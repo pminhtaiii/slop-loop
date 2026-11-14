@@ -166,10 +166,12 @@ async function runBoundReviewer(
   });
 
   let calls = 0;
+  const executedRequests: unknown[] = [];
   const actor = { adapterIdentity: `uc06-sec-${sequence}`, processIncarnation: `uc06-sec-${sequence}`, fencingGeneration: 1 };
   const transport: HostModelTransport = {
-    async execute() {
+    async execute(payload) {
       calls++;
+      executedRequests.push(payload);
       if (options?.modelThrow) {
         throw new Error('network timeout');
       }
@@ -212,7 +214,7 @@ async function runBoundReviewer(
 
   const result = await reviewer.review(f.task, diffToUse, f.evidence, request, admission);
   const journal = statePort.getJournalSnapshot();
-  return { result, calls, journal, reviewer, statePort, request, snapshot, admission };
+  return { result, calls, journal, reviewer, statePort, request, snapshot, admission, executedRequests };
 }
 
 // ==============================================================================
@@ -288,10 +290,18 @@ test('R11/R12: prompt injection attempting secret or grader access remains data 
     assert.equal(run.result.findings[0]?.message, maliciousText);
     assert.equal(run.calls, 1);
     assert.equal(run.journal.claims[0]?.status, 'settled');
+
     // Ensure no forbidden capabilities/keys leaked into the result
-    const serialized = JSON.stringify(run.result);
-    assert.equal(serialized.includes('grader.json'), false);
-    assert.equal(serialized.includes('SECRET_API_KEY'), false);
+    const serializedResult = JSON.stringify(run.result);
+    assert.equal(serializedResult.includes('grader.json'), false);
+    assert.equal(serializedResult.includes('SECRET_API_KEY'), false);
+
+    // Observe disclosure boundary at the model transport dispatch:
+    // Dispatched prompt/context must never leak secret API keys or private grader configurations
+    const serializedTransport = JSON.stringify(run.executedRequests);
+    assert.equal(serializedTransport.includes('grader.json'), false);
+    assert.equal(serializedTransport.includes('SECRET_API_KEY'), false);
+    assert.equal(serializedTransport.includes('private-evaluator-token'), false);
   }
 });
 
