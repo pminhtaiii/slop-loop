@@ -233,6 +233,8 @@ function bootPage(responder: (path: string) => unknown) {
   const body = fakeEl('body');
   body.getAttribute = () => 'uc03-runtime-evaluation-v1';
   const calls: FetchCall[] = [];
+  let seq = 0;
+  let lost = false;
   const context = {
     document: {
       body,
@@ -243,11 +245,12 @@ function bootPage(responder: (path: string) => unknown) {
       },
       createElement: (tag: string) => fakeEl(tag),
     },
-    crypto: { randomUUID: () => 'key-1' },
+    crypto: { randomUUID: () => `key-${(seq += 1)}` },
     setInterval: () => 1,
     clearInterval: () => undefined,
     fetch: (path: string, init: FetchCall['init']) => {
       calls.push({ path, init });
+      if (lost) return Promise.reject(new Error('lost response'));
       return Promise.resolve({ status: 200, json: () => Promise.resolve(responder(path)) });
     },
   };
@@ -265,7 +268,9 @@ function bootPage(responder: (path: string) => unknown) {
   };
   /** Clarification groups the script appends to the document body. */
   const groups = () => body.children.filter(child => child.tagName === 'section');
-  return { el, body, calls, settle, loadExperiment, groups };
+  /** Simulates a committed request whose response never reaches the page. */
+  const loseResponse = (value: boolean) => { lost = value; };
+  return { el, body, calls, settle, loadExperiment, groups, loseResponse };
 }
 
 /** Concatenates textContent over a fake subtree, as a reader would see it. */
@@ -593,4 +598,77 @@ test('page executes: hostile clarification text is shown as sanitized text only'
   const text = textOf(group);
   assert.ok(text.includes('<img src=x onerror=alert(1)>'), 'markup stays literal text');
   assert.equal(/[\u0080-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(text), false, 'no raw bidi/control characters');
+});
+
+/** Clicks the rendered group's submit control and returns the request body it sent, if any. */
+async function submitGroup(b: ReturnType<typeof bootPage>, text: RegExp) {
+  const group = b.groups().find(section => text.test(textOf(section)));
+  assert.ok(group, 'clarification group rendered');
+  textareasOf(group).forEach((input, index) => { input.value = `answer-${index + 1}`; });
+  const before = b.calls.length;
+  group.children.find(child => child.tagName === 'button')?.handlers.click?.(EVENT);
+  await b.settle();
+  const call = b.calls.slice(before).find(item => item.path.endsWith('/answers'));
+  return { group, call, body: call ? JSON.parse(call.init.body ?? '{}') as Record<string, unknown> : null };
+}
+
+test('page executes: an uncertain retry of the same unanswered group reuses its key and payload', async () => {
+  const view = clarificationView([{ questionId: 'gq-1', text: 'Which module owns retries?' }]);
+  const b = bootPage(viewResponder(view));
+  await b.loadExperiment();
+
+  // The first submit never reaches a response, so the key is retained for a safe retry.
+  b.loseResponse(true);
+  const first = await submitGroup(b, /Which module owns retries\?/u);
+  assert.ok(first.call, 'first submit sent');
+  b.loseResponse(false);
+
+  // A poll shows the same group still unanswered: the retry must replay the identical request.
+  const before = b.calls.length;
+  await b.loadExperiment();
+  assert.equal(b.calls.length, before + 1, 'the reload itself did not submit');
+  const retry = await submitGroup(b, /Which module owns retries\?/u);
+  assert.ok(retry.body, 'retry sent');
+  assert.equal(retry.body['idempotencyKey'], first.body?.['idempotencyKey'], 'identical retry reuses the key');
+  assert.equal(retry.body['questionId'], first.body?.['questionId']);
+  assert.equal(retry.body['questionDigest'], first.body?.['questionDigest']);
+  assert.equal(retry.body['expectedVersion'], first.body?.['expectedVersion']);
+  assert.deepEqual(retry.body['answers'], first.body?.['answers']);
+});
+
+test('page executes: a key retained past an answered group is retired, so a later group submits a fresh one', async () => {
+  let view: unknown = clarificationView([{ questionId: 'gq-1', text: 'Which module owns retries?' }]);
+  const b = bootPage(() => ({ ok: true, result: view }));
+  await b.loadExperiment();
+
+  // The first submit commits on the server, but the response is lost and the key is retained.
+  b.loseResponse(true);
+  const first = await submitGroup(b, /Which module owns retries\?/u);
+  assert.ok(first.call, 'first submit sent');
+  b.loseResponse(false);
+
+  // The authoritative view shows that group answered: its controls go away, and its key must go with them.
+  view = viewOf({
+    version: 8,
+    status: 'running',
+    answers: [{ questionId: 'gq-group-1', questionDigest: 'a'.repeat(64), answers: ['answer-1'], recordedAt: 'now' }],
+  });
+  await b.loadExperiment();
+  assert.equal(b.groups().length, 0, 'answered group controls are removed');
+
+  // A different group must not replay the retired key with a different question/digest/version:
+  // the service would answer CONFLICTING_REPLAY and the operator could never answer again.
+  view = viewOf({
+    version: 9,
+    status: 'waiting-info',
+    workflowClarification: { questionId: 'gq-group-2', questionDigest: 'b'.repeat(64), questions: [{ questionId: 'gq-9', text: 'Which test proves it?' }] },
+  });
+  await b.loadExperiment();
+  const next = await submitGroup(b, /Which test proves it\?/u);
+  assert.ok(next.body, 'new group sent');
+  assert.notEqual(next.body['idempotencyKey'], first.body?.['idempotencyKey'], 'answered group key is retired');
+  assert.equal(next.body['questionId'], 'gq-group-2');
+  assert.equal(next.body['questionDigest'], 'b'.repeat(64));
+  assert.equal(next.body['expectedVersion'], 9);
+  assert.deepEqual(next.body['answers'], ['answer-1']);
 });

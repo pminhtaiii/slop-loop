@@ -172,6 +172,8 @@ export const SCRIPT = `
     if (groupNode && groupNode.parentNode) groupNode.parentNode.removeChild(groupNode);
     groupNode = null;
     groupKey = null;
+    // The group's retained key dies with the group: a later group must never replay it as a conflict.
+    keys.group = null;
   }
 
   function renderClarification(view) {
@@ -199,7 +201,8 @@ export const SCRIPT = `
     });
     var button = el('button', 'Submit group answers');
     button.type = 'button';
-    // Answers bind to the group id/digest and go in question order; a single retained key covers the group.
+    // Answers bind to the group id/digest and go in question order; a single retained key covers this
+    // group until it is answered or replaced, and clearGroup retires it with the controls.
     button.addEventListener('click', function () {
       send(button, 'group', experimentPath('/answers'), function (key) {
         return {
