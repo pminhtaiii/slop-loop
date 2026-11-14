@@ -29,6 +29,7 @@ import type {
   ModelPortV02,
   ExecutionGuardV02,
 } from '../contracts/foundation/uc03.ts';
+import { validateTaskState } from '../contracts/foundation/uc03.ts';
 import type { RealContextSource } from '../approvals/real-context-provider.ts';
 import type { PreparedReviewContext } from '../uc06/context.ts';
 import type { ReviewContextAdmissionV1, ReviewBindingV1 } from '../contracts/review.ts';
@@ -209,6 +210,18 @@ export function admitReviewMaterial(
     return undefined;
   const parsed = validateReviewContextAdmission(context, { ...trusted, binding: { ...context.binding, ...trusted.binding }, sourceEvidence: prepared.evidence });
   return parsed.ok ? deepFreeze({ context: parsed.value, evidence: prepared.evidence }) : undefined;
+}
+
+/** Current owner ledgers can prove only a first task review; later missing history stays closed. */
+export function isUnspentFirstReview(state: TaskState): boolean {
+  const parsed = validateTaskState(state);
+  if (!parsed.ok || parsed.value.node !== 'Review' || parsed.value.latestReviewRef || parsed.value.reviewRefs?.length) return false;
+  const rows = parsed.value.budgetLedgers?.filter(row => row.kind === 'iteration' || row.kind === 'review_iteration') ?? [];
+  return (
+    rows.filter(row => row.scope === 'task').length === 1 &&
+    rows.filter(row => row.scope === 'run').length <= 1 &&
+    rows.every(row => row.consumed === 0 && row.reservations.length === 0 && row.limit > 0)
+  );
 }
 
 /**

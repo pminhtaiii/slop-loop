@@ -25,7 +25,7 @@ import { validDiffInfo, requiredChecksPassed } from './graph-validation.ts';
 import type { UC03GraphState } from './graph-state.ts';
 import type { UC03GraphConfig, UC03GraphPorts, UC03ReviewerAdmissionRequest } from './graph-types.ts';
 import type { CompletionPredicateInput } from './verification-types.ts';
-import { admitReviewMaterial } from './graph-types-v02.ts';
+import { admitReviewMaterial, isUnspentFirstReview } from './graph-types-v02.ts';
 
 export function boundReviewEnabled(config: UC03GraphConfig | undefined): boolean {
   return !!config && (config.reviewContext !== undefined || config.reviewEvidence !== undefined || config.reviewPrompt !== undefined);
@@ -136,14 +136,18 @@ export async function persistBoundReview(
   return checked.ok && checked.value.outcome === 'acknowledged' && after && hash(after) === hash(authority) ? deepFreeze(observation) : undefined;
 }
 
-/** Always discover latest by independently measured candidate, then exact-load retained owner bytes. */
+type ReviewLookupArgs = [config: UC03GraphConfig, task: BugTask, state: TaskState, diff: UC03ReviewerAdmissionRequest['diff'], results: readonly VerificationResult[]];
+export function loadBoundReview(...args: ReviewLookupArgs): Promise<ReviewObservationV1 | undefined>;
+export function loadBoundReview(...args: [...ReviewLookupArgs, classifyFirst: true]): Promise<ReviewObservationV1 | 'fresh' | undefined>;
+/** Discover independently of caches. Missing permits dispatch only with stable, unspent owner review history. */
 export async function loadBoundReview(
   config: UC03GraphConfig,
   task: BugTask,
   state: TaskState,
   diff: UC03ReviewerAdmissionRequest['diff'],
   results: readonly VerificationResult[],
-): Promise<ReviewObservationV1 | undefined> {
+  classifyFirst = false,
+): Promise<ReviewObservationV1 | 'fresh' | undefined> {
   const diffDigest = diff.diffDigest;
   if (!boundReviewPortReady(config)) return undefined;
   const owner = config.trustedExpectedContext?.statePort,
@@ -161,7 +165,13 @@ export async function loadBoundReview(
   };
   if (!validateRecoverReviewObservationRequest(request).ok) return undefined;
   const recovered = validateRecoverReviewObservationResult(await config.reviewEvidence?.recoverObservation(request), request);
-  if (!recovered.ok || recovered.value.outcome !== 'found') return undefined;
+  if (!recovered.ok) return undefined;
+  if (recovered.value.outcome === 'missing' && classifyFirst && isUnspentFirstReview(current)) {
+    const after = await owner?.loadTask(task.taskId),
+      afterAuthority = after && (await currentReviewAuthority(owner, task, after));
+    return after && afterAuthority && hash(after) === hash(current) && hash(afterAuthority) === hash(authority) ? 'fresh' : undefined;
+  }
+  if (recovered.value.outcome !== 'found') return undefined;
   const found = recovered.value,
     exact = {
       taskId: task.taskId,

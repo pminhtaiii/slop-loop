@@ -21,6 +21,7 @@ import { reloadAuthoritativeState, transitionState } from './graph-transitions.t
 import { buildFinalReport } from './report.ts';
 import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
 import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
+import type { ReviewObservationV1 } from '../contracts/review.ts';
 import { boundReviewEnabled, prepareBoundReview, persistBoundReview, loadBoundReview } from './verification-review.ts';
 
 type ReviewPorts = Pick<UC03GraphPorts, 'statePort' | 'repositoryPort' | 'reviewerPort' | 'hostAuthority'>;
@@ -61,9 +62,17 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
     if (!(await trustedOwnerStateMatches(trusted, current.state)))
       return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Trusted reviewer and route ports do not share current owner task state'] };
     let reviewed: { result: ReviewResult; ownerState: TaskState; request: Pick<ProviderRequest, 'reservationRef'> };
-    if (config && boundReviewEnabled(config) && state.reviewObservation?.authority.taskStateVersion === current.state.stateVersion) {
-      const observation = await loadBoundReview(config, state.task, current.state, diffInfo, state.verificationResults);
-      if (!observation?.result || (observation.status !== 'accepted' && observation.status !== 'findings'))
+    let observation: ReviewObservationV1 | 'fresh' | undefined;
+    if (config && boundReviewEnabled(config)) {
+      try {
+        observation = await loadBoundReview(config, state.task, current.state, diffInfo, state.verificationResults, true);
+      } catch {
+        observation = undefined;
+      }
+      if (!observation) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['EVIDENCE_UNACKNOWLEDGED: owner review history is unavailable'] };
+    }
+    if (observation && observation !== 'fresh') {
+      if (!observation.result || (observation.status !== 'accepted' && observation.status !== 'findings'))
         return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['EVIDENCE_UNACKNOWLEDGED: recovered review is unavailable'] };
       reviewed = { result: observation.result, ownerState: current.state, request: { reservationRef: observation.result.iterationReservationRef } };
     } else {
@@ -79,7 +88,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
       const reviewAdmission =
         typeof admissionSource === 'function' ? await admissionSource({ task: state.task, state: current.state, diff: diffInfo, reviewContext: prepared?.context, evidence }) : admissionSource;
       if (!reviewAdmission) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Owner did not issue a reviewer admission for the current diff'] };
-      // Same projection the real reviewer recomputes, over the same empty evidence list it dispatches.
+      // Mint and dispatch use the same selected evidence projection.
       const contextDigest = reviewerContextDigest(
         state.task,
         diffInfo.diff,

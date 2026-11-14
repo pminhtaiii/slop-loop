@@ -5,8 +5,11 @@ import { prepareControlledUC03Host } from '../../../src/runtime/uc03-host-bootst
 import { runControlledUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
 import { controlledReviewFixture, controlledReviewCompletion } from '../support/uc06/review-evidence.ts';
 import type { ReviewEvidencePortV1, PersistReviewObservationRequestV1, LoadReviewObservationRequestV1, ReviewEvidenceFoundV1 } from '../../../src/contracts/review.ts';
-import { computeCanonicalSha256 as hash, type TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import { computeCanonicalSha256 as hash, type TaskState, type ProviderRequest } from '../../../src/contracts/foundation/uc03.ts';
 import { createRuntimeReviewer } from '../../../src/foundation/reviewer.ts';
+import { buildUC03Graph, type UC03GraphConfig, type UC03GraphPorts } from '../../../src/uc03/graph.ts';
+import { restoreVerificationEvidence } from '../../../src/uc03/graph-patch-ancestry.ts';
+import type { PreparedReviewContext } from '../../../src/uc06/context.ts';
 
 type Fixture = Awaited<ReturnType<typeof controlledGeneratedPlanFixture>>;
 async function approve(fixture: Fixture) {
@@ -367,6 +370,10 @@ test('a latest settled request without an observation cannot fall back to an old
   assert.equal(fixture.evidence.records.size, 1);
   const ownerState = await fixture.owner.loadTask(fixture.task.taskId);
   assert.ok(ownerState);
+  const retained = await invokeRetainedReview(fixture, ownerState);
+  assert.equal(retained.terminalOutcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.equal(fixture.requests.length, 2);
+  assert.deepEqual(await fixture.owner.loadTask(fixture.task.taskId), ownerState);
   const result = await resumeFromTaskState(fixture, ownerState);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.equal(fixture.requests.length, 2);
@@ -483,3 +490,108 @@ test('a missing post-ACK completion lookup stops at Review and later owner recov
   assert.equal((await resumeFromTaskState(fixture, state)).outcome, 'COMPLETED');
   assert.equal(fixture.requests.length, 1);
 });
+
+function retainedReviewApp(fixture: Awaited<ReturnType<typeof controlledReviewFixture>>, overrides: Partial<UC03GraphConfig> = {}) {
+  const prepared = new WeakMap<ProviderRequest, PreparedReviewContext>();
+  const resolver = (_task: unknown, _diff: string, request: ProviderRequest) => prepared.get(request);
+  const reviewer = createRuntimeReviewer({
+    model: fixture.ports.reviewerModelPort,
+    resolveRepoDigest: async task => (await fixture.owner.loadTask(task.taskId))?.repositoryRevisionDigest,
+    resolveReviewContext: resolver,
+  });
+  const config: UC03GraphConfig = {
+    ...fixture.config,
+    generation: undefined,
+    generationV02: fixture.config.generation,
+    mode: 'controlled',
+    reviewerContextResolver: resolver,
+    reviewerAdmission: async input => {
+      const admission = await fixture.config.reviewerAdmission?.(input);
+      if (admission && input.reviewContext && input.evidence) prepared.set(admission.request, { context: input.reviewContext, evidence: input.evidence });
+      return admission;
+    },
+    ...overrides,
+  };
+  const ports: UC03GraphPorts = { ...fixture.ports, reviewerPort: reviewer, baselineEvidenceWriter: fixture.ports.baselineEvidence };
+  return buildUC03Graph(ports, config);
+}
+
+async function invokeRetainedReview(fixture: Awaited<ReturnType<typeof controlledReviewFixture>>, current: TaskState) {
+  const restored = await restoreVerificationEvidence(fixture.task, current, fixture.owner, fixture.ports.baselineEvidence, fixture.config.trustedExpectedContext.expectedTestFiles);
+  assert.ok(restored);
+  return retainedReviewApp(fixture).invoke({
+    task: fixture.task,
+    state: current,
+    baseline: restored.baseline,
+    verificationResults: structuredClone(fixture.checks),
+    patchAdmission: restored.admission,
+    patchReceipt: restored.receipt,
+  });
+}
+
+for (const loss of ['loseBeforeCommitOnce', 'loseAckOnce', 'skipCommitOnce'] as const) {
+  test(`retained full graph evidence cannot bypass owner recovery after ${loss}`, async () => {
+    const fixture = await completingFixture();
+    fixture.evidence[loss] = true;
+    assert.equal((await runControlledUC03GraphV02(fixture.task, fixture.ports, fixture.config)).outcome, 'IMPLEMENTED_UNVERIFIED');
+    const current = await fixture.owner.loadTask(fixture.task.taskId);
+    assert.ok(current);
+    assert.equal(fixture.requests.length, 1);
+    const ledger = structuredClone(fixture.owner.getLedgers());
+    const beforeRecovery = fixture.evidence.calls.filter(c => c.operation === 'recover').length;
+    const result = await invokeRetainedReview(fixture, current);
+    assert.equal(fixture.requests.length, 1);
+    assert.equal(fixture.owner.getJournalSnapshot().claims.filter(c => c.claimId.startsWith('claim-bound-review-')).length, 1);
+    assert.equal(fixture.evidence.admissions.length, 1);
+    assert.deepEqual(fixture.owner.getLedgers(), ledger);
+    assert.ok(fixture.evidence.calls.filter(c => c.operation === 'recover').length > beforeRecovery);
+    assert.equal(result.terminalOutcome, loss === 'loseAckOnce' ? 'COMPLETED' : 'IMPLEMENTED_UNVERIFIED');
+    if (loss !== 'loseAckOnce') assert.deepEqual(await fixture.owner.loadTask(fixture.task.taskId), current);
+  });
+}
+
+test('owner-backed genuine first review remains available with retained verification evidence', async () => {
+  const fixture = await completingFixture();
+  const retained = await retainedReviewApp(fixture, { reviewContext: () => undefined }).invoke({ task: fixture.task });
+  assert.equal(fixture.requests.length, 0);
+  assert.equal(retained.state?.node, 'Review');
+  assert.ok(retained.verificationResults.length);
+  assert.equal(fixture.owner.getLedgers().find(l => l.scope === 'task' && l.kind === 'iteration')?.consumed, 0);
+  const reviewed = await retainedReviewApp(fixture).invoke({
+    task: fixture.task,
+    state: retained.state,
+    baseline: retained.baseline,
+    verificationResults: retained.verificationResults,
+    patchAdmission: retained.patchAdmission,
+    patchReceipt: retained.patchReceipt,
+  });
+  assert.equal(reviewed.terminalOutcome, 'COMPLETED');
+  assert.equal(fixture.requests.length, 1);
+  assert.equal(fixture.owner.getJournalSnapshot().claims.filter(c => c.claimId.startsWith('claim-bound-review-')).length, 1);
+});
+
+for (const refusal of ['denied', 'conflict', 'uncertain'] as const) {
+  test(`owner ${refusal} cannot become first-review permission even with zero spent allowance`, async () => {
+    const fixture = await completingFixture();
+    const retained = await retainedReviewApp(fixture, { reviewContext: () => undefined }).invoke({ task: fixture.task });
+    assert.ok(retained.state);
+    const ledger = structuredClone(fixture.owner.getLedgers());
+    const port: ReviewEvidencePortV1 = {
+      ...portAdapter(fixture),
+      recoverObservation: async () => (refusal === 'uncertain' ? { outcome: 'uncertain', operationRef: 'operation-owner-unresolved' } : { outcome: refusal, reasonCode: 'AUTHORITY_UNAVAILABLE' }),
+    };
+    const refused = await retainedReviewApp(fixture, { reviewEvidence: port }).invoke({
+      task: fixture.task,
+      state: retained.state,
+      baseline: retained.baseline,
+      verificationResults: retained.verificationResults,
+      patchAdmission: retained.patchAdmission,
+      patchReceipt: retained.patchReceipt,
+    });
+    assert.equal(refused.terminalOutcome, 'IMPLEMENTED_UNVERIFIED');
+    assert.equal(fixture.requests.length, 0);
+    assert.equal(fixture.evidence.admissions.length, 0);
+    assert.deepEqual(fixture.owner.getLedgers(), ledger);
+    assert.deepEqual(await fixture.owner.loadTask(fixture.task.taskId), retained.state);
+  });
+}
