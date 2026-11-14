@@ -105,6 +105,8 @@ export type QuestionBudgetAccountingReceiptV1 = { readonly kind: 'work'; readonl
 export interface QuestionBudgetExecutionContextV1 {
   readonly signal: AbortSignal;
   readonly deadlineAt: number;
+  /** Remaining operation time in the ledger clock at dispatch. */
+  readonly remainingMs: number;
 }
 
 export type QuestionBudgetExecutionResultV1<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1 };
@@ -330,7 +332,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     if (internal.status === 'running') this.hold(internal, this.terminalReason ?? 'cancelled');
   }
 
-  private start(internal: InternalReservation): QuestionBudgetExecutionResultV1<undefined> {
+  private start(internal: InternalReservation): QuestionBudgetExecutionResultV1<number> {
     if (internal.status !== 'reserved') return { ok: false, reasonCode: 'duplicate-settlement' };
     if (this.status !== 'open') return { ok: false, reasonCode: this.terminalReason ?? 'accounting-unknown' };
     if (this.activeReservationId !== undefined) return { ok: false, reasonCode: 'busy' };
@@ -345,17 +347,18 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     internal.status = 'running';
     internal.startedAt = startedAt;
     this.activeReservationId = internal.id;
-    this.scheduleTimer(internal);
-    return { ok: true, value: undefined };
+    const remainingMs = this.scheduleTimer(internal);
+    if (remainingMs === undefined) return { ok: false, reasonCode: 'elapsed-deadline' };
+    return { ok: true, value: remainingMs };
   }
 
-  private scheduleTimer(internal: InternalReservation): void {
+  private scheduleTimer(internal: InternalReservation): number | undefined {
     const now = this.now();
     const remainingMs = internal.deadlineAt - now;
     if (!Number.isFinite(now) || remainingMs <= 0) {
       internal.controller.abort('elapsed-deadline');
       this.hold(internal, 'elapsed-deadline');
-      return;
+      return undefined;
     }
     const maxTimerDelayMs = 2_147_483_647;
     const delay = Math.min(maxTimerDelayMs, Math.max(1, Math.ceil(remainingMs)));
@@ -369,6 +372,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
       internal.controller.abort('elapsed-deadline');
       this.hold(internal, 'elapsed-deadline');
     }, delay);
+    return remainingMs;
   }
 
   private clearTimer(internal: InternalReservation): void {
@@ -376,7 +380,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     internal.timer = undefined;
   }
 
-  public _start(internal: InternalReservation): QuestionBudgetExecutionResultV1<undefined> {
+  public _start(internal: InternalReservation): QuestionBudgetExecutionResultV1<number> {
     return this.start(internal);
   }
 

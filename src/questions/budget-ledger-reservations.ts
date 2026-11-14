@@ -26,7 +26,7 @@ export interface InternalReservation {
 }
 
 export interface ReservationLedgerPortV1 {
-  _start(internal: InternalReservation): QuestionBudgetExecutionResultV1<void>;
+  _start(internal: InternalReservation): QuestionBudgetExecutionResultV1<number>;
   _releaseBeforeDispatch(internal: InternalReservation): QuestionBudgetExecutionResultV1<void>;
   _complete(internal: InternalReservation, receipt: unknown): QuestionBudgetExecutionResultV1<void>;
   _hold(internal: InternalReservation, reasonCode: QuestionBudgetRefusalCodeV1): void;
@@ -80,7 +80,7 @@ export class BudgetReservationEngine implements QuestionBudgetReservationPortV1 
     if (!started.ok) return started;
     let value: T;
     try {
-      value = await operation({ signal: this.signal, deadlineAt: this.deadlineAt });
+      value = await operation({ signal: this.signal, deadlineAt: this.deadlineAt, remainingMs: started.value });
     } catch (error) {
       if (this.signal.aborted) {
         this.owner._ignoreLate(this.internal);

@@ -77,7 +77,7 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
     const operation = admission.value;
     const execution = await operation.execute(
       async context => {
-        const safeControl = combineControl(control, context.signal, context.deadlineAt);
+        const safeControl = combineControl(control, context.signal, context.remainingMs);
         const binding = await repository.checkBinding(safeControl);
         if (binding.status !== 'ok') return binding;
         return await repository.readSpan(decision, safeControl);
@@ -89,10 +89,19 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
     const result = validateSpanResult(execution.value, limits);
     if (!result.ok) return Object.freeze({ status: 'unavailable', reasonCode: 'unsupported-adapter' });
     if (result.value.status !== 'ok') return result.value;
-    const admissionFailure = validateIssuedSpan(result.value.span, identity, snapshot, manifestByPath, issued);
+    const { span } = result.value;
+    if (
+      span.path !== decision.path ||
+      span.range.startLine !== decision.startLine ||
+      span.range.endLine > decision.endLine ||
+      (span.truncation.kind === 'truncated' && span.range.endLine === decision.endLine)
+    ) {
+      return Object.freeze({ status: 'unavailable', reasonCode: 'unsupported-adapter' });
+    }
+    const admissionFailure = validateIssuedSpan(span, identity, snapshot, manifestByPath, issued);
     if (admissionFailure) return admissionFailure;
-    issued.set(result.value.span.evidenceId, result.value.span);
-    return Object.freeze({ status: 'ok', span: result.value.span });
+    issued.set(span.evidenceId, span);
+    return Object.freeze({ status: 'ok', span });
   }
 
   async function present(proposal: unknown, control: QuestionRepositoryOperationControl): Promise<QuestionPresentationResultV1> {
@@ -118,7 +127,7 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
 
     const execution = await operation.execute(
       async context => {
-        const safeControl = combineControl(control, context.signal, context.deadlineAt);
+        const safeControl = combineControl(control, context.signal, context.remainingMs);
         if (containsProtectedAnswer(safe.value)) return { status: 'protected' as const };
         const binding = await repository.checkBinding(safeControl);
         return binding.status === 'ok' ? { status: 'ok' as const } : { status: 'binding-failure' as const, binding };
@@ -278,8 +287,7 @@ function bindingPresentationFailure(binding: Awaited<ReturnType<QuestionReposito
   return Object.freeze({ kind: 'blocked', reasonCode: 'owner-unavailable' });
 }
 
-function combineControl(control: QuestionRepositoryOperationControl, reservationSignal: AbortSignal, deadlineAt: number): QuestionRepositoryOperationControl {
-  const remainingMs = Math.max(0, deadlineAt - performance.now());
+function combineControl(control: QuestionRepositoryOperationControl, reservationSignal: AbortSignal, remainingMs: number): QuestionRepositoryOperationControl {
   return Object.freeze({
     signal: AbortSignal.any([control.signal, reservationSignal]),
     deadlineEpochMs: Math.min(control.deadlineEpochMs, Date.now() + remainingMs),

@@ -68,9 +68,10 @@ function profile(maxToolCalls = 5): QuestionBudgetProfileV1 {
   };
 }
 
-function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = {}, staleAfterChecks?: number) {
+function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = {}, staleAfterChecks?: number, now?: () => number) {
   let bindingChecks = 0;
   let reads = 0;
+  const deadlines: number[] = [];
   const span: AdmittedSpanV1 = Object.freeze({
     identity,
     evidenceId: 'evidence-1',
@@ -100,7 +101,8 @@ function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = 
     binding,
     reader,
     bindingPort: {
-      async checkBinding() {
+      async checkBinding(_binding, operationControl) {
+        deadlines.push(operationControl.deadlineEpochMs);
         bindingChecks += 1;
         return staleAfterChecks !== undefined && bindingChecks > staleAfterChecks ? { status: 'stale' } : { status: 'ok', binding };
       },
@@ -108,6 +110,7 @@ function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = 
   });
   const budgetResult = createQuestionBudgetLedger(profile(maxToolCalls), {
     pricing: { inputMicrosPerMillionTokens: 100_000, outputMicrosPerMillionTokens: 200_000 },
+    ...(now === undefined ? {} : { now }),
   });
   assert.equal(budgetResult.ok, true);
   if (!budgetResult.ok) throw new Error('valid fixture budget was rejected');
@@ -120,7 +123,7 @@ function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = 
   });
   assert.equal(registryResult.ok, true);
   if (!registryResult.ok) throw new Error('valid fixture evidence context was rejected');
-  return { bindingChecks: () => bindingChecks, reads: () => reads, repository, budget: budgetResult.value, registry: registryResult.value };
+  return { bindingChecks: () => bindingChecks, reads: () => reads, deadlines, repository, budget: budgetResult.value, registry: registryResult.value };
 }
 
 function control(): { readonly signal: AbortSignal; readonly deadlineEpochMs: number } {
@@ -157,8 +160,31 @@ test('only a guarded issued span can support a canonical source citation', async
   assert.equal(fixture.budget.snapshot().consumed.toolCalls, 2);
 });
 
+test('read and final validation convert ledger time to bounded transport deadlines', async () => {
+  const fixture = makeFixture(5, {}, undefined, () => 0);
+  const before = Date.now();
+  const callerControl = { ...control(), deadlineEpochMs: before + 10_000 };
+  const read = await fixture.registry.readSpan({ path: SOURCE_PATH, startLine: 2, endLine: 3 }, callerControl);
+  assert.equal(read.status, 'ok');
+  if (read.status !== 'ok') return;
+  const result = await presentQuestionAnswer(
+    fixture.registry,
+    {
+      claims: [{ claimId: 'claim-1', text: 'A supported fact.', kind: 'observation', evidence: [{ evidenceId: read.span.evidenceId, range: { startLine: 2, endLine: 3 } }] }],
+      limitations: [],
+    },
+    callerControl,
+  );
+  assert.equal(result.kind, 'delivered');
+  const after = Date.now();
+  assert.equal(fixture.deadlines.length, 2);
+  for (const deadline of fixture.deadlines) {
+    assert.ok(deadline >= before + 5_000 && deadline <= after + 5_000, `unexpected transport deadline: ${deadline}`);
+  }
+});
+
 test('an issued span supports canonical single-line coordinates', async () => {
-  const fixture = makeFixture();
+  const fixture = makeFixture(5, { range: { startLine: 2, endLine: 2 }, excerpt: 'two', excerptDigest: computeFileDigest(Buffer.from('two')) });
   const read = await fixture.registry.readSpan({ path: SOURCE_PATH, startLine: 2, endLine: 2 }, control());
   assert.equal(read.status, 'ok');
   if (read.status !== 'ok') return;
@@ -174,6 +200,42 @@ test('an issued span supports canonical single-line coordinates', async () => {
   if (result.kind !== 'delivered') return;
   assert.ok(result.text.includes('`' + SOURCE_PATH + ':L2-L2`'));
   assert.equal(fixture.budget.snapshot().consumed.toolCalls, 2);
+});
+
+test('read responses for a different path or range never issue evidence', async () => {
+  const requests = [
+    { path: 'src/other.py', startLine: 2, endLine: 3 },
+    { path: SOURCE_PATH, startLine: 1, endLine: 3 },
+    { path: SOURCE_PATH, startLine: 2, endLine: 2 },
+  ];
+  for (const request of requests) {
+    const fixture = makeFixture();
+    assert.deepEqual(await fixture.registry.readSpan(request, control()), { status: 'unavailable', reasonCode: 'unsupported-adapter' });
+    const presentation = await presentQuestionAnswer(
+      fixture.registry,
+      { claims: [{ claimId: 'claim-1', text: 'A supported fact.', kind: 'observation', evidence: [{ evidenceId: 'evidence-1', range: { startLine: 2, endLine: 2 } }] }], limitations: [] },
+      control(),
+    );
+    assert.deepEqual(presentation, { kind: 'failed', reasonCode: 'invalid-citation' });
+    assert.equal(fixture.reads(), 1);
+    assert.equal(fixture.bindingChecks(), 1);
+  }
+});
+
+test('reads admit an EOF-clamped range or a truncated prefix of the requested lines', async () => {
+  const eof = await makeFixture().registry.readSpan({ path: SOURCE_PATH, startLine: 2, endLine: 10 }, control());
+  assert.equal(eof.status, 'ok');
+  if (eof.status === 'ok') assert.deepEqual(eof.span.range, { startLine: 2, endLine: 3 });
+
+  const truncated = makeFixture(5, {
+    range: { startLine: 2, endLine: 2 },
+    excerpt: 'two',
+    excerptDigest: computeFileDigest(Buffer.from('two')),
+    truncation: { kind: 'truncated', nextLine: 3 },
+  });
+  const result = await truncated.registry.readSpan({ path: SOURCE_PATH, startLine: 2, endLine: 3 }, control());
+  assert.equal(result.status, 'ok');
+  if (result.status === 'ok') assert.deepEqual(result.span.range, { startLine: 2, endLine: 2 });
 });
 
 test('unread, copied, and partially covered citations fail before final validation', async () => {
