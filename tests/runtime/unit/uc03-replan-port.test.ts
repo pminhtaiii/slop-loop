@@ -73,7 +73,13 @@ function fixture(): { state: TaskState; candidatePlan: FixPlan } {
     plan,
     activeDecisionId: plan.decisionRef,
     taskContext: task,
-    budgetLedgers: [ledger('replan', 3, 'count'), ledger('repair', 2, 'count'), { ...ledger('tokens', 100000, 'count'), consumed: 5 }, ledger('cost', 5, 'usd')],
+    budgetLedgers: [
+      ledger('replan', 3, 'count'),
+      ledger('repair', 2, 'count'),
+      { ...ledger('tokens', 100000, 'count'), consumed: 5 },
+      ledger('cost', 5, 'usd'),
+      { ...ledger('tokens', 5000, 'count'), scope: 'run' as const },
+    ],
   });
   const changed = 'Check divisor == 0 and raise CalculationError';
   return { state, candidatePlan: { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) } };
@@ -186,6 +192,8 @@ test('replan: owner-committed state must bind to this task, run and one-step rep
   const taskContext = state.taskContext;
   assert.ok(committedPlan);
   assert.ok(taskContext);
+  const withLimit = (kind: string, scope: 'task' | 'run', limit: number): readonly BudgetLedger[] =>
+    (committed.budgetLedgers ?? []).map(ledger => (ledger.kind === kind && ledger.scope === scope ? { ...ledger, limit } : ledger));
   const cases: readonly (readonly [string, Partial<TaskState>, string])[] = [
     ['bound', {}, 'REPLAN_PREPARED'],
     ['replanCount does not advance', { replanCount: 0 }, 'INCOMPLETE'],
@@ -205,6 +213,13 @@ test('replan: owner-committed state must bind to this task, run and one-step rep
     ['different repository revision', { repositoryRevisionDigest: 'revision-other' }, 'INCOMPLETE'],
     ['different configuration id', { taskContext: { ...taskContext, configId: 'config-other' } }, 'INCOMPLETE'],
     ['different configuration version', { taskContext: { ...taskContext, configVersion: 'config-version-other' } }, 'INCOMPLETE'],
+    [
+      'raised task budget limit under the same configuration',
+      { taskContext: { ...taskContext, budgetLimits: { ...taskContext.budgetLimits, maxTokens: 200000 } }, budgetLedgers: withLimit('tokens', 'task', 200000) },
+      'INCOMPLETE',
+    ],
+    ['raised run-scope ledger limit', { budgetLedgers: withLimit('tokens', 'run', 9000) }, 'INCOMPLETE'],
+    ['raised existing replan ledger limit', { budgetLedgers: withLimit('replan', 'task', 4) }, 'INCOMPLETE'],
   ];
   for (const [label, override, expected] of cases) {
     const statePort = new CountingPortV02({ initialTaskState: state });

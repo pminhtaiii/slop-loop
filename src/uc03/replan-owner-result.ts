@@ -39,12 +39,14 @@ export async function bindAcceptedMaterialReplan(prior: TaskState, input: Replan
   // ALLOWED_NODE_TRANSITIONS reaches AwaitPlan from AwaitFeedback/Repair only through Investigate and
   // every edge bumps stateVersion once, so the single owner transaction still lands two versions later.
   const expectedStateVersion = prior.stateVersion + (prior.node === 'Investigate' ? 1 : 2);
-  // context/runtime_policy.md: a replan resets no other task budget. Consumption may only grow, and an
-  // outstanding reservation may only disappear when its amount is settled into consumption.
+  // context/runtime_policy.md: a replan resets no other task budget. Limits never change, consumption
+  // may only grow, and an outstanding reservation may only disappear when its amount is settled into
+  // consumption. The first replan charge may create the replan ledger; its limit is then fixed by
+  // checkReplanAccounting against the configuration.
   const budgetsMonotone = (prior.budgetLedgers ?? []).every(before => {
-    if (before.kind === 'replan') return true;
     const after = owned.budgetLedgers?.find(next => next.scope === before.scope && next.kind === before.kind);
-    if (!after || after.consumed < before.consumed) return false;
+    if (before.kind === 'replan') return !after || after.limit === before.limit;
+    if (!after || after.limit !== before.limit) return false;
     const removed = before.reservations.filter(item => !after.reservations.some(next => next.reservationId === item.reservationId && next.keyedId === item.keyedId && next.amount === item.amount));
     return after.consumed >= before.consumed + removed.reduce((sum, item) => sum + item.amount, 0);
   });
@@ -60,6 +62,7 @@ export async function bindAcceptedMaterialReplan(prior: TaskState, input: Replan
     owned.repositoryRevisionDigest === prior.repositoryRevisionDigest &&
     owned.taskContext?.configId === prior.taskContext?.configId &&
     owned.taskContext?.configVersion === prior.taskContext?.configVersion &&
+    computeCanonicalSha256(owned.taskContext?.budgetLimits ?? null) === computeCanonicalSha256(prior.taskContext?.budgetLimits ?? null) &&
     owned.stateVersion === expectedStateVersion &&
     owned.node === 'AwaitPlan' &&
     owned.nextAction === 'approve-fix-plan' &&
