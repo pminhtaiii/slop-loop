@@ -234,7 +234,8 @@ export function attachUC03ExecutionEvidence(
     : validateRepositoryExecutionReceiptV02(raw.patchReceipt, patchAdmission.value);
   const candidateState = raw.finalState === undefined ? raw.state : raw.finalState;
   const finalState = candidateState === undefined || candidateState === null ? undefined : validateTaskState(candidateState);
-  const evidence = freezeProjection({
+  // Validators may return their input (or retain its arrays), so detach the projection before freezing it.
+  const evidence = freezeProjection(structuredClone({
     ...(baseline?.ok ? { baseline: baseline.value } : {}),
     ...(verificationResults?.every(item => item.ok) ? { verificationResults: verificationResults.map(item => item.value) } : {}),
     ...(reviewRequest?.ok ? { reviewRequest: reviewRequest.value } : {}),
@@ -244,7 +245,7 @@ export function attachUC03ExecutionEvidence(
     } : {}),
     ...(patchReceipt?.ok ? { patchReceipt: patchReceipt.value } : {}),
     finalState: finalState?.ok ? finalState.value : null,
-  });
+  }));
   Object.defineProperty(result, 'executionEvidence', { value: evidence, enumerable: false, writable: false, configurable: false });
   return result;
 }

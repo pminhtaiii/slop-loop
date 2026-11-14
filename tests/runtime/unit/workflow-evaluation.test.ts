@@ -45,7 +45,7 @@ import { createSnapshotGrader } from '../../../eval/uc03/workflow-grade.ts';
 import { issueRealExecutionAdmission, runEvaluation } from '../../../eval/uc03/runner.ts';
 import { registerUC03WorkflowEvaluation } from '../../../eval/uc03/registration.ts';
 import { validateWorkflowObservation } from '../../../eval/uc03/validation.ts';
-import { WORKFLOW_EVALUATION_VERSION, type EvaluationCaseSpec, type WorkflowCaseContext } from '../../../eval/uc03/types.ts';
+import { WORKFLOW_EVALUATION_VERSION, type EvaluationCaseSpec, type WorkflowCaseContext, type WorkflowEvaluationReport } from '../../../eval/uc03/types.ts';
 import { createFixtureBugTask, createFixtureCheckDefinition, createFixtureExecutorIdentityV02, createFixturePolicyAuthorityRefV02, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { createGraphRepositoryPort, createGraphTaskState, seedGraphTaskState } from '../support/uc03/graph-fixtures.ts';
 import { createTestApprovalBinding, createTestProviderOutcomeReceiptV02, createTestRepositoryCommandAdmissionContextV02 } from '../support/uc03/state-fixtures.ts';
@@ -616,6 +616,84 @@ test('workflow grader accepts graph verification IDs only when every required bi
   assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, misbound), { required: false, focused: false });
   const duplicateEvidenceId = results.map((result, index) => index === 1 ? { ...result, evidenceId: results[0]?.evidenceId ?? result.evidenceId } : result);
   assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, duplicateEvidenceId), { required: false, focused: false });
+
+  // A regression failure withholds required completion but must not erase the correctly bound focused pass.
+  const regressionFailed = results.map((result, index) => index === 1 ? { ...result, outcome: 'fail' as const } : result);
+  assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, regressionFailed), { required: false, focused: true });
+  // A focused pass with a foreign binding is still refused, even while the regression check fails.
+  const focusedMisbound = regressionFailed.map((result, index) => index === 0 ? { ...result, diffDigest: digest('foreign-diff') } : result);
+  assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, focusedMisbound), { required: false, focused: false });
+});
+
+test('a blocked regression check keeps its bound focused pass and reaches the snapshot regression grade', async () => {
+  const reproduction = createFixtureCheckDefinition();
+  const regression = createFixtureCheckDefinition({
+    checkId: 'check-pytest-regression',
+    argv: ['-q', 'tests/test_calculator.py', '-k', 'not test_divide_zero'],
+    purpose: 'regression',
+  });
+  const task = createFixtureBugTask({ requiredChecks: [reproduction, regression] });
+  const state = createFixtureTaskState({
+    taskId: task.taskId,
+    repositoryId: task.repositoryId,
+    repositoryRevisionDigest: task.initialRevisionDigest,
+    runId: 'run-grade-regression-001',
+    requiredCheckIds: task.requiredChecks.map(check => check.checkId),
+  });
+  const diffDigest = `sha256:${digest('workflow-regression-diff')}`;
+  const resultFor = (check: typeof reproduction, outcome: VerificationResult['outcome']): VerificationResult => ({
+    evidenceId: `evidence-verif-${check.checkId}-sha256:${sha256Text(check.checkId)}`,
+    taskId: task.taskId,
+    runId: state.runId,
+    actionId: `action-${check.checkId}`,
+    phase: check.purpose === 'reproduction' ? 'focused' : check.purpose,
+    repoDigest: state.repositoryRevisionDigest,
+    diffDigest,
+    commandIdentity: `${check.executable} ${check.argv.join(' ')}`,
+    outcome,
+    testedIds: [check.checkId],
+    diagnosticRefs: [],
+  });
+  const facts = deriveVerificationFacts(task, state, diffDigest, [resultFor(reproduction, 'pass'), resultFor(regression, 'fail')]);
+  assert.deepEqual(facts, { required: false, focused: true });
+
+  const snapshot = { snapshotId: 'snapshot-regression-001', digest: `sha256:${digest('regression-snapshot')}` };
+  const grader = createSnapshotGrader({
+    criteria: { digest: `sha256:${digest('criteria-regression')}`, criteria: [{ criterionId: 'criterion-C02-regression', caseId: 'C02', predicate: 'regression', hiddenCheckId: null }] },
+    profile: {
+      profileId: 'controlled-profile',
+      digest: `sha256:${digest('controlled-profile-digest')}`,
+      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+    },
+    isolationAuthority: { admit: () => undefined },
+    executor: { executorId: 'controlled-grader', execute: () => undefined },
+    graderPayload: null,
+  });
+  const grade = await grader.grade('C02', {
+    observation: validateWorkflowObservation({
+      repositoryId: task.repositoryId, taskId: task.taskId, runId: state.runId, returnedModel: 'controlled-model', graderDigest: null,
+      initialRepositoryDigest: null, workflowOutcome: 'IMPLEMENTED_UNVERIFIED', expectedWait: null, blocked: null,
+      effects: 'observed', usage: 'observed', diagnostic: null, artifacts: [], limitations: [],
+    }),
+    snapshot,
+    evidence: {
+      digest: `sha256:${digest('regression-evidence')}`,
+      snapshotDigest: snapshot.digest,
+      diffDigest,
+      baselineFailed: true,
+      requiredChecksPassed: facts.required,
+      focusedCheckPassed: facts.focused,
+      testsProtected: true,
+      reviewAccepted: true,
+      reviewedDiffDigest: diffDigest,
+      sentinelsUnchanged: true,
+      speculativePatchApplied: false,
+      stoppedBeforeEffect: false,
+      completionWithheld: true,
+    },
+  });
+  assert.equal(grade.grade, 'pass', JSON.stringify(grade));
+  assert.equal(grade.reason, 'criteria-satisfied');
 });
 
 test('failed or stale independent grades cannot be upgraded by a matching expected wait', async () => {
@@ -1566,6 +1644,51 @@ test('a foreign-task resume receipt refuses before clarification owner calls or 
   assert.equal(fixture.route.repositoryPort.commands.length, commandsBefore);
   assert.deepEqual(modelCallsBefore, ['coder:propose-plan']);
   assert.deepEqual(fixture.modelCalls, modelCallsBefore);
+});
+
+test('service stores a frozen detached copy of the graph workflow report', async () => {
+  const report: WorkflowEvaluationReport = {
+    suite: 'uc03',
+    contractVersion: WORKFLOW_EVALUATION_VERSION,
+    mode: 'mock',
+    tier: 'controlled',
+    manifestDigest: digest('manifest'),
+    configDigest: digest('config'),
+    timestamp: '2026-11-13T00:00:00.000Z',
+    isRealVerified: false,
+    selectionResult: { selected: ['C01'], passed: 0, failed: 0, incomplete: 1, pendingWaits: [], outcome: 'incomplete' },
+    suiteAcceptance: { scope: 'catalog', requiredCases: 17, satisfiedCases: 0, outcome: 'incomplete' },
+    exitCode: 3,
+    cases: [{
+      caseId: 'C01', repositoryId: 'repo-1', taskId: 'task-1', runId: 'run-1', requestedModel: 'm', returnedModel: 'm',
+      profileDigest: digest('profile'), configDigest: digest('config'), pricingDigest: digest('pricing'), adapterVersions: ['a@1'],
+      graderDigest: null, initialRepositoryDigest: null, workflowOutcome: 'waiting-approval', expectedOutcome: 'COMPLETED',
+      tier: 'controlled', grade: 'not-run', gradeReason: 'unresolved-wait', effects: 'observed',
+      usage: 'observed', diagnostic: null, artifacts: [], limitations: ['paused'],
+    }],
+    limitations: ['controlled only'],
+  };
+  const { service } = createService({ graph: {
+    portsFor: () => ({}),
+    run: async () => ({ outcome: 'pending-approval', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' }, workflowReport: report }),
+  } });
+  const started = await service.startExperiment({ source: catalogSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-report' });
+  assert.ok(started.ok);
+
+  // The graph's retained reference cannot rewrite the stored report.
+  (report.cases[0]?.limitations as string[]).push('mutated by the producer');
+  assert.deepEqual(started.value.experiment.workflowReport?.cases[0]?.limitations, ['paused']);
+  assert.equal(Object.isFrozen(started.value.experiment.workflowReport), true);
+
+  // A returned view cannot rewrite it either.
+  const next = service.getExperiment('exp-001');
+  assert.ok(next.ok);
+  const view = next.value.workflowReport;
+  assert.ok(view);
+  assert.throws(() => (view.cases[0]?.limitations as string[]).push('mutated by a view'), TypeError);
+  const reread = service.getExperiment('exp-001');
+  assert.ok(reread.ok);
+  assert.deepEqual(reread.value.workflowReport?.cases[0]?.limitations, ['paused']);
 });
 
 test('service returns the original receipt for a duplicate key and denies stale or conflicting replay', async () => {

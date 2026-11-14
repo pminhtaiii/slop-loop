@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { deepFreeze } from '../contracts/foundation/uc03/v02/admission/snapshot.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import { bindEvaluationSource, isAdmittedEvaluationProfile, type BoundSource, type EvaluationProfile } from './evaluation-profile.ts';
 import {
@@ -79,7 +80,8 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
         questions: Object.freeze(clarification.questions.map(question => Object.freeze({ questionId: question.questionId, text: question.text }))),
       });
     }
-    if (result.workflowReport !== undefined) experiment.workflowReport = result.workflowReport;
+    // Detach and freeze once: neither the graph's retained report nor a returned view rewrites stored evidence.
+    if (result.workflowReport !== undefined) experiment.workflowReport = result.workflowReport === null ? null : deepFreeze(structuredClone(result.workflowReport));
     if (TERMINAL.has(experiment.status)) activeId = activeId === experiment.id ? undefined : activeId;
   };
 

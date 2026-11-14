@@ -198,7 +198,8 @@ export function deriveVerificationFacts(task: BugTask, state: TaskState, diffDig
       return { required: false, focused: false };
     }
     const expectedPhase = check.purpose === 'reproduction' ? 'focused' : check.purpose;
-    const admission = validateVerificationAdmission(result, {
+    // Admit identity, phase and binding per check as pass; a non-pass outcome then only withholds `required`.
+    const admission = validateVerificationAdmission({ ...result, outcome: 'pass' }, {
       expectedTaskId: task.taskId,
       expectedRunId: state.runId,
       expectedRepoDigest: state.repositoryRevisionDigest,
@@ -208,10 +209,14 @@ export function deriveVerificationFacts(task: BugTask, state: TaskState, diffDig
     });
     if (!admission.ok) return { required: false, focused: false };
     matchedResults.add(result);
-    if (check === reproduction) focusedPassed = true;
+    if (check === reproduction) focusedPassed = result.outcome === 'pass';
   }
-  return { required: matchedResults.size === checked.length, focused: focusedPassed };
+  // The regression check failing is exactly the withheld-completion case: keep its bound focused pass.
+  const required = matchedResults.size === checked.length && checked.every(result => result.outcome === 'pass');
+  return { required, focused: focusedPassed };
 }
+
+
 
 function reviewFacts(evidence: UC03ExecutionEvidence, state: TaskState, diffDigest: string): Readonly<{ accepted: boolean; reviewedDiffDigest: string | null }> | undefined {
   const review = evidence.reviewResult;

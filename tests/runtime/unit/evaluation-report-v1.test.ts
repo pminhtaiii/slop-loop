@@ -180,11 +180,15 @@ test('real tier is admitted only by an internally issued receipt bound to this r
   assert.deepEqual(fake.calls, []);
   assert.equal(wrongRun.cases[0]?.gradeReason, 'real-execution-unavailable');
 
-  // The issued receipt bound to this exact run is the only thing that reaches dispatch.
+  // The issued receipt bound to this exact run is the only thing that reaches dispatch. Admission alone is
+  // not grading evidence: a real-tier case without an independent snapshot grade stays not-run.
   const admitted = driver(() => observation());
   const allowed = await runEvaluation(options({ mode: 'real', cases: ['C01'], realAdmission: receipt, driver: admitted }));
   assert.deepEqual(admitted.calls, ['C01']);
-  assert.equal(allowed.cases[0]?.grade, 'pass');
+  assert.equal(allowed.cases[0]?.grade, 'not-run');
+  assert.equal(allowed.cases[0]?.gradeReason, 'private-grading');
+  assert.equal(allowed.isRealVerified, false);
+  assert.deepEqual(allowed.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 0, outcome: 'incomplete' });
 });
 
 test('exploratory scope grades nothing and claims no suite acceptance', async () => {
