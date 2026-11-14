@@ -45,3 +45,7 @@ Path/protected-content checks and revision validation reuse foundation helpers b
 ## Compatibility acceptance
 
 Existing readFile/searchCode/listDir tests retain old prefix/string signatures and results. New tests cover later ranges, exact matching, line bounds, Unicode/CRLF, protected content, file-size enforcement, deterministic paging, stale/forged cursors, work exhaustion, cancellation, directory/digest work bounds and filesystem root isolation. Add A -> B -> A mutation during a read, mutation during snapshot acquisition, corrupt manifest/file bytes and unsupported stable-lease admission vectors. Controlled v0.2 read fencing must still run; no source is admitted through an unfenced route. Unsupported optional capabilities fail closed before reads.
+
+## Retrieval integration
+
+The index builder consumes the same host-admitted manifest and protected-content-checked source bytes. It receives no model-selected root and introduces no unguarded filesystem route. Ranked chunk identities resolve through guarded ranges before evidence issuance; a stale digest, incomplete range or failed admission cannot grant a citation. Exact definition lookup uses parsed metadata; guarded literal search still locates occurrences and records bounded search coverage.

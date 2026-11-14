@@ -117,7 +117,7 @@ The table below is the use-case catalog. UC-03, UC-04, and UC-05 were selected f
 | ID | Candidate use case |
 |---|---|
 | UC-01 | Issue triage |
-| UC-02 | Codebase questions and answers |
+| UC-02 | [Codebase questions and answers with RAG](../specs/008-retrieval-augmented-generation/spec.md) |
 | UC-03 | End-to-end bug fix |
 | UC-04 | Multi-step feature with resume |
 | UC-05 | Human approval |

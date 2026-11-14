@@ -99,7 +99,7 @@ Agreed human-control behavior follows [ADR-0006](adr/0006-uc05-cli-and-human-con
 |---|---|---|
 | K1: Model, structured output, agent loop | UC-03 | Validated model results and bounded workflow execution |
 | K2: Tool use and skills | UC-03 plus shared foundation | Assign and evaluate any selected runtime skill; repository helper skills do not prove runtime loading |
-| K3: Retrieval-augmented generation | UC-03 repository evidence path | Define retrieval, provenance, and evidence reaching the model; a file-search demo alone does not establish coverage |
+| K3: Retrieval-augmented generation | UC-02 repository Q&A | Validate hybrid retrieval, incremental index persistence, provenance, and Recall@5 using the [Feature 008 evaluation contract](../specs/008-retrieval-augmented-generation/contracts/evaluation.md) |
 | K4: Memory, state, context | UC-04 | Include compaction and repository-memory evidence, beyond basic checkpoints |
 | K5: Workflow and human-in-the-loop | UC-04 and UC-05 | Integrated pause/restart/resume cases |
 | K6: Multi-agent coordination and MCP | Owner and scope decision pending | Three selected UCs do not by themselves demonstrate this area; assign explicit coordination/MCP evidence or select another UC later |
