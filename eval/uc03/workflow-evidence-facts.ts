@@ -117,11 +117,32 @@ export function parseWorkflowFinalTree(value: unknown, binding: FinalTreeBinding
   return { tree, snapshot };
 }
 
-async function ownerAndPatchFacts(evidence: UC03ExecutionEvidence, task: BugTask, state: TaskState, owner: StatePortV02 | undefined): Promise<boolean | undefined> {
-  if (evidence.patchAdmission === undefined && evidence.patchReceipt === undefined) {
-    if (state.changedPaths.length === 0 && ['Investigate', 'NeedsInfo', 'AwaitPlan', 'AwaitFeedback'].includes(state.node)) return false;
-    return undefined;
-  }
+// The coder agent emits `REPAIR_BUDGET_EXHAUSTED`; the repair/replan ledgers emit `repair-budget-exhausted`.
+const BUDGET_STOP = /budget[-_]exhausted/iu;
+
+/** A coder-or-repair budget refusal is the only stop that can justify a patch-free stop as "no effect yet". */
+export function budgetStopEvidence(reasons: readonly string[]): boolean {
+  return reasons.some(reason => BUDGET_STOP.test(reason));
+}
+
+/**
+ * A patch-free state proves nothing was applied only at a pre-patch wait, or at a Repair/Incomplete
+ * stop whose own budget-exhaustion evidence says the route halted before the next effect.
+ */
+export function patchFreeFacts(state: TaskState, stoppedOnBudget: boolean): boolean | undefined {
+  if (state.changedPaths.length !== 0) return undefined;
+  if (['Investigate', 'NeedsInfo', 'AwaitPlan', 'AwaitFeedback'].includes(state.node)) return false;
+  return (state.node === 'Repair' || state.node === 'Incomplete') && stoppedOnBudget ? false : undefined;
+}
+
+async function ownerAndPatchFacts(
+  evidence: UC03ExecutionEvidence,
+  task: BugTask,
+  state: TaskState,
+  owner: StatePortV02 | undefined,
+  stoppedOnBudget: boolean,
+): Promise<boolean | undefined> {
+  if (evidence.patchAdmission === undefined && evidence.patchReceipt === undefined) return patchFreeFacts(state, stoppedOnBudget);
   if (!owner || !evidence.patchAdmission || !evidence.patchReceipt) return undefined;
   let ancestry;
   try {
@@ -290,7 +311,8 @@ export async function deriveWorkflowEvidenceFacts(input: {
     return undefined;
   }
   const testsProtected = protectedDigest === baseline.testProtectionDigest;
-  const patchApplied = await ownerAndPatchFacts(execution, input.task, state, input.statePort);
+  const exhaustedBeforeNextEffect = budgetStopEvidence(input.result.reasons);
+  const patchApplied = await ownerAndPatchFacts(execution, input.task, state, input.statePort, exhaustedBeforeNextEffect);
   const review = reviewFacts(execution, state, diffInfo.diffDigest);
   const withheld = completionWasWithheld(input.result, state);
   if (patchApplied === undefined || review === undefined || withheld === undefined) return undefined;
@@ -298,7 +320,6 @@ export async function deriveWorkflowEvidenceFacts(input: {
   const checks = deriveVerificationFacts(input.task, state, diffInfo.diffDigest, execution.verificationResults);
   const unmodifiedChecks = expectedTestFiles.every(path => !diffInfo.changedFiles.includes(path));
   const sentinelsUnchanged = testsProtected && unmodifiedChecks;
-  const exhaustedBeforeNextEffect = input.result.reasons.some(reason => /(?:MODEL_CALL_BUDGET_EXHAUSTED|ACTIVE_TIME_BUDGET_EXHAUSTED|REPAIR_BUDGET_EXHAUSTED|REPLAN_BUDGET_EXHAUSTED)/u.test(reason));
   const stoppedBeforeEffect = input.result.outcome === 'INCOMPLETE' ? (exhaustedBeforeNextEffect ? true : undefined) : false;
   if (stoppedBeforeEffect === undefined) return undefined;
   const factsWithoutDigest = {

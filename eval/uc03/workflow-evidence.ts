@@ -1,6 +1,6 @@
 /** Host-only producer for snapshot-bound workflow grades. */
 
-import type { BugTask, RepositoryPort, RepositoryPortV02, StatePortV02 } from '../../src/contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, type BugTask, type RepositoryPort, type RepositoryPortV02, type StatePortV02 } from '../../src/contracts/foundation/uc03.ts';
 import type { BaselineEvidenceCandidate } from '../../src/uc03/investigation.ts';
 import { deriveWorkflowEvidenceFacts, parseWorkflowFinalTree, type DerivedWorkflowFacts, type FinalTreeBinding, type TrustedFinalTreeSnapshotPort } from './workflow-evidence-facts.ts';
 import { isSnapshotGradeCurrent, type SnapshotGradeResult, type SnapshotGrader } from './workflow-grade.ts';
@@ -30,7 +30,12 @@ export interface WorkflowGradeDecision {
   readonly limitations: readonly string[];
 }
 
-const decisions = new WeakMap<object, WorkflowGradeDecision>();
+const decisions = new WeakMap<object, Readonly<{ caseId: string; fingerprint: string; decision: WorkflowGradeDecision }>>();
+
+/** The graded inputs, so a mutated or reused observation object cannot inherit the stored verdict. */
+function remember(key: object, caseId: string, graded: unknown, decision: WorkflowGradeDecision): void {
+  decisions.set(key, Object.freeze({ caseId, fingerprint: computeCanonicalSha256(graded), decision }));
+}
 
 function decisionFrom(result: SnapshotGradeResult, caseId: string, snapshot?: EvaluationSnapshotIdentity, evidenceDigest?: string): WorkflowGradeDecision | undefined {
   if (
@@ -75,7 +80,8 @@ export async function produceWorkflowEvidence(input: {
   try {
     observation = validateWorkflowObservation(input.observation);
   } catch {
-    decisions.set(key, await notRunDecision(input.host.grader, input.caseId, 'The workflow observation failed host validation.'));
+    // Nothing gradeable to bind: the runner re-validates and reports the observation as invalid.
+    decisions.delete(key);
     return;
   }
 
@@ -92,23 +98,23 @@ export async function produceWorkflowEvidence(input: {
       retainedBaseline: input.retainedBaseline,
     });
   } catch {
-    decisions.set(key, await notRunDecision(input.host.grader, input.caseId, 'Host evidence could not be validated.'));
+    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'Host evidence could not be validated.'));
     return;
   }
   if (!facts) {
-    decisions.set(key, await notRunDecision(input.host.grader, input.caseId, 'Required task, snapshot, diff, protected-test, check, review or patch-effect evidence was missing or inconsistent.'));
+    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'Required task, snapshot, diff, protected-test, check, review or patch-effect evidence was missing or inconsistent.'));
     return;
   }
   let grade: SnapshotGradeResult;
   try {
     grade = await input.host.grader.grade(input.caseId, { observation, snapshot: facts.snapshot, evidence: facts.evidence });
   } catch {
-    decisions.set(key, await notRunDecision(input.host.grader, input.caseId, 'The independent snapshot grader failed.'));
+    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'The independent snapshot grader failed.'));
     return;
   }
   const decision = decisionFrom(grade, input.caseId, facts.snapshot, facts.evidence.digest);
   if (!decision) {
-    decisions.set(key, await notRunDecision(input.host.grader, input.caseId, 'The snapshot grader returned an invalid or stale receipt.'));
+    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'The snapshot grader returned an invalid or stale receipt.'));
     return;
   }
 
@@ -126,7 +132,7 @@ export async function produceWorkflowEvidence(input: {
       facts.snapshot,
     );
   } catch {
-    decisions.set(key, await notRunDecision(input.host.grader, input.caseId, 'The final snapshot could not be stability-checked after grading.'));
+    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'The final snapshot could not be stability-checked after grading.'));
     return;
   }
   const binding: FinalTreeBinding = {
@@ -139,13 +145,20 @@ export async function produceWorkflowEvidence(input: {
   };
   const checkedTree = parseWorkflowFinalTree(rechecked, binding);
   if (!checkedTree || checkedTree.snapshot.snapshotId !== facts.snapshot.snapshotId || checkedTree.snapshot.digest !== facts.snapshot.digest) {
-    decisions.set(key, await notRunDecision(input.host.grader, input.caseId, 'The final tree changed while the independent grade was being produced.'));
+    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'The final tree changed while the independent grade was being produced.'));
     return;
   }
-  decisions.set(key, decision);
+  remember(key, input.caseId, observation, decision);
 }
 
-/** Exact object identity prevents a copied observation from inheriting a private grade. */
-export function workflowEvidenceDecision(observation: unknown): WorkflowGradeDecision | undefined {
-  return typeof observation === 'object' && observation !== null ? decisions.get(observation) : undefined;
+/**
+ * Object identity plus the exact graded inputs: a copied observation, a case switch or a mutated
+ * `workflowOutcome`/`runId` on the same object yields no verdict.
+ */
+export function workflowEvidenceDecision(caseId: string, observation: unknown): WorkflowGradeDecision | undefined {
+  if (typeof observation !== 'object' || observation === null) return undefined;
+  const stored = decisions.get(observation);
+  return stored !== undefined && stored.caseId === caseId && stored.fingerprint === computeCanonicalSha256(observation)
+    ? stored.decision
+    : undefined;
 }

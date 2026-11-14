@@ -81,7 +81,9 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
       });
     }
     // Detach and freeze once: neither the graph's retained report nor a returned view rewrites stored evidence.
-    if (result.workflowReport !== undefined) experiment.workflowReport = result.workflowReport === null ? null : deepFreeze(structuredClone(result.workflowReport));
+    // A result without a report has none: the previous execution's report is not the current one.
+    const report = result.workflowReport;
+    experiment.workflowReport = report == null ? null : deepFreeze(structuredClone(report));
     if (TERMINAL.has(experiment.status)) activeId = activeId === experiment.id ? undefined : activeId;
   };
 

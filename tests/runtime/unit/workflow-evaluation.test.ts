@@ -40,8 +40,9 @@ import { createUC03EvaluationGraph, type UC03EvaluationGraphRoute } from '../../
 import { prepareControlledUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { canonicalDigest, sha256Text } from '../../../src/uc01/contracts.ts';
 import { createWorkflowDriver, type WorkflowCaseHost } from '../../../eval/uc03/workflow-driver.ts';
-import { deriveVerificationFacts } from '../../../eval/uc03/workflow-evidence-facts.ts';
-import { createSnapshotGrader } from '../../../eval/uc03/workflow-grade.ts';
+import { budgetStopEvidence, deriveVerificationFacts, patchFreeFacts } from '../../../eval/uc03/workflow-evidence-facts.ts';
+import { produceWorkflowEvidence, workflowEvidenceDecision } from '../../../eval/uc03/workflow-evidence.ts';
+import { createSnapshotGrader, type SnapshotGradeResult, type SnapshotGrader } from '../../../eval/uc03/workflow-grade.ts';
 import { issueRealExecutionAdmission, runEvaluation } from '../../../eval/uc03/runner.ts';
 import { registerUC03WorkflowEvaluation } from '../../../eval/uc03/registration.ts';
 import { validateWorkflowObservation } from '../../../eval/uc03/validation.ts';
@@ -1662,7 +1663,7 @@ test('service stores a frozen detached copy of the graph workflow report', async
     cases: [{
       caseId: 'C01', repositoryId: 'repo-1', taskId: 'task-1', runId: 'run-1', requestedModel: 'm', returnedModel: 'm',
       profileDigest: digest('profile'), configDigest: digest('config'), pricingDigest: digest('pricing'), adapterVersions: ['a@1'],
-      graderDigest: null, initialRepositoryDigest: null, workflowOutcome: 'waiting-approval', expectedOutcome: 'COMPLETED',
+      graderDigest: null, initialRepositoryDigest: null, workflowOutcome: 'waiting-approval' as const, expectedOutcome: 'COMPLETED',
       tier: 'controlled', grade: 'not-run', gradeReason: 'unresolved-wait', effects: 'observed',
       usage: 'observed', diagnostic: null, artifacts: [], limitations: ['paused'],
     }],
@@ -1689,6 +1690,58 @@ test('service stores a frozen detached copy of the graph workflow report', async
   const reread = service.getExperiment('exp-001');
   assert.ok(reread.ok);
   assert.deepEqual(reread.value.workflowReport?.cases[0]?.limitations, ['paused']);
+});
+
+test('a continuation result without a report clears the previous execution report', async () => {
+  const report: WorkflowEvaluationReport = {
+    suite: 'uc03',
+    contractVersion: WORKFLOW_EVALUATION_VERSION,
+    mode: 'mock',
+    tier: 'controlled',
+    manifestDigest: digest('manifest'),
+    configDigest: digest('config'),
+    timestamp: '2026-11-13T00:00:00.000Z',
+    isRealVerified: false,
+    selectionResult: { selected: ['C01'], passed: 1, failed: 0, incomplete: 0, pendingWaits: [], outcome: 'pass' },
+    suiteAcceptance: { scope: 'catalog', requiredCases: 17, satisfiedCases: 1, outcome: 'incomplete' },
+    exitCode: 0,
+    cases: [{
+      caseId: 'C01', repositoryId: 'repo-1', taskId: 'task-1', runId: 'run-1', requestedModel: 'm', returnedModel: 'm',
+      profileDigest: digest('profile'), configDigest: digest('config'), pricingDigest: digest('pricing'), adapterVersions: ['a@1'],
+      graderDigest: null, initialRepositoryDigest: null, workflowOutcome: 'COMPLETED', expectedOutcome: 'COMPLETED',
+      tier: 'controlled', grade: 'pass', gradeReason: 'criteria-satisfied', effects: 'observed',
+      usage: 'observed', diagnostic: null, artifacts: [], limitations: [],
+    }],
+    limitations: ['controlled only'],
+  };
+  let stop = false;
+  const { service } = createService({ graph: {
+    portsFor: () => ({}),
+    // The second execution is a refused continuation: the graph returns INCOMPLETE with no report.
+    run: async () => (stop
+      ? { outcome: 'INCOMPLETE', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' } }
+      : { outcome: 'pending-approval', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' }, workflowReport: report }),
+  } });
+  const started = await service.startExperiment({ source: catalogSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-stale-report-start' });
+  assert.ok(started.ok);
+  assert.ok(started.value.experiment.workflowReport, 'the start execution retained its report');
+
+  const direction = await service.issueDirection({ id: 'exp-001', expectedTaskVersion: 1, expectedControlVersion: 1, kind: 'resume', idempotencyKey: 'key-stale-report-direction' });
+  assert.ok(direction.ok);
+  stop = true;
+  const continued = await service.continueExperiment({
+    id: 'exp-001',
+    expectedVersion: direction.value.experiment.version,
+    directionRef: 'receiptRef' in direction.value.receipt ? direction.value.receipt.receiptRef : direction.value.receipt.receiptId,
+    idempotencyKey: 'key-stale-report-continue',
+  });
+  assert.ok(continued.ok);
+  assert.equal(continued.value.experiment.status, 'incomplete');
+  // The earlier passing report no longer describes the latest execution, so it cannot be current.
+  assert.equal(continued.value.experiment.workflowReport, null);
+  const reread = service.getExperiment('exp-001');
+  assert.ok(reread.ok);
+  assert.equal(reread.value.workflowReport, null);
 });
 
 test('service returns the original receipt for a duplicate key and denies stale or conflicting replay', async () => {
@@ -1829,4 +1882,59 @@ test('service forwards a direction for a task-bearing graph wait to control and 
   });
   assert.ok(continuation.ok);
   assert.equal(continuation.value.experiment.taskId, 'task-001');
+});
+
+/* ------------------------------------------------------------------
+ * CodeRabbit repair batch cr-E: budget-stop evidence, verdict binding, stale reports
+ * ------------------------------------------------------------------ */
+
+test('a patch-free Repair stop counts as no patch only when the stop evidence confirms budget exhaustion', () => {
+  const state = createFixtureTaskState({ node: 'Repair', nextAction: 'repair-review-findings' });
+  assert.equal(state.changedPaths.length, 0);
+  assert.equal(patchFreeFacts(state, true), false);
+  assert.equal(patchFreeFacts(state, false), undefined, 'a Repair halt without budget evidence is indeterminate, not patch-free');
+
+  const terminal = createFixtureTaskState({ node: 'Incomplete', outcome: 'INCOMPLETE', nextAction: 'halt-no-repair-proposal' });
+  assert.equal(patchFreeFacts(terminal, true), false);
+  assert.equal(patchFreeFacts(terminal, false), undefined);
+
+  // A state that already recorded a change is never patch-free, budget or not.
+  assert.equal(patchFreeFacts(createFixtureTaskState({ node: 'Repair', changedPaths: ['src/calculator.py'] }), true), undefined);
+
+  // The repair ledger's lower-case reason and the coder agent's upper-case codes both qualify.
+  assert.equal(budgetStopEvidence(['repair-budget-exhausted']), true);
+  assert.equal(budgetStopEvidence(['REAL_PROFILE_GENERATION_INVALID: REPAIR_BUDGET_EXHAUSTED']), true);
+  assert.equal(budgetStopEvidence(['MODEL_CALL_BUDGET_EXHAUSTED']), true);
+  assert.equal(budgetStopEvidence(['No repair patch proposal provided']), false);
+});
+
+test('a private verdict is bound to its case id and exact graded observation contents', async () => {
+  const observation = {
+    repositoryId: 'repo-calc', taskId: 'task-calc-001', runId: 'run-001', returnedModel: null,
+    graderDigest: null, initialRepositoryDigest: null, workflowOutcome: 'waiting-approval' as const,
+    expectedWait: 'waiting-approval' as const, blocked: null, effects: 'observed' as const, usage: 'unavailable' as const,
+    diagnostic: null, artifacts: [], limitations: [],
+  };
+  // Without task state and ports the facts never certify a snapshot, so the producer records its
+  // bounded not-run verdict against the exact observation object it was handed.
+  const grader: SnapshotGrader = {
+    grade: async (caseId: string): Promise<SnapshotGradeResult> => ({
+      caseId: caseId as Exclude<SnapshotGradeResult['caseId'], null>, criterionId: null,
+      grade: 'not-run' as const, reason: 'private-grading' as const,
+      evidenceIds: [], snapshot: null, evidenceDigest: null, criteriaDigest: digest('criteria'), limitations: [],
+    }),
+  };
+  await produceWorkflowEvidence({
+    caseId: 'C01', task: createFixtureBugTask(), result: { outcome: 'pending-approval', state: null, reasons: [], milestones: [] },
+    observation, repository: undefined, host: { grader, finalTree: { freezeFinalTree: () => ({}), recheckCurrentFinalTree: () => ({}) } },
+  });
+
+  const stored = workflowEvidenceDecision('C01', observation);
+  assert.ok(stored, 'the graded case returns the verdict it earned');
+  assert.equal(workflowEvidenceDecision('C02', observation), undefined, 'another case cannot borrow it');
+  assert.equal(workflowEvidenceDecision('C01', validateWorkflowObservation(observation)), undefined, 'a copied observation cannot borrow it');
+
+  // Mutating a graded field on the same object voids the verdict instead of silently reusing it.
+  (observation as { runId: string | null }).runId = 'run-002';
+  assert.equal(workflowEvidenceDecision('C01', observation), undefined);
 });
