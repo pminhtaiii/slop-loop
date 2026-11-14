@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { computeAdmissionDigest, computeAttemptOutcomeDigest, computeReconciliationDigest } from '../../../src/contracts/foundation/uc03.ts';
 import type { ClaimReceiptV02, RepositoryAdmissionContextV02, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
@@ -184,6 +185,40 @@ test('operation lookup: a committed replan operation record resolves with its re
     // A record whose task version moved on is no longer that commit.
     await state.writeJson(journalOperationPath(state, context.taskId, 'replan-op-001'), { taskId: context.taskId, stateVersion: task.stateVersion + 1, receipts: [] });
     assert.deepEqual(await lookup.lookupOperation(journalOperationRef('replan-op-001')), { outcome: 'unknown' });
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('operation lookup: a structurally corrupt outcome or reconciliation is unknown', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-corrupt-schema-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const state = new StatePortStore(port.store);
+    const lookup = createJournalOperationLookup(port);
+    const attempt = await port.beginAttempt(claim.claimId, createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }));
+    const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+    assert.deepEqual(await port.recordOutcome(outcome), { outcome: 'settled', receiptId: outcome.receiptId });
+    const outcomePath = state.statePath(context.taskId, `outcome-${outcome.receiptId}.json`);
+    const otherTask = createTestRepositoryCommandAdmissionContextV02({ taskId: 'task-other-002' });
+    const rebound = (raw: Record<string, unknown>): Record<string, unknown> => ({ ...raw, receiptDigest: computeAttemptOutcomeDigest(raw) });
+
+    // Each row is parseable JSON whose digest is self-consistent, so only binding or schema can refuse it.
+    const rows: readonly (readonly [string, unknown])[] = [
+      ['an empty object', {}],
+      ['a wrong claim id', rebound({ ...outcome, claimId: 'claim-other-001' })],
+      ['a wrong attempt id', rebound({ ...outcome, attemptId: 'attempt-other-001' })],
+      ['a wrong task', rebound({ ...outcome, admissionDigest: computeAdmissionDigest(otherTask) })],
+    ];
+    for (const [label, value] of rows) {
+      await state.writeJson(outcomePath, value);
+      assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, `${label} is not a recorded commit`);
+    }
+
+    await state.writeJson(outcomePath, outcome);
+    const bogusReconciliation: Record<string, unknown> = { claimId: claim.claimId, predecessorReceiptId: outcome.receiptId };
+    await state.writeJson(state.statePath(context.taskId, 'recon-001.json'), { ...bogusReconciliation, reconciliationDigest: computeReconciliationDigest(bogusReconciliation) });
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, 'a reconciliation that does not settle this outcome is unknown');
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }

@@ -9,10 +9,12 @@
  */
 import { readdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { computeAdmissionDigest, computeAttemptOutcomeDigest, computeReconciliationDigest } from '../../contracts/foundation/uc03.ts';
 import type { AttemptOutcomeReceiptV02, AttemptReceiptV02, AttemptReconciliationReceiptV02, ClaimReceiptV02, TaskState } from '../../contracts/foundation/uc03.ts';
 import { isSafeStorageId } from '../store.ts';
 import type { DurableStatePortV02 } from './state-port-v02.ts';
 import { StatePortStore } from './state-port-v02-storage.ts';
+import type { StoredAttemptV02, StoredClaimV02 } from './state-port-v02-types.ts';
 
 export const JOURNAL_OPERATION_PREFIX = 'uc04-journal:';
 
@@ -53,8 +55,38 @@ export function journalOperationPath(state: StatePortStore, taskId: string, oper
 const ABSENT: JournalOperationLookupResultV02 = Object.freeze({ outcome: 'absent' });
 const UNKNOWN: JournalOperationLookupResultV02 = Object.freeze({ outcome: 'unknown' });
 
-/** The reconciliation that settled this claim, if the journal holds one. */
-async function readReconciliation(state: StatePortStore, taskId: string, claimId: string): Promise<AttemptReconciliationReceiptV02 | null> {
+/** A persisted outcome is the commit only when it is self-consistent and bound to this claim and attempt. */
+function outcomeMatchesClaim(outcome: AttemptOutcomeReceiptV02, claim: StoredClaimV02, attempt: StoredAttemptV02): boolean {
+  return (
+    outcome.receiptDigest === computeAttemptOutcomeDigest(outcome) &&
+    outcome.claimId === claim.receipt.claimId &&
+    outcome.claimDigest === claim.receipt.claimDigest &&
+    outcome.attemptId === attempt.receipt.attemptId &&
+    outcome.admissionDigest === computeAdmissionDigest(claim.context)
+  );
+}
+
+/** A persisted reconciliation is trusted only when it settles exactly this claim's outcome. */
+function reconciliationMatches(reconciliation: AttemptReconciliationReceiptV02, claim: StoredClaimV02, attempt: StoredAttemptV02, outcome: AttemptOutcomeReceiptV02): boolean {
+  return (
+    reconciliation.reconciliationDigest === computeReconciliationDigest(reconciliation) &&
+    reconciliation.claimId === claim.receipt.claimId &&
+    reconciliation.claimDigest === claim.receipt.claimDigest &&
+    reconciliation.attemptId === attempt.receipt.attemptId &&
+    reconciliation.predecessorReceiptId === outcome.receiptId &&
+    reconciliation.predecessorReceiptDigest === outcome.receiptDigest &&
+    reconciliation.admissionDigest === computeAdmissionDigest(claim.context)
+  );
+}
+
+/** The reconciliation that settled this claim, if the journal holds a valid one. */
+async function readReconciliation(
+  state: StatePortStore,
+  taskId: string,
+  claim: StoredClaimV02,
+  attempt: StoredAttemptV02,
+  outcome: AttemptOutcomeReceiptV02,
+): Promise<AttemptReconciliationReceiptV02 | null> {
   const names = await readdir(dirname(state.statePath(taskId, 'x'))).catch((err: unknown) => {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [] as string[];
     throw err;
@@ -62,7 +94,10 @@ async function readReconciliation(state: StatePortStore, taskId: string, claimId
   for (const name of names) {
     if (!name.startsWith('recon-') || !name.endsWith('.json')) continue;
     const receipt = await state.readJson<AttemptReconciliationReceiptV02>(state.statePath(taskId, name));
-    if (receipt?.claimId === claimId) return receipt;
+    if (receipt?.claimId !== claim.receipt.claimId) continue;
+    // A present receipt for this claim that does not settle it is corruption, not an absence.
+    if (!reconciliationMatches(receipt, claim, attempt, outcome)) throw new Error('Corrupted UC-03 reconciliation receipt');
+    return receipt;
   }
   return null;
 }
@@ -79,7 +114,7 @@ async function lookupClaim(state: StatePortStore, claimId: string): Promise<Jour
   if (!attempt || attempt.outcomeReceiptId === undefined) return UNKNOWN;
   const outcome = await state.readOutcome(taskId, attempt.outcomeReceiptId);
   const task = await state.readTask(taskId);
-  if (!outcome || !task) return UNKNOWN;
+  if (!outcome || !task || !outcomeMatchesClaim(outcome, claim, attempt)) return UNKNOWN;
   return {
     outcome: 'committed',
     state: structuredClone(task),
@@ -88,7 +123,7 @@ async function lookupClaim(state: StatePortStore, claimId: string): Promise<Jour
       claim: structuredClone(claim.receipt),
       attempt: structuredClone(attempt.receipt),
       outcome: structuredClone(outcome),
-      reconciliation: await readReconciliation(state, taskId, claimId),
+      reconciliation: await readReconciliation(state, taskId, claim, attempt, outcome),
     },
   };
 }
