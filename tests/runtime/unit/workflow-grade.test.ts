@@ -441,6 +441,60 @@ test('an uncertain replan operation reference is not budget-exhaustion evidence'
   }
 });
 
+test('the saved fourth-replan cap stop is exhaustion evidence; a failed cap transition is not', async () => {
+  const task = createFixtureBugTask();
+  const strategy = 'Check divisor == 0 before division';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Calculator.divide does not check the divisor',
+    suspectedCauseLocations: ['src/calculator.py:3'],
+    evidenceRefs: ['evi-repro-001'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-001',
+  };
+  const state = createFixtureTaskState({ stateVersion: 2, node: 'Repair', plan, activeDecisionId: plan.decisionRef, taskContext: task, replanCount: 3, budgetLedgers: routeLedgers({ replan: 3 }) });
+  const changed = 'Check divisor == 0 and raise CalculationError';
+  const candidatePlan: FixPlan = { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) };
+  const run = (statePort: MemoryStatePortV02) =>
+    executeReplan(
+      { taskId: state.taskId, candidatePlan, proposalId: 'prop-cap' },
+      {
+        statePort,
+        trustedDirection: {
+          directive: 'revise',
+          taskId: state.taskId,
+          workspaceId: state.workspaceId,
+          repositoryRevisionDigest: state.repositoryRevisionDigest,
+          stateVersion: state.stateVersion,
+          planVersion: state.planVersion,
+          rejectedDecisionId: plan.decisionRef ?? '',
+          strategyDigest: plan.strategyDigest,
+        },
+      },
+    );
+
+  const stopped = await run(new MemoryStatePortV02({ initialTaskState: state }));
+  assert.equal(stopped.outcome, 'INCOMPLETE');
+  assert.deepEqual(stopped.reasons, ['replan-cap-exceeded-fourth-replan-refused']);
+  assert.equal(stopped.state?.node, 'Incomplete');
+  assert.equal(budgetStopEvidence(stopped.reasons), true);
+  assert.equal(patchFreeFacts(stopped.state ?? state, budgetStopEvidence(stopped.reasons)), false);
+
+  const failingPort = new MemoryStatePortV02({ initialTaskState: state });
+  failingPort.transition = async () => {
+    throw new Error('owner unavailable');
+  };
+  const failed = await run(failingPort);
+  assert.equal(failed.reasons[0], 'replan-cap-exceeded-fourth-replan-refused');
+  assert.ok(failed.reasons.length > 1, 'the failed transition appends its error');
+  assert.equal(budgetStopEvidence(failed.reasons), false, 'an unsaved cap stop is not exhaustion evidence');
+  assert.equal(budgetStopEvidence(['replan-cap-exceeded-fourth-replan-refused-later']), false, 'never a substring');
+});
+
 test('the repair ledgers accept only their exact exhaustion codes as stop evidence', () => {
   const state = createFixtureTaskState({ budgetLedgers: routeLedgers() });
   const repairExhausted = checkAccounting({ ...state, budgetLedgers: routeLedgers({ repair: 2 }) });

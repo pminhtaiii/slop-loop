@@ -132,6 +132,8 @@ const CODER_STOP: ReadonlySet<string> = new Set(['REPLAN_BUDGET_EXHAUSTED', 'REP
 
 /** An exact ledger reason or coder envelope code is the only stop that can justify a patch-free stop as "no effect yet". */
 export function budgetStopEvidence(reasons: readonly string[]): boolean {
+  // `replan.ts:247` emits the cap reason alone only once the cap stop is saved; an appended error means it was not.
+  if (reasons.length === 1 && reasons[0] === 'replan-cap-exceeded-fourth-replan-refused') return true;
   return reasons.some(reason => LEDGER_STOP.has(reason) || (reason.startsWith(CODER_STOP_PREFIX) && CODER_STOP.has(reason.slice(CODER_STOP_PREFIX.length))));
 }
 
