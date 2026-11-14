@@ -66,10 +66,12 @@ export const SCRIPT = `
     if (button.disabled) return null;
     if (!keys[slot]) keys[slot] = freshKey();
     button.disabled = true;
-    var payload = build(keys[slot]);
+    var key = keys[slot];
+    var payload = build(key);
     return api('POST', path, payload).then(function (out) {
       button.disabled = false;
-      if (out.status === 200) keys[slot] = null;
+      // Only the slot's own key retires: a newer action in the same slot keeps its pending key.
+      if (out.status === 200 && keys[slot] === key) keys[slot] = null;
       show('result', describe(out));
       return out;
     }, function () {
@@ -160,6 +162,7 @@ export const SCRIPT = `
   // submission). Render it on demand through textContent only, one input per question in order.
   var groupNode = null;
   var groupKey = null;
+  var groupSent = null;
   var groupVersion = 0;
 
   function el(tag, text) {
@@ -172,6 +175,7 @@ export const SCRIPT = `
     if (groupNode && groupNode.parentNode) groupNode.parentNode.removeChild(groupNode);
     groupNode = null;
     groupKey = null;
+    groupSent = null;
     // The group's retained key dies with the group: a later group must never replay it as a conflict.
     keys.group = null;
   }
@@ -205,15 +209,20 @@ export const SCRIPT = `
     // group until it is answered or replaced, and clearGroup retires it with the controls.
     button.addEventListener('click', function () {
       send(button, 'group', experimentPath('/answers'), function (key) {
-        return {
+        // An uncertain retry replays the payload its key was minted with: the service fingerprints
+        // answers, so edited inputs under that key would be refused as a conflicting replay.
+        if (groupSent && groupSent.idempotencyKey === key) return groupSent;
+        groupSent = {
           idempotencyKey: key,
           questionId: c.questionId,
           questionDigest: c.questionDigest,
           expectedVersion: groupVersion,
           answers: inputs.map(function (input) { return input.value; })
         };
+        return groupSent;
       }).then(function (out) {
-        if (out && out.status === 200) clearGroup();
+        // A late response for a superseded group must not remove the current group's controls or key.
+        if (out && out.status === 200 && groupKey === key) clearGroup();
       });
     });
     section.appendChild(button);

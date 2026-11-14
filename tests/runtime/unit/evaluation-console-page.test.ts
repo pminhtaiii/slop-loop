@@ -636,6 +636,73 @@ test('page executes: an uncertain retry of the same unanswered group reuses its 
   assert.deepEqual(retry.body['answers'], first.body?.['answers']);
 });
 
+test('page executes: a retry after an edit replays the submitted answers with the retained key', async () => {
+  const view = clarificationView([{ questionId: 'gq-1', text: 'Which module owns retries?' }]);
+  const b = bootPage(viewResponder(view));
+  await b.loadExperiment();
+
+  // The server may have recorded the answer; only the response was lost.
+  b.loseResponse(true);
+  const first = await submitGroup(b, /Which module owns retries\?/u);
+  assert.ok(first.body, 'first submit sent');
+  b.loseResponse(false);
+
+  // The operator edits an answer before retrying; the service fingerprints answers, so an edited
+  // payload under the same key would be refused as a conflicting replay.
+  await b.loadExperiment();
+  const group = b.groups().find(section => /Which module owns retries\?/u.test(textOf(section)));
+  assert.ok(group, 'clarification group rendered');
+  textareasOf(group).forEach(input => { input.value = 'edited after the lost response'; });
+  const before = b.calls.length;
+  group.children.find(child => child.tagName === 'button')?.handlers.click?.(EVENT);
+  await b.settle();
+  const call = b.calls.slice(before).find(item => item.path.endsWith('/answers'));
+  assert.ok(call, 'retry sent');
+  const body = JSON.parse(call.init.body ?? '{}') as Record<string, unknown>;
+  assert.equal(body['idempotencyKey'], first.body?.['idempotencyKey'], 'retry reuses the key');
+  assert.deepEqual(body['answers'], first.body?.['answers'], 'retry replays the submitted answers');
+  assert.equal((body['answers'] as unknown[])[0], 'answer-1');
+});
+
+test('page executes: a pending group A response leaves group B controls and its key intact', async () => {
+  const viewA = clarificationView([{ questionId: 'gq-1', text: 'Which module owns retries?' }]);
+  const viewB = viewOf({
+    id: 'exp-2',
+    version: 5,
+    status: 'waiting-info',
+    workflowClarification: { questionId: 'gq-group-2', questionDigest: 'b'.repeat(64), questions: [{ questionId: 'gq-9', text: 'Which test proves it?' }] },
+  });
+  let release!: (value: unknown) => void;
+  const held = new Promise<unknown>(resolve => { release = resolve; });
+  let answerCalls = 0;
+  const b = bootPage((path) => {
+    if (!path.endsWith('/answers')) return { ok: true, result: path.includes('exp-2') ? viewB : viewA };
+    answerCalls += 1;
+    return answerCalls === 1 ? held : { ok: true, result: viewB };
+  });
+
+  // Group A's request is in flight and unanswered.
+  await b.loadExperiment();
+  const a = await submitGroup(b, /Which module owns retries\?/u);
+  assert.ok(a.call, 'group A request sent');
+
+  // The operator loads another experiment and submits its group B, whose response is also lost.
+  b.el('experiment-id').value = 'exp-2';
+  b.el('load-experiment').handlers.click?.(EVENT);
+  await b.settle();
+  b.loseResponse(true);
+  const firstB = await submitGroup(b, /Which test proves it\?/u);
+  assert.ok(firstB.body, 'group B request sent');
+  b.loseResponse(false);
+
+  // Group A's late 200 must not remove B's controls or release B's pending key.
+  release({ ok: true, result: { experiment: viewA, receipt: { receiptId: 'rcpt-a', kind: 'answer', idempotencyKey: 'key-a', experimentId: 'exp-1', version: 8 } } });
+  await b.settle();
+  assert.ok(b.groups().some(section => /Which test proves it\?/u.test(textOf(section))), 'group B controls survive');
+  const retryB = await submitGroup(b, /Which test proves it\?/u);
+  assert.equal(retryB.body?.['idempotencyKey'], firstB.body?.['idempotencyKey'], 'group B keeps its pending key');
+});
+
 test('page executes: a key retained past an answered group is retired, so a later group submits a fresh one', async () => {
   let view: unknown = clarificationView([{ questionId: 'gq-1', text: 'Which module owns retries?' }]);
   const b = bootPage(() => ({ ok: true, result: view }));
