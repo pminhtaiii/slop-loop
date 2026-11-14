@@ -57,8 +57,12 @@ export class QuestionRepositorySnapshotReader {
     this.checkPathContainment = options.checkPathContainment;
   }
 
-  get scannedFileCount(): number { return this.scannedFiles; }
-  get scannedByteCount(): number { return this.scannedBytes; }
+  get scannedFileCount(): number {
+    return this.scannedFiles;
+  }
+  get scannedByteCount(): number {
+    return this.scannedBytes;
+  }
 
   async ensureSnapshot(control: QuestionRepositoryOperationControl): Promise<AdmittedSnapshot | ToolFailure> {
     if (this.admittedSnapshot) return this.admittedSnapshot;
@@ -82,8 +86,11 @@ export class QuestionRepositorySnapshotReader {
     if (active) return active;
     this.checkReadHold();
     let result: unknown;
-    try { result = await port.checkBinding(expected, control); }
-    catch (error: unknown) { return safeExceptionFailure(error); }
+    try {
+      result = await port.checkBinding(expected, control);
+    } catch (error: unknown) {
+      return safeExceptionFailure(error);
+    }
     const after = activeControl(control);
     if (after) return after;
     if (!isRecord(result) || typeof result['status'] !== 'string') return failure('unavailable', 'unsupported-adapter');
@@ -92,8 +99,12 @@ export class QuestionRepositorySnapshotReader {
     if (result['status'] === 'unavailable') return failure('unavailable', 'unsupported-adapter');
     if (result['status'] !== 'ok' || !isRecord(result['binding'])) return failure('unavailable', 'unsupported-adapter');
     const candidate = result['binding'];
-    if (candidate['repositoryId'] !== expected.repositoryId || candidate['workspaceId'] !== expected.workspaceId ||
-      candidate['revisionDigest'] !== expected.revisionDigest || candidate['policyDigest'] !== expected.policyDigest) {
+    if (
+      candidate['repositoryId'] !== expected.repositoryId ||
+      candidate['workspaceId'] !== expected.workspaceId ||
+      candidate['revisionDigest'] !== expected.revisionDigest ||
+      candidate['policyDigest'] !== expected.policyDigest
+    ) {
       return failure('stale', 'binding-mismatch');
     }
     return undefined;
@@ -103,16 +114,15 @@ export class QuestionRepositorySnapshotReader {
     if (path === '.') return undefined;
     const active = activeControl(control);
     if (active) return active;
-    try { await this.checkPathContainment(path, control); }
-    catch (error: unknown) { return safeExceptionFailure(error); }
+    try {
+      await this.checkPathContainment(path, control);
+    } catch (error: unknown) {
+      return safeExceptionFailure(error);
+    }
     return activeControl(control);
   }
 
-  async readSnapshotFile(
-    path: string,
-    admitted: AdmittedSnapshot,
-    control: QuestionRepositoryOperationControl,
-  ): Promise<(SnapshotFileRead & { readonly digest: string }) | ToolFailure> {
+  async readSnapshotFile(path: string, admitted: AdmittedSnapshot, control: QuestionRepositoryOperationControl): Promise<(SnapshotFileRead & { readonly digest: string }) | ToolFailure> {
     const limits = this.limits;
     if (!limits) return failure('unavailable', 'unsupported-adapter');
     const expected = admitted.manifestByPath.get(path);
@@ -126,8 +136,11 @@ export class QuestionRepositorySnapshotReader {
     const bindingBefore = await this.checkBinding(control);
     if (bindingBefore) return bindingBefore;
     let prePath: { readonly resolvedPath: string };
-    try { prePath = await this.checkPathContainment(path, control); }
-    catch (error: unknown) { return safeExceptionFailure(error); }
+    try {
+      prePath = await this.checkPathContainment(path, control);
+    } catch (error: unknown) {
+      return safeExceptionFailure(error);
+    }
     const afterPath = activeControl(control);
     if (afterPath) return afterPath;
     const bindingAfterContainment = await this.checkBinding(control);
@@ -138,14 +151,13 @@ export class QuestionRepositorySnapshotReader {
     // A bounded read can consume one extra byte to detect overflow.
     const maxReadBytes = Math.min(limits.maxFileBytes, remainingBytes - 1);
     const reservation = maxReadBytes + 1;
-    const oversized = maxReadBytes < limits.maxFileBytes
-      ? failure('exhausted', 'scan-limit')
-      : failure('unavailable', 'oversized');
+    const oversized = maxReadBytes < limits.maxFileBytes ? failure('exhausted', 'scan-limit') : failure('unavailable', 'oversized');
     this.scannedFiles += 1;
     this.reservedScanBytes += reservation;
     let input: unknown;
-    try { input = await admitted.readFile(path, maxReadBytes, control); }
-    catch (error: unknown) {
+    try {
+      input = await admitted.readFile(path, maxReadBytes, control);
+    } catch (error: unknown) {
       this.scannedBytes += reservation;
       const mapped = safeExceptionFailure(error);
       if (mapped.status === 'exhausted' || mapped.status === 'cancelled') return mapped;
@@ -155,8 +167,7 @@ export class QuestionRepositorySnapshotReader {
       this.reservedScanBytes -= reservation;
     }
     const afterRead = activeControl(control);
-    if (!validReadFileResult(input) || input.scannedBytes > reservation ||
-      (input.status === 'oversized' && input.scannedBytes !== reservation)) {
+    if (!validReadFileResult(input) || input.scannedBytes > reservation || (input.status === 'oversized' && input.scannedBytes !== reservation)) {
       this.scannedBytes += reservation;
       return afterRead ?? failure('unavailable', 'unsupported-adapter');
     }
@@ -169,8 +180,11 @@ export class QuestionRepositorySnapshotReader {
     const bindingAfterRead = await this.checkBinding(control);
     if (bindingAfterRead) return bindingAfterRead;
     let postPath: { readonly resolvedPath: string };
-    try { postPath = await this.checkPathContainment(path, control); }
-    catch (error: unknown) { return safeExceptionFailure(error); }
+    try {
+      postPath = await this.checkPathContainment(path, control);
+    } catch (error: unknown) {
+      return safeExceptionFailure(error);
+    }
     if (postPath.resolvedPath !== prePath.resolvedPath) return failure('stale', 'source-mismatch');
     const bindingAfterSecondContainment = await this.checkBinding(control);
     if (bindingAfterSecondContainment) return bindingAfterSecondContainment;
@@ -195,7 +209,9 @@ export class QuestionRepositorySnapshotReader {
         admissionLimits: { maxFiles: limits.maxScannedFiles, maxBytes: limits.maxScannedBytes, maxElapsedMs: requestedMaxElapsedMs },
         control,
       });
-    } catch (error: unknown) { return safeExceptionFailure(error); }
+    } catch (error: unknown) {
+      return safeExceptionFailure(error);
+    }
     const afterAcquire = activeControl(control);
     if (afterAcquire) return afterAcquire;
     if (Date.now() - startedAt > Math.max(1, control.deadlineEpochMs - startedAt)) return failure('exhausted', 'deadline');
@@ -210,8 +226,13 @@ export class QuestionRepositorySnapshotReader {
     for (const rawEntry of rawManifest) {
       const activeManifest = activeControl(control);
       if (activeManifest) return activeManifest;
-      if (!isRecord(rawEntry) || typeof rawEntry['path'] !== 'string' || typeof rawEntry['originalByteDigest'] !== 'string' ||
-        Buffer.byteLength(rawEntry['path'], 'utf8') > limits.maxPathBytes || rawEntry['originalByteDigest'].length > 71) {
+      if (
+        !isRecord(rawEntry) ||
+        typeof rawEntry['path'] !== 'string' ||
+        typeof rawEntry['originalByteDigest'] !== 'string' ||
+        Buffer.byteLength(rawEntry['path'], 'utf8') > limits.maxPathBytes ||
+        rawEntry['originalByteDigest'].length > 71
+      ) {
         return failure('unavailable', 'unsupported-adapter');
       }
       const metadataBytes = Buffer.byteLength(rawEntry['path'], 'utf8') + Buffer.byteLength(rawEntry['originalByteDigest'], 'utf8');
@@ -226,8 +247,8 @@ export class QuestionRepositorySnapshotReader {
     if (!validatedSnapshot.ok) return failure('unavailable', 'unsupported-adapter');
     const snapshot = validatedSnapshot.value;
     if (!sameBinding(snapshot.binding, binding)) return failure('stale', 'binding-mismatch');
-    if (snapshot.admissionLimits.maxFiles > limits.maxScannedFiles || snapshot.admissionLimits.maxBytes > limits.maxScannedBytes ||
-      snapshot.admissionLimits.maxElapsedMs > requestedMaxElapsedMs) return failure('unavailable', 'unsupported-adapter');
+    if (snapshot.admissionLimits.maxFiles > limits.maxScannedFiles || snapshot.admissionLimits.maxBytes > limits.maxScannedBytes || snapshot.admissionLimits.maxElapsedMs > requestedMaxElapsedMs)
+      return failure('unavailable', 'unsupported-adapter');
     if (Date.now() - startedAt > snapshot.admissionLimits.maxElapsedMs) return failure('exhausted', 'deadline');
     let previousPath = '';
     const manifestByPath = new Map<string, SourceManifestEntryV1>();
@@ -272,9 +293,7 @@ export class QuestionRepositorySnapshotReader {
     for (const [directory, children] of mutableDirectories) {
       const activeDirectory = activeControl(control);
       if (activeDirectory) return activeDirectory;
-      const entries = [...children.entries()]
-        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-        .map(([path, kind]) => Object.freeze({ path, kind }));
+      const entries = [...children.entries()].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)).map(([path, kind]) => Object.freeze({ path, kind }));
       directoryChildren.set(directory, Object.freeze(entries));
     }
     if (!directoryChildren.has('.')) return failure('unavailable', 'unsupported-adapter');

@@ -2,15 +2,23 @@ import { Buffer } from 'node:buffer';
 import type { DirectoryPageV1, QuestionIdentityV1, SearchPageV1, SpanResultV1 } from '../contracts/questions/contracts.ts';
 import { isProtectedPath } from '../contracts/foundation/uc03.ts';
 import { containsProtectedContent } from './docker-workspace-policy.ts';
-import {
-  validateQuestionIdentity,
-  validateSpanResult,
-} from '../contracts/questions/validation.ts';
+import { validateQuestionIdentity, validateSpanResult } from '../contracts/questions/validation.ts';
 import type { ExecutionGuardReadCapability, QuestionRepositoryOperationControl, QuestionRepositoryReadLimits } from './repository-types.ts';
 import type { QuestionRepositoryBindingPort, TrustedQuestionRepositorySnapshotPort } from './repository-types.ts';
 import {
-  activeControl, createAdmittedSpan, decodeFile, failure, isFailure, isPositiveSafeInteger, lineArray,
-  safeExceptionFailure, validateLimits, validPath, isRecord, type CursorState, type ReturnedByteCounter,
+  activeControl,
+  createAdmittedSpan,
+  decodeFile,
+  failure,
+  isFailure,
+  isPositiveSafeInteger,
+  lineArray,
+  safeExceptionFailure,
+  validateLimits,
+  validPath,
+  isRecord,
+  type CursorState,
+  type ReturnedByteCounter,
 } from './question-repository-primitives.ts';
 import { QuestionRepositorySnapshotReader } from './question-repository-snapshot.ts';
 import { listDirectoryGuarded } from './question-repository-directory.ts';
@@ -57,14 +65,10 @@ export class QuestionRepositoryReader {
     });
   }
 
-  async listDirectory(
-    request: { readonly path: string; readonly cursor?: string },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<DirectoryPageV1> {
+  async listDirectory(request: { readonly path: string; readonly cursor?: string }, control: QuestionRepositoryOperationControl): Promise<DirectoryPageV1> {
     const limits = this.limits;
     if (!this.isConfigured() || !limits) return failure('unavailable', 'unsupported-adapter');
-    if (!request || typeof request !== 'object' || !validPath(request.path, limits) ||
-      (request.cursor !== undefined && !this.cursorIsValid(request.cursor)) || !this.isControl(control)) {
+    if (!request || typeof request !== 'object' || !validPath(request.path, limits) || (request.cursor !== undefined && !this.cursorIsValid(request.cursor)) || !this.isControl(control)) {
       return failure('invalid', 'invalid-request');
     }
     if (isProtectedPath(request.path)) return failure('denied', 'protected');
@@ -78,19 +82,37 @@ export class QuestionRepositoryReader {
       if (cursor?.kind !== 'directory' || cursor.path !== path) return failure('invalid', 'invalid-cursor');
       this.cursors.delete(cursorId);
     }
-    return await this.mediate('list', path, undefined, safeControl, async () => await listDirectoryGuarded({
-      limits, snapshotReader: this.snapshotReader, cursors: this.cursors, returnedBytes: this.returnedBytes,
-    }, { path, cursor: cursor?.kind === 'directory' ? cursor : undefined }, safeControl));
+    return await this.mediate(
+      'list',
+      path,
+      undefined,
+      safeControl,
+      async () =>
+        await listDirectoryGuarded(
+          {
+            limits,
+            snapshotReader: this.snapshotReader,
+            cursors: this.cursors,
+            returnedBytes: this.returnedBytes,
+          },
+          { path, cursor: cursor?.kind === 'directory' ? cursor : undefined },
+          safeControl,
+        ),
+    );
   }
 
-  async readSpan(
-    request: { readonly path: string; readonly startLine: number; readonly endLine: number },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<SpanResultV1> {
+  async readSpan(request: { readonly path: string; readonly startLine: number; readonly endLine: number }, control: QuestionRepositoryOperationControl): Promise<SpanResultV1> {
     const limits = this.limits;
     if (!this.isConfigured() || !limits) return failure('unavailable', 'unsupported-adapter');
-    if (!request || typeof request !== 'object' || !validPath(request.path, limits) ||
-      !isPositiveSafeInteger(request.startLine) || !isPositiveSafeInteger(request.endLine) || request.startLine > request.endLine || !this.isControl(control)) {
+    if (
+      !request ||
+      typeof request !== 'object' ||
+      !validPath(request.path, limits) ||
+      !isPositiveSafeInteger(request.startLine) ||
+      !isPositiveSafeInteger(request.endLine) ||
+      request.startLine > request.endLine ||
+      !this.isControl(control)
+    ) {
       return failure('invalid', 'invalid-request');
     }
     if (isProtectedPath(request.path)) return failure('denied', 'protected');
@@ -99,17 +121,22 @@ export class QuestionRepositoryReader {
     return await this.mediate('read', safeRequest.path, undefined, safeControl, async () => await this.readSpanGuarded(safeRequest, safeControl));
   }
 
-  async searchLiteral(
-    request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<SearchPageV1> {
+  async searchLiteral(request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string }, control: QuestionRepositoryOperationControl): Promise<SearchPageV1> {
     const limits = this.limits;
     if (!this.isConfigured() || !limits) return failure('unavailable', 'unsupported-adapter');
-    if (!request || typeof request !== 'object' || typeof request.query !== 'string' || request.query.length === 0 ||
-      request.query.includes('\n') || request.query.includes('\r') || request.query.includes('\u0000') ||
+    if (
+      !request ||
+      typeof request !== 'object' ||
+      typeof request.query !== 'string' ||
+      request.query.length === 0 ||
+      request.query.includes('\n') ||
+      request.query.includes('\r') ||
+      request.query.includes('\u0000') ||
       Buffer.byteLength(request.query, 'utf8') > limits.maxQueryBytes ||
       (request.pathPrefix !== undefined && !validPath(request.pathPrefix, limits)) ||
-      (request.cursor !== undefined && !this.cursorIsValid(request.cursor)) || !this.isControl(control)) {
+      (request.cursor !== undefined && !this.cursorIsValid(request.cursor)) ||
+      !this.isControl(control)
+    ) {
       return failure('invalid', 'invalid-request');
     }
     if (request.pathPrefix !== undefined && isProtectedPath(request.pathPrefix)) return failure('denied', 'protected');
@@ -124,13 +151,24 @@ export class QuestionRepositoryReader {
       }
       this.cursors.delete(cursorId);
     }
-    return await this.mediate('search', pathPrefix, query, safeControl, async () => await searchLiteralGuarded({
-      identity: this.identity as QuestionIdentityV1,
-      limits,
-      snapshotReader: this.snapshotReader,
-      cursors: this.cursors,
-      returnedBytes: this.returnedBytes,
-    }, { query, pathPrefix, cursor: cursor?.kind === 'search' ? cursor : undefined }, safeControl));
+    return await this.mediate(
+      'search',
+      pathPrefix,
+      query,
+      safeControl,
+      async () =>
+        await searchLiteralGuarded(
+          {
+            identity: this.identity as QuestionIdentityV1,
+            limits,
+            snapshotReader: this.snapshotReader,
+            cursors: this.cursors,
+            returnedBytes: this.returnedBytes,
+          },
+          { query, pathPrefix, cursor: cursor?.kind === 'search' ? cursor : undefined },
+          safeControl,
+        ),
+    );
   }
 
   private async mediate<T extends DirectoryPageV1 | SpanResultV1 | SearchPageV1>(
@@ -151,10 +189,7 @@ export class QuestionRepositoryReader {
     }
   }
 
-  private async readSpanGuarded(
-    request: { readonly path: string; readonly startLine: number; readonly endLine: number },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<SpanResultV1> {
+  private async readSpanGuarded(request: { readonly path: string; readonly startLine: number; readonly endLine: number }, control: QuestionRepositoryOperationControl): Promise<SpanResultV1> {
     const bindingFailure = await this.snapshotReader.checkBinding(control);
     if (bindingFailure) return bindingFailure;
     const admitted = await this.snapshotReader.ensureSnapshot(control);
@@ -206,17 +241,19 @@ export class QuestionRepositoryReader {
   }
 
   private isConfigured(): boolean {
-    return validateLimits(this.limits) && this.identity !== undefined &&
+    return (
+      validateLimits(this.limits) &&
+      this.identity !== undefined &&
       typeof this.guardCapability?.mediateRead === 'function' &&
       typeof this.bindingPort?.checkBinding === 'function' &&
-      typeof this.snapshotPort?.acquireSnapshot === 'function';
+      typeof this.snapshotPort?.acquireSnapshot === 'function'
+    );
   }
 
   private isControl(value: unknown): value is QuestionRepositoryOperationControl {
     if (!isRecord(value)) return false;
     const signal = value['signal'];
-    return isRecord(signal) && typeof signal['aborted'] === 'boolean' && typeof value['deadlineEpochMs'] === 'number' &&
-      Number.isFinite(value['deadlineEpochMs']) && value['deadlineEpochMs'] > 0;
+    return isRecord(signal) && typeof signal['aborted'] === 'boolean' && typeof value['deadlineEpochMs'] === 'number' && Number.isFinite(value['deadlineEpochMs']) && value['deadlineEpochMs'] > 0;
   }
 
   private cursorIsValid(value: unknown): value is string {

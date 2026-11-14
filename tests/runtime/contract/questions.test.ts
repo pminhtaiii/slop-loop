@@ -489,21 +489,22 @@ const span = {
 };
 
 test('source snapshot validates a bounded canonical manifest and detaches its entries', () => {
+  const manifestEntry = { path: span.path, originalByteDigest: span.originalByteDigest };
   const snapshot = {
     snapshotId: span.snapshotId,
     binding: identity.binding,
     manifestDigest: span.manifestDigest,
     acquisitionId: 'lease-001',
     admissionLimits: { maxFiles: 2, maxBytes: 1_000, maxElapsedMs: 100 },
-    manifest: [{ path: span.path, originalByteDigest: span.originalByteDigest }],
+    manifest: [manifestEntry],
   };
   const result = validateSourceSnapshot(snapshot);
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(Object.isFrozen(result.value.manifest[0]), true);
-  snapshot.manifest[0]!.path = 'changed.py';
+  manifestEntry.path = 'changed.py';
   assert.equal(result.value.manifest[0]?.path, span.path);
-  assert.equal(validateSourceSnapshot({ ...snapshot, manifest: [{ ...snapshot.manifest[0], path: 'C:repo.py' }] }).ok, false);
+  assert.equal(validateSourceSnapshot({ ...snapshot, manifest: [{ ...manifestEntry, path: 'C:repo.py' }] }).ok, false);
   assert.equal(validateSourceSnapshot({ ...snapshot, manifest: [...snapshot.manifest, ...snapshot.manifest] }).ok, false);
 });
 

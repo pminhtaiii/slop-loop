@@ -1,11 +1,6 @@
 /** Pure budget counter, work-validation, and finite reservation-plan helpers. */
 import type { QuestionBudgetProfileV1 } from '../contracts/questions/contracts.ts';
-import type {
-  QuestionBudgetOperationKindV1,
-  QuestionBudgetPricingV1,
-  QuestionBudgetRefusalCodeV1,
-  QuestionBudgetWorkV1,
-} from './budget.ts';
+import type { QuestionBudgetOperationKindV1, QuestionBudgetPricingV1, QuestionBudgetRefusalCodeV1, QuestionBudgetWorkV1 } from './budget.ts';
 
 export interface BudgetCounters {
   elapsedMs: number;
@@ -50,8 +45,7 @@ export interface BudgetReservationPlanV1 {
 }
 
 export type BudgetReservationPlanResultV1 =
-  | { readonly ok: true; readonly plan: BudgetReservationPlanV1 }
-  | { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1; readonly terminal: boolean };
+  { readonly ok: true; readonly plan: BudgetReservationPlanV1 } | { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1; readonly terminal: boolean };
 
 export const WORK_KEYS = [
   'scannedFiles',
@@ -197,12 +191,7 @@ export function availableCounters(consumed: BudgetCounters, reserved: BudgetCoun
 }
 
 /** Selects the stable refusal category for a reservation that exceeds one or more task caps. */
-export function counterLimitReason(
-  consumed: BudgetCounters,
-  reserved: BudgetCounters,
-  proposed: BudgetCounters,
-  limits: BudgetCounters,
-): QuestionBudgetRefusalCodeV1 {
+export function counterLimitReason(consumed: BudgetCounters, reserved: BudgetCounters, proposed: BudgetCounters, limits: BudgetCounters): QuestionBudgetRefusalCodeV1 {
   const fits = (key: keyof BudgetCounters): boolean => consumed[key] + reserved[key] + proposed[key] <= limits[key];
   if (proposed['toolCalls'] > 0 && !fits('toolCalls')) return 'tool-limit';
   if (proposed['modelCalls'] > 0 && !fits('modelCalls')) return 'model-limit';
@@ -240,15 +229,9 @@ export function workAsCounters(work: QuestionBudgetWorkV1): BudgetCounters {
 }
 
 /** One integer micro-USD ceiling over the weighted input and output token total. */
-export function costMicros(
-  inputTokens: number,
-  outputTokens: number,
-  pricing: QuestionBudgetPricingV1,
-): number | undefined {
+export function costMicros(inputTokens: number, outputTokens: number, pricing: QuestionBudgetPricingV1): number | undefined {
   const million = 1_000_000n;
-  const numerator =
-    BigInt(inputTokens) * BigInt(pricing.inputMicrosPerMillionTokens) +
-    BigInt(outputTokens) * BigInt(pricing.outputMicrosPerMillionTokens);
+  const numerator = BigInt(inputTokens) * BigInt(pricing.inputMicrosPerMillionTokens) + BigInt(outputTokens) * BigInt(pricing.outputMicrosPerMillionTokens);
   const total = (numerator + million - 1n) / million;
   return total <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(total) : undefined;
 }
@@ -267,9 +250,7 @@ function plan(
       counters,
       maximumWork: Object.freeze({ ...maximumWork }),
       maxOperationMs,
-      ...(modelBounds === undefined
-        ? {}
-        : { maximumInputTokens: modelBounds.inputTokens, maximumOutputTokens: modelBounds.outputTokens }),
+      ...(modelBounds === undefined ? {} : { maximumInputTokens: modelBounds.inputTokens, maximumOutputTokens: modelBounds.outputTokens }),
     },
   };
 }
@@ -287,21 +268,14 @@ export function planSnapshotAdmission(profile: QuestionBudgetProfileV1): BudgetR
   return plan('snapshot-admission', counters, { scannedFiles, scannedBytes: counters['scannedBytes'] }, profile.retrieval.maxIndexDeadlineMs);
 }
 
-export function planRepositoryOperation(
-  profile: QuestionBudgetProfileV1,
-  available: BudgetCounters,
-  kind: 'list' | 'search' | 'read',
-): BudgetReservationPlanResultV1 {
+export function planRepositoryOperation(profile: QuestionBudgetProfileV1, available: BudgetCounters, kind: 'list' | 'search' | 'read'): BudgetReservationPlanResultV1 {
   const counters = emptyCounters();
   counters['toolCalls'] = 1;
   const work: QuestionBudgetWorkV1 = {};
 
   if (kind === 'list') {
     const pageBytes = BigInt(profile.repository.maxPageEntries) * BigInt(profile.repository.maxPathBytes);
-    const returnedBytes = Math.min(
-      available['returnedBytes'],
-      pageBytes > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(pageBytes),
-    );
+    const returnedBytes = Math.min(available['returnedBytes'], pageBytes > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(pageBytes));
     if (returnedBytes <= 0) return denied('output-limit');
     counters['returnedBytes'] = returnedBytes;
     Object.assign(work, { returnedBytes });
@@ -325,9 +299,7 @@ export function planRepositoryOperation(
   const scannedBytes = available['scannedBytes'];
   const outputPerHit = BigInt(profile.repository.maxSpanBytes) + BigInt(profile.repository.maxPathBytes);
   const maximumHitsBytes = outputPerHit * BigInt(profile.repository.maxSearchHits);
-  const boundedHitBytes = maximumHitsBytes > BigInt(Number.MAX_SAFE_INTEGER)
-    ? Number.MAX_SAFE_INTEGER
-    : Number(maximumHitsBytes);
+  const boundedHitBytes = maximumHitsBytes > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(maximumHitsBytes);
   const returnedBytes = Math.min(available['returnedBytes'], boundedHitBytes);
   if (scannedFiles <= 0 || scannedBytes <= 0) return denied('scan-limit');
   if (returnedBytes <= 0) return denied('output-limit');
@@ -346,10 +318,7 @@ export function planFinalValidation(profile: QuestionBudgetProfileV1, available:
   return plan('final-validation', counters, { finalBytes: profile.runtime.maxFinalBytes }, available['elapsedMs']);
 }
 
-export function planSummary(
-  available: BudgetCounters,
-  projectedBytes: number,
-): BudgetReservationPlanResultV1 {
+export function planSummary(available: BudgetCounters, projectedBytes: number): BudgetReservationPlanResultV1 {
   if (!isNonNegativeSafeInteger(projectedBytes) || projectedBytes === 0) return denied('invalid-work', false);
   if (projectedBytes > available['conversationBytes']) return denied('output-limit');
   const counters = emptyCounters();
@@ -364,12 +333,7 @@ export function planClarification(available: BudgetCounters): BudgetReservationP
   return plan('clarification', counters, { clarificationRounds: 1 }, available['elapsedMs']);
 }
 
-export function planModelCall(
-  profile: QuestionBudgetProfileV1,
-  pricing: QuestionBudgetPricingV1,
-  available: BudgetCounters,
-  compiledInputTokens: number,
-): BudgetReservationPlanResultV1 {
+export function planModelCall(profile: QuestionBudgetProfileV1, pricing: QuestionBudgetPricingV1, available: BudgetCounters, compiledInputTokens: number): BudgetReservationPlanResultV1 {
   if (!isNonNegativeSafeInteger(compiledInputTokens) || compiledInputTokens === 0) return denied('invalid-work', false);
   if (compiledInputTokens > profile.runtime.maxInputTokensPerCall) return denied('token-limit');
   const outputTokens = profile.runtime.maxOutputTokensPerCall;
@@ -393,22 +357,9 @@ export function planRetrievalQuery(profile: QuestionBudgetProfileV1, available: 
   return plan('retrieval-query', counters, { scannedVectors }, profile.retrieval.maxRetrievalDeadlineMs);
 }
 
-export function planIndexBatch(
-  profile: QuestionBudgetProfileV1,
-  input: unknown,
-): BudgetReservationPlanResultV1 {
+export function planIndexBatch(profile: QuestionBudgetProfileV1, input: unknown): BudgetReservationPlanResultV1 {
   if (!isRecord(input)) return denied('invalid-work', false);
-  const expectedKeys = [
-    'batchSize',
-    'cacheBytes',
-    'chunks',
-    'diskBytes',
-    'files',
-    'scannedBytes',
-    'scannedFiles',
-    'vectorDimensions',
-    'workerMemoryBytes',
-  ];
+  const expectedKeys = ['batchSize', 'cacheBytes', 'chunks', 'diskBytes', 'files', 'scannedBytes', 'scannedFiles', 'vectorDimensions', 'workerMemoryBytes'];
   if (!hasExactKeys(input, expectedKeys)) return denied('invalid-work', false);
   const batchSize = input['batchSize'];
   const cacheBytes = input['cacheBytes'];
@@ -420,12 +371,17 @@ export function planIndexBatch(
   const vectorDimensions = input['vectorDimensions'];
   const workerMemoryBytes = input['workerMemoryBytes'];
   if (
-    !isNonNegativeSafeInteger(batchSize) || !isNonNegativeSafeInteger(cacheBytes) ||
-    !isNonNegativeSafeInteger(chunks) || !isNonNegativeSafeInteger(diskBytes) ||
-    !isNonNegativeSafeInteger(files) || !isNonNegativeSafeInteger(scannedBytes) ||
-    !isNonNegativeSafeInteger(scannedFiles) || !isNonNegativeSafeInteger(vectorDimensions) ||
+    !isNonNegativeSafeInteger(batchSize) ||
+    !isNonNegativeSafeInteger(cacheBytes) ||
+    !isNonNegativeSafeInteger(chunks) ||
+    !isNonNegativeSafeInteger(diskBytes) ||
+    !isNonNegativeSafeInteger(files) ||
+    !isNonNegativeSafeInteger(scannedBytes) ||
+    !isNonNegativeSafeInteger(scannedFiles) ||
+    !isNonNegativeSafeInteger(vectorDimensions) ||
     !isNonNegativeSafeInteger(workerMemoryBytes)
-  ) return denied('invalid-work', false);
+  )
+    return denied('invalid-work', false);
   const bounds: IndexBatchBoundsV1 = {
     batchSize,
     cacheBytes,
@@ -438,16 +394,20 @@ export function planIndexBatch(
     workerMemoryBytes,
   };
   if (
-    bounds.batchSize === 0 || bounds.batchSize > profile.retrieval.maxBatchSize ||
-    bounds.files === 0 || bounds.files > profile.retrieval.maxFiles ||
+    bounds.batchSize === 0 ||
+    bounds.batchSize > profile.retrieval.maxBatchSize ||
+    bounds.files === 0 ||
+    bounds.files > profile.retrieval.maxFiles ||
     bounds.chunks > profile.retrieval.maxChunks ||
     bounds.diskBytes > profile.retrieval.maxIndexDiskBytes ||
     bounds.workerMemoryBytes > profile.retrieval.maxWorkerMemoryBytes ||
     bounds.cacheBytes > profile.retrieval.maxSqliteCacheBytes ||
-    bounds.vectorDimensions === 0 || bounds.vectorDimensions > profile.retrieval.maxVectorDimensions ||
+    bounds.vectorDimensions === 0 ||
+    bounds.vectorDimensions > profile.retrieval.maxVectorDimensions ||
     bounds.scannedFiles > bounds.files ||
     bounds.scannedBytes > profile.runtime.maxScannedBytes
-  ) return denied('scan-limit');
+  )
+    return denied('scan-limit');
   const counters = emptyCounters();
   counters['indexedFiles'] = bounds.files;
   counters['indexedChunks'] = bounds.chunks;

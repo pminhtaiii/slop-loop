@@ -12,11 +12,7 @@ import type {
 import { computeCanonicalSha256, isCanonicalRelativePath } from '../contracts/foundation/uc03.ts';
 import { validateAdmittedSpan } from '../contracts/questions/validation.ts';
 import { computeFileDigest } from './docker-workspace-policy.ts';
-import type {
-  QuestionRepositoryOperationControl,
-  QuestionRepositoryReadLimits,
-  TrustedQuestionRepositorySnapshotLease,
-} from './repository-types.ts';
+import type { QuestionRepositoryOperationControl, QuestionRepositoryReadLimits, TrustedQuestionRepositorySnapshotLease } from './repository-types.ts';
 
 export type ToolFailure =
   | { readonly status: 'denied'; readonly reasonCode: 'protected' | 'outside-scope' | 'read-not-authorized' }
@@ -78,7 +74,9 @@ export interface SearchCursor {
 }
 
 export type CursorState = DirectoryCursor | SearchCursor;
-export interface ReturnedByteCounter { value: number }
+export interface ReturnedByteCounter {
+  value: number;
+}
 
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 
@@ -96,16 +94,26 @@ export function isNonNegativeSafeInteger(value: unknown): value is number {
 
 export function validateLimits(input: QuestionRepositoryReadLimits | undefined): input is QuestionRepositoryReadLimits {
   if (!input || typeof input !== 'object') return false;
-  const positive = [input.maxFileBytes, input.maxSpanBytes, input.maxSpanLines, input.maxPageEntries,
-    input.maxSearchHits, input.maxQueryBytes, input.maxPathBytes, input.maxScannedFiles,
-    input.maxScannedBytes, input.maxReturnedBytes, input.maxCursors];
-  return positive.every(isPositiveSafeInteger) && input.maxFileBytes < Number.MAX_SAFE_INTEGER &&
-    isNonNegativeSafeInteger(input.contextLinesBefore) && isNonNegativeSafeInteger(input.contextLinesAfter);
+  const positive = [
+    input.maxFileBytes,
+    input.maxSpanBytes,
+    input.maxSpanLines,
+    input.maxPageEntries,
+    input.maxSearchHits,
+    input.maxQueryBytes,
+    input.maxPathBytes,
+    input.maxScannedFiles,
+    input.maxScannedBytes,
+    input.maxReturnedBytes,
+    input.maxCursors,
+  ];
+  return (
+    positive.every(isPositiveSafeInteger) && input.maxFileBytes < Number.MAX_SAFE_INTEGER && isNonNegativeSafeInteger(input.contextLinesBefore) && isNonNegativeSafeInteger(input.contextLinesAfter)
+  );
 }
 
 export function sameBinding(left: RepositoryBindingV1, right: RepositoryBindingV1): boolean {
-  return left.repositoryId === right.repositoryId && left.workspaceId === right.workspaceId &&
-    left.revisionDigest === right.revisionDigest && left.policyDigest === right.policyDigest;
+  return left.repositoryId === right.repositoryId && left.workspaceId === right.workspaceId && left.revisionDigest === right.revisionDigest && left.policyDigest === right.policyDigest;
 }
 
 export function canonicalManifest(manifest: readonly SourceManifestEntryV1[]): string {
@@ -125,7 +133,8 @@ export function safeExceptionFailure(error: unknown): ToolFailure {
     const code = error.message.split(':', 1)[0];
     if (code === 'PROTECTED_PATH_FORBIDDEN' || code === 'FORBIDDEN_LINK_TARGET' || code === 'PROTECTED_PATH') return failure('denied', 'protected');
     if (code === 'WORKSPACE_ESCAPE' || code === 'INVALID_PATH') return failure('denied', 'outside-scope');
-    if (code === 'TASK_CONTROL_REQUIRED' || code === 'INVALID_TASK_CONTROL_SNAPSHOT' || code === 'TASK_PAUSED_OR_HELD' || code === 'CLAIM_OPEN_READ_DENIED') return failure('denied', 'read-not-authorized');
+    if (code === 'TASK_CONTROL_REQUIRED' || code === 'INVALID_TASK_CONTROL_SNAPSHOT' || code === 'TASK_PAUSED_OR_HELD' || code === 'CLAIM_OPEN_READ_DENIED')
+      return failure('denied', 'read-not-authorized');
     if (code === 'FILE_TOO_LARGE') return failure('unavailable', 'oversized');
     if (code === 'ABORT_ERR' || code === 'CANCELLED') return failure('cancelled', 'cancelled');
     if (code === 'DEADLINE_EXCEEDED') return failure('exhausted', 'deadline');
@@ -153,7 +162,11 @@ export function validReadFileResult(input: unknown): input is SnapshotFileRead |
 
 export function decodeFile(bytes: Uint8Array): string | undefined {
   if (bytes.includes(0)) return undefined;
-  try { return textDecoder.decode(bytes); } catch { return undefined; }
+  try {
+    return textDecoder.decode(bytes);
+  } catch {
+    return undefined;
+  }
 }
 
 export function lineArray(normalized: string): string[] {
@@ -172,7 +185,9 @@ export function pathWithinPrefix(path: string, prefix: string | undefined): bool
   return path.startsWith(`${prefix}/`);
 }
 
-export function createCursorId(): string { return `cursor-${randomUUID()}`; }
+export function createCursorId(): string {
+  return `cursor-${randomUUID()}`;
+}
 
 export function cursorIsValid(input: unknown): input is string {
   return typeof input === 'string' && input.length >= 8 && input.length <= 512 && /^[A-Za-z0-9._~-]+$/u.test(input);

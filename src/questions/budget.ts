@@ -39,10 +39,7 @@ export interface QuestionBudgetReservation {
   /** Releases the bound only while no adapter dispatch has started. */
   releaseBeforeDispatch(): QuestionBudgetExecutionResultV1<void>;
   /** Calls the adapter with its deadline and signal, then admits only a timely settled result. */
-  execute<T>(
-    operation: (context: QuestionBudgetExecutionContextV1) => Promise<T>,
-    account: (value: T) => QuestionBudgetAccountingReceiptV1,
-  ): Promise<QuestionBudgetExecutionResultV1<T>>;
+  execute<T>(operation: (context: QuestionBudgetExecutionContextV1) => Promise<T>, account: (value: T) => QuestionBudgetAccountingReceiptV1): Promise<QuestionBudgetExecutionResultV1<T>>;
   /** Apply later trusted accounting to an uncertain held reservation; late adapter results are never reconciled automatically. */
   reconcile(accounting: QuestionBudgetAccountingReceiptV1): QuestionBudgetExecutionResultV1<void>;
 }
@@ -61,13 +58,10 @@ export interface QuestionBudgetLedger {
   cancel(): void;
 }
 
-export type QuestionBudgetReservationResultV1 =
-  | { readonly ok: true; readonly value: QuestionBudgetReservation }
-  | { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1 };
+export type QuestionBudgetReservationResultV1 = { readonly ok: true; readonly value: QuestionBudgetReservation } | { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1 };
 
 export type QuestionBudgetLedgerCreationV1 =
-  | { readonly ok: true; readonly value: QuestionBudgetLedger }
-  | { readonly ok: false; readonly reasonCode: 'invalid-config'; readonly errors: readonly QuestionValidationError[] };
+  { readonly ok: true; readonly value: QuestionBudgetLedger } | { readonly ok: false; readonly reasonCode: 'invalid-config'; readonly errors: readonly QuestionValidationError[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -101,10 +95,7 @@ function validatePricing(input: unknown): QuestionBudgetPricingV1 | undefined {
 }
 
 /** Validates every finite runtime, repository, and retrieval cap before creating the task ledger. */
-export function createQuestionBudgetLedger(
-  input: unknown,
-  options: CreateQuestionBudgetLedgerOptionsV1,
-): QuestionBudgetLedgerCreationV1 {
+export function createQuestionBudgetLedger(input: unknown, options: CreateQuestionBudgetLedgerOptionsV1): QuestionBudgetLedgerCreationV1 {
   const profile = validateQuestionBudgetProfile(input);
   if (!profile.ok) return { ok: false, reasonCode: 'invalid-config', errors: profile.errors };
   const pricing = validatePricing(options?.pricing);

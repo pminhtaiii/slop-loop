@@ -96,10 +96,7 @@ export class RepositoryPathGuard {
     if (Date.now() >= control.deadlineEpochMs) throw new Error('DEADLINE_EXCEEDED: Repository operation deadline elapsed');
   }
 
-  async checkPathContainment(
-    targetPath: string,
-    control?: { readonly signal: AbortSignal; readonly deadlineEpochMs: number },
-  ): Promise<{ readonly resolvedPath: string }> {
+  async checkPathContainment(targetPath: string, control?: { readonly signal: AbortSignal; readonly deadlineEpochMs: number }): Promise<{ readonly resolvedPath: string }> {
     const normalizedTarget = targetPath === '.' ? '' : targetPath;
     if (normalizedTarget.length > 0) {
       if (!isCanonicalRelativePath(normalizedTarget)) {
@@ -153,5 +150,4 @@ export class RepositoryPathGuard {
 
     return { resolvedPath: lastResolved };
   }
-
 }

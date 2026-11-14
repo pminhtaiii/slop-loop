@@ -1,25 +1,10 @@
 /** Validates trusted operation receipts and produces exact counter deltas. */
 import type { QuestionUsageV1 } from '../contracts/questions/contracts.ts';
 import { validateQuestionUsage } from '../contracts/questions/validation.ts';
-import type {
-  QuestionBudgetOperationKindV1,
-  QuestionBudgetPricingV1,
-  QuestionBudgetWorkV1,
-} from './budget.ts';
-import {
-  costMicros,
-  emptyCounters,
-  hasExactKeys,
-  isRecord,
-  normalizeWork,
-  WORK_KEYS,
-  workAsCounters,
-  type BudgetCounters,
-} from './budget-ledger-counters.ts';
+import type { QuestionBudgetOperationKindV1, QuestionBudgetPricingV1, QuestionBudgetWorkV1 } from './budget.ts';
+import { costMicros, emptyCounters, hasExactKeys, isRecord, normalizeWork, WORK_KEYS, workAsCounters, type BudgetCounters } from './budget-ledger-counters.ts';
 
-export type BudgetSettlementResultV1 =
-  | { readonly ok: true; readonly counters: BudgetCounters }
-  | { readonly ok: false; readonly reasonCode: 'accounting-unknown' | 'over-reservation' };
+export type BudgetSettlementResultV1 = { readonly ok: true; readonly counters: BudgetCounters } | { readonly ok: false; readonly reasonCode: 'accounting-unknown' | 'over-reservation' };
 
 /** Checks receipt shape, trusted model usage, and every reported count against the admitted worst case. */
 export function settleBudgetReceipt(
@@ -40,11 +25,8 @@ export function settleBudgetReceipt(
     }
     const usage: QuestionUsageV1 & { readonly status: 'complete' } = checkedUsage.value;
     const totalTokens = usage.inputTokens + usage.outputTokens;
-    if (
-      usage.inputTokens > (maximumInputTokens ?? -1) ||
-      usage.outputTokens > (maximumOutputTokens ?? -1) ||
-      totalTokens > reservedCounters['billableTokens']
-    ) return { ok: false, reasonCode: 'over-reservation' };
+    if (usage.inputTokens > (maximumInputTokens ?? -1) || usage.outputTokens > (maximumOutputTokens ?? -1) || totalTokens > reservedCounters['billableTokens'])
+      return { ok: false, reasonCode: 'over-reservation' };
     const actualCost = costMicros(usage.inputTokens, usage.outputTokens, pricing);
     if (actualCost === undefined || actualCost > reservedCounters['costMicros']) {
       return { ok: false, reasonCode: 'over-reservation' };
