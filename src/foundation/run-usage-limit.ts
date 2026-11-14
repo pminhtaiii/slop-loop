@@ -80,6 +80,8 @@ export function createRunUsageLimiter(limits: RunUsageLimits): RunUsageLimiter {
   const reports = new Map<string, CallUsageReport>();
 
   const keyOf = (taskId: string, runId: string): string => JSON.stringify([taskId, runId]);
+  // A charge belongs to one run, so a call id reused by another run never settles it.
+  const chargeKeyOf = (call: RunCallAdmission): string => JSON.stringify([call.taskId, call.runId, call.callId]);
 
   return {
     admit(call) {
@@ -91,14 +93,15 @@ export function createRunUsageLimiter(limits: RunUsageLimits): RunUsageLimiter {
       if (counters.inputTokens + call.maxInputTokens > perRunInputTokens) return false;
       if (counters.outputTokens + call.maxOutputTokens > perRunOutputTokens) return false;
       runs.set(key, { calls: counters.calls + 1, inputTokens: counters.inputTokens + call.maxInputTokens, outputTokens: counters.outputTokens + call.maxOutputTokens });
-      charges.set(call.callId, { key, inputTokens: call.maxInputTokens, outputTokens: call.maxOutputTokens });
+      charges.set(chargeKeyOf(call), { key, inputTokens: call.maxInputTokens, outputTokens: call.maxOutputTokens });
       reports.set(call.callId, { callId: call.callId, inputTokens: 'unknown', outputTokens: 'unknown', costUsd: 'unknown', costLabel: 'unknown' });
       return true;
     },
     settle(call, usage) {
-      const charge = charges.get(call.callId);
+      const chargeKey = chargeKeyOf(call);
+      const charge = charges.get(chargeKey);
       if (charge === undefined) return;
-      charges.delete(call.callId);
+      charges.delete(chargeKey);
       if (usage === undefined) return;
       const counters = runs.get(charge.key);
       if (counters !== undefined) {

@@ -128,6 +128,23 @@ test('keys counters per task and run and ignores a settle for a call never admit
   limiter.settle(call({ callId: 'ghost' }));
   assert.equal(limiter.reportFor('ghost'), undefined);
   assert.equal(limiter.countersFor('task-1', 'run-a')?.inputTokensCharged, 30000);
+  // A settlement for another run's call id has no pending entry and changes no counters.
+  limiter.settle(call({ runId: 'run-b', callId: 'a' }), { inputTokens: 1, outputTokens: 1, costUsd: 0, billableTokens: 2 });
+  assert.equal(limiter.countersFor('task-1', 'run-a')?.inputTokensCharged, 30000);
+  assert.equal(limiter.countersFor('task-1', 'run-b')?.inputTokensCharged, 30000);
+});
+
+test('keeps an overlapping run at its full maxima when another run settles the same call id', () => {
+  const limiter = createRunUsageLimiter({ ...LIMITS, perRunInputTokens: 200, perRunOutputTokens: 200 });
+  const runA = call({ taskId: 'task-a', runId: 'run-a', callId: 'shared', maxInputTokens: 200, maxOutputTokens: 200 });
+  const runB = call({ taskId: 'task-b', runId: 'run-b', callId: 'shared', maxInputTokens: 200, maxOutputTokens: 200 });
+  assert.equal(limiter.admit(runA), true);
+  assert.equal(limiter.admit(runB), true);
+  limiter.settle(runA, { inputTokens: 1, outputTokens: 1, costUsd: 0, billableTokens: 2 });
+  assert.deepEqual(limiter.countersFor('task-a', 'run-a'), { taskId: 'task-a', runId: 'run-a', calls: 1, inputTokensCharged: 1, outputTokensCharged: 1 });
+  assert.deepEqual(limiter.countersFor('task-b', 'run-b'), { taskId: 'task-b', runId: 'run-b', calls: 1, inputTokensCharged: 200, outputTokensCharged: 200 });
+  // Run B's reservation is untouched, so its ceiling still holds.
+  assert.equal(limiter.admit(call({ taskId: 'task-b', runId: 'run-b', callId: 'second', maxInputTokens: 1, maxOutputTokens: 1 })), false);
 });
 
 test('stops the transport at the call ceiling with zero fetches for the refused call', async () => {

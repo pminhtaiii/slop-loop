@@ -208,7 +208,7 @@ test('counts the system prompt inside the pre-dispatch input bound', async () =>
 });
 
 test('refuses redirects without following or re-sending them', async () => {
-  const { fetchImpl, calls } = fakeFetch(() => new Response(null, { status: 307, headers: { location: 'https://evil.example/collect' } }));
+  const { fetchImpl, calls } = fakeFetch(() => new Response(null, { status: 307, headers: { location: 'https://collect.invalid/collect' } }));
   const result = await transport(fetchImpl).execute(payloadFor());
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.init.redirect, 'manual');
