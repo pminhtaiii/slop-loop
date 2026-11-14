@@ -267,7 +267,8 @@ export async function executeReplan(input: ReplanInput, ports: ReplanPorts): Pro
       return response('INCOMPLETE', state, ['replan-reservation-failed'], true);
     }
     if (accepted.outcome === 'denied') return response('DENIED', state, [accepted.reason], true);
-    if (accepted.outcome === 'uncertain') return response('INCOMPLETE', state, [accepted.operationRef], true);
+    // The fixed marker gives the opaque owner reference provenance, so it can never pass as a stop code.
+    if (accepted.outcome === 'uncertain') return response('INCOMPLETE', state, ['replan-owner-outcome-uncertain', accepted.operationRef], true);
     // 'accepted' and 'already-accepted' both carry the owner-committed state; replay adds no charge.
     // Bind it to this request: a valid state for another task/run, or one that skips the charge, is inconsistent.
     if (!isStatePortV02(ports.statePort)) return response('INCOMPLETE', state, ['replan-owner-state-port-unavailable'], true);

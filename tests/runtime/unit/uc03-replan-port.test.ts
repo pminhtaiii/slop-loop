@@ -123,7 +123,7 @@ test('replan: v0.2 material replan maps all four owner outcomes with no legacy a
     ['accepted', 'REPLAN_PREPARED', []],
     ['already-accepted', 'REPLAN_PREPARED', []],
     ['denied', 'DENIED', ['owner-denied-cap']],
-    ['uncertain', 'INCOMPLETE', ['op-ref-1']],
+    ['uncertain', 'INCOMPLETE', ['replan-owner-outcome-uncertain', 'op-ref-1']],
   ] as const;
   for (const [outcome, expected, reasons] of cases) {
     const statePort = new CountingPortV02({ initialTaskState: state });

@@ -15,7 +15,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSnapshotGrader, isSnapshotGradeCurrent, SNAPSHOT_GRADE_LIMITATION, type SnapshotCriterion, type SnapshotCriteria, type SnapshotEvidence } from '../../../eval/uc03/workflow-grade.ts';
-import { budgetStopEvidence, patchFreeFacts } from '../../../eval/uc03/workflow-evidence-facts.ts';
+import { budgetStopEvidence, deriveWorkflowEvidenceFacts, patchFreeFacts } from '../../../eval/uc03/workflow-evidence-facts.ts';
+import { resolveExpectedTestFiles } from '../../../src/uc03/graph-validation.ts';
+import { computeTestProtectionDigest } from '../../../src/uc03/investigation.ts';
 import { computeCanonicalSha256, computeCheckSetDigest, type BudgetLedger, type FixPlan } from '../../../src/contracts/foundation/uc03.ts';
 import { createCoderAgent } from '../../../src/uc03/agent.ts';
 import { executeReplan } from '../../../src/uc03/repair.ts';
@@ -414,8 +416,8 @@ test('an uncertain replan operation reference is not budget-exhaustion evidence'
   const state = createFixtureTaskState({ stateVersion: 2, node: 'Repair', plan, activeDecisionId: plan.decisionRef, taskContext: task, budgetLedgers: routeLedgers() });
   const changed = 'Check divisor == 0 and raise CalculationError';
   const candidatePlan: FixPlan = { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) };
-  // The owner reports an unknown outcome; its opaque operation reference becomes the route's reasons.
-  for (const operationRef of ['op-not-budget-exhausted-001', 'not-budget-exhausted']) {
+  // The owner reports an unknown outcome; its opaque reference is carried behind a fixed uncertainty marker.
+  for (const operationRef of ['op-not-budget-exhausted-001', 'not-budget-exhausted', 'repair-budget-exhausted', 'REAL_PROFILE_GENERATION_INVALID: REPAIR_BUDGET_EXHAUSTED']) {
     const statePort = new MemoryStatePortV02({ initialTaskState: state });
     const result = await executeReplan(
       { taskId: state.taskId, candidatePlan, proposalId: 'prop-1' },
@@ -435,10 +437,93 @@ test('an uncertain replan operation reference is not budget-exhaustion evidence'
       },
     );
     assert.equal(result.outcome, 'INCOMPLETE');
-    assert.deepEqual(result.reasons, [operationRef]);
+    assert.deepEqual(result.reasons, ['replan-owner-outcome-uncertain', operationRef]);
     assert.equal(budgetStopEvidence(result.reasons), false, `${operationRef} is an opaque reference, not exhaustion`);
     assert.equal(patchFreeFacts(state, budgetStopEvidence(result.reasons)), undefined, 'an uncertain outcome must stay indeterminate');
   }
+});
+
+test('an uncertain replan whose reference collides with a stop code cannot certify exhaustion', async () => {
+  const task = createFixtureBugTask();
+  const strategy = 'Check divisor == 0 before division';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Calculator.divide does not check the divisor',
+    suspectedCauseLocations: ['src/calculator.py:3'],
+    evidenceRefs: ['evi-repro-001'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-001',
+  };
+  const state = createFixtureTaskState({ stateVersion: 2, node: 'Repair', plan, activeDecisionId: plan.decisionRef, taskContext: task, budgetLedgers: routeLedgers() });
+  const changed = 'Check divisor == 0 and raise CalculationError';
+  const result = await executeReplan(
+    { taskId: state.taskId, candidatePlan: { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) }, proposalId: 'prop-collide' },
+    {
+      statePort: new MemoryStatePortV02({ initialTaskState: state }),
+      trustedDirection: {
+        directive: 'revise',
+        taskId: state.taskId,
+        workspaceId: state.workspaceId,
+        repositoryRevisionDigest: state.repositoryRevisionDigest,
+        stateVersion: state.stateVersion,
+        planVersion: state.planVersion,
+        rejectedDecisionId: plan.decisionRef ?? '',
+        strategyDigest: plan.strategyDigest,
+      },
+      replanPort: { provenance: 'mock', accept: async () => ({ outcome: 'uncertain' as const, operationRef: 'repair-budget-exhausted' }) },
+    },
+  );
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(budgetStopEvidence(result.reasons), false);
+
+  const testFiles = [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }];
+  const expectedTestFiles = resolveExpectedTestFiles(task);
+  const firstCheck = task.requiredChecks[0];
+  assert.ok(firstCheck);
+  const retainedBaseline = {
+    taskId: task.taskId,
+    workspaceId: state.workspaceId,
+    repositoryId: task.repositoryId,
+    repositorySnapshotDigest: task.initialRevisionDigest,
+    acceptanceCriteria: task.acceptanceCriteria,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    requiredChecks: task.requiredChecks,
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    reproductionCheckId: firstCheck.checkId,
+    expectedPassingCheckIds: [],
+    expectedTestFiles,
+    testProtectionDigest: computeTestProtectionDigest(testFiles),
+    reproductionFailureSignature: 'reproduced failure',
+    checkResults: task.requiredChecks.map(check => ({ checkId: check.checkId, outcome: 'fail' as const })),
+  };
+  const uncertain = observation({
+    repositoryId: task.repositoryId,
+    taskId: task.taskId,
+    runId: state.runId,
+    initialRepositoryDigest: task.initialRevisionDigest,
+    workflowOutcome: 'INCOMPLETE',
+    effects: 'uncertain',
+  });
+  const freeze = async (binding: object) => ({ ...binding, snapshotId: 'final-collide', complete: true, files: testFiles });
+  const derive = (reasons: readonly string[]) =>
+    deriveWorkflowEvidenceFacts({
+      caseId: 'C04',
+      task,
+      result: { outcome: 'INCOMPLETE', state, milestones: [], reasons, executionEvidence: { finalState: state } },
+      observation: uncertain,
+      repository: { inspectDiff: async () => ({ diff: '', diffDigest: computeCanonicalSha256(''), changedFiles: [] }) },
+      finalTree: { freezeFinalTree: freeze, recheckCurrentFinalTree: freeze },
+      retainedBaseline,
+    });
+  assert.equal((await derive(['repair-budget-exhausted']))?.evidence.stoppedBeforeEffect, true, 'control: the same snapshot with a real ledger stop derives');
+  assert.equal(await derive(result.reasons), undefined, 'uncertain replan facts stay underivable');
+  // Defence in depth: even certified stop evidence cannot pass exhaustion when effects are uncertain.
+  const grade = await grader({ criteria: criteria([criterion('C04', 'exhaustion')]) }).grade('C04', { observation: uncertain, snapshot: SNAPSHOT, evidence: evidence() });
+  assert.notEqual(grade.grade, 'pass');
 });
 
 test('the saved fourth-replan cap stop is exhaustion evidence; a failed cap transition is not', async () => {

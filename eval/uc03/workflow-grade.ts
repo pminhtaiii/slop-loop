@@ -373,7 +373,9 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
 
       if (criterion.predicate === 'exhaustion') {
         const evidenceIds = [`criterion:${criterion.criterionId}`, 'check:stop-before-effect'];
-        return decide(criterion, observation.workflowOutcome === 'INCOMPLETE' && evidence.stoppedBeforeEffect, evidenceIds, snapshot, evidence.digest);
+        // An uncertain effect (T027) means no one knows whether the stop preceded an effect, so it never certifies.
+        const ok = observation.workflowOutcome === 'INCOMPLETE' && evidence.stoppedBeforeEffect && observation.effects !== 'uncertain';
+        return decide(criterion, ok, evidenceIds, snapshot, evidence.digest);
       }
 
       if (criterion.predicate === 'expected-refusal') {
