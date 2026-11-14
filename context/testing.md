@@ -8,7 +8,7 @@ Use the repository's established test and quality commands. Read `AGENTS.md`, pr
 
 UC-06 contract validation:
 
-Run `node --test tests/runtime/contract/uc06-review.test.ts tests/runtime/unit/uc06-context.test.ts tests/runtime/unit/uc06-reviewer.test.ts tests/runtime/unit/uc06-review-prompt.test.ts`, then the corresponding fresh `dist/tests/**.js` files after build. Include existing model, runtime-reviewer, reviewer-v02-accounting, deepseek-transport and uc03-review-regressions suites when shared ingress changes. These public-boundary checks cover pure companion validation/assembly and actual reviewer/model/transport with controlled owner/fake HTTP; they prove neither owner storage nor real workflow. Current criterion evidence is in the [UC-06 Phase 3 record](../specs/009-reviewer-agent/checklists/phase3-verification.md).
+Run `node --test tests/runtime/contract/uc06-review.test.ts tests/runtime/unit/uc06-context.test.ts tests/runtime/unit/uc06-reviewer.test.ts tests/runtime/unit/uc06-review-prompt.test.ts tests/runtime/integration/uc06-review-route.test.ts`, then the corresponding fresh `dist/tests/**.js` files after build. Include existing model, runtime-reviewer, reviewer-v02-accounting, deepseek-transport, graph/verification, host-pipeline/v02-route and uc03-review-regressions suites when shared ingress/completion changes. Public-boundary checks cover pure companion validation/assembly, actual reviewer/model/transport with fake HTTP, and controlled graph owner persist/load/recovery. They establish neither actual owner storage nor real provider/process restart. Current criterion evidence is in the [UC-06 Phase 3 record](../specs/009-reviewer-agent/checklists/phase3-verification.md).
 
 ## What to test
 

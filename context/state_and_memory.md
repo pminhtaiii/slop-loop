@@ -19,6 +19,8 @@ The test-only `MemoryStatePort` simulates CAS, atomic multi-budget reservations,
 
 The UC-03 Phase 4 repair/replan consumers use the injected StatePort for authoritative reloads, reservations and CAS. Material replans require an explicit trusted reservation-admission context; they do not mutate mock internals or implement UC-04 durability. Rejection direction binds to the paused task and current plan/state; feedback text alone cannot restart replanning. Controlled checks retain charged accounting across simulated invocations and return authoritative charged state after failed admission. Confirmed repair-action charges remain reserved when material replanning begins; a reservation lacking a persisted confirmed-action reference requires trusted reconciliation. Outstanding token/cost reservations still prevent replanning. Actual process recovery remains a later integration gate.
 
+The optional UC-06 graph route consumes the owner-provided `ReviewEvidencePortV1` supplement. It persists bound observations after provider settlement; Review and Deliver freshly discover/exact-load owner records and compare current host-selected material. TaskState-only continuation may recover committed evidence without provider replay; missing or uncertain evidence remains unverified and preserves charges. The controlled in-memory double is not actual owner storage or process-restart delivery; see [evidence](../specs/009-reviewer-agent/checklists/phase3-verification.md).
+
 ## Checkpoint and resume
 
 Write checkpoints at meaningful boundaries: plan creation, baseline completion, implementation steps, patch application, verification, approval request or resolution, and review completion.
