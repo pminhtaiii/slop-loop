@@ -86,7 +86,7 @@ export class QuestionRepositorySnapshotReader {
     if (active) return active;
     const work = control.work;
     if (work && typeof port.checkBindingBounded !== 'function') return failure('unavailable', 'unsupported-adapter');
-    if (work && (work.remaining('scannedFiles') <= 0 || work.remaining('scannedBytes') <= 0)) return failure('exhausted', 'scan-limit');
+    // A bounded owner can attest freshness without traversal; any traversal must still charge the meter.
     this.checkReadHold();
     let result: unknown;
     try {

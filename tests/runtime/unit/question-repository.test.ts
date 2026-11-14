@@ -8,6 +8,7 @@ import {
   type QuestionRepositoryReadLimits,
   type TrustedFilesystemPort,
 } from '../../../src/foundation/repository-tools.ts';
+import type { QuestionRepositoryBindingPort, QuestionRepositoryWork, QuestionRepositoryWorkMeter } from '../../../src/foundation/repository-types.ts';
 import { computeFileDigest } from '../../../src/foundation/docker-workspace-policy.ts';
 import { computeSourceManifestDigest } from '../../../src/foundation/question-repository-read.ts';
 import type { RepositoryBindingV1, SourceManifestEntryV1, SourceSnapshotV1 } from '../../../src/contracts/questions/contracts.ts';
@@ -280,6 +281,61 @@ test('literal search visits adjacent files both within a page and when resuming'
     ['c.py'],
   );
   assert.equal(second.coverage, 'complete');
+});
+
+test('metered directory and search preserve partial coverage if freshness needs no scan work', async () => {
+  const files = new Map([
+    ['a.py', Buffer.from('target\n')],
+    ['b.py', Buffer.from('target\n')],
+  ]);
+  for (const operation of ['directory', 'search'] as const) {
+    for (const requiresTraversal of [false, true]) {
+      const remainder = { scannedFiles: operation === 'directory' ? 2 : 1, scannedBytes: operation === 'directory' ? 4 : 100, returnedBytes: 256 };
+      const keys = ['scannedFiles', 'scannedBytes', 'returnedBytes'] as const;
+      const work: QuestionRepositoryWorkMeter = {
+        remaining: key => remainder[key],
+        charge(usage: QuestionRepositoryWork) {
+          if (keys.some(key => (usage[key] ?? 0) > remainder[key])) return false;
+          for (const key of keys) remainder[key] -= usage[key] ?? 0;
+          return true;
+        },
+      };
+      let exhaustedChecks = 0;
+      let digestScans = 0;
+      const bindingPort: QuestionRepositoryBindingPort = {
+        async checkBinding() {
+          return { status: 'ok', binding };
+        },
+        async checkBindingBounded(_expected, { work }) {
+          if (work.remaining('scannedFiles') === 0 || work.remaining('scannedBytes') === 0) {
+            exhaustedChecks += 1;
+            if (requiresTraversal) {
+              if (!work.charge({ scannedFiles: 1, scannedBytes: 1 })) return { status: 'exhausted', reasonCode: 'scan-limit' };
+              digestScans += 1;
+            }
+          }
+          return { status: 'ok', binding };
+        },
+      };
+      const { tools, reads } = makeTools({ files, bindingPort });
+      const reader = questionTools(tools);
+      assert.deepEqual(await reader.readSpan({ path: 'missing.py', startLine: 1, endLine: 1 }, control()), { status: 'denied', reasonCode: 'outside-scope' });
+      const metered = { ...control(), work };
+      const result = operation === 'directory' ? await reader.listDirectory({ path: '.' }, metered) : await reader.searchLiteral({ query: 'target' }, metered);
+      if (requiresTraversal) {
+        assert.deepEqual(result, { status: 'exhausted', reasonCode: 'scan-limit' });
+      } else {
+        assert.equal(result.status, 'ok');
+        assert.equal(result.coverage, 'partial');
+        assert.deepEqual(result.omissionReasons, ['scan-limit']);
+        assert.equal(result.nextCursor, undefined);
+        assert.deepEqual('entries' in result ? result.entries.map(entry => entry.path) : result.hits.map(hit => hit.span.path), ['a.py']);
+      }
+      assert.ok(exhaustedChecks > 0);
+      assert.equal(digestScans, 0);
+      assert.deepEqual(reads, operation === 'directory' ? [] : ['a.py']);
+    }
+  }
 });
 
 test('a final binding refusal preserves the output quota and cursor slot for each repository operation', async () => {

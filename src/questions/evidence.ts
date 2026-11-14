@@ -81,6 +81,7 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
         const safeControl = combineControl(control, context.signal, context.remainingMs, work.meter);
         const binding = await repository.checkBinding(safeControl);
         if (binding.status !== 'ok') return binding;
+        if (!sameBinding(binding.binding, identity.binding)) return { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
         return await repository.readSpan(decision, safeControl);
       },
       result => repositoryReceipt(result, work.consumed),

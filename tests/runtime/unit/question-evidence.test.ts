@@ -70,7 +70,7 @@ function profile(maxToolCalls = 5): QuestionBudgetProfileV1 {
   };
 }
 
-function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = {}, staleAfterChecks?: number, now?: () => number, finalBinding = binding) {
+function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = {}, staleAfterChecks?: number, now?: () => number, finalBinding = binding, initialBinding = binding) {
   let bindingChecks = 0;
   let reads = 0;
   const deadlines: number[] = [];
@@ -126,7 +126,7 @@ function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = 
       ...repository,
       async checkBinding(operationControl) {
         const outcome = await repository.checkBinding(operationControl);
-        return outcome.status === 'ok' && bindingChecks > 1 ? { status: 'ok', binding: finalBinding } : outcome;
+        return outcome.status === 'ok' ? { status: 'ok', binding: bindingChecks > 1 ? finalBinding : initialBinding } : outcome;
       },
     },
     budget: budgetResult.value,
@@ -396,6 +396,13 @@ test('oversized rendered output is refused without final repository IO', async (
   assert.equal(fixture.bindingChecks(), 1);
   assert.equal(fixture.budget.snapshot().consumed.toolCalls, 1);
   assert.equal(fixture.budget.snapshot().reserved.finalBytes, 0);
+});
+
+test('a successful check for a different binding never dispatches a source read', async () => {
+  const current = makeFixture(5, {}, undefined, undefined, binding, { ...binding, workspaceId: 'workspace-2' });
+  assert.deepEqual(await current.registry.readSpan({ path: SOURCE_PATH, startLine: 2, endLine: 3 }, control()), { status: 'stale', reasonCode: 'binding-mismatch' });
+  assert.equal(current.bindingChecks(), 1);
+  assert.equal(current.reads(), 0);
 });
 
 test('a valid different final binding cannot deliver evidence issued for this run', async () => {
