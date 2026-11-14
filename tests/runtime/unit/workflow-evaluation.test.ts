@@ -2056,10 +2056,12 @@ test('a patch-free Repair stop counts as no patch only when the stop evidence co
   // A state that already recorded a change is never patch-free, budget or not.
   assert.equal(patchFreeFacts(createFixtureTaskState({ node: 'Repair', changedPaths: ['src/calculator.py'] }), true), undefined);
 
-  // The repair ledger's lower-case reason and the coder agent's upper-case codes both qualify.
+  // The repair ledger's exact lower-case reason and the coder agent's codes in their route envelope both qualify.
   assert.equal(budgetStopEvidence(['repair-budget-exhausted']), true);
   assert.equal(budgetStopEvidence(['REAL_PROFILE_GENERATION_INVALID: REPAIR_BUDGET_EXHAUSTED']), true);
-  assert.equal(budgetStopEvidence(['MODEL_CALL_BUDGET_EXHAUSTED']), true);
+  assert.equal(budgetStopEvidence(['REAL_PROFILE_GENERATION_INVALID: MODEL_CALL_BUDGET_EXHAUSTED']), true);
+  // A bare upper-case code never reaches reasons: `graph-generation.ts:205` always adds the envelope.
+  assert.equal(budgetStopEvidence(['MODEL_CALL_BUDGET_EXHAUSTED']), false);
   assert.equal(budgetStopEvidence(['No repair patch proposal provided']), false);
 });
 

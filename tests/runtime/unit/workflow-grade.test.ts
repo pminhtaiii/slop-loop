@@ -15,6 +15,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSnapshotGrader, isSnapshotGradeCurrent, SNAPSHOT_GRADE_LIMITATION, type SnapshotCriterion, type SnapshotCriteria, type SnapshotEvidence } from '../../../eval/uc03/workflow-grade.ts';
+import { budgetStopEvidence, patchFreeFacts } from '../../../eval/uc03/workflow-evidence-facts.ts';
+import { computeCanonicalSha256, computeCheckSetDigest, type BudgetLedger, type FixPlan } from '../../../src/contracts/foundation/uc03.ts';
+import { createCoderAgent } from '../../../src/uc03/agent.ts';
+import { executeReplan } from '../../../src/uc03/repair.ts';
+import { checkAccounting } from '../../../src/uc03/repair-types.ts';
+import { checkReplanAccounting } from '../../../src/uc03/replan-accounting.ts';
+import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
+import { createFixtureBugTask, createFixtureProviderRequest, createFixtureSourceEvidence, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import type {
   EvaluationGradingAdmissionRequest,
   EvaluationGraderExecutionRequest,
@@ -368,4 +376,140 @@ test('a blocked observation is not-run with its blocking reason instead of gradi
   const result = await grader().grade('C01', { observation: observation({ blocked: 'prerequisite-unavailable' }), snapshot: SNAPSHOT, evidence: evidence() });
   assert.equal(result.grade, 'not-run');
   assert.equal(result.reason, 'prerequisite-unavailable');
+});
+
+/* ------------------------------------------------------------------
+ * CR2-01: only exact producer-emitted budget-exhaustion codes authorise a patch-free stop.
+ * ------------------------------------------------------------------ */
+
+function routeLedgers(overrides: Readonly<Record<string, number>> = {}): BudgetLedger[] {
+  const ledger = (kind: string, limit: number, unit: string): BudgetLedger => ({
+    scope: 'task',
+    kind,
+    limit,
+    consumed: overrides[kind] ?? 0,
+    reservations: [],
+    unit,
+    configurationId: 'config-v1',
+    version: 1,
+  });
+  return [ledger('replan', 3, 'count'), ledger('repair', 2, 'count'), ledger('tokens', 100_000, 'count'), ledger('cost', 5, 'usd')];
+}
+
+test('an uncertain replan operation reference is not budget-exhaustion evidence', async () => {
+  const task = createFixtureBugTask();
+  const strategy = 'Check divisor == 0 before division';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Calculator.divide does not check the divisor',
+    suspectedCauseLocations: ['src/calculator.py:3'],
+    evidenceRefs: ['evi-repro-001'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-001',
+  };
+  const state = createFixtureTaskState({ stateVersion: 2, node: 'Repair', plan, activeDecisionId: plan.decisionRef, taskContext: task, budgetLedgers: routeLedgers() });
+  const changed = 'Check divisor == 0 and raise CalculationError';
+  const candidatePlan: FixPlan = { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) };
+  // The owner reports an unknown outcome; its opaque operation reference becomes the route's reasons.
+  for (const operationRef of ['op-not-budget-exhausted-001', 'not-budget-exhausted']) {
+    const statePort = new MemoryStatePortV02({ initialTaskState: state });
+    const result = await executeReplan(
+      { taskId: state.taskId, candidatePlan, proposalId: 'prop-1' },
+      {
+        statePort,
+        trustedDirection: {
+          directive: 'revise',
+          taskId: state.taskId,
+          workspaceId: state.workspaceId,
+          repositoryRevisionDigest: state.repositoryRevisionDigest,
+          stateVersion: state.stateVersion,
+          planVersion: state.planVersion,
+          rejectedDecisionId: plan.decisionRef ?? '',
+          strategyDigest: plan.strategyDigest,
+        },
+        replanPort: { provenance: 'mock', accept: async () => ({ outcome: 'uncertain' as const, operationRef }) },
+      },
+    );
+    assert.equal(result.outcome, 'INCOMPLETE');
+    assert.deepEqual(result.reasons, [operationRef]);
+    assert.equal(budgetStopEvidence(result.reasons), false, `${operationRef} is an opaque reference, not exhaustion`);
+    assert.equal(patchFreeFacts(state, budgetStopEvidence(result.reasons)), undefined, 'an uncertain outcome must stay indeterminate');
+  }
+});
+
+test('the repair ledgers accept only their exact exhaustion codes as stop evidence', () => {
+  const state = createFixtureTaskState({ budgetLedgers: routeLedgers() });
+  const repairExhausted = checkAccounting({ ...state, budgetLedgers: routeLedgers({ repair: 2 }) });
+  assert.ok(!repairExhausted.ok);
+  assert.equal(repairExhausted.reason, 'repair-budget-exhausted');
+  assert.equal(budgetStopEvidence([repairExhausted.reason]), true);
+
+  const tokensExhausted = checkAccounting({ ...state, budgetLedgers: routeLedgers({ tokens: 100_000 }) });
+  assert.ok(!tokensExhausted.ok);
+  assert.equal(tokensExhausted.reason, 'token-or-cost-budget-exhausted');
+  assert.equal(budgetStopEvidence([tokensExhausted.reason]), true);
+
+  const replanState = createFixtureTaskState({ budgetLedgers: routeLedgers({ repair: 2 }) });
+  const replanExhausted = checkReplanAccounting(replanState);
+  assert.ok(!replanExhausted.ok);
+  assert.equal(replanExhausted.reason, 'task-budget-exhausted');
+  assert.equal(budgetStopEvidence([replanExhausted.reason]), true);
+});
+
+test('the coder agent exhaustion codes count only in the whole-code envelope the route emits', async () => {
+  const task = createFixtureBugTask();
+  const strategy = 'Check divisor == 0 before division';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Calculator.divide does not check the divisor',
+    suspectedCauseLocations: ['src/calculator.py:3'],
+    evidenceRefs: ['evi-repro-001'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-001',
+  };
+  const patch = {
+    kind: 'propose-patch',
+    proposalId: 'patch-budget-001',
+    diff: ['--- a/src/calculator.py', '+++ b/src/calculator.py', '@@ -1,2 +1,3 @@', ' def divide(a, b):', '+    if b == 0: raise CalculationError', '     return a / b', ''].join('\n'),
+    targetPaths: ['src/calculator.py'],
+    approvedPlanRef: plan.strategyDigest,
+  };
+  const turn = (budget: { maxModelCalls: number; maxActiveMs: number; maxRepairs: number; maxReplans: number }) =>
+    createCoderAgent({
+      propose: async () => ({
+        outcome: 'observed',
+        result: { proposal: { proposalId: patch.proposalId, content: JSON.stringify(patch) }, observedUsage: { inputTokens: 1, outputTokens: 1, costUsd: 0, billableTokens: 2 } },
+      }),
+      repository: {
+        provenance: 'mock',
+        listDir: async () => [],
+        readFile: async path => createFixtureSourceEvidence({ path }),
+        searchCode: async () => [],
+        applyPatch: async () => ({ applied: false, newRevisionDigest: '' }),
+        runCommand: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+        runTests: async check => ({ checkId: check.checkId, outcome: 'pass' }),
+        inspectDiff: async () => ({ diff: '', diffDigest: '', changedFiles: [] }),
+      },
+      budget,
+    }).turn(task, createFixtureTaskState({ taskContext: task, node: 'Repair', plan, activeDecisionId: plan.decisionRef }), [], createFixtureProviderRequest());
+
+  const modelCalls = await turn({ maxModelCalls: 0, maxActiveMs: 60_000, maxRepairs: 1, maxReplans: 1 });
+  assert.equal(modelCalls.outcome === 'invalid' ? modelCalls.reason : '', 'MODEL_CALL_BUDGET_EXHAUSTED');
+  const repairs = await turn({ maxModelCalls: 4, maxActiveMs: 60_000, maxRepairs: 0, maxReplans: 1 });
+  assert.equal(repairs.outcome === 'invalid' ? repairs.reason : '', 'REPAIR_BUDGET_EXHAUSTED');
+
+  for (const outcome of [modelCalls, repairs]) {
+    const code = outcome.outcome === 'invalid' ? outcome.reason : '';
+    // `graph-generation.ts:85` wraps a coder refusal in exactly this envelope before it reaches reasons.
+    assert.equal(budgetStopEvidence([`REAL_PROFILE_GENERATION_INVALID: ${code}`]), true, code);
+    assert.equal(budgetStopEvidence([`${code}: preceding text`]), false, `${code} must not match as a substring`);
+  }
 });

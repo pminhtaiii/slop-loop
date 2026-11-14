@@ -124,12 +124,15 @@ export function parseWorkflowFinalTree(value: unknown, binding: FinalTreeBinding
   return { tree, snapshot };
 }
 
-// The coder agent emits `REPAIR_BUDGET_EXHAUSTED`; the repair/replan ledgers emit `repair-budget-exhausted`.
-const BUDGET_STOP = /budget[-_]exhausted/iu;
+/** The exact reason each ledger emits (`repair-types.ts:279`, `replan-accounting.ts:60`), never a substring. */
+const LEDGER_STOP: ReadonlySet<string> = new Set(['repair-budget-exhausted', 'token-or-cost-budget-exhausted', 'task-budget-exhausted']);
+/** The agent's codes (`agent.ts:92,96,130,131`) arrive only inside this envelope (`graph-generation.ts:85,205`). */
+const CODER_STOP_PREFIX = 'REAL_PROFILE_GENERATION_INVALID: ';
+const CODER_STOP: ReadonlySet<string> = new Set(['REPLAN_BUDGET_EXHAUSTED', 'REPAIR_BUDGET_EXHAUSTED', 'MODEL_CALL_BUDGET_EXHAUSTED', 'ACTIVE_TIME_BUDGET_EXHAUSTED']);
 
-/** A coder-or-repair budget refusal is the only stop that can justify a patch-free stop as "no effect yet". */
+/** An exact ledger reason or coder envelope code is the only stop that can justify a patch-free stop as "no effect yet". */
 export function budgetStopEvidence(reasons: readonly string[]): boolean {
-  return reasons.some(reason => BUDGET_STOP.test(reason));
+  return reasons.some(reason => LEDGER_STOP.has(reason) || (reason.startsWith(CODER_STOP_PREFIX) && CODER_STOP.has(reason.slice(CODER_STOP_PREFIX.length))));
 }
 
 /**
