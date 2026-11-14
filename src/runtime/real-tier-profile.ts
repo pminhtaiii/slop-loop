@@ -10,8 +10,8 @@
  * and the scheme only. The normalized `href` and the credential are non-enumerable, so JSON, a digest input
  * or an error never carries the URL, the host or the key bytes.
  */
-import { readFileSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { sha256Text, type Validation } from '../uc01/contracts.ts';
 import { collect, deny, IMAGE_DIGEST, keysOf, limitsOf, positiveInteger, pricingOf, text } from './evaluation-profile-primitives.ts';
 import type { EvaluationLimits, EvaluationPricing } from './evaluation-profile-types.ts';
@@ -76,9 +76,16 @@ function absolutePath(value: unknown, path: string): string {
   return isAbsolute(candidate) ? resolve(candidate) : deny('INVALID_PATH', path);
 }
 
-/** Resolves the target and reports whether it lands inside the checkout, case-insensitively on Windows. */
+/** The real path; a leaf that does not exist yet keeps its name after its deepest existing ancestor. */
+function realPath(path: string): string {
+  if (existsSync(path)) return realpathSync.native(path);
+  const parent = dirname(path);
+  return parent === path ? path : join(realPath(parent), basename(path));
+}
+
+/** Resolves both sides to real paths and reports whether the target lands inside the checkout. */
 function insideRepository(root: string, target: string): boolean {
-  const from = relative(resolve(root).toLowerCase(), target.toLowerCase());
+  const from = relative(realPath(resolve(root)).toLowerCase(), realPath(target).toLowerCase());
   return from === '' || (!from.startsWith('..') && !isAbsolute(from));
 }
 

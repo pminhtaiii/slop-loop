@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_REAL_TIER_ENDPOINT, loadRealTierProfile, type RealTierProfile } from '../../../src/runtime/real-tier-profile.ts';
@@ -212,6 +212,29 @@ test('refuses any profile, state or artifact path inside the repository root', (
 
   assert.equal(reasonOf(load(profileOf({ stateRoot: join(repoRoot, 'state') }))), 'state-root-inside-repository');
   assert.equal(reasonOf(load(profileOf({ artifacts: { retainRoot: join(repoRoot, 'artifacts'), retainRawStreams: false } }))), 'artifacts-inside-repository');
+});
+
+test('refuses any path that reaches the repository through a directory junction', t => {
+  // A junction outside the checkout whose target is inside it stays lexically outside until realpath is followed.
+  const target = join(repoRoot, 'junction-target');
+  mkdirSync(target, { recursive: true });
+  const container = mkdtempSync(join(tmpdir(), 't047-junction-'));
+  const alias = join(container, 'alias');
+  symlinkSync(target, alias, 'junction');
+  writeFileSync(join(target, 'profile.json'), JSON.stringify(defaults()), 'utf8');
+  t.after(() => {
+    unlinkSync(alias); // Unlinks the junction itself; nothing is deleted through it.
+    rmSync(container, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  });
+
+  const env = { UC03_REAL_TIER_PROFILE: join(alias, 'profile.json'), ANTHROPIC_API_KEY: KEY };
+  assert.equal(reasonOf(loadRealTierProfile(env, { repositoryRoot: repoRoot })), 'profile-inside-repository');
+  assert.equal(reasonOf(loadRealTierProfile({ ...env, UC03_REAL_TIER_PROFILE: join(alias, 'absent', 'profile.json') }, { repositoryRoot: repoRoot })), 'profile-inside-repository');
+  assert.equal(reasonOf(load(profileOf({ stateRoot: alias }))), 'state-root-inside-repository');
+  assert.equal(reasonOf(load(profileOf({ stateRoot: join(alias, 'state') }))), 'state-root-inside-repository');
+  assert.equal(reasonOf(load(profileOf({ artifacts: { retainRoot: alias, retainRawStreams: false } }))), 'artifacts-inside-repository');
+  assert.equal(reasonOf(load(profileOf({ artifacts: { retainRoot: join(alias, 'artifacts'), retainRawStreams: false } }))), 'artifacts-inside-repository');
 });
 
 test('a malformed profile gives a bounded reason with no file content or endpoint bytes echoed', () => {
