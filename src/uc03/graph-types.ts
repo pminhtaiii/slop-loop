@@ -44,6 +44,10 @@ import type { BaselineEvidenceWriter, InvestigationConfigPort, TrustedHostExpect
 import type { RepairPatchProposal, TrustedReplanDirection } from './repair.ts';
 import type { FinalReport, Milestone } from './report.ts';
 import type { EvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts';
+import type { PreparedReviewContext } from '../uc06/context.ts';
+import type { ReviewContextV1, ReviewEvidencePortV1 } from '../contracts/review.ts';
+import type { DeepSeekReviewPrompt } from '../foundation/deepseek-transport.ts';
+import type { RuntimeReviewerOptions } from '../foundation/reviewer.ts';
 
 export const UC03_GRAPH_RECURSION_LIMIT = 25;
 
@@ -88,7 +92,14 @@ export interface UC03ReviewerAdmissionRequest {
   readonly task: BugTask;
   readonly state: TaskState;
   readonly diff: { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] };
+  readonly reviewContext?: ReviewContextV1 | undefined;
+  readonly evidence?: readonly SourceEvidence[] | undefined;
+  /** Completion refresh selects current material without reminting the dispatched request. */
+  readonly phase?: 'prepare' | 'completion' | undefined;
 }
+
+/** Host-selected current facts; presence opts into bound review without a legacy fallback. */
+export type UC03ReviewContextResolver = (request: UC03ReviewerAdmissionRequest) => PreparedReviewContext | undefined | Promise<PreparedReviewContext | undefined>;
 
 export interface UC03PatchAdmissionRequest {
   readonly task: BugTask;
@@ -112,7 +123,8 @@ export interface UC03CompletionContextRequest {
   readonly state: TaskState;
   readonly baseline: Baseline;
   readonly verificationResults: readonly VerificationResult[];
-  readonly reviewRequest: ProviderRequest;
+  /** Only the persisted reservation ref survives TaskState-only review recovery. */
+  readonly reviewRequest: Pick<ProviderRequest, 'reservationRef'>;
   readonly reviewResult: ReviewResult;
   readonly diffInfo: Readonly<{ diffDigest: string; changedFiles: readonly string[] }>;
   readonly patchAdmission: UC03RepositoryAdmission;
@@ -160,6 +172,11 @@ export interface UC03GraphConfig {
   readonly completionContextFor?: UC03CompletionContextResolver | undefined;
   readonly admissionContext?: UC03RepositoryAdmission | UC03PatchAdmissionResolver | undefined;
   readonly reviewerAdmission?: UC03ReviewerAdmission | UC03ReviewerAdmissionResolver | undefined;
+  readonly reviewContext?: UC03ReviewContextResolver | undefined;
+  readonly reviewEvidence?: ReviewEvidencePortV1 | undefined;
+  readonly reviewPrompt?: DeepSeekReviewPrompt | undefined;
+  /** Same request-local closure captured by the configured reviewer factory. */
+  readonly reviewerContextResolver?: RuntimeReviewerOptions['resolveReviewContext'];
   readonly coderAdmission?: UC03CoderAdmission | UC03CoderAdmissionResolver | undefined;
   readonly patchContent?: string | undefined;
   readonly targetPaths?: readonly string[] | undefined;

@@ -2,7 +2,7 @@
 
 **Branch**: `feat/uc06-reviewer-planning` | **Date**: 2026-11-12 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 **Input**: specs/009-reviewer-agent/spec.md
-**Status**: Planning only; [decisions](contracts/decisions.md) own release/owner gates.
+**Status**: [Decisions](contracts/decisions.md) own release/owner gates; T002 and Phase 3 T003–T006 have separate source/controlled releases. Dependency and acceptance gates remain mandatory.
 
 ## Summary
 
@@ -45,13 +45,14 @@ spec.md, plan.md, tasks.md, research.md, data-model.md, quickstart.md, contracts
 
 | Change class | Exact paths | Ownership / purpose |
 |---|---|---|
-| New | src/contracts/review.ts; src/uc06/validation.ts | Trọng Tấn, UC-06; pure companion types/runtime validation; T002 unreleased |
-| New | src/uc06/context.ts | Trọng Tấn consumes host records, builds immutable projection; no IO/storage authority; T003 unreleased |
+| New | src/contracts/review.ts; src/uc06/validation.ts | Trọng Tấn, UC-06; T002 pure source/controlled prerequisite accepted; no owner authority |
+| New | src/uc06/context.ts | Trọng Tấn consumes host records, builds immutable projection; no IO/storage authority; T003 source/controlled release only |
 | Extension | src/foundation/reviewer.ts | Tai; opt-in resolver, shared snapshot/digest companion and stricter output/evidence validation |
+| Approved T004 extension | src/foundation/model.ts; tests/runtime/unit/model.test.ts | User-relayed Tai agreement on 2026-11-13; token-boundary correction only, preserve actual credential refusal |
 | Extension | src/foundation/deepseek-transport.ts | Tai; trusted role prompt/schema branch; retain coder/transport/accounting |
 | Extension | src/uc03/graph.ts; src/uc03/graph-types.ts; src/uc03/graph-types-v02.ts; src/uc03/graph-v02.ts; src/uc03/graph-state.ts; src/uc03/graph-review.ts; src/uc03/graph-completion.ts; src/uc03/verification-types.ts; src/uc03/verification-review.ts | Tai; v0.2 propagation, context resolution/admission, both Review/Deliver completion calls |
 | Extension of existing evaluation system | eval/uc06/catalog.ts; eval/uc06/grade.ts; eval/uc06/registration.ts; eval/shared.ts; eval/shared-types.ts | Tai evaluation + independent labels; additive capability-aware v2, retain v1 real refusal |
-| Reuse unchanged | src/foundation/model.ts; src/foundation/model-v02.ts; src/foundation/provider-admission.ts; src/contracts/foundation/uc03.ts; src/persistence/; src/approvals/ | Existing owners; no parallel implementation or ownership transfer |
+| Reuse unchanged | src/foundation/model-v02.ts; src/foundation/provider-admission.ts; src/contracts/foundation/uc03.ts; src/persistence/; src/approvals/ | Existing owners; no parallel implementation or ownership transfer |
 
 Exact tests and serialized path handoffs are in [tasks](tasks.md).
 

@@ -9,6 +9,10 @@
 import type { ModelProposal, ProviderRequest, ProviderUsage, ValidationError } from '../contracts/foundation/uc03.ts';
 import { validateProviderRequest, validateProviderUsage } from '../contracts/foundation/uc03.ts';
 import type { HostModelTransport, HostModelTransportPayload } from './model.ts';
+import { admitReviewProfile, REVIEW_SYSTEM_TEXT, type DeepSeekReviewPrompt } from './deepseek-review-profile.ts';
+
+export type { DeepSeekReviewPrompt } from './deepseek-review-profile.ts';
+export { DEEPSEEK_REVIEW_PROMPT } from './deepseek-review-profile.ts';
 
 export interface DeepSeekPricing {
   readonly inputRate: number;
@@ -28,6 +32,7 @@ export interface DeepSeekTransport extends HostModelTransport {
   identityForRequest(taskId: string, runId: string, providerRequestId: string): DeepSeekModelIdentity | undefined;
   /** Returns a run identity only when every observed response in that run agrees. */
   identityForRun(taskId: string, runId: string): DeepSeekModelIdentity | undefined;
+  readonly reviewPrompt?: DeepSeekReviewPrompt | undefined;
 }
 
 export interface DeepSeekTransportOptions {
@@ -35,6 +40,7 @@ export interface DeepSeekTransportOptions {
   readonly apiKey: string;
   readonly pricing: DeepSeekPricing;
   readonly fetch?: typeof globalThis.fetch | undefined;
+  readonly reviewPrompt?: DeepSeekReviewPrompt | undefined;
 }
 
 /** Module-private brand: only this factory can mint a trusted production transport. */
@@ -114,28 +120,33 @@ function promptFor(payload: HostModelTransportPayload, request: ProviderRequest)
       expectedBehavior: payload.state.expectedBehavior,
       reproduction: payload.state.reproduction,
       acceptanceCriteria: payload.state.acceptanceCriteria,
+      ...(request.role === 'reviewer' ? { constraints: payload.state.constraints } : {}),
     },
     request: { providerRequestId: request.providerRequestId, role: request.role, purpose: request.purpose, contextDigest: request.contextDigest },
     untrustedEvidence: payload.untrustedContext.evidenceItems,
   });
 }
 
-function requestBody(prompt: string, request: ProviderRequest): string {
+function requestBody(prompt: string, request: ProviderRequest, system: string): string {
   return JSON.stringify({
     model: request.modelId,
     max_tokens: request.maxOutputTokens,
     stream: false,
     thinking: { type: 'disabled' },
-    system: SYSTEM_PROMPT,
+    system,
     messages: [{ role: 'user', content: prompt }],
   });
 }
 
 /** Conservative pre-dispatch admission; never guesses an unsupported ceiling. */
-function admit(payload: HostModelTransportPayload, pricing: DeepSeekPricing): Admission {
+function admit(payload: HostModelTransportPayload, pricing: DeepSeekPricing, reviewPrompt?: DeepSeekReviewPrompt): Admission {
   const requestRes = validateProviderRequest(payload.request);
   if (!requestRes.ok) return { ok: false, reason: `INVALID_REQUEST: ${requestRes.errors[0]?.code ?? 'MALFORMED_REQUEST'}` };
   const request = requestRes.value;
+  if ((request.role === 'reviewer' || request.purpose === 'final-review') && (request.role !== 'reviewer' || request.purpose !== 'final-review' || !reviewPrompt)) {
+    return { ok: false, reason: 'REVIEW_PROFILE_REQUIRED: reviewer role, final-review purpose and pinned profile must agree' };
+  }
+  const system = request.role === 'reviewer' ? REVIEW_SYSTEM_TEXT : SYSTEM_PROMPT;
   const { caps } = payload;
   for (const value of [caps.timeoutMs, caps.maxInputTokens, caps.maxOutputTokens, caps.maxBillableTokens]) {
     if (!isNonNegativeInteger(value) || value <= 0) return { ok: false, reason: 'UNSUPPORTED_BOUND: timeout and token bounds must be finite positive integers' };
@@ -143,7 +154,7 @@ function admit(payload: HostModelTransportPayload, pricing: DeepSeekPricing): Ad
   if (!Number.isFinite(caps.maxCostUsd) || caps.maxCostUsd <= 0) return { ok: false, reason: 'UNSUPPORTED_COST_BOUND: a finite positive cost bound is required before dispatch' };
   const prompt = promptFor(payload, request);
   // UTF-8 bytes upper-bound token count, so this bounds input without guessing a tokenizer.
-  const inputBound = Buffer.byteLength(SYSTEM_PROMPT, 'utf8') + Buffer.byteLength(prompt, 'utf8');
+  const inputBound = Buffer.byteLength(system, 'utf8') + Buffer.byteLength(prompt, 'utf8');
   if (inputBound > caps.maxInputTokens) return { ok: false, reason: 'INPUT_TOKENS_UNBOUNDED: prompt exceeds the admitted input-token bound' };
   if (inputBound + request.maxOutputTokens > caps.maxBillableTokens) {
     return { ok: false, reason: 'BILLABLE_BOUND_UNSUPPORTED: admitted billable bound cannot cover the conservative input and output ceiling' };
@@ -152,7 +163,7 @@ function admit(payload: HostModelTransportPayload, pricing: DeepSeekPricing): Ad
   if (!Number.isSafeInteger(ceiling) || ceiling / 1_000_000 > caps.maxCostUsd) {
     return { ok: false, reason: 'COST_BOUND_UNSUPPORTED: conservative ceiling exceeds the admitted cost bound' };
   }
-  return { ok: true, request, body: requestBody(prompt, request) };
+  return { ok: true, request, body: requestBody(prompt, request, system) };
 }
 
 function parseUsage(raw: unknown, pricing: DeepSeekPricing): { readonly ok: true; readonly usage: ProviderUsage } | { readonly ok: false; readonly error: ValidationError } {
@@ -177,7 +188,7 @@ function invalidContent(path: string, code: string, message: string, observedUsa
 }
 
 /** One text block carrying one JSON object; tool calls, extra blocks and reasoning blocks refuse. */
-function parseMessage(raw: unknown, pricing: DeepSeekPricing, request: ProviderRequest): ParsedMessage {
+function parseMessage(raw: unknown, pricing: DeepSeekPricing, request: ProviderRequest, maxOutputBytes?: number): ParsedMessage {
   if (!isRecord(raw)) return invalidContent('message', 'INVALID_TYPE', 'Provider response must be a JSON object');
   const usage = parseUsage(raw['usage'], pricing);
   const observedUsage = usage.ok ? usage.usage : undefined;
@@ -193,6 +204,8 @@ function parseMessage(raw: unknown, pricing: DeepSeekPricing, request: ProviderR
   }
   if (raw['stop_reason'] === 'tool_use') return invalidContent('stop_reason', 'TOOL_CALL_FORBIDDEN', 'Provider requested an unsupported tool call', observedUsage);
   const text = block['text'];
+  if (maxOutputBytes !== undefined && Buffer.byteLength(text, 'utf8') > maxOutputBytes)
+    return invalidContent('content', 'OUTPUT_TOO_LARGE', 'Provider content exceeds the admitted byte bound', observedUsage);
   let contentValue: unknown;
   try {
     contentValue = JSON.parse(text);
@@ -208,10 +221,36 @@ function isTimeout(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'TimeoutError';
 }
 
+async function boundedBody(response: Response, limit: number, timeoutMs: number): Promise<string> {
+  if (!response.body) throw new Error('BODY_MISSING');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let bytes = 0;
+  let text = '';
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('BODY_TIMEOUT')), timeoutMs);
+  });
+  try {
+    while (true) {
+      const chunk = await Promise.race([reader.read(), expired]);
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > limit) throw new Error('BODY_TOO_LARGE');
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    clearTimeout(timer);
+    void reader.cancel().catch(() => undefined);
+  }
+}
+
 export function createDeepSeekTransport(options: DeepSeekTransportOptions): DeepSeekTransport {
   assertPinnedEndpoint(options.endpoint);
   assertHostCredential(options.apiKey);
   const pricing = assertPricing(options.pricing);
+  const reviewPrompt = admitReviewProfile(options.reviewPrompt);
   const fetchFn = options.fetch ?? globalThis.fetch;
   let lastModelIdentity: DeepSeekModelIdentity | undefined;
   const runIdentities = new Map<string, Map<string, DeepSeekModelIdentity>>();
@@ -227,13 +266,16 @@ export function createDeepSeekTransport(options: DeepSeekTransportOptions): Deep
   };
 
   const transport: DeepSeekTransport = {
+    get reviewPrompt() {
+      return reviewPrompt;
+    },
     get lastModelIdentity() {
       return lastModelIdentity;
     },
     identityForRequest,
     identityForRun,
     async execute(payload: HostModelTransportPayload): Promise<DeepSeekTransportResult> {
-      const admission = admit(payload, pricing);
+      const admission = admit(payload, pricing, reviewPrompt);
       if (!admission.ok) return { outcome: 'denied', reason: admission.reason };
 
       let response: Response;
@@ -258,7 +300,7 @@ export function createDeepSeekTransport(options: DeepSeekTransportOptions): Deep
 
       let text: string;
       try {
-        text = await response.text();
+        text = admission.request.role === 'reviewer' && reviewPrompt ? await boundedBody(response, reviewPrompt.maxResponseBytes, payload.caps.timeoutMs) : await response.text();
       } catch {
         return { outcome: 'uncertain', reason: 'PROVIDER_BODY_READ_FAILED: response body unreadable after dispatch' };
       }
@@ -268,7 +310,7 @@ export function createDeepSeekTransport(options: DeepSeekTransportOptions): Deep
       } catch {
         return { outcome: 'invalid', errors: [error('body', 'MALFORMED_JSON', 'Provider response body is not JSON')] };
       }
-      const parsed = parseMessage(body, pricing, admission.request);
+      const parsed = parseMessage(body, pricing, admission.request, admission.request.role === 'reviewer' ? reviewPrompt?.maxOutputBytes : undefined);
       if (!parsed.ok) {
         return parsed.observedUsage === undefined ? { outcome: 'invalid', errors: parsed.errors } : { outcome: 'invalid', errors: parsed.errors, observedUsage: parsed.observedUsage };
       }
@@ -291,5 +333,6 @@ export function createDeepSeekTransport(options: DeepSeekTransportOptions): Deep
   };
   // Defaults are non-enumerable and non-configurable, so an object spread cannot launder the brand.
   Object.defineProperty(transport, DEEPSEEK_TRANSPORT, { value: true });
+  Object.defineProperty(transport, 'reviewPrompt', { value: reviewPrompt, writable: false, configurable: false, enumerable: true });
   return transport;
 }

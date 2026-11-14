@@ -1915,3 +1915,11 @@ for (const mode of ['own-name', 'own-message', 'name-accessor'] as const) {
     assert.equal(s.transport.callCount, 1);
   });
 }
+
+test('ordinary task identifiers remain data while actual protected tokens refuse', () => {
+  for (const ordinary of ['task-independent', JSON.stringify({ taskId: 'task-calc-001' }), '+task-independent']) assert.equal(containsProtectedContent(ordinary), false);
+  for (const secret of ['sk-credential', 'SK-credential', 'token=credential', 'api_key=credential', 'bearer credential', 'MARKER_SECRET', 'SECRET_KEY', 'BEGIN PRIVATE KEY']) {
+    assert.equal(containsProtectedContent(secret), true);
+    assert.equal(containsProtectedContent(`task-independent ${secret}`), true);
+  }
+});
