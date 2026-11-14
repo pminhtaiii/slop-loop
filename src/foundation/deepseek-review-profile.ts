@@ -31,7 +31,7 @@ function isNonNegativeInteger(value: unknown): value is number {
 }
 
 /** Frozen copy of an exactly-shaped, pinned profile; anything else throws before dispatch. */
-export function admitReviewProfile(configured: unknown): DeepSeekReviewPrompt | undefined {
+export function admitReviewProfile(configured: DeepSeekReviewPrompt | undefined): DeepSeekReviewPrompt | undefined {
   if (configured === undefined) return undefined;
   if (
     !isRecord(configured) ||
@@ -45,10 +45,5 @@ export function admitReviewProfile(configured: unknown): DeepSeekReviewPrompt | 
   ) {
     throw new Error('INVALID_REVIEW_PROFILE: pinned template and finite positive byte bounds required');
   }
-  return Object.freeze({
-    version: configured.version,
-    digest: configured.digest,
-    maxOutputBytes: configured.maxOutputBytes,
-    maxResponseBytes: configured.maxResponseBytes,
-  });
+  return Object.freeze({ ...configured });
 }
