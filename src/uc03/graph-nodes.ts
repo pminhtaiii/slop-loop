@@ -50,10 +50,12 @@ export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphC
       if (retained.ok) {
         baselineCandidate = retained.baseline;
         retainedForClarification = true;
-      } else if (config?.mode === 'controlled' && config.generationV02?.agent && !config.generationV02.agentFor) {
-        // The legacy direct controlled graph API permits a caller-seeded answer with no prior
-        // graph invocation. Reproduce and revalidate the baseline on that route. The service
-        // adapter uses generationV02 and remains retained-only, so its resume never reruns checks.
+      } else if (!config?.generationV02?.agentFor) {
+        // Every non-service route (the legacy injected agent, the controlled fixture) permits a
+        // caller-seeded answer with no prior graph invocation. Reproduce and revalidate the baseline
+        // there. Only the service adapter's run-scoped selector is retained-only, so its resume never
+        // reruns checks — and that refusal must not preempt the ask-path refusals below, which are
+        // observable contract: the round cap and the answered-record replay.
         const baselineResult = await investigateBaseline(state.task, ports.repositoryPort, ports.hostAuthority, {
           ...trustedContext,
           executionGuard: guard,
