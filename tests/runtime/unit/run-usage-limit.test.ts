@@ -89,7 +89,7 @@ test('replaces the provisional charge with observed usage and reports an unverif
   limiter.settle(entry, { inputTokens: 120, outputTokens: 40, costUsd: 0.00016, billableTokens: 160 });
   assert.equal(limiter.countersFor('task-1', 'run-1')?.inputTokensCharged, 120);
   assert.equal(limiter.countersFor('task-1', 'run-1')?.outputTokensCharged, 40);
-  assert.deepEqual(limiter.reportFor('call-1'), {
+  assert.deepEqual(limiter.reportFor(entry), {
     callId: 'call-1',
     inputTokens: 120,
     outputTokens: 40,
@@ -110,7 +110,7 @@ test('keeps the full admitted maxima and an unknown usage report without observe
     inputTokensCharged: 30000,
     outputTokensCharged: 8000,
   });
-  assert.deepEqual(limiter.reportFor('call-1'), {
+  assert.deepEqual(limiter.reportFor(entry), {
     callId: 'call-1',
     inputTokens: 'unknown',
     outputTokens: 'unknown',
@@ -126,7 +126,7 @@ test('keys counters per task and run and ignores a settle for a call never admit
   assert.equal(limiter.countersFor('task-1', 'run-a')?.calls, 1);
   assert.equal(limiter.countersFor('task-1', 'run-b')?.calls, 1);
   limiter.settle(call({ callId: 'ghost' }));
-  assert.equal(limiter.reportFor('ghost'), undefined);
+  assert.equal(limiter.reportFor(call({ callId: 'ghost' })), undefined);
   assert.equal(limiter.countersFor('task-1', 'run-a')?.inputTokensCharged, 30000);
   // A settlement for another run's call id has no pending entry and changes no counters.
   limiter.settle(call({ runId: 'run-b', callId: 'a' }), { inputTokens: 1, outputTokens: 1, costUsd: 0, billableTokens: 2 });
@@ -145,6 +145,30 @@ test('keeps an overlapping run at its full maxima when another run settles the s
   assert.deepEqual(limiter.countersFor('task-b', 'run-b'), { taskId: 'task-b', runId: 'run-b', calls: 1, inputTokensCharged: 200, outputTokensCharged: 200 });
   // Run B's reservation is untouched, so its ceiling still holds.
   assert.equal(limiter.admit(call({ taskId: 'task-b', runId: 'run-b', callId: 'second', maxInputTokens: 1, maxOutputTokens: 1 })), false);
+});
+
+test('reports the unknown usage of one overlapping run without showing the other run figures', () => {
+  const limiter = createRunUsageLimiter(LIMITS);
+  const runA = call({ taskId: 'task-a', runId: 'run-a', callId: 'shared' });
+  const runB = call({ taskId: 'task-b', runId: 'run-b', callId: 'shared' });
+  assert.equal(limiter.admit(runA), true);
+  assert.equal(limiter.admit(runB), true);
+  limiter.settle(runA, { inputTokens: 1, outputTokens: 2, costUsd: 0.1, billableTokens: 3 });
+  limiter.settle(runB);
+  assert.deepEqual(limiter.reportFor(runA), { callId: 'shared', inputTokens: 1, outputTokens: 2, costUsd: 0.1, costLabel: 'estimate-unverified' });
+  assert.deepEqual(limiter.reportFor(runB), { callId: 'shared', inputTokens: 'unknown', outputTokens: 'unknown', costUsd: 'unknown', costLabel: 'unknown' });
+});
+
+test('reports each overlapping run its own observed figures for a shared call id', () => {
+  const limiter = createRunUsageLimiter(LIMITS);
+  const runA = call({ taskId: 'task-a', runId: 'run-a', callId: 'shared' });
+  const runB = call({ taskId: 'task-b', runId: 'run-b', callId: 'shared' });
+  assert.equal(limiter.admit(runA), true);
+  assert.equal(limiter.admit(runB), true);
+  limiter.settle(runA, { inputTokens: 1, outputTokens: 2, costUsd: 0.1, billableTokens: 3 });
+  limiter.settle(runB, { inputTokens: 100, outputTokens: 200, costUsd: 20, billableTokens: 300 });
+  assert.deepEqual(limiter.reportFor(runA), { callId: 'shared', inputTokens: 1, outputTokens: 2, costUsd: 0.1, costLabel: 'estimate-unverified' });
+  assert.deepEqual(limiter.reportFor(runB), { callId: 'shared', inputTokens: 100, outputTokens: 200, costUsd: 20, costLabel: 'estimate-unverified' });
 });
 
 test('stops the transport at the call ceiling with zero fetches for the refused call', async () => {

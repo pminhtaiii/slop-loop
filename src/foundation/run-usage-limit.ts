@@ -24,6 +24,9 @@ export interface RunCallAdmission {
   readonly maxOutputTokens: number;
 }
 
+/** The task/run/call identity a charge and its report are keyed by. */
+export type CallUsageIdentity = Pick<RunCallAdmission, 'taskId' | 'runId' | 'callId'>;
+
 export interface RunUsageCounters {
   readonly taskId: string;
   readonly runId: string;
@@ -46,7 +49,8 @@ export interface RunUsageLimiter {
   admit(call: RunCallAdmission): boolean;
   /** Replaces the provisional charge only when observed usage was parsed from a 2xx response. */
   settle(call: RunCallAdmission, usage?: ProviderUsage | undefined): void;
-  reportFor(callId: string): CallUsageReport | undefined;
+  /** The report for one call of one run; the identity is the same one that keys its charge. */
+  reportFor(call: CallUsageIdentity): CallUsageReport | undefined;
   countersFor(taskId: string, runId: string): RunUsageCounters | undefined;
 }
 
@@ -80,8 +84,9 @@ export function createRunUsageLimiter(limits: RunUsageLimits): RunUsageLimiter {
   const reports = new Map<string, CallUsageReport>();
 
   const keyOf = (taskId: string, runId: string): string => JSON.stringify([taskId, runId]);
-  // A charge belongs to one run, so a call id reused by another run never settles it.
-  const chargeKeyOf = (call: RunCallAdmission): string => JSON.stringify([call.taskId, call.runId, call.callId]);
+  // A charge and its report belong to one run, so a call id reused by another run never settles or reports it.
+  const chargeKeyOf = (call: CallUsageIdentity): string => JSON.stringify([call.taskId, call.runId, call.callId]);
+  const unknownReport = (callId: string): CallUsageReport => ({ callId, inputTokens: 'unknown', outputTokens: 'unknown', costUsd: 'unknown', costLabel: 'unknown' });
 
   return {
     admit(call) {
@@ -94,7 +99,7 @@ export function createRunUsageLimiter(limits: RunUsageLimits): RunUsageLimiter {
       if (counters.outputTokens + call.maxOutputTokens > perRunOutputTokens) return false;
       runs.set(key, { calls: counters.calls + 1, inputTokens: counters.inputTokens + call.maxInputTokens, outputTokens: counters.outputTokens + call.maxOutputTokens });
       charges.set(chargeKeyOf(call), { key, inputTokens: call.maxInputTokens, outputTokens: call.maxOutputTokens });
-      reports.set(call.callId, { callId: call.callId, inputTokens: 'unknown', outputTokens: 'unknown', costUsd: 'unknown', costLabel: 'unknown' });
+      reports.set(chargeKeyOf(call), unknownReport(call.callId));
       return true;
     },
     settle(call, usage) {
@@ -111,10 +116,10 @@ export function createRunUsageLimiter(limits: RunUsageLimits): RunUsageLimiter {
           outputTokens: counters.outputTokens - charge.outputTokens + usage.outputTokens,
         });
       }
-      reports.set(call.callId, { callId: call.callId, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUsd: usage.costUsd, costLabel: 'estimate-unverified' });
+      reports.set(chargeKey, { callId: call.callId, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUsd: usage.costUsd, costLabel: 'estimate-unverified' });
     },
-    reportFor(callId) {
-      return reports.get(callId);
+    reportFor(call) {
+      return reports.get(chargeKeyOf(call));
     },
     countersFor(taskId, runId) {
       const counters = runs.get(keyOf(taskId, runId));

@@ -300,7 +300,13 @@ test('replaces the provisional charge with observed 2xx usage and reports an unv
     inputTokensCharged: 120,
     outputTokensCharged: 40,
   });
-  assert.deepEqual(limiter.reportFor('req-a'), { callId: 'req-a', inputTokens: 120, outputTokens: 40, costUsd: 0.00016, costLabel: 'estimate-unverified' });
+  assert.deepEqual(limiter.reportFor({ taskId: 'task-calc-001', runId: 'run-001', callId: 'req-a' }), {
+    callId: 'req-a',
+    inputTokens: 120,
+    outputTokens: 40,
+    costUsd: 0.00016,
+    costLabel: 'estimate-unverified',
+  });
 });
 
 test('keeps the full admitted maxima for every uncertain or usage-less outcome', async () => {
@@ -322,6 +328,10 @@ test('keeps the full admitted maxima for every uncertain or usage-less outcome',
     assert.equal(calls.length, 1, label);
     assert.deepEqual(limiter.countersFor('task-calc-001', 'run-001'), { taskId: 'task-calc-001', runId: 'run-001', calls: 1, inputTokensCharged: 2000, outputTokensCharged: 1000 }, label);
     // Unknown usage is never zero and never labelled as an observed cost.
-    assert.deepEqual(limiter.reportFor('req-a'), { callId: 'req-a', inputTokens: 'unknown', outputTokens: 'unknown', costUsd: 'unknown', costLabel: 'unknown' }, label);
+    assert.deepEqual(
+      limiter.reportFor({ taskId: 'task-calc-001', runId: 'run-001', callId: 'req-a' }),
+      { callId: 'req-a', inputTokens: 'unknown', outputTokens: 'unknown', costUsd: 'unknown', costLabel: 'unknown' },
+      label,
+    );
   }
 });
