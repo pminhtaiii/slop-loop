@@ -224,6 +224,49 @@ test('operation lookup: a structurally corrupt outcome or reconciliation is unkn
   }
 });
 
+test('operation lookup: a self-consistent receipt the canonical validators refuse is unknown', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-canonical-invalid-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const state = new StatePortStore(port.store);
+    const lookup = createJournalOperationLookup(port);
+    const attempt = await port.beginAttempt(claim.claimId, createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }));
+    const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+    assert.deepEqual(await port.recordOutcome(outcome), { outcome: 'settled', receiptId: outcome.receiptId });
+    const outcomePath = state.statePath(context.taskId, `outcome-${outcome.receiptId}.json`);
+    const raw = outcome as unknown as Record<string, unknown>;
+    const rebound = (receipt: Record<string, unknown>): Record<string, unknown> => ({ ...receipt, receiptDigest: computeAttemptOutcomeDigest(receipt) });
+
+    // Each row keeps every binding valid and recomputes its digest, so only canonical receipt
+    // validation can tell it apart from the real commit.
+    const rows: readonly (readonly [string, Record<string, unknown>])[] = [
+      ['an invalid outcome status', rebound({ ...raw, outcome: 'not-an-outcome' })],
+      ['a receipt missing a required field', rebound(Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'versions')))],
+    ];
+    for (const [label, value] of rows) {
+      await state.writeJson(outcomePath, value);
+      assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, `${label} is not a recorded commit`);
+    }
+
+    await state.writeJson(outcomePath, outcome);
+    const weakReconciliation: Record<string, unknown> = {
+      reconciliationId: 'recon-001',
+      reconciliationKind: 'observed-unsettled',
+      predecessorReceiptId: outcome.receiptId,
+      predecessorReceiptDigest: outcome.receiptDigest,
+      admissionDigest: computeAdmissionDigest(context),
+      claimId: claim.claimId,
+      claimDigest: claim.claimDigest,
+      attemptId: attempt.attemptId,
+      evidenceRefs: outcome.evidenceRefs,
+    };
+    await state.writeJson(state.statePath(context.taskId, 'recon-001.json'), { ...weakReconciliation, reconciliationDigest: computeReconciliationDigest(weakReconciliation) });
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, 'a self-consistent reconciliation missing required fields is not a settle');
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
 test('operation lookup: a corrupt entry and any other prefix are unknown, and nothing writes', async () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-corrupt-'));
   try {
