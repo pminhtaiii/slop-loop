@@ -1,5 +1,5 @@
 import { dirname, join } from 'node:path';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
 import type { StoreResponse } from '../../approvals/service-data.ts';
 import {
   type ApprovalRequestRecord,
@@ -102,13 +102,50 @@ export const taskDir = (storageDir: string, taskId: string): string => join(stor
 /** Resolves the storage directory for a decision. */
 export const decisionDir = (storageDir: string, dId: string): string => join(storageDir, 'decisions', dId);
 
-/** Generates initial default ApprovalTaskControl for a newly observed task. */
-export function makeInitialControl(taskId: string): ApprovalTaskControl {
+/** Controlled fallback mapping; real callers pass the task's actual repository/workspace. */
+export const DEFAULT_TASK_MAPPING = { repositoryId: 'default-repo', workspaceId: 'default-ws' } as const;
+
+interface TaskMapping {
+  readonly repositoryId: string;
+  readonly workspaceId: string;
+}
+
+const isApprovalId = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/.test(value);
+
+/**
+ * The actual repository/workspace mapping for a first control write.
+ *
+ * A pending request wins because UC-05 refuses a request whose mapping differs from the
+ * control; otherwise the persisted durable task record supplies the binding. A task with
+ * neither — or with an unreadable record — keeps the controlled seed rather than blocking.
+ */
+export function initialControlMapping(durableStore: DurableStore | undefined, taskId: string, request: TaskMapping | undefined): TaskMapping {
+  if (request !== undefined) return { repositoryId: request.repositoryId, workspaceId: request.workspaceId };
+  const taskPath = durableStore?.getTaskPath(taskId);
+  if (taskPath === undefined || !existsSync(taskPath)) return DEFAULT_TASK_MAPPING;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(taskPath, 'utf8'));
+  } catch {
+    return DEFAULT_TASK_MAPPING;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return DEFAULT_TASK_MAPPING;
+  const { repositoryId, workspaceId } = parsed as Record<string, unknown>;
+  if (typeof repositoryId !== 'string' || !isApprovalId(repositoryId) || typeof workspaceId !== 'string' || !isApprovalId(workspaceId)) return DEFAULT_TASK_MAPPING;
+  return { repositoryId, workspaceId };
+}
+
+/** Generates initial default ApprovalTaskControl for a newly observed task.
+ *
+ * The mapping is the caller's actual task binding. A task-bound UC-05 context cannot be
+ * re-mapped after the fact, so a store without one keeps the controlled fallback.
+ */
+export function makeInitialControl(taskId: string, mapping: { readonly repositoryId: string; readonly workspaceId: string } = DEFAULT_TASK_MAPPING): ApprovalTaskControl {
   return {
     schemaVersion: UC05_APPROVAL_SCHEMA_VERSION,
     taskId,
-    repositoryId: 'default-repo',
-    workspaceId: 'default-ws',
+    repositoryId: mapping.repositoryId,
+    workspaceId: mapping.workspaceId,
     version: 1,
     epoch: 1,
     mode: 'runnable',

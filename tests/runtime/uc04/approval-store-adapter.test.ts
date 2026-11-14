@@ -4,8 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { ApprovalRequestRecord, DecisionEvent, DeveloperDirection, HumanResolution } from '../../../src/contracts/approvals/contracts.ts';
+import { computeActionDigest } from '../../../src/contracts/foundation/uc03.ts';
+import { ApprovalServiceError, createApprovalService } from '../../../src/approvals/service.ts';
+import type { ApprovalStore } from '../../../src/approvals/service.ts';
+import { UC04_SCHEMA_VERSION, type TaskState } from '../../../src/persistence/contracts.ts';
 import { DurableApprovalStore } from '../../../src/persistence/adapters/approval-store-adapter.ts';
 import { DEFAULT_POLICY_PROFILE } from '../../../src/persistence/adapters/approval-types.ts';
+import { DurableStore } from '../../../src/persistence/store.ts';
 
 const actionDigest = `sha256:${'a'.repeat(64)}`;
 const presentationDigest = `sha256:${'b'.repeat(64)}`;
@@ -112,6 +117,71 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
     }
   };
 
+  const interopTaskId = 'task-interop';
+  const interopDecisionId = 'decision-interop';
+  const interopAction = { actionId: 'action-interop', kind: 'run_command' as const, executable: 'pytest', argv: ['-q', 'tests/'], workingDirectory: '/workspace' };
+
+  const taskStateOf = (repositoryId: string, workspaceId: string): TaskState => ({
+    schemaVersion: UC04_SCHEMA_VERSION,
+    taskId: interopTaskId,
+    runId: 'run-interop',
+    repositoryId,
+    workspaceId,
+    taskType: 'feature',
+    goal: 'g',
+    acceptanceCriteria: ['c'],
+    constraints: [],
+    plan: [{ id: 's-1', title: 'Step', description: 'First', status: 'todo' }],
+    currentStepIndex: 0,
+    status: 'pending',
+    stateVersion: 1,
+    budgetLedgers: [],
+    workspaceBaseline: { commitHash: 'abcdef1234567890', branch: 'feature', isClean: true, trackedFilesHash: 'hash' },
+    changedFiles: [],
+    openRisks: [],
+    nextAction: 'start',
+  });
+
+  const contextOf = (repositoryId: string, workspaceId: string): unknown => ({
+    action: interopAction,
+    runId: 'run-interop',
+    freshness: {
+      currentTaskId: interopTaskId,
+      currentWorkspaceId: workspaceId,
+      currentRepositoryRevisionDigest: repoDigest,
+      currentPolicyId: DEFAULT_POLICY_PROFILE.policyIdentity.policyId,
+      currentPolicyVersion: DEFAULT_POLICY_PROFILE.policyIdentity.policyVersion,
+      currentNormalizedActionDigest: computeActionDigest(interopAction),
+    },
+    elements: { action: 'Run focused tests', necessity: 'Verify', targets: ['tests/test_x.py'], consequences: 'Runs tests', verificationStatus: 'Not executed' },
+    facts: {
+      taskId: interopTaskId,
+      repositoryId,
+      workspaceId,
+      repositoryRevisionDigest: repoDigest,
+      policyIdentity: DEFAULT_POLICY_PROFILE.policyIdentity,
+      registeredActionDigest: computeActionDigest(interopAction),
+      continuationRef: 'continuation-interop',
+      role: 'coder',
+      safety: { workspaceContained: true, protectedContentAbsent: true, hiddenGradingAbsent: true, policyBypassAbsent: true, testsPreserved: true, commandSourceWritesAbsent: true, isolated: true },
+      command: { executableRef: 'tests', resolvedExecutable: 'pytest', workingDirectoryRef: 'repository-root', workingDirectory: '/workspace', constrainedCapability: 'constrained-tests' },
+      patch: null,
+      plan: null,
+    },
+  });
+
+  const bindingOf = () => ({
+    decisionId: interopDecisionId,
+    actionKind: 'action' as const,
+    normalizedActionDigest: computeActionDigest(interopAction),
+    taskId: interopTaskId,
+    workspaceId: 'workspace-1',
+    repositoryRevisionDigest: repoDigest,
+    policyId: DEFAULT_POLICY_PROFILE.policyIdentity.policyId,
+    policyVersion: DEFAULT_POLICY_PROFILE.policyIdentity.policyVersion,
+    status: 'pending' as const,
+  });
+
   await t.test('loads initial task control and creates pending approval', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
     const initial = store.loadTaskControl(taskId);
@@ -126,7 +196,8 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
       event: sampleEvent,
     });
 
-    assert.equal(pendingRes.safe.outcome, 'ok');
+    assert.equal(pendingRes.safe.outcome, 'pending');
+    assert.equal(pendingRes.safe.eventRef, sampleEvent.eventId);
     assert.equal(pendingRes.value?.decisionId, decisionId);
 
     const afterPause = store.loadTaskControl(taskId);
@@ -430,10 +501,13 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
   await t.test('first pending creation continues control from the created default', () => {
     withFreshStore('uc05-approval-first-pending-', (_dir, store) => {
       const res = store.createPendingAndPause({ request: sampleRequest, event: sampleEvent });
-      assert.equal(res.safe.outcome, 'ok');
+      assert.equal(res.safe.outcome, 'pending');
       assert.equal(res.safe.safeReasonCode, 'pending-created');
+      assert.equal(res.safe.eventRef, sampleEvent.eventId);
       const control = store.loadTaskControl(taskId).value;
+      // The first control takes the request's actual mapping, not the controlled seed.
       assert.deepEqual([control?.mode, control?.version, control?.pendingDecisionId], ['waiting', 2, decisionId]);
+      assert.deepEqual([control?.repositoryId, control?.workspaceId], ['repo-1', 'workspace-1']);
     });
   });
 
@@ -491,5 +565,121 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
   await t.test('throws when invalid policy profile is supplied', () => {
     assert.throws(() => new DurableApprovalStore({ storageDir: tempDir, profile: null }), /Invalid policy profile/);
     assert.throws(() => new DurableApprovalStore({ storageDir: tempDir, profile: '' }), /Invalid policy profile/);
+  });
+
+  await t.test('reports a missing decision as invalid/unknown-decision for the UC-05 request path', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+    const missing = store.readRequest('decision-absent');
+    assert.equal(missing.safe.outcome, 'invalid');
+    assert.equal(missing.safe.safeReasonCode, 'unknown-decision');
+    assert.equal(missing.value, null);
+  });
+
+  await t.test('acknowledges a committed resolution and direction with their event ids', () => {
+    withFreshStore('uc05-approval-receipt-events-', (_dir, store) => {
+      const task = 'task-receipt-events';
+      const pending = 'decision-receipt-events';
+      const pendingEvent = eventOf({ eventId: 'event-receipt-request', taskId: task, decisionId: pending });
+      const created = store.createPendingAndPause({ request: requestFor(task, pending), event: pendingEvent });
+      assert.equal(created.safe.outcome, 'pending');
+      assert.equal(created.safe.eventRef, pendingEvent.eventId);
+
+      const resolutionEvent = eventOf({ eventId: 'event-receipt-resolution', taskId: task, decisionId: pending, type: 'human-resolution-recorded', outcome: 'ok' });
+      const resolved = store.resolvePending({
+        expectedControlVersion: created.safe.controlVersion,
+        expectedRequestVersion: 1,
+        trustedOperator,
+        trustedResponse: { ...resolutionOf('response-receipt', resolutionEvent.eventId), decisionId: pending },
+        event: resolutionEvent,
+      });
+      assert.equal(resolved.safe.outcome, 'ok');
+      assert.equal(resolved.safe.eventRef, resolutionEvent.eventId);
+
+      const directionEvent = eventOf({
+        eventId: 'event-receipt-direction',
+        taskId: task,
+        decisionId: null,
+        directionId: 'dir-receipt',
+        type: 'developer-direction-recorded',
+        outcome: 'ok',
+      });
+      const directed = store.recordDirection({
+        direction: {
+          schemaVersion: 'uc05-approval/0.1-draft',
+          directionId: 'dir-receipt',
+          taskId: task,
+          expectedVersion: resolved.safe.controlVersion,
+          expectedEpoch: resolved.safe.controlVersion,
+          direction: 'resume',
+          safeScopeRef: 'scope-receipt',
+          responseKey: 'response-key-receipt',
+          createdAt: '2026-10-26T07:10:00.000Z',
+        },
+        trustedOperator,
+        event: directionEvent,
+      });
+      assert.equal(directed.safe.outcome, 'ok');
+      assert.equal(directed.safe.eventRef, directionEvent.eventId);
+    });
+  });
+
+  await t.test('UC-05 service accepts the file-backed store for a task-bound request', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uc05-approval-interop-'));
+    try {
+      const durable = new DurableStore(dir);
+      const approvals = new DurableApprovalStore({ storageDir: dir, durableStore: durable });
+      await durable.saveTask(taskStateOf('repo-1', 'workspace-1'));
+      const service = createApprovalService({
+        taskId: interopTaskId,
+        profile: DEFAULT_POLICY_PROFILE,
+        store: approvals as unknown as ApprovalStore,
+        context: { loadForAction: async () => contextOf('repo-1', 'workspace-1'), loadForDecision: async () => contextOf('repo-1', 'workspace-1') },
+        operator: { identity: { actorId: 'operator-1', channelRef: 'host-1', provenance: 'real' } },
+        now: () => '2026-11-14T00:00:00.000Z',
+      });
+
+      const binding = await service.requestDecision(bindingOf());
+      assert.equal(binding.decisionId, interopDecisionId);
+      assert.equal(binding.status, 'pending');
+
+      const control = approvals.loadTaskControl(interopTaskId).value;
+      assert.deepEqual([control?.mode, control?.repositoryId, control?.workspaceId], ['waiting', 'repo-1', 'workspace-1']);
+
+      const stored = approvals.readRequest(interopDecisionId);
+      assert.equal(stored.safe.outcome, 'ok');
+      assert.equal(stored.safe.eventRef, null, 'a read carries no write acknowledgement');
+
+      const events = approvals.readEvents(interopTaskId).value ?? [];
+      assert.equal(events.filter(event => event.type === 'approval-request-created').length, 1);
+      assert.equal(events.find(event => event.type === 'approval-request-created')?.decisionId, interopDecisionId);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('UC-05 service refuses a context whose mapping differs from the control', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uc05-approval-mapping-'));
+    try {
+      const durable = new DurableStore(dir);
+      const approvals = new DurableApprovalStore({ storageDir: dir, durableStore: durable });
+      await durable.saveTask(taskStateOf('repo-1', 'workspace-1'));
+      const service = createApprovalService({
+        taskId: interopTaskId,
+        profile: DEFAULT_POLICY_PROFILE,
+        store: approvals as unknown as ApprovalStore,
+        context: { loadForAction: async () => contextOf('repo-2', 'workspace-1'), loadForDecision: async () => contextOf('repo-2', 'workspace-1') },
+        operator: { identity: { actorId: 'operator-1', channelRef: 'host-1', provenance: 'real' } },
+        now: () => '2026-11-14T00:00:00.000Z',
+      });
+
+      await assert.rejects(
+        service.requestDecision(bindingOf()),
+        (error: unknown) => error instanceof ApprovalServiceError && error.outcome === 'stale' && error.reasonCode === 'changed-repository-mapping',
+      );
+      assert.equal(approvals.readRequest(interopDecisionId).safe.safeReasonCode, 'unknown-decision');
+      assert.equal(approvals.loadTaskControl(interopTaskId).value?.mode, 'runnable');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
