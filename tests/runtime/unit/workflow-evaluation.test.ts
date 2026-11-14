@@ -2099,6 +2099,7 @@ test('a private verdict is bound to its case id and exact graded observation con
   };
   await produceWorkflowEvidence({
     caseId: 'C01',
+    mode: 'mock',
     task: createFixtureBugTask(),
     result: { outcome: 'pending-approval', state: null, reasons: [], milestones: [] },
     observation,
@@ -2106,12 +2107,84 @@ test('a private verdict is bound to its case id and exact graded observation con
     host: { grader, finalTree: { freezeFinalTree: () => ({}), recheckCurrentFinalTree: () => ({}) } },
   });
 
-  const stored = workflowEvidenceDecision('C01', observation);
+  const stored = workflowEvidenceDecision('C01', 'mock', observation);
   assert.ok(stored, 'the graded case returns the verdict it earned');
-  assert.equal(workflowEvidenceDecision('C02', observation), undefined, 'another case cannot borrow it');
-  assert.equal(workflowEvidenceDecision('C01', validateWorkflowObservation(observation)), undefined, 'a copied observation cannot borrow it');
+  assert.equal(workflowEvidenceDecision('C02', 'mock', observation), undefined, 'another case cannot borrow it');
+  assert.equal(workflowEvidenceDecision('C01', 'mock', validateWorkflowObservation(observation)), undefined, 'a copied observation cannot borrow it');
 
   // Mutating a graded field on the same object voids the verdict instead of silently reusing it.
   (observation as { runId: string | null }).runId = 'run-002';
-  assert.equal(workflowEvidenceDecision('C01', observation), undefined);
+  assert.equal(workflowEvidenceDecision('C01', 'mock', observation), undefined);
+});
+
+test('a mock-run verdict cannot answer the same observation in a real-tier evaluation', async () => {
+  // CR4-01: the store is keyed by case and observation contents; without the mode a mock verdict
+  // would outrank the real tier's own not-run fallback for an admitted real case.
+  const binding = {
+    profileDigest: digest('mode-profile'),
+    configDigest: digest('mode-config'),
+    pricingDigest: digest('mode-pricing'),
+    adapterVersions: ['mode-adapter-1'],
+    caseIds: ['C02'],
+    requestedModel: 'deepseek-v4.1',
+  };
+  const observation = {
+    repositoryId: 'repo-mode-evidence',
+    taskId: 'task-mode-evidence',
+    runId: 'run-mode-evidence',
+    returnedModel: 'deepseek-v4.1',
+    graderDigest: digest('grader-mode-evidence'),
+    initialRepositoryDigest: digest('initial-mode-evidence'),
+    workflowOutcome: 'waiting-info' as const,
+    expectedWait: 'waiting-info' as const,
+    blocked: null,
+    effects: 'observed' as const,
+    usage: 'observed' as const,
+    diagnostic: null,
+    artifacts: [],
+    limitations: [],
+  };
+  const mockGrader: SnapshotGrader = {
+    grade: async (caseId: string): Promise<SnapshotGradeResult> => ({
+      caseId: caseId as Exclude<SnapshotGradeResult['caseId'], null>,
+      criterionId: null,
+      grade: 'not-run' as const,
+      reason: 'busy' as const,
+      evidenceIds: [],
+      snapshot: null,
+      evidenceDigest: null,
+      criteriaDigest: digest('criteria'),
+      limitations: [],
+    }),
+  };
+  await produceWorkflowEvidence({
+    caseId: 'C02',
+    mode: 'mock',
+    task: createFixtureBugTask(),
+    result: { outcome: 'pending-approval', state: null, reasons: [], milestones: [] },
+    observation,
+    repository: undefined,
+    host: { grader: mockGrader, finalTree: { freezeFinalTree: () => ({}), recheckCurrentFinalTree: () => ({}) } },
+  });
+
+  assert.equal(workflowEvidenceDecision('C02', 'mock', observation)?.reason, 'busy', 'the mock run returns its own verdict');
+  assert.equal(workflowEvidenceDecision('C02', 'real', observation), undefined, 'a mock verdict cannot cross into the real tier');
+
+  const report = await runEvaluation({
+    contractVersion: WORKFLOW_EVALUATION_VERSION,
+    mode: 'real',
+    cases: ['C02'],
+    profileDigest: binding.profileDigest,
+    configDigest: binding.configDigest,
+    pricingDigest: binding.pricingDigest,
+    adapterVersions: binding.adapterVersions,
+    requestedModel: binding.requestedModel,
+    realAdmission: issueRealExecutionAdmission(binding),
+    driver: { executeCase: async () => observation },
+    timestamp: '2026-11-13T00:00:00.000Z',
+  });
+  assert.ok('selectionResult' in report);
+  if (!('selectionResult' in report)) return;
+  assert.equal(report.cases[0]?.grade, 'not-run');
+  assert.equal(report.cases[0]?.gradeReason, 'private-grading', 'the real tier keeps its own not-run fallback');
 });

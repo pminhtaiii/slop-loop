@@ -652,3 +652,63 @@ test('the coder agent exhaustion codes count only in the whole-code envelope the
     assert.equal(budgetStopEvidence([`${code}: preceding text`]), false, `${code} must not match as a substring`);
   }
 });
+
+test('a plan-generation budget stop at Investigate is withheld completion, and without the stop it derives nothing', async () => {
+  // CR4-05: plan generation exhausting at Investigate leaves the owner there with no patch; the
+  // stop evidence is what makes that a certifiable patch-free halt rather than an unknown state.
+  const task = createFixtureBugTask();
+  const state = createFixtureTaskState({ node: 'Investigate', nextAction: 'propose-fix-plan', taskContext: task });
+  const testFiles = [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }];
+  const firstCheck = task.requiredChecks[0];
+  assert.ok(firstCheck);
+  const retainedBaseline = {
+    taskId: task.taskId,
+    workspaceId: state.workspaceId,
+    repositoryId: task.repositoryId,
+    repositorySnapshotDigest: task.initialRevisionDigest,
+    acceptanceCriteria: task.acceptanceCriteria,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    requiredChecks: task.requiredChecks,
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    reproductionCheckId: firstCheck.checkId,
+    expectedPassingCheckIds: [],
+    expectedTestFiles: resolveExpectedTestFiles(task),
+    testProtectionDigest: computeTestProtectionDigest(testFiles),
+    reproductionFailureSignature: 'reproduced failure',
+    checkResults: task.requiredChecks.map(check => ({ checkId: check.checkId, outcome: 'fail' as const })),
+  };
+  const stopped = observation({
+    repositoryId: task.repositoryId,
+    taskId: task.taskId,
+    runId: state.runId,
+    initialRepositoryDigest: task.initialRevisionDigest,
+    workflowOutcome: 'INCOMPLETE',
+    effects: 'observed',
+  });
+  const freeze = async (binding: object) => ({ ...binding, snapshotId: 'final-investigate', complete: true, files: testFiles });
+  const derive = (reasons: readonly string[]) =>
+    deriveWorkflowEvidenceFacts({
+      caseId: 'C04',
+      task,
+      result: { outcome: 'INCOMPLETE', state, milestones: [], reasons, executionEvidence: { finalState: state } },
+      observation: stopped,
+      repository: { inspectDiff: async () => ({ diff: '', diffDigest: computeCanonicalSha256(''), changedFiles: [] }) },
+      finalTree: { freezeFinalTree: freeze, recheckCurrentFinalTree: freeze },
+      retainedBaseline,
+    });
+
+  const facts = await derive(['REAL_PROFILE_GENERATION_INVALID: MODEL_CALL_BUDGET_EXHAUSTED']);
+  assert.ok(facts, 'a plan-generation budget stop at Investigate must still derive its snapshot facts');
+  assert.equal(facts.evidence.speculativePatchApplied, false, 'Investigate holds no patch');
+  assert.equal(facts.evidence.stoppedBeforeEffect, true);
+  assert.equal(facts.evidence.completionWithheld, true);
+  assert.equal((await derive(['REAL_PROFILE_GENERATION_INVALID: ACTIVE_TIME_BUDGET_EXHAUSTED']))?.evidence.completionWithheld, true);
+
+  // An Investigate state with no budget evidence is an unexplained halt: no facts, so no evidence
+  // digest exists and the run can never reach an exhaustion grade.
+  assert.equal(await derive([]), undefined);
+  assert.equal(await derive(['No plan was produced']), undefined, 'a non-budget refusal is not exhaustion');
+  // With the derived evidence the same observation earns the exhaustion pass.
+  const graded = await grader({ criteria: criteria([criterion('C04', 'exhaustion')]) }).grade('C04', { observation: stopped, snapshot: facts.snapshot, evidence: facts.evidence });
+  assert.equal(graded.grade, 'pass');
+});

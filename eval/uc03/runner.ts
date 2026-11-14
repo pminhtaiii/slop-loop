@@ -174,7 +174,7 @@ async function runWorkflowEvaluation(options: unknown): Promise<WorkflowEvaluati
         continue;
       }
       try {
-        const independentGrade = workflowEvidenceDecision(spec.caseId, observation);
+        const independentGrade = workflowEvidenceDecision(spec.caseId, request.mode, observation);
         cases.push(workflowCaseResult(spec, validateWorkflowObservation(observation), binding, independentGrade));
       } catch {
         cases.push(notRunWorkflowCase(spec, 'invalid-observation', 'Workflow driver returned an invalid observation.', binding));

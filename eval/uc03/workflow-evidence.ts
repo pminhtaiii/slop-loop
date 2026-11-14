@@ -5,7 +5,7 @@ import type { BaselineEvidenceCandidate } from '../../src/uc03/investigation.ts'
 import { deriveWorkflowEvidenceFacts, parseWorkflowFinalTree, type DerivedWorkflowFacts, type FinalTreeBinding, type TrustedFinalTreeSnapshotPort } from './workflow-evidence-facts.ts';
 import { isSnapshotGradeCurrent, type SnapshotGradeResult, type SnapshotGrader } from './workflow-grade.ts';
 import { validateWorkflowObservation } from './validation.ts';
-import type { EvaluationSnapshotIdentity, WorkflowGrade, WorkflowObservation, WorkflowReason } from './types.ts';
+import type { EvaluationMode, EvaluationSnapshotIdentity, WorkflowGrade, WorkflowObservation, WorkflowReason } from './types.ts';
 import type { UC03WorkflowResult } from '../../src/uc03/graph-types.ts';
 
 export type { DerivedWorkflowFacts, FinalTreeBinding, TrustedFinalTreeSnapshotPort, WorkflowFinalTreeSnapshot } from './workflow-evidence-facts.ts';
@@ -40,11 +40,11 @@ export interface WorkflowGradeDecision {
   readonly limitations: readonly string[];
 }
 
-const decisions = new WeakMap<object, Readonly<{ caseId: string; fingerprint: string; decision: WorkflowGradeDecision }>>();
+const decisions = new WeakMap<object, Readonly<{ caseId: string; mode: EvaluationMode; fingerprint: string; decision: WorkflowGradeDecision }>>();
 
-/** The graded inputs, so a mutated or reused observation object cannot inherit the stored verdict. */
-function remember(key: object, caseId: string, graded: unknown, decision: WorkflowGradeDecision): void {
-  decisions.set(key, Object.freeze({ caseId, fingerprint: computeCanonicalSha256(graded), decision }));
+/** The evaluation mode and graded inputs, so a mock-run verdict can never answer a real-tier case. */
+function remember(key: object, caseId: string, mode: EvaluationMode, graded: unknown, decision: WorkflowGradeDecision): void {
+  decisions.set(key, Object.freeze({ caseId, mode, fingerprint: computeCanonicalSha256(graded), decision }));
 }
 
 function decisionFrom(result: SnapshotGradeResult, caseId: string, snapshot?: EvaluationSnapshotIdentity, evidenceDigest?: string): WorkflowGradeDecision | undefined {
@@ -85,6 +85,7 @@ async function notRunDecision(grader: SnapshotGrader, caseId: string, reason: st
 /** Grades the exact observation before it crosses the driver boundary and stores only its safe verdict privately. */
 export async function produceWorkflowEvidence(input: {
   readonly caseId: string;
+  readonly mode: EvaluationMode;
   readonly task: BugTask;
   readonly result: UC03WorkflowResult;
   readonly observation: WorkflowObservation;
@@ -117,13 +118,14 @@ export async function produceWorkflowEvidence(input: {
       retainedBaseline: input.retainedBaseline,
     });
   } catch {
-    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'Host evidence could not be validated.'));
+    remember(key, input.caseId, input.mode, observation, await notRunDecision(input.host.grader, input.caseId, 'Host evidence could not be validated.'));
     return;
   }
   if (!facts) {
     remember(
       key,
       input.caseId,
+      input.mode,
       observation,
       await notRunDecision(input.host.grader, input.caseId, 'Required task, snapshot, diff, protected-test, check, review or patch-effect evidence was missing or inconsistent.'),
     );
@@ -133,12 +135,12 @@ export async function produceWorkflowEvidence(input: {
   try {
     grade = await input.host.grader.grade(input.caseId, { observation, snapshot: facts.snapshot, evidence: facts.evidence });
   } catch {
-    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'The independent snapshot grader failed.'));
+    remember(key, input.caseId, input.mode, observation, await notRunDecision(input.host.grader, input.caseId, 'The independent snapshot grader failed.'));
     return;
   }
   const decision = decisionFrom(grade, input.caseId, facts.snapshot, facts.evidence.digest);
   if (!decision) {
-    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'The snapshot grader returned an invalid or stale receipt.'));
+    remember(key, input.caseId, input.mode, observation, await notRunDecision(input.host.grader, input.caseId, 'The snapshot grader returned an invalid or stale receipt.'));
     return;
   }
 
@@ -156,7 +158,7 @@ export async function produceWorkflowEvidence(input: {
       facts.snapshot,
     );
   } catch {
-    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'The final snapshot could not be stability-checked after grading.'));
+    remember(key, input.caseId, input.mode, observation, await notRunDecision(input.host.grader, input.caseId, 'The final snapshot could not be stability-checked after grading.'));
     return;
   }
   const binding: FinalTreeBinding = {
@@ -169,18 +171,18 @@ export async function produceWorkflowEvidence(input: {
   };
   const checkedTree = parseWorkflowFinalTree(rechecked, binding);
   if (!checkedTree || checkedTree.snapshot.snapshotId !== facts.snapshot.snapshotId || checkedTree.snapshot.digest !== facts.snapshot.digest) {
-    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'The final tree changed while the independent grade was being produced.'));
+    remember(key, input.caseId, input.mode, observation, await notRunDecision(input.host.grader, input.caseId, 'The final tree changed while the independent grade was being produced.'));
     return;
   }
-  remember(key, input.caseId, observation, decision);
+  remember(key, input.caseId, input.mode, observation, decision);
 }
 
 /**
- * Object identity plus the exact graded inputs: a copied observation, a case switch or a mutated
- * `workflowOutcome`/`runId` on the same object yields no verdict.
+ * Object identity, evaluation mode plus the exact graded inputs: a copied observation, a case or
+ * mode switch, or a mutated `workflowOutcome`/`runId` on the same object yields no verdict.
  */
-export function workflowEvidenceDecision(caseId: string, observation: unknown): WorkflowGradeDecision | undefined {
+export function workflowEvidenceDecision(caseId: string, mode: EvaluationMode, observation: unknown): WorkflowGradeDecision | undefined {
   if (typeof observation !== 'object' || observation === null) return undefined;
   const stored = decisions.get(observation);
-  return stored !== undefined && stored.caseId === caseId && stored.fingerprint === computeCanonicalSha256(observation) ? stored.decision : undefined;
+  return stored !== undefined && stored.caseId === caseId && stored.mode === mode && stored.fingerprint === computeCanonicalSha256(observation) ? stored.decision : undefined;
 }

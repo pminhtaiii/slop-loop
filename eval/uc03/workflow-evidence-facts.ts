@@ -282,7 +282,7 @@ function reviewFacts(evidence: UC03ExecutionEvidence, state: TaskState, diffDige
 
 function completionWasWithheld(result: UC03WorkflowResult, state: TaskState): boolean | undefined {
   if (state.outcome === 'COMPLETED' || result.finalReport?.isComplete === true) return false;
-  if (['NeedsInfo', 'AwaitPlan', 'AwaitFeedback', 'Repair', 'Verify', 'Incomplete'].includes(state.node)) return true;
+  if (['Investigate', 'NeedsInfo', 'AwaitPlan', 'AwaitFeedback', 'Repair', 'Verify', 'Incomplete'].includes(state.node)) return true;
   return undefined;
 }
 

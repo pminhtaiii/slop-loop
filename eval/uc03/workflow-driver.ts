@@ -164,7 +164,7 @@ export async function observeAndGradeWorkflowResult(
       });
       if (retained.ok) retainedBaseline = retained.baseline;
     }
-    await produceWorkflowEvidence({ caseId: host.entry.caseId, task: host.task, result, observation, repository, statePort: ports?.statePort, host: host.workflowEvidence, retainedBaseline });
+    await produceWorkflowEvidence({ caseId: host.entry.caseId, mode, task: host.task, result, observation, repository, statePort: ports?.statePort, host: host.workflowEvidence, retainedBaseline });
   }
   return observation;
 }
