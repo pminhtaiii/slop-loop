@@ -24,6 +24,9 @@ export function stageForNode(node: TaskState['node'] | undefined): DiagnosticSta
 
 const CODER_REFUSAL_PREFIX = 'REAL_PROFILE_GENERATION_INVALID: ';
 
+/** Emitted by `executeReplan` (`replan.ts`) ahead of its opaque owner operationRef; everything after it is uninterpretable text. */
+const UNCERTAIN_OWNER_MARKER = 'replan-owner-outcome-uncertain';
+
 /** Exact coder-boundary codes (the agent's own bounded vocabulary, never exception text) and the category each one observes. */
 const CODER_REFUSALS: readonly { readonly match: RegExp; readonly component: DiagnosticComponent; readonly attribution: 'model' | 'tool' | 'environment'; readonly reasonCode: string }[] = [
   { match: /^PROPOSAL_INVALID:[A-Z_]{1,64}$/u, component: 'model-output', attribution: 'model', reasonCode: 'coder-proposal-invalid' },
@@ -32,6 +35,8 @@ const CODER_REFUSALS: readonly { readonly match: RegExp; readonly component: Dia
 ];
 
 function coderRefusal(reasons: readonly string[]): (typeof CODER_REFUSALS)[number] | undefined {
+  // An uncertain owner outcome carries an opaque operationRef; scanning it would attribute an unobserved failure.
+  if (reasons.includes(UNCERTAIN_OWNER_MARKER)) return undefined;
   for (const reason of reasons) {
     if (!reason.startsWith(CODER_REFUSAL_PREFIX)) continue;
     const code = reason.slice(CODER_REFUSAL_PREFIX.length);

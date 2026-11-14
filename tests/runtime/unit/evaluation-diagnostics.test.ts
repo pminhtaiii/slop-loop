@@ -1,12 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ApprovalPort, ModelPort, RepositoryPort, StatePort } from '../../../src/contracts/foundation/uc03.ts';
+import {
+  computeCanonicalSha256,
+  computeCheckSetDigest,
+  type ApprovalPort,
+  type BudgetLedger,
+  type FixPlan,
+  type ModelPort,
+  type RepositoryPort,
+  type StatePort,
+} from '../../../src/contracts/foundation/uc03.ts';
 import { DIAGNOSTIC_ATTRIBUTIONS, DIAGNOSTIC_COMPONENTS, DIAGNOSTIC_STAGES, createEvaluationDiagnostic } from '../../../src/runtime/evaluation-diagnostics.ts';
 import { runUC03Graph, type UC03GraphPorts } from '../../../src/uc03/graph.ts';
 import { diagnosticForOutcome } from '../../../src/uc03/graph-diagnostics.ts';
+import { executeReplan } from '../../../src/uc03/repair.ts';
 import { createGraphTaskState } from '../support/uc03/graph-fixtures.ts';
-import { createFixtureBugTask } from '../support/uc03/port-fixtures.ts';
+import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
+import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 
 const SECRET = `sk-${'a'.repeat(24)}`;
 const ABSOLUTE_PATH = 'C:/Users/taiph/.ssh/id_rsa';
@@ -218,4 +229,70 @@ test('unrecognized or unprefixed coder reasons stay workflow/unknown/route-incom
     const diagnostic = refused(...reasons);
     assert.deepEqual([diagnostic?.component, diagnostic?.attribution, diagnostic?.attributionConfidence, diagnostic?.reasonCode], ['workflow', 'unknown', 'unknown', 'route-incomplete']);
   }
+});
+
+/* MCR3-01: the opaque operationRef behind `replan-owner-outcome-uncertain` is never a coder refusal. */
+
+test('uncertain replan operation references are never classified as coder refusals', () => {
+  for (const code of ['PROPOSAL_INVALID:MALFORMED_JSON', 'TOOL_ERROR', 'MODEL_ERROR']) {
+    const diagnostic = refused('replan-owner-outcome-uncertain', `REAL_PROFILE_GENERATION_INVALID: ${code}`);
+    assert.deepEqual([diagnostic?.component, diagnostic?.attribution, diagnostic?.attributionConfidence, diagnostic?.reasonCode], ['workflow', 'unknown', 'unknown', 'route-incomplete'], code);
+    assert.equal(JSON.stringify(diagnostic).includes('coder-'), false, code);
+  }
+});
+
+test('a real coder refusal without the uncertainty marker still maps to its category', () => {
+  const diagnostic = refused('replan-owner-outcome-uncertain-but-different', 'Incomplete verification', 'REAL_PROFILE_GENERATION_INVALID: MODEL_ERROR');
+  assert.deepEqual([diagnostic?.component, diagnostic?.attribution, diagnostic?.reasonCode], ['provider', 'environment', 'coder-dispatch-failed']);
+});
+
+test('an uncertain replan driven through the real producer yields a workflow/unknown diagnostic', async () => {
+  const task = createFixtureBugTask();
+  const strategy = 'Check divisor == 0 before division';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Calculator.divide does not check the divisor',
+    suspectedCauseLocations: ['src/calculator.py:3'],
+    evidenceRefs: ['evi-repro-001'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-001',
+  };
+  const ledger = (kind: string, limit: number, unit: string): BudgetLedger => ({ scope: 'task', kind, limit, consumed: 0, reservations: [], unit, configurationId: 'config-v1', version: 1 });
+  const state = createFixtureTaskState({
+    stateVersion: 2,
+    node: 'Repair',
+    plan,
+    activeDecisionId: plan.decisionRef,
+    taskContext: task,
+    budgetLedgers: [ledger('replan', 3, 'count'), ledger('repair', 2, 'count'), ledger('tokens', 100_000, 'count'), ledger('cost', 5, 'usd')],
+  });
+  const changed = 'Check divisor == 0 and raise CalculationError';
+  const operationRef = 'REAL_PROFILE_GENERATION_INVALID: MODEL_ERROR';
+  const result = await executeReplan(
+    { taskId: state.taskId, candidatePlan: { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) }, proposalId: 'prop-mcr3-01' },
+    {
+      statePort: new MemoryStatePortV02({ initialTaskState: state }),
+      trustedDirection: {
+        directive: 'revise',
+        taskId: state.taskId,
+        workspaceId: state.workspaceId,
+        repositoryRevisionDigest: state.repositoryRevisionDigest,
+        stateVersion: state.stateVersion,
+        planVersion: state.planVersion,
+        rejectedDecisionId: plan.decisionRef ?? '',
+        strategyDigest: plan.strategyDigest,
+      },
+      replanPort: { provenance: 'mock', accept: async () => ({ outcome: 'uncertain' as const, operationRef }) },
+    },
+  );
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.deepEqual(result.reasons, ['replan-owner-outcome-uncertain', operationRef]);
+  const diagnostic = diagnosticForOutcome({ terminalOutcome: 'INCOMPLETE', reasons: result.reasons, state } as never).diagnostic;
+  assert.deepEqual([diagnostic?.component, diagnostic?.attribution, diagnostic?.attributionConfidence, diagnostic?.reasonCode], ['workflow', 'unknown', 'unknown', 'route-incomplete']);
+  assert.equal(diagnostic?.effects, 'unknown');
+  assert.ok(diagnostic?.limitations.some(limitation => limitation.includes('was not observed')));
 });
