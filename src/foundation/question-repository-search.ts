@@ -20,26 +20,18 @@ export interface SearchOperationContext {
 
 export async function searchLiteralGuarded(
   context: SearchOperationContext,
-  request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string },
+  request: { readonly query: string; readonly pathPrefix: string | undefined; readonly cursor: SearchCursor | undefined },
   control: QuestionRepositoryOperationControl,
 ): Promise<SearchPageV1> {
   const bindingFailure = await context.snapshotReader.checkBinding(control);
   if (bindingFailure) return bindingFailure;
   const admitted = await context.snapshotReader.ensureSnapshot(control);
   if (isFailure(admitted)) return admitted;
-  const prefix = request.pathPrefix ?? undefined;
+  const { pathPrefix: prefix, cursor } = request;
+  if (cursor && !matchesSnapshot(cursor, admitted)) return failure('invalid', 'invalid-cursor');
   if (prefix !== undefined && !admitted.directoryChildren.has(prefix)) return failure('denied', 'outside-scope');
   const pathCheck = prefix === undefined ? undefined : await context.snapshotReader.checkDirectoryPath(prefix, control);
   if (pathCheck) return pathCheck;
-
-  let cursor: SearchCursor | undefined;
-  if (request.cursor !== undefined) {
-    const state = context.cursors.get(request.cursor);
-    if (state) context.cursors.delete(request.cursor);
-    if (!state || state.kind !== 'search' || state.query !== request.query || state.pathPrefix !== prefix || state.expiresAt <= Date.now() ||
-      activeControl(control) || !matchesSnapshot(state, admitted)) return failure('invalid', 'invalid-cursor');
-    cursor = state;
-  }
 
   const hits: SearchHitV1[] = [];
   const omissions = cursor ? [...cursor.omissionReasons] : [];

@@ -14,7 +14,7 @@ export interface DirectoryOperationContext {
 
 export async function listDirectoryGuarded(
   context: DirectoryOperationContext,
-  request: { readonly path: string; readonly cursor?: string },
+  request: { readonly path: string; readonly cursor: DirectoryCursor | undefined },
   control: QuestionRepositoryOperationControl,
 ): Promise<DirectoryPageV1> {
   const before = activeControl(control);
@@ -23,28 +23,15 @@ export async function listDirectoryGuarded(
   if (bindingFailure) return bindingFailure;
   const admitted = await context.snapshotReader.ensureSnapshot(control);
   if (isFailure(admitted)) return admitted;
-  if (!admitted.directoryChildren.has(request.path)) return failure('denied', 'outside-scope');
+  const cursor = request.cursor;
+  if (cursor && !matchesSnapshot(cursor, admitted)) return failure('invalid', 'invalid-cursor');
+  const built = admitted.directoryChildren.get(request.path);
+  if (!built) return failure('denied', 'outside-scope');
   const pathCheck = await context.snapshotReader.checkDirectoryPath(request.path, control);
   if (pathCheck) return pathCheck;
 
-  let entries: readonly DirectoryEntryV1[];
-  let offset: number;
-  let cursorState: DirectoryCursor | undefined;
-  if (request.cursor !== undefined) {
-    const state = context.cursors.get(request.cursor);
-    if (state) context.cursors.delete(request.cursor);
-    if (!state || state.kind !== 'directory' || state.path !== request.path || state.expiresAt <= Date.now() || activeControl(control) || !matchesSnapshot(state, admitted)) {
-      return failure('invalid', 'invalid-cursor');
-    }
-    cursorState = state;
-    entries = state.entries;
-    offset = state.offset;
-  } else {
-    const built = admitted.directoryChildren.get(request.path);
-    if (!built) return failure('denied', 'outside-scope');
-    entries = built;
-    offset = 0;
-  }
+  const entries = cursor?.entries ?? built;
+  let offset = cursor?.offset ?? 0;
 
   const page: DirectoryEntryV1[] = [];
   let outputBytes = 0;
@@ -61,7 +48,7 @@ export async function listDirectoryGuarded(
   const more = offset < entries.length;
   let nextCursor: string | undefined;
   if (more) {
-    if (!cursorState && context.cursors.size >= context.limits.maxCursors) return failure('exhausted', 'output-limit');
+    if (context.cursors.size >= context.limits.maxCursors) return failure('exhausted', 'output-limit');
     const id = createCursorId();
     context.cursors.set(id, {
       kind: 'directory', path: request.path, bindingDigest: admitted.bindingDigest,

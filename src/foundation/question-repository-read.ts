@@ -68,11 +68,19 @@ export class QuestionRepositoryReader {
       return failure('invalid', 'invalid-request');
     }
     if (isProtectedPath(request.path)) return failure('denied', 'protected');
-    const safeRequest = Object.freeze({ path: request.path, ...(request.cursor === undefined ? {} : { cursor: request.cursor }) });
+    const path = request.path;
+    const cursorId = request.cursor;
     const safeControl = Object.freeze({ signal: control.signal, deadlineEpochMs: control.deadlineEpochMs });
-    return await this.mediate('list', safeRequest.path, undefined, safeControl, async () => await listDirectoryGuarded({
+    const stopped = activeControl(safeControl);
+    if (stopped) return stopped;
+    const cursor = this.getActiveCursor(cursorId);
+    if (cursorId !== undefined) {
+      if (cursor?.kind !== 'directory' || cursor.path !== path) return failure('invalid', 'invalid-cursor');
+      this.cursors.delete(cursorId);
+    }
+    return await this.mediate('list', path, undefined, safeControl, async () => await listDirectoryGuarded({
       limits, snapshotReader: this.snapshotReader, cursors: this.cursors, returnedBytes: this.returnedBytes,
-    }, safeRequest, safeControl));
+    }, { path, cursor: cursor?.kind === 'directory' ? cursor : undefined }, safeControl));
   }
 
   async readSpan(
@@ -105,19 +113,24 @@ export class QuestionRepositoryReader {
       return failure('invalid', 'invalid-request');
     }
     if (request.pathPrefix !== undefined && isProtectedPath(request.pathPrefix)) return failure('denied', 'protected');
-    const safeRequest = Object.freeze({
-      query: request.query,
-      ...(request.pathPrefix === undefined ? {} : { pathPrefix: request.pathPrefix }),
-      ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
-    });
+    const { query, pathPrefix, cursor: cursorId } = request;
     const safeControl = Object.freeze({ signal: control.signal, deadlineEpochMs: control.deadlineEpochMs });
-    return await this.mediate('search', safeRequest.pathPrefix, safeRequest.query, safeControl, async () => await searchLiteralGuarded({
+    const stopped = activeControl(safeControl);
+    if (stopped) return stopped;
+    const cursor = this.getActiveCursor(cursorId);
+    if (cursorId !== undefined) {
+      if (cursor?.kind !== 'search' || cursor.query !== query || cursor.pathPrefix !== pathPrefix) {
+        return failure('invalid', 'invalid-cursor');
+      }
+      this.cursors.delete(cursorId);
+    }
+    return await this.mediate('search', pathPrefix, query, safeControl, async () => await searchLiteralGuarded({
       identity: this.identity as QuestionIdentityV1,
       limits,
       snapshotReader: this.snapshotReader,
       cursors: this.cursors,
       returnedBytes: this.returnedBytes,
-    }, safeRequest, safeControl));
+    }, { query, pathPrefix, cursor: cursor?.kind === 'search' ? cursor : undefined }, safeControl));
   }
 
   private async mediate<T extends DirectoryPageV1 | SpanResultV1 | SearchPageV1>(
@@ -208,5 +221,15 @@ export class QuestionRepositoryReader {
 
   private cursorIsValid(value: unknown): value is string {
     return typeof value === 'string' && value.length >= 8 && value.length <= 512 && /^[A-Za-z0-9._~-]+$/u.test(value);
+  }
+
+  private getActiveCursor(cursorId: string | undefined): CursorState | undefined {
+    if (cursorId === undefined) return undefined;
+    const cursor = this.cursors.get(cursorId);
+    if (cursor && cursor.expiresAt <= Date.now()) {
+      this.cursors.delete(cursorId);
+      return undefined;
+    }
+    return cursor;
   }
 }

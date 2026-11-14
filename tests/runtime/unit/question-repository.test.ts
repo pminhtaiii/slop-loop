@@ -380,6 +380,81 @@ test('question repository exposes only four read and binding operations with an 
   assert.equal(Object.isFrozen(checkedBindings[0]), true);
 });
 
+test('question repository rejects unknown cursors before guard, binding, or snapshot work', async () => {
+  let bindingChecks = 0;
+  let acquisitions = 0;
+  const bindingPort = { checkBinding: async () => {
+    bindingChecks += 1;
+    return { status: 'ok', binding };
+  } };
+  const fixture = makeTools({ bindingPort, acquireSnapshot: async () => {
+    acquisitions += 1;
+    return undefined;
+  } });
+  const port = createQuestionRepositoryPort({ binding, reader: questionTools(fixture.tools), bindingPort });
+  const cursor = 'forged-cursor-123456';
+
+  assert.deepEqual(await Promise.all([
+    port.listDirectory({ path: '.', cursor }, control()),
+    port.searchLiteral({ query: 'target', pathPrefix: 'src', cursor }, control()),
+  ]), [
+    { status: 'invalid', reasonCode: 'invalid-cursor' },
+    { status: 'invalid', reasonCode: 'invalid-cursor' },
+  ]);
+  assert.deepEqual(fixture.guard.calls, []);
+  assert.equal(bindingChecks, 0);
+  assert.equal(acquisitions, 0);
+  assert.deepEqual(fixture.reads, []);
+});
+
+test('question repository rejects wrong-scope and expired cursors before effects and claims valid cursors once', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  let bindingChecks = 0;
+  const bindingPort = { checkBinding: async () => {
+    bindingChecks += 1;
+    return { status: 'ok', binding };
+  } };
+  const fixture = makeTools({
+    files: new Map([['src/a.py', Buffer.from('target\ntarget\ntarget')], ['src/b.py', fileBytes], ['src/c.py', fileBytes]]),
+    limits: { maxPageEntries: 1, maxSearchHits: 1 },
+    bindingPort,
+  });
+  const port = createQuestionRepositoryPort({ binding, reader: questionTools(fixture.tools), bindingPort });
+  const directory = await port.listDirectory({ path: 'src' }, control());
+  const search = await port.searchLiteral({ query: 'target', pathPrefix: 'src' }, control());
+  if (directory.status !== 'ok' || !directory.nextCursor || search.status !== 'ok' || !search.nextCursor) {
+    assert.fail('expected resumable directory and search results');
+  }
+  const effects = () => [fixture.guard.calls.length, bindingChecks, fixture.reads.length];
+  const beforeWrongScope = effects();
+  const invalidCursor = { status: 'invalid', reasonCode: 'invalid-cursor' };
+  assert.deepEqual(await port.listDirectory({ path: 'elsewhere', cursor: directory.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.listDirectory({ path: 'src', cursor: search.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.searchLiteral({ query: 'target', pathPrefix: 'src', cursor: directory.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.searchLiteral({ query: 'different', pathPrefix: 'src', cursor: search.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.searchLiteral({ query: 'target', pathPrefix: 'elsewhere', cursor: search.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(effects(), beforeWrongScope);
+
+  const listNext = { path: 'src', cursor: directory.nextCursor };
+  const searchNext = { query: 'target', pathPrefix: 'src', cursor: search.nextCursor };
+  const [dirPage, dirReplay, searchPage, searchReplay] = await Promise.all([
+    port.listDirectory(listNext, control()), port.listDirectory(listNext, control()),
+    port.searchLiteral(searchNext, control()), port.searchLiteral(searchNext, control()),
+  ]);
+  assert.deepEqual(dirReplay, invalidCursor);
+  assert.deepEqual(searchReplay, invalidCursor);
+  assert.equal(fixture.guard.calls.length, beforeWrongScope[0]! + 2);
+  if (dirPage.status !== 'ok' || !dirPage.nextCursor || searchPage.status !== 'ok' || !searchPage.nextCursor) {
+    assert.fail('expected both valid continuations to yield another cursor');
+  }
+
+  const beforeExpiration = effects();
+  t.mock.timers.tick(1_001);
+  assert.deepEqual(await port.listDirectory({ ...listNext, cursor: dirPage.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.searchLiteral({ ...searchNext, cursor: searchPage.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(effects(), beforeExpiration);
+});
+
 test('question repository refuses forged cursors and returns stale when the bound revision changes', async () => {
   const files = new Map<string, Uint8Array>([
     ['a.py', Buffer.from('a')],
