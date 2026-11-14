@@ -2,7 +2,7 @@
 
 **Feature Branch**: `feat/uc06-reviewer-planning`
 **Created**: 2026-11-12 (Asia/Saigon)
-**Status**: Planning/review only; [decisions](contracts/decisions.md) govern release. No runtime implementation authorized.
+**Status**: [Decisions](contracts/decisions.md) govern the separately released T002 and Phase 3 T003–T006 source/controlled work. Tasks record acceptance; successor and real tiers remain gated.
 **Input**: Product reviewer checks a diff against requirements, acceptance criteria, repository conventions and verification evidence, returning located, reasoned findings under shared read-only authority and finite accounting.
 
 ## User Scenarios & Testing *(mandatory)*

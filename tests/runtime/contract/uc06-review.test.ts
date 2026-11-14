@@ -229,6 +229,13 @@ test('refuses whole unsupported diffs, mixed metadata and overflowing/malformed 
     assert.equal(validateReviewDiff(bad, 49152).ok, false, bad);
   assert.equal(validateReviewDiff(diff, 1).ok, false);
 });
+test('requires consistent unchanged prefixes and gaps across complete diff hunks', () => {
+  const headers = '--- a/src/a.py\n+++ b/src/a.py\n';
+  for (const patch of ['--- /dev/null\n+++ b/src/a.py\n@@ -0,0 +42 @@\n+new\n', '--- a/src/a.py\n+++ /dev/null\n@@ -42 +0,0 @@\n-old\n', diff + '@@ -3 +42 @@\n-old\n+new\n'])
+    assert.equal(validateReviewDiff(patch, 49152).ok, false, patch);
+  for (const patch of [diff + '@@ -3 +3 @@\n-old\n+new\n', headers + '@@ -1,0 +2 @@\n+inserted\n@@ -3 +4 @@\n-old\n+new\n', headers + '@@ -2 +1,0 @@\n-removed\n@@ -4 +3 @@\n-old\n+new\n'])
+    assert.equal(validateReviewDiff(patch, 49152).ok, true, patch);
+});
 function evidenceFixture() {
   const o = observation(),
     observationDigest = hash(o);

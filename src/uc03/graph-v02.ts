@@ -9,7 +9,9 @@
  * `provenance: 'mock'` while `checkProductionPortsV02` demands `'real'`. These tests witness the
  * refusal path only — they are not G-OWNERS, G-ROUTE or G-REAL evidence.
  */
-import type { BugTask, TaskState } from '../contracts/foundation/uc03.ts';
+import type { BugTask, TaskState, ProviderRequest } from '../contracts/foundation/uc03.ts';
+import type { PreparedReviewContext } from '../uc06/context.ts';
+import type { RuntimeReviewerOptions } from '../foundation/reviewer.ts';
 import { createEvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts';
 import { createRuntimeReviewer } from '../foundation/reviewer.ts';
 import { buildUC03Graph, runUC03Graph, type UC03WorkflowApp } from './graph.ts';
@@ -21,7 +23,7 @@ export function refuseProductionPorts(candidate: unknown): ProductionPortRejecti
   return checkProductionPortsV02(candidate);
 }
 
-function assemblePorts(ports: UC03GraphPortsV02): UC03GraphPorts {
+function assemblePorts(ports: UC03GraphPortsV02, resolver?: RuntimeReviewerOptions['resolveReviewContext']): UC03GraphPorts {
   return {
     statePort: ports.statePort,
     approvalPort: ports.approvalPort,
@@ -33,12 +35,32 @@ function assemblePorts(ports: UC03GraphPortsV02): UC03GraphPorts {
     reviewerPort: createRuntimeReviewer({
       model: ports.reviewerModelPort,
       resolveRepoDigest: async task => (await ports.statePort.loadTask(task.taskId))?.repositoryRevisionDigest,
+      ...(resolver ? { resolveReviewContext: resolver } : {}),
     }),
     executionGuard: ports.executionGuard,
     baselineEvidenceWriter: ports.baselineEvidence,
     hostAuthority: ports.hostAuthority,
     configPort: ports.configPort,
     replanPort: ports.replanPort,
+  };
+}
+
+function assembleRoute(ports: UC03GraphPortsV02, config: UC03GraphConfigV02, mode: 'production' | 'controlled' = 'production') {
+  if (!config.reviewContext && !config.reviewEvidence && !config.reviewPrompt) return { ports: assemblePorts(ports), config: assembleConfig(config, mode) };
+  const prepared = new WeakMap<ProviderRequest, PreparedReviewContext>();
+  const resolver: NonNullable<RuntimeReviewerOptions['resolveReviewContext']> = (_task, _diff, request) => prepared.get(request);
+  const shared = assembleConfig(config, mode);
+  return {
+    ports: assemblePorts(ports, resolver),
+    config: {
+      ...shared,
+      reviewerContextResolver: resolver,
+      reviewerAdmission: async (input: Parameters<NonNullable<UC03GraphConfigV02['reviewerAdmission']>>[0]) => {
+        const admission = await config.reviewerAdmission?.(input);
+        if (admission && input.reviewContext && input.evidence) prepared.set(admission.request, { context: input.reviewContext, evidence: input.evidence });
+        return admission;
+      },
+    },
   };
 }
 
@@ -53,13 +75,17 @@ function assembleConfig(config: UC03GraphConfigV02, mode: 'production' | 'contro
     trustedTransitionContext: config.trustedTransitionContext,
     admissionContext: config.admissionContext,
     reviewerAdmission: config.reviewerAdmission,
+    reviewContext: config.reviewContext,
+    reviewEvidence: config.reviewEvidence,
+    reviewPrompt: config.reviewPrompt,
     coderAdmission: config.coderAdmission,
   };
 }
 
 /** Assembly only — no admission check, so a controlled caller can build and inspect the route. */
 export function createProductionRoute(ports: UC03GraphPortsV02, config: UC03GraphConfigV02): UC03WorkflowApp {
-  return buildUC03Graph(assemblePorts(ports), assembleConfig(config));
+  const assembled = assembleRoute(ports, config);
+  return buildUC03Graph(assembled.ports, assembled.config);
 }
 
 export async function runUC03GraphV02(task: BugTask, ports: UC03GraphPortsV02, config: UC03GraphConfigV02, initialState?: TaskState): Promise<UC03WorkflowResult> {
@@ -81,12 +107,14 @@ export async function runUC03GraphV02(task: BugTask, ports: UC03GraphPortsV02, c
     };
   }
   // The shared runner owns invoke, the production admission gate and failure attribution.
-  return runUC03Graph(task, assemblePorts(ports), assembleConfig(config), initialState);
+  const assembled = assembleRoute(ports, config);
+  return runUC03Graph(task, assembled.ports, assembled.config, initialState);
 }
 
 /** Mock-only entry for contract witnesses; production admission remains a separate path. */
 export async function runControlledUC03GraphV02(task: BugTask, ports: UC03GraphPortsV02, config: UC03GraphConfigV02, initialState?: TaskState): Promise<UC03WorkflowResult> {
   const rejection = checkControlledPortsV02(ports);
   if (rejection) return { outcome: 'INCOMPLETE', state: null, reasons: [`CONTROLLED_ADMISSION_REFUSED: ${rejection.component} ${rejection.reasonCode}`], milestones: [] };
-  return runUC03Graph(task, assemblePorts(ports), assembleConfig(config, 'controlled'), initialState);
+  const assembled = assembleRoute(ports, config, 'controlled');
+  return runUC03Graph(task, assembled.ports, assembled.config, initialState);
 }
