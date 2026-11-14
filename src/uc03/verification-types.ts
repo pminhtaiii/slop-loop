@@ -11,6 +11,7 @@ import type {
   TaskState,
   VerificationResult,
 } from '../contracts/foundation/uc03.ts';
+import type { ReviewObservationV1 } from '../contracts/review.ts';
 
 export interface TrustedReviewRecord {
   readonly reviewId: string;
@@ -34,6 +35,9 @@ export interface CompletionPredicateInput {
   readonly originalProtectedTestsDigest: string;
   readonly currentProtectedTestsDigest: string;
   readonly trustedReviewRecord?: TrustedReviewRecord | undefined;
+  readonly reviewContextRequired?: boolean | undefined;
+  /** Host result of a fresh accepted owner lookup, never a serialized caller acknowledgment. */
+  readonly trustedReviewObservation?: ReviewObservationV1 | undefined;
   readonly authorizedDiffDigest?: string | undefined;
   readonly trustedPatchRecord?: { readonly authorizedDiffDigest: string } | undefined;
 }

@@ -29,7 +29,13 @@ import type {
   ModelPortV02,
   ExecutionGuardV02,
 } from '../contracts/foundation/uc03.ts';
+import { validateTaskState } from '../contracts/foundation/uc03.ts';
 import type { RealContextSource } from '../approvals/real-context-provider.ts';
+import type { PreparedReviewContext } from '../uc06/context.ts';
+import type { ReviewContextAdmissionV1, ReviewBindingV1 } from '../contracts/review.ts';
+import type { DeepSeekReviewPrompt } from '../foundation/deepseek-transport.ts';
+import { safeSnapshot, deepFreeze } from '../contracts/foundation/uc03/v02/admission/snapshot.ts';
+import { validateReviewContextAdmission } from '../uc06/validation.ts';
 import type { ExecutionGuardReadCapability } from '../foundation/repository-types.ts';
 import type { InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort, BaselineEvidenceWriter } from './investigation.ts';
 import type { CoderAgentV02 } from './agent-types.ts';
@@ -174,10 +180,48 @@ export interface UC03GraphConfigV02 {
   readonly generation?: UC03GraphGenerationV02 | undefined;
   readonly coderAdmission?: UC03CoderAdmissionResolver | undefined;
   readonly reviewerAdmission?: UC03ReviewerAdmissionResolverV02 | undefined;
+  readonly reviewContext?: UC03GraphConfig['reviewContext'];
+  readonly reviewEvidence?: UC03GraphConfig['reviewEvidence'];
+  readonly reviewPrompt?: UC03GraphConfig['reviewPrompt'];
   readonly trustedExpectedContext: TrustedHostExpectedContext;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
   readonly admissionContext?: UC03GraphConfig['admissionContext'];
+}
+
+/** Closed current host material and its pinned transport configuration; this conveys no owner authority. */
+export function admitReviewMaterial(
+  input: unknown,
+  prompt: DeepSeekReviewPrompt | undefined,
+  trusted: Omit<ReviewContextAdmissionV1, 'sourceEvidence' | 'binding'> & { readonly binding: Partial<ReviewBindingV1> },
+): PreparedReviewContext | undefined {
+  const captured = safeSnapshot(input);
+  if (!captured.ok || !captured.value || typeof captured.value !== 'object') return undefined;
+  const prepared = captured.value as PreparedReviewContext,
+    context = prepared.context;
+  if (
+    !context ||
+    !prompt ||
+    prompt.version !== context.profile?.promptVersion ||
+    prompt.digest !== context.profile.promptDigest ||
+    prompt.maxOutputBytes !== context.profile.maxOutputBytes ||
+    prompt.maxResponseBytes !== context.profile.maxResponseBytes
+  )
+    return undefined;
+  const parsed = validateReviewContextAdmission(context, { ...trusted, binding: { ...context.binding, ...trusted.binding }, sourceEvidence: prepared.evidence });
+  return parsed.ok ? deepFreeze({ context: parsed.value, evidence: prepared.evidence }) : undefined;
+}
+
+/** Current owner ledgers can prove only a first task review; later missing history stays closed. */
+export function isUnspentFirstReview(state: TaskState): boolean {
+  const parsed = validateTaskState(state);
+  if (!parsed.ok || parsed.value.node !== 'Review' || parsed.value.latestReviewRef || parsed.value.reviewRefs?.length) return false;
+  const rows = parsed.value.budgetLedgers?.filter(row => row.kind === 'iteration' || row.kind === 'review_iteration') ?? [];
+  return (
+    rows.filter(row => row.scope === 'task').length === 1 &&
+    rows.filter(row => row.scope === 'run').length <= 1 &&
+    rows.every(row => row.consumed === 0 && row.reservations.length === 0 && row.limit > 0)
+  );
 }
 
 /**

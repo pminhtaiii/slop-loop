@@ -122,10 +122,14 @@ export function validateReviewDiff(input: unknown, maxBytes: number): Validation
         nn = Number(h[3]),
         ol = Number(h[2] ?? 1),
         nl = Number(h[4] ?? 1);
+      // Empty ranges name the preceding line; nonempty ranges name their first line.
+      const oldStart = on - (ol > 0 ? 1 : 0),
+        newStart = nn - (nl > 0 ? 1 : 0);
       if (
         ![on, nn, ol, nl, on + ol, nn + nl].every(Number.isSafeInteger) ||
-        on < oldEnd ||
-        nn < newEnd ||
+        oldStart < oldEnd ||
+        newStart < newEnd ||
+        oldStart - oldEnd !== newStart - newEnd ||
         (ol === 0 && nl === 0) ||
         (ol > 0 && on === 0) ||
         (nl > 0 && nn === 0) ||
@@ -133,8 +137,8 @@ export function validateReviewDiff(input: unknown, maxBytes: number): Validation
         (b === null && (nn !== 0 || nl !== 0))
       )
         return invalid();
-      oldEnd = on + ol;
-      newEnd = nn + nl;
+      oldEnd = oldStart + ol;
+      newEnd = newStart + nl;
       hunks++;
       while (ol > 0 || nl > 0) {
         const line = lines[i++];

@@ -18,6 +18,7 @@ import { usesCanonicalReviewerIngress } from '../foundation/reviewer.ts';
 import { handlePlanRejection } from './repair.ts';
 import { createEvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts';
 import { diagnosticForOutcome, stageForNode } from './graph-diagnostics.ts';
+import { boundReviewEnabled, restoreBoundReview } from './verification-review.ts';
 
 export { UC03StateAnnotation };
 export type { UC03GraphConfig, UC03GraphPorts, UC03GraphState, UC03WorkflowResult };
@@ -66,6 +67,10 @@ function createWorkflowApp(ports: UC03GraphPorts, config?: UC03GraphConfig) {
       }
       if (authoritative.node === 'NeedsInfo') {
         return { state: authoritative, terminalOutcome: 'needs-info' as const, reasons: ['Task is paused for required information'] };
+      }
+      if (config && boundReviewEnabled(config) && (authoritative.node === 'Review' || authoritative.node === 'Deliver') && !state.verificationResults?.length) {
+        const restored = await restoreBoundReview(state.task, authoritative, ports, config);
+        return restored ?? { state: authoritative, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['EVIDENCE_UNACKNOWLEDGED: TaskState-only review recovery failed'] };
       }
       if (authoritative.node === 'Verify' && (!state.baseline || !state.patchAdmission || !state.patchReceipt)) {
         const trusted = trustedExpectedContext(config, state.task, authoritative);
@@ -282,6 +287,7 @@ export function createDeliverNode(ports: UC03GraphPorts, config?: UC03GraphConfi
       trustedCompletion: config.trustedTransitionContext?.completion,
       patchAdmission: state.patchAdmission,
       patchReceipt: state.patchReceipt,
+      boundReview: config,
     });
     if (!completionInput.ok) return incompleteDelivery(state, completionInput.reasons, diffInfo);
     const beforeReport = await reloadAuthoritativeState(current.state, ports.statePort);
