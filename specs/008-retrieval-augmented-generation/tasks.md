@@ -6,25 +6,25 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Freeze question contracts/validators and schema versions in src/contracts/questions/contracts.ts and src/contracts/questions/validation.ts with contract vectors in tests/runtime/contract/questions.test.ts.
+- [X] T001 Freeze question contracts/validators and schema versions in src/contracts/questions/contracts.ts and src/contracts/questions/validation.ts with contract vectors in tests/runtime/contract/questions.test.ts.
   - **Dependencies**: None; external G-IMPLEMENT required.
   - **Acceptance**: All contract shapes including retrieval represented; malformed IDs/ranges/limits/decisions/usage rejected; no repair schema change.
-- [ ] T002 Build deterministic disposable Python repository trees and scripted model support in tests/runtime/support/questions/fixtures.ts and tests/runtime/support/questions/scripted-model.ts.
+- [X] T002 Build deterministic disposable Python repository trees and scripted model support in tests/runtime/support/questions/fixtures.ts and tests/runtime/support/questions/scripted-model.ts.
   - **Dependencies**: T001.
   - **Acceptance**: ~1k/~10k/~30k size bands, late definition, three-file flow, docs/config/tests, canaries and isolated target roots; Python never executed; judging data not copied into target.
 
 ## Phase 2: Foundational prerequisites
 
-- [ ] T003 Add bounded line spans, match-centered literal search, paged directory access and work/deadline-aware filesystem operations in src/foundation/repository-types.ts, src/foundation/repository-read.ts, src/foundation/repository-tools.ts and src/foundation/host-filesystem-port.ts; cover old/new behavior in tests/runtime/unit/question-repository.test.ts and tests/runtime/unit/repository-tools.test.ts.
+- [X] T003 Add bounded line spans, match-centered literal search, paged directory access and work/deadline-aware filesystem operations in src/foundation/repository-types.ts, src/foundation/repository-read.ts, src/foundation/repository-tools.ts and src/foundation/host-filesystem-port.ts; cover old/new behavior in tests/runtime/unit/question-repository.test.ts and tests/runtime/unit/repository-tools.test.ts.
   - **Dependencies**: T001, T002.
   - **Acceptance**: repository-tools contract vectors pass; legacy signatures/results retained; guards run, no unbounded directory/digest traversal or unguarded file reopen; unknown adapter capabilities denied before use. Validate immutable snapshot/manifest admission and expected file bytes, including ABA mutation, mutation during acquisition and corrupt manifest tests. Mandatory baseline/regression on existing repository/guard/filesystem suites.
-- [ ] T004 Implement Q&A-only repository adapter and binding validation in src/questions/repository.ts with root-isolation/denial/revision tests in tests/runtime/unit/question-repository.test.ts.
+- [X] T004 Implement Q&A-only repository adapter and binding validation in src/questions/repository.ts with root-isolation/denial/revision tests in tests/runtime/unit/question-repository.test.ts.
   - **Dependencies**: T003.
   - **Acceptance**: Only four read/binding operations exposed; host bindings immutable; cursor forgery/staleness denied; no patch/command/tool escape.
-- [ ] T005 Implement cumulative reservations, scan/call/byte/time/token/cost accounting and cancellation in src/questions/budget.ts with tests/runtime/unit/question-budget.test.ts.
+- [X] T005 Implement cumulative reservations, scan/call/byte/time/token/cost accounting and cancellation in src/questions/budget.ts with tests/runtime/unit/question-budget.test.ts.
   - **Dependencies**: T001, T002.
   - **Acceptance**: Invalid config denies before IO, including missing retrieval limits; finite worst-case reservations including snapshot admission; exact settlement/uncertain hold; follow-ups retain ledger; each costly loop charged; late responses ignored. Exact-boundary tests show zero final IO after exhaustion; no source-bearing result without admitted final validation.
-- [ ] T006 Implement issued-span registry, citation validation and safe presentation in src/questions/evidence.ts and src/questions/presentation.ts with tests/runtime/unit/question-evidence.test.ts.
+- [X] T006 Implement issued-span registry, citation validation and safe presentation in src/questions/evidence.ts and src/questions/presentation.ts with tests/runtime/unit/question-evidence.test.ts.
   - **Dependencies**: T004, T005.
   - **Acceptance**: Verify safe path:Lstart-Lend rendering; reject unread/forged/copied/wrong-task/wrong-revision citations; full-line coverage and expected snapshot byte digests; final protection checks; no raw trace body leaks; final binding recheck only within admitted remaining budget, otherwise claim-free fallback.
 

@@ -1,0 +1,765 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  ControlledRepositoryTools,
+  type ControlledRepositoryToolsOptions,
+  type ExecutionGuardReadCapability,
+  type GuardedReadOperation,
+  type QuestionRepositoryReadLimits,
+  type TrustedFilesystemPort,
+} from '../../../src/foundation/repository-tools.ts';
+import type { QuestionRepositoryBindingPort, QuestionRepositoryWork, QuestionRepositoryWorkMeter } from '../../../src/foundation/repository-types.ts';
+import { computeFileDigest } from '../../../src/foundation/docker-workspace-policy.ts';
+import { computeSourceManifestDigest } from '../../../src/foundation/question-repository-read.ts';
+import type { RepositoryBindingV1, SourceManifestEntryV1, SourceSnapshotV1 } from '../../../src/contracts/questions/contracts.ts';
+import { createQuestionRepositoryPort, type QuestionRepositoryReadPort } from '../../../src/questions/repository.ts';
+
+const DIGEST = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const binding = Object.freeze({ repositoryId: 'repo-1', workspaceId: 'ws-test', revisionDigest: DIGEST, policyDigest: DIGEST });
+const identity = Object.freeze({ sessionId: 'session-1', taskId: 'task-1', runId: 'run-1', questionId: 'question-1', binding, configDigest: DIGEST });
+const fileBytes = Buffer.from('one\r\ntwo\r\nthree\r\n');
+
+class ReadGuard implements ExecutionGuardReadCapability {
+  readonly provenance = 'mock' as const;
+  readonly capabilityId = 'read-capability-1';
+  readonly workspaceId = binding.workspaceId;
+  readonly taskId = identity.taskId;
+  readonly calls: string[] = [];
+  allow = true;
+  beforeExecute?: (() => Promise<void> | void) | undefined;
+  async mediateRead<T>(operation: GuardedReadOperation<T>): Promise<T> {
+    this.calls.push(operation.kind);
+    if (!this.allow) throw new Error('GUARD_DENIED: fixture refusal');
+    await this.beforeExecute?.();
+    return await operation.execute();
+  }
+}
+
+class NoLiveFilesystem implements TrustedFilesystemPort {
+  readonly provenance = 'mock' as const;
+  private readonly filePaths: readonly string[];
+  constructor(filePaths: readonly string[]) {
+    this.filePaths = filePaths;
+  }
+  async stat(path: string) {
+    return path === '' || path === '.' ? { isFile: false, isDirectory: true, isSymbolicLink: false, size: 0 } : { isFile: true, isDirectory: false, isSymbolicLink: false, size: fileBytes.byteLength };
+  }
+  async lstat(path: string) {
+    return path === '' || path === '.' || this.filePaths.some(file => file.startsWith(`${path}/`))
+      ? { isFile: false, isDirectory: true, isSymbolicLink: false, size: 0 }
+      : { isFile: true, isDirectory: false, isSymbolicLink: false, size: fileBytes.byteLength };
+  }
+  async realpath(path: string) {
+    return path;
+  }
+  async readDir(): Promise<never> {
+    throw new Error('live filesystem must not be used');
+  }
+  async readTextFile(): Promise<never> {
+    throw new Error('live filesystem must not be used');
+  }
+  async getCurrentRevisionDigest(): Promise<never> {
+    throw new Error('live filesystem must not be used');
+  }
+}
+
+const questionLimits = Object.freeze({
+  maxFileBytes: 128,
+  maxSpanBytes: 64,
+  maxSpanLines: 3,
+  maxPageEntries: 2,
+  maxSearchHits: 2,
+  maxQueryBytes: 32,
+  maxPathBytes: 128,
+  maxScannedFiles: 20,
+  maxScannedBytes: 2_048,
+  maxReturnedBytes: 1_024,
+  maxCursors: 4,
+  contextLinesBefore: 1,
+  contextLinesAfter: 1,
+});
+
+function questionTools(tools: ControlledRepositoryTools): QuestionRepositoryReadPort {
+  return tools as unknown as QuestionRepositoryReadPort;
+}
+
+function control(): { readonly signal: AbortSignal; readonly deadlineEpochMs: number } {
+  return { signal: new AbortController().signal, deadlineEpochMs: Date.now() + 5_000 };
+}
+
+interface ToolFixtureOptions {
+  readonly files?: ReadonlyMap<string, Uint8Array>;
+  readonly manifest?: readonly SourceManifestEntryV1[];
+  readonly limits?: Partial<QuestionRepositoryReadLimits>;
+  readonly snapshot?: unknown;
+  readonly omitSnapshotPort?: boolean;
+  readonly bindingPort?: unknown;
+  readonly acquireSnapshot?: () => Promise<unknown>;
+}
+
+function makeTools(options: ToolFixtureOptions = {}): {
+  readonly tools: ControlledRepositoryTools;
+  readonly guard: ReadGuard;
+  readonly reads: string[];
+  readonly readCaps: number[];
+  readonly files: ReadonlyMap<string, Uint8Array>;
+} {
+  const guard = new ReadGuard();
+  const files = options.files ?? new Map([['src/example.py', fileBytes]]);
+  const manifest = options.manifest ?? [...files].map(([path, bytes]) => ({ path, originalByteDigest: computeFileDigest(bytes) }));
+  const readLimits = { ...questionLimits, ...options.limits };
+  const snapshot: SourceSnapshotV1 = (options.snapshot as SourceSnapshotV1) ?? {
+    snapshotId: 'snapshot-1',
+    binding,
+    manifestDigest: computeSourceManifestDigest(manifest),
+    acquisitionId: 'acquisition-1',
+    admissionLimits: { maxFiles: readLimits.maxScannedFiles, maxBytes: Math.min(1_024, readLimits.maxScannedBytes), maxElapsedMs: 1_000 },
+    manifest,
+  };
+  const reads: string[] = [];
+  const readCaps: number[] = [];
+  const snapshotPort = options.omitSnapshotPort
+    ? undefined
+    : {
+        acquireSnapshot:
+          options.acquireSnapshot ??
+          (async () => ({
+            snapshot,
+            readFile: async (path: string, maxBytes: number) => {
+              reads.push(path);
+              readCaps.push(maxBytes);
+              const bytes = files.get(path);
+              if (bytes !== undefined && bytes.byteLength > maxBytes) return { status: 'oversized', scannedBytes: maxBytes + 1 };
+              return bytes === undefined ? { status: 'unreadable', scannedBytes: 0 } : { status: 'ok', bytes: Buffer.from(bytes), scannedBytes: bytes.byteLength };
+            },
+          })),
+      };
+  const toolOptions = {
+    guardCapability: guard,
+    fsPort: new NoLiveFilesystem([...files.keys()]),
+    limits: { maxExcerptBytes: 128, maxResultCount: 10 },
+    questionIdentity: identity,
+    questionLimits: readLimits,
+    questionBindingPort: options.bindingPort ?? { checkBinding: async () => ({ status: 'ok', binding }) },
+    ...(snapshotPort === undefined ? {} : { questionSnapshotPort: snapshotPort }),
+  } as unknown as ControlledRepositoryToolsOptions;
+  return { tools: new ControlledRepositoryTools(toolOptions), guard, reads, readCaps, files };
+}
+
+test('readSpan returns normalized whole lines from the trusted snapshot and clamps end-of-file', async () => {
+  const { tools } = makeTools();
+  const result = await questionTools(tools).readSpan({ path: 'src/example.py', startLine: 2, endLine: 8 }, control());
+
+  assert.equal(typeof result, 'object');
+  const spanResult = result as { readonly status: string; readonly span?: Record<string, unknown> };
+  assert.equal(spanResult.status, 'ok');
+  assert.ok(spanResult.span);
+  assert.deepEqual(spanResult.span['range'], { startLine: 2, endLine: 3 });
+  assert.equal(spanResult.span['excerpt'], 'two\nthree');
+  assert.equal(spanResult.span['excerptDigest'], computeFileDigest(Buffer.from('two\nthree', 'utf8')));
+  assert.equal(spanResult.span['originalByteDigest'], computeFileDigest(fileBytes));
+  assert.deepEqual(spanResult.span['truncation'], { kind: 'none' });
+  assert.deepEqual(spanResult.span['identity'], identity);
+  assert.ok(typeof spanResult.span['evidenceId'] === 'string');
+});
+
+test('readSpan admits blank lines and counts the separator before the next line', async () => {
+  const { tools } = makeTools({ files: new Map([['blank.py', Buffer.from('\r\nabc\r\n')]]), limits: { maxSpanBytes: 3 } });
+  const reader = questionTools(tools);
+  for (const [endLine, truncation] of [
+    [1, { kind: 'none' }],
+    [2, { kind: 'truncated', nextLine: 2 }],
+  ] as const) {
+    const result = await reader.readSpan({ path: 'blank.py', startLine: 1, endLine }, control());
+    assert.equal(result.status, 'ok');
+    assert.equal(result.span.excerpt, '');
+    assert.equal(result.span.excerptDigest, computeFileDigest(Buffer.alloc(0)));
+    assert.deepEqual(result.span.range, { startLine: 1, endLine: 1 });
+    assert.deepEqual(result.span.truncation, truncation);
+  }
+});
+
+test('repository tool inputs and deadlines are detached before the guarded await', async () => {
+  const fixture = makeTools();
+  const request = { path: 'src/example.py', startLine: 2, endLine: 2 };
+  const operationControl = { signal: new AbortController().signal, deadlineEpochMs: Date.now() + 5_000 };
+  fixture.guard.beforeExecute = () => {
+    request.path = '../outside.py';
+    operationControl.deadlineEpochMs = Date.now() - 1;
+  };
+  const result = (await questionTools(fixture.tools).readSpan(request, operationControl)) as {
+    readonly status: string;
+    readonly span?: { readonly path: string; readonly excerpt: string };
+  };
+  assert.equal(result.status, 'ok');
+  assert.equal(result.span?.path, 'src/example.py');
+  assert.equal(result.span?.excerpt, 'two');
+  assert.deepEqual(fixture.reads, ['src/example.py']);
+});
+
+test('searchLiteral is case-sensitive, returns one first-match hit per line, and centers context on the match', async () => {
+  const content = Buffer.from('header\r\nalpha = target + target\r\nfooter\r\n', 'utf8');
+  const { tools, reads } = makeTools({ files: new Map([['src/search.py', content]]) });
+  const result = (await questionTools(tools).searchLiteral({ query: 'target', pathPrefix: 'src' }, control())) as {
+    readonly status: string;
+    readonly hits?: readonly {
+      readonly line: number;
+      readonly column: number;
+      readonly matchLength: number;
+      readonly span: { readonly excerpt: string; readonly range: { readonly startLine: number; readonly endLine: number } };
+    }[];
+    readonly coverage?: string;
+  };
+
+  assert.equal(result.status, 'ok');
+  assert.equal(result.hits?.length, 1);
+  assert.equal(result.hits?.[0]?.line, 2);
+  assert.equal(result.hits?.[0]?.column, 9);
+  assert.equal(result.hits?.[0]?.matchLength, 6);
+  assert.equal(result.hits?.[0]?.span.excerpt, 'header\nalpha = target + target\nfooter');
+  assert.deepEqual(result.hits?.[0]?.span.range, { startLine: 1, endLine: 3 });
+  assert.equal(result.coverage, 'complete');
+  assert.deepEqual(reads, ['src/search.py']);
+
+  const mismatch = (await questionTools(tools).searchLiteral({ query: 'Target' }, control())) as { readonly status: string; readonly hits?: readonly unknown[] };
+  assert.equal(mismatch.status, 'ok');
+  assert.deepEqual(mismatch.hits, []);
+});
+
+test('searchLiteral pages cached file lines without reopening the immutable source', async () => {
+  const content = Buffer.from('target one\ntarget two\ntarget three\n', 'utf8');
+  const { tools, reads } = makeTools({ files: new Map([['src/many.py', content]]) });
+  const first = (await questionTools(tools).searchLiteral({ query: 'target' }, control())) as {
+    readonly status: string;
+    readonly hits?: readonly { readonly line: number }[];
+    readonly nextCursor?: string;
+  };
+  assert.equal(first.status, 'ok');
+  assert.deepEqual(
+    first.hits?.map(hit => hit.line),
+    [1, 2],
+  );
+  assert.ok(first.nextCursor);
+  const second = (await questionTools(tools).searchLiteral({ query: 'target', cursor: first.nextCursor }, control())) as {
+    readonly status: string;
+    readonly hits?: readonly { readonly line: number }[];
+  };
+  assert.equal(second.status, 'ok');
+  assert.deepEqual(
+    second.hits?.map(hit => hit.line),
+    [3],
+  );
+  assert.deepEqual(reads, ['src/many.py']);
+});
+
+test('literal search visits adjacent files both within a page and when resuming', async () => {
+  const files = new Map([
+    ['a.py', Buffer.from('irrelevant\n')],
+    ['b.py', Buffer.from('target\n')],
+    ['c.py', Buffer.from('target\n')],
+  ]);
+  const whole = await questionTools(makeTools({ files }).tools).searchLiteral({ query: 'target' }, control());
+  assert.equal(whole.status, 'ok');
+  assert.deepEqual(
+    whole.hits.map(hit => hit.span.path),
+    ['b.py', 'c.py'],
+  );
+  assert.equal(whole.coverage, 'complete');
+
+  const reader = questionTools(makeTools({ files, limits: { maxSearchHits: 1 } }).tools);
+  const first = await reader.searchLiteral({ query: 'target' }, control());
+  assert.equal(first.status, 'ok');
+  assert.deepEqual(
+    first.hits.map(hit => hit.span.path),
+    ['b.py'],
+  );
+  assert.ok(first.nextCursor);
+  const second = await reader.searchLiteral({ query: 'target', cursor: first.nextCursor }, control());
+  assert.equal(second.status, 'ok');
+  assert.deepEqual(
+    second.hits.map(hit => hit.span.path),
+    ['c.py'],
+  );
+  assert.equal(second.coverage, 'complete');
+});
+
+test('metered directory and search preserve partial coverage if freshness needs no scan work', async () => {
+  const files = new Map([
+    ['a.py', Buffer.from('target\n')],
+    ['b.py', Buffer.from('target\n')],
+  ]);
+  for (const operation of ['directory', 'search'] as const) {
+    for (const requiresTraversal of [false, true]) {
+      const remainder = { scannedFiles: operation === 'directory' ? 2 : 1, scannedBytes: operation === 'directory' ? 4 : 100, returnedBytes: 256 };
+      const keys = ['scannedFiles', 'scannedBytes', 'returnedBytes'] as const;
+      const work: QuestionRepositoryWorkMeter = {
+        remaining: key => remainder[key],
+        charge(usage: QuestionRepositoryWork) {
+          if (keys.some(key => (usage[key] ?? 0) > remainder[key])) return false;
+          for (const key of keys) remainder[key] -= usage[key] ?? 0;
+          return true;
+        },
+      };
+      let exhaustedChecks = 0;
+      let digestScans = 0;
+      const bindingPort: QuestionRepositoryBindingPort = {
+        async checkBinding() {
+          return { status: 'ok', binding };
+        },
+        async checkBindingBounded(_expected, { work }) {
+          if (work.remaining('scannedFiles') === 0 || work.remaining('scannedBytes') === 0) {
+            exhaustedChecks += 1;
+            if (requiresTraversal) {
+              if (!work.charge({ scannedFiles: 1, scannedBytes: 1 })) return { status: 'exhausted', reasonCode: 'scan-limit' };
+              digestScans += 1;
+            }
+          }
+          return { status: 'ok', binding };
+        },
+      };
+      const { tools, reads } = makeTools({ files, bindingPort });
+      const reader = questionTools(tools);
+      assert.deepEqual(await reader.readSpan({ path: 'missing.py', startLine: 1, endLine: 1 }, control()), { status: 'denied', reasonCode: 'outside-scope' });
+      const metered = { ...control(), work };
+      const result = operation === 'directory' ? await reader.listDirectory({ path: '.' }, metered) : await reader.searchLiteral({ query: 'target' }, metered);
+      if (requiresTraversal) {
+        assert.deepEqual(result, { status: 'exhausted', reasonCode: 'scan-limit' });
+      } else {
+        assert.equal(result.status, 'ok');
+        assert.equal(result.coverage, 'partial');
+        assert.deepEqual(result.omissionReasons, ['scan-limit']);
+        assert.equal(result.nextCursor, undefined);
+        assert.deepEqual('entries' in result ? result.entries.map(entry => entry.path) : result.hits.map(hit => hit.span.path), ['a.py']);
+      }
+      assert.ok(exhaustedChecks > 0);
+      assert.equal(digestScans, 0);
+      assert.deepEqual(reads, operation === 'directory' ? [] : ['a.py']);
+    }
+  }
+});
+
+test('a final binding refusal preserves the output quota and cursor slot for each repository operation', async () => {
+  const files = new Map([
+    ['a.py', Buffer.from('target\n')],
+    ['b.py', Buffer.from('second\n')],
+  ]);
+  const operations: readonly {
+    readonly run: (reader: QuestionRepositoryReadPort) => Promise<{ readonly status: string }>;
+    readonly maxReturnedBytes: number;
+    readonly cachedBindingChecks: number;
+    readonly cursorExpected?: boolean;
+  }[] = [
+    { run: reader => reader.listDirectory({ path: '.' }, control()), maxReturnedBytes: 28, cachedBindingChecks: 2, cursorExpected: true },
+    { run: reader => reader.searchLiteral({ query: 'target' }, control()), maxReturnedBytes: 138, cachedBindingChecks: 6, cursorExpected: true },
+    { run: reader => reader.readSpan({ path: 'a.py', startLine: 1, endLine: 1 }, control()), maxReturnedBytes: 138, cachedBindingChecks: 6 },
+  ];
+  for (const operation of operations) {
+    let checksUntilDenial = Number.POSITIVE_INFINITY;
+    const bindingPort = {
+      checkBinding: async () => (--checksUntilDenial === 0 ? { status: 'denied' } : { status: 'ok', binding }),
+    };
+    const { tools } = makeTools({
+      files,
+      bindingPort,
+      limits: { maxPageEntries: 1, maxSearchHits: 1, maxCursors: 1, maxReturnedBytes: operation.maxReturnedBytes },
+    });
+    const reader = questionTools(tools);
+    // Admit the snapshot without spending output bytes.
+    assert.deepEqual(await reader.readSpan({ path: 'missing.py', startLine: 1, endLine: 1 }, control()), { status: 'denied', reasonCode: 'outside-scope' });
+    checksUntilDenial = operation.cachedBindingChecks;
+    assert.deepEqual(await operation.run(reader), { status: 'denied', reasonCode: 'read-not-authorized' });
+    assert.equal(checksUntilDenial, 0);
+    const retry = await operation.run(reader);
+    assert.equal(retry.status, 'ok');
+    if (operation.cursorExpected) assert.ok('nextCursor' in retry);
+  }
+});
+
+test('concurrent directory pages cannot overspend the last shared output bytes', async () => {
+  const files = new Map([['a.py', Buffer.from('target\n')]]);
+  const firstControl = control();
+  let heldChecks = 0;
+  const atFinalBinding = Promise.withResolvers<undefined>();
+  const proceed = Promise.withResolvers<undefined>();
+  const bindingPort = {
+    async checkBinding(_expected: RepositoryBindingV1, operationControl: { readonly signal: AbortSignal }) {
+      if (operationControl.signal === firstControl.signal && ++heldChecks === 2) {
+        atFinalBinding.resolve(undefined);
+        await proceed.promise;
+      }
+      return { status: 'ok', binding };
+    },
+  };
+  const reader = questionTools(makeTools({ files, bindingPort, limits: { maxReturnedBytes: 28 } }).tools);
+  assert.deepEqual(await reader.readSpan({ path: 'missing.py', startLine: 1, endLine: 1 }, control()), { status: 'denied', reasonCode: 'outside-scope' });
+  const first = reader.listDirectory({ path: '.' }, firstControl);
+  await atFinalBinding.promise;
+  try {
+    assert.equal((await reader.listDirectory({ path: '.' }, control())).status, 'ok');
+  } finally {
+    proceed.resolve(undefined);
+  }
+  assert.deepEqual(await first, { status: 'exhausted', reasonCode: 'output-limit' });
+});
+
+test('listDirectory returns lexically sorted bounded pages and consumes opaque cursors once', async () => {
+  const files = new Map<string, Uint8Array>([
+    ['a.py', Buffer.from('a')],
+    ['b.py', Buffer.from('b')],
+    ['dir/c.py', Buffer.from('c')],
+  ]);
+  const { tools } = makeTools({ files });
+  const first = (await questionTools(tools).listDirectory({ path: '.' }, control())) as {
+    readonly status: string;
+    readonly entries?: readonly unknown[];
+    readonly coverage?: string;
+    readonly nextCursor?: string;
+  };
+
+  assert.equal(first.status, 'ok');
+  assert.deepEqual(first.entries, [
+    { path: 'a.py', kind: 'file' },
+    { path: 'b.py', kind: 'file' },
+  ]);
+  assert.equal(first.coverage, 'partial');
+  assert.ok(first.nextCursor);
+
+  const second = (await questionTools(tools).listDirectory({ path: '.', cursor: first.nextCursor }, control())) as {
+    readonly status: string;
+    readonly entries?: readonly unknown[];
+    readonly coverage?: string;
+  };
+  assert.equal(second.status, 'ok');
+  assert.deepEqual(second.entries, [{ path: 'dir', kind: 'directory' }]);
+  assert.equal(second.coverage, 'complete');
+
+  const replay = (await questionTools(tools).listDirectory({ path: '.', cursor: first.nextCursor }, control())) as { readonly status: string; readonly reasonCode?: string };
+  assert.deepEqual(replay, { status: 'invalid', reasonCode: 'invalid-cursor' });
+});
+
+test('corrupt manifests and unknown capabilities are refused before opening snapshot bytes', async () => {
+  const files = new Map([['src/example.py', fileBytes]]);
+  const badSnapshot = {
+    snapshotId: 'snapshot-1',
+    binding,
+    manifestDigest: DIGEST,
+    acquisitionId: 'acquisition-1',
+    admissionLimits: { maxFiles: 20, maxBytes: 1_024, maxElapsedMs: 1_000 },
+    manifest: [{ path: 'src/example.py', originalByteDigest: computeFileDigest(fileBytes) }],
+  };
+  const corrupt = makeTools({ files, snapshot: badSnapshot });
+  const corruptResult = (await questionTools(corrupt.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as { readonly status: string; readonly reasonCode?: string };
+  assert.deepEqual(corruptResult, { status: 'unavailable', reasonCode: 'unsupported-adapter' });
+  assert.deepEqual(corrupt.reads, []);
+
+  const unsupported = makeTools({ omitSnapshotPort: true });
+  const unsupportedResult = (await questionTools(unsupported.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
+  assert.deepEqual(unsupportedResult, { status: 'unavailable', reasonCode: 'unsupported-adapter' });
+  assert.deepEqual(unsupported.guard.calls, []);
+
+  const missingReadCapability = makeTools({ acquireSnapshot: async () => ({ snapshot: badSnapshot, readFile: undefined }) });
+  const missingRead = (await questionTools(missingReadCapability.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
+  assert.deepEqual(missingRead, { status: 'unavailable', reasonCode: 'unsupported-adapter' });
+  assert.deepEqual(missingReadCapability.reads, []);
+});
+
+test('snapshot bytes must match the trusted manifest even when a mutable source changes A to B and back to A', async () => {
+  const original = Buffer.from('source A\n');
+  const changed = Buffer.from('source B\n');
+  let mutableSource = Buffer.from(original);
+  let readCount = 0;
+  const files = new Map([['src/example.py', original]]);
+  const fixture = makeTools({
+    files,
+    acquireSnapshot: async () => {
+      const pinned = Buffer.from(original);
+      return {
+        snapshot: {
+          snapshotId: 'snapshot-1',
+          binding,
+          manifestDigest: computeSourceManifestDigest([{ path: 'src/example.py', originalByteDigest: computeFileDigest(original) }]),
+          acquisitionId: 'acquisition-1',
+          admissionLimits: { maxFiles: 20, maxBytes: 1_024, maxElapsedMs: 1_000 },
+          manifest: [{ path: 'src/example.py', originalByteDigest: computeFileDigest(original) }],
+        },
+        readFile: async () => {
+          readCount += 1;
+          mutableSource = Buffer.from(changed);
+          await Promise.resolve();
+          mutableSource = Buffer.from(original);
+          return { status: 'ok', bytes: pinned, scannedBytes: pinned.byteLength };
+        },
+      };
+    },
+  });
+  const result = (await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly span?: { readonly excerpt: string };
+  };
+  assert.equal(result.status, 'ok');
+  assert.equal(result.span?.excerpt, 'source A');
+  assert.equal(readCount, 1);
+  assert.equal(mutableSource.toString('utf8'), 'source A\n');
+});
+
+test('snapshot acquisition that cannot prove stable source bytes is denied without retry or file reads', async () => {
+  let acquisitions = 0;
+  let mutableSource = Buffer.from('source A\n');
+  const fixture = makeTools({
+    acquireSnapshot: async () => {
+      acquisitions += 1;
+      mutableSource = Buffer.from('source B\n');
+      await Promise.resolve();
+      mutableSource = Buffer.from('source A\n');
+      return undefined;
+    },
+  });
+  const result = (await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
+  assert.deepEqual(result, { status: 'unavailable', reasonCode: 'unsupported-adapter' });
+  const repeated = (await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as { readonly status: string; readonly reasonCode?: string };
+  assert.deepEqual(repeated, result);
+  assert.equal(acquisitions, 1, 'a failed acquisition is not retried later in the run');
+  assert.equal(mutableSource.toString('utf8'), 'source A\n');
+  assert.deepEqual(fixture.reads, []);
+});
+
+test('byte mutation after admission is stale and never issues an excerpt', async () => {
+  const original = Buffer.from('trusted A\n');
+  const changed = Buffer.from('mutable B\n');
+  const fixture = makeTools({
+    files: new Map([['src/example.py', original]]),
+    acquireSnapshot: async () => ({
+      snapshot: {
+        snapshotId: 'snapshot-1',
+        binding,
+        manifestDigest: computeSourceManifestDigest([{ path: 'src/example.py', originalByteDigest: computeFileDigest(original) }]),
+        acquisitionId: 'acquisition-1',
+        admissionLimits: { maxFiles: 20, maxBytes: 1_024, maxElapsedMs: 1_000 },
+        manifest: [{ path: 'src/example.py', originalByteDigest: computeFileDigest(original) }],
+      },
+      readFile: async () => ({ status: 'ok', bytes: changed, scannedBytes: changed.byteLength }),
+    }),
+  });
+  const result = (await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+    readonly span?: unknown;
+  };
+  assert.deepEqual(result, { status: 'stale', reasonCode: 'source-mismatch' });
+  assert.deepEqual(fixture.reads, []);
+});
+
+test('protected content outside the requested span excludes the whole file', async () => {
+  const secret = Buffer.from('ordinary source\npassword="abcdefghijk"\n', 'utf8');
+  const { tools } = makeTools({ files: new Map([['src/example.py', secret]]) });
+  const result = (await questionTools(tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
+  assert.deepEqual(result, { status: 'denied', reasonCode: 'protected' });
+});
+
+test('span reads budget the overflow probe', async () => {
+  const path = 'src/example.py';
+  const manifestBytes = Buffer.byteLength(path) + Buffer.byteLength(DIGEST);
+  const request = { path, startLine: 1, endLine: 1 };
+  const exhausted = { status: 'exhausted', reasonCode: 'scan-limit' };
+  const maxScannedBytes = manifestBytes + 5;
+  for (const [limits, caps, result] of [
+    [{ maxScannedBytes: manifestBytes }, [], exhausted],
+    [{ maxScannedFiles: 1 }, [], exhausted],
+    [{ maxScannedBytes }, [4], exhausted],
+    [{ maxScannedBytes, maxFileBytes: 4 }, [4], { status: 'unavailable', reasonCode: 'oversized' }],
+  ] as const) {
+    const { tools, readCaps } = makeTools({ limits });
+    assert.deepEqual(await tools.readSpan(request, control()), result);
+    assert.deepEqual(readCaps, caps);
+  }
+});
+
+test('cancellation and expired deadlines stop before snapshot admission', async () => {
+  let acquisitions = 0;
+  const fixture = makeTools({
+    acquireSnapshot: async () => {
+      acquisitions += 1;
+      return undefined;
+    },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  const cancelled = (await questionTools(fixture.tools).listDirectory({ path: '.' }, { signal: controller.signal, deadlineEpochMs: Date.now() + 5_000 })) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
+  assert.deepEqual(cancelled, { status: 'cancelled', reasonCode: 'cancelled' });
+  const expired = (await questionTools(fixture.tools).listDirectory({ path: '.' }, { signal: new AbortController().signal, deadlineEpochMs: Date.now() - 1 })) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
+  assert.deepEqual(expired, { status: 'exhausted', reasonCode: 'deadline' });
+  assert.equal(acquisitions, 0);
+});
+
+test('question repository exposes only four read and binding operations with an immutable captured binding', async () => {
+  const suppliedBinding: { repositoryId: string; workspaceId: string; revisionDigest: string; policyDigest: string } = { ...binding };
+  const checkedBindings: RepositoryBindingV1[] = [];
+  const bindingPort = {
+    checkBinding: async (expected: RepositoryBindingV1) => {
+      checkedBindings.push(expected);
+      return { status: 'ok', binding: expected };
+    },
+  };
+  const { tools } = makeTools({ bindingPort });
+  const port = createQuestionRepositoryPort({
+    binding: suppliedBinding,
+    reader: questionTools(tools),
+    bindingPort,
+  });
+
+  suppliedBinding.revisionDigest = 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+  assert.deepEqual(Reflect.ownKeys(port).sort(), ['checkBinding', 'listDirectory', 'readSpan', 'searchLiteral']);
+  assert.equal(Object.isFrozen(port), true);
+
+  const result = await port.checkBinding(control());
+  assert.deepEqual(result, { status: 'ok', binding });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.binding), true);
+  assert.equal(checkedBindings[0]?.revisionDigest, DIGEST);
+  assert.equal(Object.isFrozen(checkedBindings[0]), true);
+});
+
+test('question repository rejects unknown cursors before guard, binding, or snapshot work', async () => {
+  let bindingChecks = 0;
+  let acquisitions = 0;
+  const bindingPort = {
+    checkBinding: async () => {
+      bindingChecks += 1;
+      return { status: 'ok', binding };
+    },
+  };
+  const fixture = makeTools({
+    bindingPort,
+    acquireSnapshot: async () => {
+      acquisitions += 1;
+      return undefined;
+    },
+  });
+  const port = createQuestionRepositoryPort({ binding, reader: questionTools(fixture.tools), bindingPort });
+  const cursor = 'forged-cursor-123456';
+
+  assert.deepEqual(await Promise.all([port.listDirectory({ path: '.', cursor }, control()), port.searchLiteral({ query: 'target', pathPrefix: 'src', cursor }, control())]), [
+    { status: 'invalid', reasonCode: 'invalid-cursor' },
+    { status: 'invalid', reasonCode: 'invalid-cursor' },
+  ]);
+  assert.deepEqual(fixture.guard.calls, []);
+  assert.equal(bindingChecks, 0);
+  assert.equal(acquisitions, 0);
+  assert.deepEqual(fixture.reads, []);
+});
+
+test('question repository rejects wrong-scope and expired cursors before effects and claims valid cursors once', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  let bindingChecks = 0;
+  const bindingPort = {
+    checkBinding: async () => {
+      bindingChecks += 1;
+      return { status: 'ok', binding };
+    },
+  };
+  const fixture = makeTools({
+    files: new Map([
+      ['src/a.py', Buffer.from('target\ntarget\ntarget')],
+      ['src/b.py', fileBytes],
+      ['src/c.py', fileBytes],
+    ]),
+    limits: { maxPageEntries: 1, maxSearchHits: 1 },
+    bindingPort,
+  });
+  const port = createQuestionRepositoryPort({ binding, reader: questionTools(fixture.tools), bindingPort });
+  const directory = await port.listDirectory({ path: 'src' }, control());
+  const search = await port.searchLiteral({ query: 'target', pathPrefix: 'src' }, control());
+  if (directory.status !== 'ok' || !directory.nextCursor || search.status !== 'ok' || !search.nextCursor) {
+    assert.fail('expected resumable directory and search results');
+  }
+  const effects = () => [fixture.guard.calls.length, bindingChecks, fixture.reads.length] as const;
+  const beforeWrongScope = effects();
+  const invalidCursor = { status: 'invalid', reasonCode: 'invalid-cursor' };
+  assert.deepEqual(await port.listDirectory({ path: 'elsewhere', cursor: directory.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.listDirectory({ path: 'src', cursor: search.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.searchLiteral({ query: 'target', pathPrefix: 'src', cursor: directory.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.searchLiteral({ query: 'different', pathPrefix: 'src', cursor: search.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.searchLiteral({ query: 'target', pathPrefix: 'elsewhere', cursor: search.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(effects(), beforeWrongScope);
+
+  const listNext = { path: 'src', cursor: directory.nextCursor };
+  const searchNext = { query: 'target', pathPrefix: 'src', cursor: search.nextCursor };
+  const [dirPage, dirReplay, searchPage, searchReplay] = await Promise.all([
+    port.listDirectory(listNext, control()),
+    port.listDirectory(listNext, control()),
+    port.searchLiteral(searchNext, control()),
+    port.searchLiteral(searchNext, control()),
+  ]);
+  assert.deepEqual(dirReplay, invalidCursor);
+  assert.deepEqual(searchReplay, invalidCursor);
+  assert.equal(fixture.guard.calls.length, beforeWrongScope[0] + 2);
+  if (dirPage.status !== 'ok' || !dirPage.nextCursor || searchPage.status !== 'ok' || !searchPage.nextCursor) {
+    assert.fail('expected both valid continuations to yield another cursor');
+  }
+
+  const beforeExpiration = effects();
+  t.mock.timers.tick(1_001);
+  assert.deepEqual(await port.listDirectory({ ...listNext, cursor: dirPage.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(await port.searchLiteral({ ...searchNext, cursor: searchPage.nextCursor }, control()), invalidCursor);
+  assert.deepEqual(effects(), beforeExpiration);
+});
+
+test('question repository refuses forged cursors and returns stale when the bound revision changes', async () => {
+  const files = new Map<string, Uint8Array>([
+    ['a.py', Buffer.from('a')],
+    ['b.py', Buffer.from('b')],
+  ]);
+  let currentBinding: RepositoryBindingV1 = binding;
+  const bindingPort = {
+    checkBinding: async () => ({ status: 'ok', binding: currentBinding }),
+  };
+  const fixture = makeTools({ files, limits: { maxPageEntries: 1 }, bindingPort });
+  const port = createQuestionRepositoryPort({ binding, reader: questionTools(fixture.tools), bindingPort });
+
+  const forged = await port.listDirectory({ path: '.', cursor: 'forged-cursor-123456' }, control());
+  assert.deepEqual(forged, { status: 'invalid', reasonCode: 'invalid-cursor' });
+
+  const first = await port.listDirectory({ path: '.' }, control());
+  assert.equal(first.status, 'ok');
+  if (first.status !== 'ok' || first.nextCursor === undefined) assert.fail('expected a resumable first page');
+
+  currentBinding = { ...binding, revisionDigest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' };
+  const stale = await port.listDirectory({ path: '.', cursor: first.nextCursor }, control());
+  assert.deepEqual(stale, { status: 'stale', reasonCode: 'binding-mismatch' });
+});
+
+test('question repository keeps root selection host-owned and exposes no mutation or execution operations', async () => {
+  const { tools, reads } = makeTools();
+  const bindingPort = { checkBinding: async () => ({ status: 'ok', binding }) };
+  const port = createQuestionRepositoryPort({ binding, reader: questionTools(tools), bindingPort });
+
+  assert.equal('applyPatch' in port, false);
+  assert.equal('executeCommand' in port, false);
+  assert.deepEqual(await port.readSpan({ path: '../../outside.py', startLine: 1, endLine: 1 }, control()), {
+    status: 'invalid',
+    reasonCode: 'invalid-request',
+  });
+  assert.deepEqual(await port.readSpan({ path: '.git/config', startLine: 1, endLine: 1 }, control()), {
+    status: 'denied',
+    reasonCode: 'protected',
+  });
+  assert.deepEqual(reads, []);
+});
