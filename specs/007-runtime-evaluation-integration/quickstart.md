@@ -178,3 +178,81 @@ The `serve` CLI command (T035) launches the console only from real-ready provena
 | SC-007 | T030-068 same-graph concurrent replay, repeated service/control requests, fourth-replan refusal and bounded effect/accounting rows; `T030-independent-068-v2.log`. | Mock owner receipts do not establish foreign-owner transactions or real effects. |
 
 For the focused repaired source/emitted/type checks, use the exact commands in `T030-repair-command-status.json`; for independent criteria and observed outcomes, use the T030-068 merger verdict. Neither should be replaced by the pre-repair 80/80 receipt or by an aggregate full-suite claim.
+
+## Real-tier prerequisites (T040–T055) — operator steps
+
+Planned steps from the [real-tier contract](contracts/real-tier.md). Nothing below runs until T040–T050 are implemented and released after both planning review lanes pass. Every step is labelled with its tier. **T011 is a later, separately released step**: none of these commands runs `evaluate run`, and none claims G-REAL/SC-001, T017, a restart or G-OWNERS (still single-attested).
+
+### 1. Controlled tier: owner lanes, profile, budget and assembly (T040–T050)
+
+```powershell
+node --test tests/runtime/uc04/state-port-v02-read-fence.test.ts tests/runtime/uc04/state-port-v02-operation-lookup.test.ts tests/runtime/uc04/baseline-evidence-store.test.ts tests/runtime/uc04/approval-store-adapter.test.ts tests/runtime/uc04/state-port-v02-authority.test.ts tests/runtime/uc04/material-replan-port.test.ts
+node --test tests/runtime/approvals/journal-acceptance-v02.test.ts tests/runtime/unit/console-approval-port.test.ts
+node --test tests/runtime/unit/real-tier-profile.test.ts tests/runtime/unit/docker-controller.test.ts tests/runtime/unit/docker-spawn.test.ts tests/runtime/unit/paid-call-budget.test.ts tests/runtime/unit/deepseek-transport.test.ts
+node --test tests/runtime/contract/real-tier-assembly.test.ts
+pnpm run typecheck; pnpm run build
+```
+
+Then run the emitted counterparts under `dist/`. These checks use temp directories and fetch/spawn doubles: no Docker, no network, no paid call.
+
+### 2. Operator setup (local, no paid call)
+
+1. Start Docker Desktop and confirm the daemon: `docker version`. If it fails, the real-tier runs below report not-run.
+2. Build the image. Network is used here at build time only:
+
+   ```powershell
+   $base = docker buildx imagetools inspect python:3.12-alpine --format '{{json .Manifest.Digest}}'
+   docker build --platform linux/amd64 --build-arg "PYTHON_BASE=python:3.12-alpine@$($base.Trim('"'))" -t uc03-pytest:real-tier docker/uc03
+   docker image inspect uc03-pytest:real-tier --format '{{.Id}}'
+   ```
+
+   Record the base digest and the image ID in the profile.
+3. Create `$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json` from the shape in the contract §(d), and a `host.json` beside it whose `assembly` points to `dist/src/runtime/real-tier-assembly.js`. Replace each pricing rate with DeepSeek's official published rate, and only when that rate is not lower than the placeholder. Record `source` and `retrievedOn`.
+4. Set the variables for this shell session only. The key is never typed on a command line or stored in a file:
+
+   ```powershell
+   $env:UC03_REAL_TIER_PROFILE = "$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json"
+   $secure = Read-Host -AsSecureString 'DeepSeek key'
+   $env:ANTHROPIC_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+   ```
+
+5. Initialize the budget ledger once, then check it: `node dist/src/cli/real-tier-budget.js init` and `node dist/src/cli/real-tier-budget.js status`. If the account is prepaid, keeping its balance at or below the campaign cap gives an outer bound.
+6. Readiness only, no run: `node dist/src/cli/evaluate.js preflight --host "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"`. It must report ready. Any `credential-missing`, `docker-unavailable` or `mock-delivery` reason stops here.
+
+### 3. Real tier, zero paid calls: T024 containment (T051) and T025 approval gating (T052)
+
+```powershell
+node dist/tests/runtime/security/uc03-real-containment-probe.js
+node --test tests/runtime/integration/uc03-approvals.test.ts
+node dist/tests/runtime/integration/uc03-approvals-real-probe.js
+node dist/src/cli/real-tier-budget.js status
+```
+
+Expected: every C06–C11 and C13 row passes, or the probe exits nonzero with fail/not-run; the ledger total is unchanged. Retain the outputs under `.agent-work/<date>/uc03-real-tier/evidence/T051/` and `T052/`, and write the reports to the ignored `docs/verification/uc03-isolation.md` and `uc03-approvals.md`.
+
+### 4. Controlled tier: T026/T066 gaps (T053)
+
+```powershell
+node --test tests/runtime/unit/uc03-graph.test.ts tests/runtime/contract/atomic-admission-matrix.test.ts
+```
+
+Run the emitted counterparts after the build. Record each recorded gap as closed (with its asserting row) or still open.
+
+### 5. Real tier, paid within the recorded budget: T028 success route (T054)
+
+Precondition: the coordinator has recorded the budget in the decision record.
+
+```powershell
+node dist/tests/runtime/integration/uc03-success-real-run.js --conformance
+node dist/tests/runtime/integration/uc03-success-real-run.js --case C01
+node dist/tests/runtime/integration/uc03-success-real-run.js --case C02
+node dist/tests/runtime/integration/uc03-success-real-run.js --case C10
+node dist/tests/runtime/integration/uc03-success-real-evidence.js --evidence .agent-work/<date>/uc03-real-tier/evidence/T054
+node dist/src/cli/real-tier-budget.js status
+```
+
+C01 pauses for the plan decision. The operator inspects the presentation and decides explicitly through the runner's decision prompt, which uses the T046 port; nothing approves automatically. Stop at once if the conformance call refuses the model id, the budget is exhausted, or the checker finds credential bytes. Failed attempts are retained, not retried automatically (at most two C01 attempts). The UC-03 ledger then judges T028. This run does not check T011 or claim SC-001.
+
+### 6. Afterwards
+
+T055 refreshes context and this guide with the observed results. T011, T014's real half, T017 and restart acceptance each need their own release.

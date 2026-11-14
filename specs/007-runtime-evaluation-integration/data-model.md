@@ -51,3 +51,18 @@ These records are immutable identity/observation references, not another task le
 Provider lifecycle stays canonical `admission -> claim -> beginAttempt -> outcome/uncertainty`, owned at model ingress. Graph generation forwards authority without another claim. Material replan is a separate owner transaction, not a provider/repository admission. Its accepted transition invalidates prior approval/review/edit authority and enters renewed plan approval; at most three material replans, with no count reset on continuation. Command-view facts come from one measured snapshot shared by owner admission and executor, with mismatches denied before attempts.
 
 Coder inspection observations are bounded sanitized evidence/check-result references used to construct the next owner-bound request; each new model turn gets a distinct current admission. Explicit clarification persists bound questions and waits; stop/exhaustion cannot complete a repair. Reviewer uses the same canonical provider lifecycle with a distinct reviewer request/role; raw transport without durable attempt/outcome is unavailable on the production route.
+
+## Real-tier records — 2026-11-14
+
+See the [real-tier contract](contracts/real-tier.md). The spend ledger is an operator guard, not a task ledger; UC-04 accounting stays authoritative for task budgets.
+
+| Record | Required fields | Invariants / stories |
+|---|---|---|
+| RealTierProfile | `schema: uc03-real-tier-profile/1`, campaignId, stateRoot, provider {model, mode, timeoutMs}, pricing {pricingId, source, retrievedOn, denominator, input/cache/output/overhead rates}, budget {ledgerPath, totalMicroUsd, perRunMicroUsd, perRunInputTokens, perRunOutputTokens}, limits (EvaluationLimits), image {label, imageId, base, platform, user}, catalog path, artifacts {retainRoot, retainRawStreams=false}, approvalPolicy {profileVersion} | Stored outside the repository; unknown keys refuse; integers finite and positive. The credential is never a field: it is read from `ANTHROPIC_API_KEY` and kept out of digests and serializations. US1 |
+| BudgetLedgerHeader | campaignId, caps, pricingId, createdAt | Written once by `real-tier-budget init` and never overwritten. US1 |
+| BudgetReservation | seq, callId (task/run/request), runId, boundMicroUsd, inputTokensBound, outputTokensBound, at | Durable before `fetch`; counts at the full bound until settled. US1 |
+| BudgetSettlement | seq, callId, outcome `observed` or `uncertain`, chargedMicroUsd, usage tokens or null, at | One per reservation. `observed` only from a validated 2xx with usage; `uncertain` charges the full bound. US1/US2 |
+| RealTierDeliveryIdentity | component, implementation revision (commit SHA), contract version, attribution `delegated-single-attestation-2026-11-14` | Never names Thanh Tan or Trong Tan as deliverer; readiness built from it is not G-OWNERS. US1 |
+| RealTierEvidenceRecord | run task (T051–T054), mapped UC-03 task, candidate SHA, profile/image/pricing/model identities, commands and exit codes, per-case pass/fail/not-run, ledger totals before/after, credential-scan result | Retained under the ignored session evidence directory. The UC-03 ledger records acceptance; there is no G-REAL/SC-001 field. US1 |
+
+Lifecycle: `reserve → settle(observed | uncertain)`. A crash leaves `reserve` open, charged at its bound. Campaign spend is the sum of settled charges plus the bounds of open reservations. A dispatch is allowed only when that sum plus the new bound stays within the campaign total and the per-run cap, and the run's token sums stay within their caps.

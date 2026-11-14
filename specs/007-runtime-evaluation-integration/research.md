@@ -74,3 +74,40 @@ Fresh planning base `d2f953239b658b2b282d9e41523e819d9785fd49`; source/spec comp
 **Decision**: Treat evidence writer/replan/fenced read authority as exact public owner deliveries; build only host observations/adapters. **Rationale**: Missing owner seams are contract/delivery gates, not permission to add a second journal or approval control. **Alternatives considered**: Direct DurableStore/internal journal manipulation, fabricated acknowledgements and opening mock-only approval control would cross ownership or weaken safeguards.
 
 **Decision**: Add no dependencies or production default profile values. **Rationale**: Existing toolchain/contracts suffice for design and controlled tests; pricing/engine/profile/operator setup remains pinned runtime input. This amendment does not revisit provider selection or make current API/pricing claims.
+
+## Real-tier prerequisite research — 2026-11-14
+
+Inspection at `c1eba127`; the evidence-backed gap inventory is in [real-tier contract](contracts/real-tier.md) §(a). No test, container or provider call was run for this research, and no web source was fetched. The pricing and model statements below are therefore planning defaults for the operator to confirm, not observations.
+
+### Image base
+
+**Decision**: Keep `python:3.12-alpine`, pinned by digest through a required `ARG PYTHON_BASE`, and install pinned `pytest==8.3.4` and its dependencies at build time. The run-time identity is the built image ID, referenced with `--pull=never`.
+**Rationale**: The existing Dockerfile and probe already target this base and the `1000:1000` user, and pure-Python pytest has no musl concern. The built image digest pins every installed byte, so per-package hashes add little. Docker's `name@digest` form needs a registry RepoDigest, which a locally built image does not have; the content-addressed image ID needs no registry.
+**Alternatives considered**: `python:3.12-slim` (glibc, larger; adopt only if a case needs compiled wheels). Hash-pinned `--require-hashes` requirements (rejected: the final image ID is the identity that runs). Pushing to a loopback `registry:2` to obtain a RepoDigest so the current `${image}@${digest}` form works unchanged (adds a second unpinned image and a running service; kept as the fallback if referencing by image ID is rejected).
+
+### Pricing source and table
+
+**Decision**: The profile carries integer micro-USD rates per 1,000,000 tokens with a mandatory `source` (DeepSeek's official pricing page) and `retrievedOn`. The default is a conservative placeholder: 2 USD/1M input, 2 USD/1M cache-hit (no discount assumed), 8 USD/1M output, zero overhead.
+**Rationale**: The 2026-11-01 research forbade copying a permanent price (`research.md:32`), and nothing can be fetched in this planning session. A placeholder believed to be above the published rates keeps the guard conservative. The operator may replace a rate only with an official figure that is not lower than the published one.
+**Alternatives considered**: Hard-coding current published prices (stale by design); a multiplier over official prices (adds a knob without improving safety).
+
+### Budget default
+
+**Decision**: Campaign total 10.00 USD; per run 2.50 USD and 400,000 input / 80,000 output tokens; per call 32,768/8,192 tokens; 24 calls per run.
+**Rationale**: T024, T025 and T026/T066 need no paid calls. T028 needs one conformance call, at most two C01 attempts and one C02 attempt. At placeholder rates, one full-bound call reserves 0.197 USD, so the 2.50 USD per-run cap always leaves room for the next call while observed spend stays small. The 10.00 USD total covers the planned runs, with headroom for one failed C01 attempt. The user can change any value; the coordinator records the final numbers in the decision record before T054.
+**Alternatives considered**: No cap (contradicts the 2026-11-14 release); per-run caps only (cannot bound repeated runs); a much lower total such as 2.00 USD (risks stopping C01 mid-run at placeholder rates).
+
+### How paid calls are counted
+
+**Decision**: One paid call is one `fetch` to the pinned endpoint. A durable `reserve` record precedes it and a `settle` record follows: `observed` only for a validated 2xx response with usage, otherwise `uncertain` at the full bound. A reservation that is never settled stays charged. A missing or unreadable ledger refuses dispatch.
+**Rationale**: This follows the existing reservation/uncertainty accounting (`specs/001-verified-code-repair/contracts/decisions.md:135`), and unknown cost is never zero. Error responses may be free in practice, but nothing in our evidence proves it.
+**Alternatives considered**: Settling from provider-side billing (unavailable to the harness); releasing reservations after a timeout (could undercount real spend).
+
+### Other decisions
+
+- **Profile location**: outside the repository (`%USERPROFILE%\.slop-loop\uc03-real-tier\`), named by `UC03_REAL_TIER_PROFILE`; in-repo paths are refused. An ignored directory such as `.agent-work/` was rejected because agent-dump cleanup could delete the budget ledger and silently reset spend.
+- **T028 runner, not the evaluation CLI**: running `evaluate run` for C01 is the T011 path, which is not released. The runner drives `runUC03GraphV02` and the independent snapshot grader directly; T011 can later consume or rerun this evidence under its own release.
+- **Real-tier runners outside CI**: `scripts/ci/run-runtime-tests.mjs:20-21` globs `*.test.*`, so Docker and paid runs use `*-probe.ts`/`*-run.ts`/`*-evidence.ts` names. T025's `.test.ts` file stays CI-safe, with no Docker or provider.
+- **UC-05 profile id literal**: `PolicyProfile.profileId` is typed `'uc05-local-v1'`. The real-tier policy keeps that literal and differs by `profileVersion`, which avoids a UC-05 contract amendment.
+- **Model id**: `deepseek-flash`, as recorded (`contracts/decisions.md:7,50`). The T054 conformance call verifies it; if the endpoint refuses it, the campaign stops for user direction.
+- **Docker CLI environment**: `structuredSpawn` currently inherits the full host environment (`src/foundation/docker-spawn.ts:37`). T048 adds an allowlist, so the credential never reaches the Docker CLI process.
