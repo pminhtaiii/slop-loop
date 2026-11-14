@@ -67,6 +67,9 @@ export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphC
           };
         }
         baselineCandidate = baselineResult.baseline;
+        // Mirror the fresh branch: this route reproduced under the same generation key, so a later
+        // ask in the same round cap must find retained evidence rather than refuse the pause.
+        retainedForClarification = retainClarificationBaseline(retentionKey, state.task, state.state, baselineCandidate);
       } else {
         return { state: state.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [retained.reason] };
       }
