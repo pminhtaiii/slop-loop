@@ -15,13 +15,13 @@
 
 ## Phase 2: Foundational prerequisites
 
-- [ ] T003 Add bounded line spans, match-centered literal search, paged directory access and work/deadline-aware filesystem operations in src/foundation/repository-types.ts, src/foundation/repository-read.ts, src/foundation/repository-tools.ts and src/foundation/host-filesystem-port.ts; cover old/new behavior in tests/runtime/unit/question-repository.test.ts and tests/runtime/unit/repository-tools.test.ts.
+- [X] T003 Add bounded line spans, match-centered literal search, paged directory access and work/deadline-aware filesystem operations in src/foundation/repository-types.ts, src/foundation/repository-read.ts, src/foundation/repository-tools.ts and src/foundation/host-filesystem-port.ts; cover old/new behavior in tests/runtime/unit/question-repository.test.ts and tests/runtime/unit/repository-tools.test.ts.
   - **Dependencies**: T001, T002.
   - **Acceptance**: repository-tools contract vectors pass; legacy signatures/results retained; guards run, no unbounded directory/digest traversal or unguarded file reopen; unknown adapter capabilities denied before use. Validate immutable snapshot/manifest admission and expected file bytes, including ABA mutation, mutation during acquisition and corrupt manifest tests. Mandatory baseline/regression on existing repository/guard/filesystem suites.
 - [ ] T004 Implement Q&A-only repository adapter and binding validation in src/questions/repository.ts with root-isolation/denial/revision tests in tests/runtime/unit/question-repository.test.ts.
   - **Dependencies**: T003.
   - **Acceptance**: Only four read/binding operations exposed; host bindings immutable; cursor forgery/staleness denied; no patch/command/tool escape.
-- [ ] T005 Implement cumulative reservations, scan/call/byte/time/token/cost accounting and cancellation in src/questions/budget.ts with tests/runtime/unit/question-budget.test.ts.
+- [X] T005 Implement cumulative reservations, scan/call/byte/time/token/cost accounting and cancellation in src/questions/budget.ts with tests/runtime/unit/question-budget.test.ts.
   - **Dependencies**: T001, T002.
   - **Acceptance**: Invalid config denies before IO, including missing retrieval limits; finite worst-case reservations including snapshot admission; exact settlement/uncertain hold; follow-ups retain ledger; each costly loop charged; late responses ignored. Exact-boundary tests show zero final IO after exhaustion; no source-bearing result without admitted final validation.
 - [ ] T006 Implement issued-span registry, citation validation and safe presentation in src/questions/evidence.ts and src/questions/presentation.ts with tests/runtime/unit/question-evidence.test.ts.
