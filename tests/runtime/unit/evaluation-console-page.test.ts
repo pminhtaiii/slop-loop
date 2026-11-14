@@ -185,48 +185,63 @@ interface FakeEl {
   value: string;
   textContent: string;
   disabled: boolean;
+  tagName: string;
+  children: FakeEl[];
+  parentNode: FakeEl | null;
+  firstChild: FakeEl | null;
   handlers: Record<string, (event: FakeEvent) => void>;
   addEventListener(type: string, handler: (event: FakeEvent) => void): void;
   getAttribute(name: string): string | null;
+  appendChild(child: FakeEl): void;
+  insertBefore(child: FakeEl): void;
+  removeChild(child: FakeEl): void;
+}
+
+/** Minimal element: `textContent` is a real text sink and also clears children on assignment. */
+function fakeEl(tagName: string): FakeEl {
+  let text = '';
+  const el = {
+    value: '', disabled: false, tagName,
+    children: [] as FakeEl[],
+    parentNode: null as FakeEl | null,
+    handlers: {} as Record<string, (event: FakeEvent) => void>,
+    addEventListener(type: string, handler: (event: FakeEvent) => void): void { el.handlers[type] = handler; },
+    getAttribute(): string | null { return null; },
+    appendChild(child: FakeEl): void { el.children.push(child); child.parentNode = el; },
+    insertBefore(child: FakeEl): void { el.children.push(child); child.parentNode = el; },
+    removeChild(child: FakeEl): void { const index = el.children.indexOf(child); if (index >= 0) el.children.splice(index, 1); },
+  } as unknown as FakeEl;
+  Object.defineProperty(el, 'textContent', { get: () => text, set: (v: string) => { text = String(v); el.children.length = 0; } });
+  Object.defineProperty(el, 'firstChild', { get: () => el.children[0] ?? null });
+  for (const sink of ['innerHTML', 'outerHTML']) {
+    Object.defineProperty(el, sink, { set() { throw new Error(`HTML sink ${sink} used`); } });
+  }
+  return el;
 }
 interface FetchCall {
   readonly path: string;
-  readonly init: { readonly headers: Record<string, string> };
+  readonly init: { readonly headers: Record<string, string>; readonly body?: string | null };
 }
 
-const EVENT: FakeEvent = { preventDefault() {} };
+const EVENT: FakeEvent = { preventDefault: () => undefined };
 
 function bootPage(responder: (path: string) => unknown) {
   const els = new Map<string, FakeEl>();
   for (const match of page.matchAll(/\sid="([^"]+)"/gu)) {
-    const el: FakeEl = {
-      value: '',
-      textContent: '',
-      disabled: false,
-      handlers: {},
-      addEventListener(type, handler) {
-        this.handlers[type] = handler;
-      },
-      getAttribute: () => null,
-    };
-    for (const sink of ['innerHTML', 'outerHTML']) {
-      Object.defineProperty(el, sink, {
-        set() {
-          throw new Error(`HTML sink ${sink} used`);
-        },
-      });
-    }
-    els.set(match[1] ?? '', el);
+    els.set(match[1] ?? '', fakeEl('div'));
   }
+  const body = fakeEl('body');
+  body.getAttribute = () => 'uc03-runtime-evaluation-v1';
   const calls: FetchCall[] = [];
   const context = {
     document: {
-      body: { getAttribute: () => 'uc03-runtime-evaluation-v1' },
+      body,
       getElementById: (id: string) => {
         const el = els.get(id);
         if (!el) throw new Error(`no element ${id}`);
         return el;
       },
+      createElement: (tag: string) => fakeEl(tag),
     },
     crypto: { randomUUID: () => 'key-1' },
     setInterval: () => 1,
@@ -248,7 +263,18 @@ function bootPage(responder: (path: string) => unknown) {
     await settle();
     return el('experiment').textContent;
   };
-  return { el, calls, settle, loadExperiment };
+  /** Clarification groups the script appends to the document body. */
+  const groups = () => body.children.filter(child => child.tagName === 'section');
+  return { el, body, calls, settle, loadExperiment, groups };
+}
+
+/** Concatenates textContent over a fake subtree, as a reader would see it. */
+function textOf(el: FakeEl): string {
+  return el.textContent + el.children.map(textOf).join('');
+}
+
+function textareasOf(el: FakeEl): FakeEl[] {
+  return el.tagName === 'textarea' ? [el] : el.children.flatMap(textareasOf);
 }
 
 function caseResult(over: Record<string, unknown> = {}) {
@@ -486,7 +512,7 @@ function safeResult(outcome: string, safeReasonCode: string, recorded: boolean) 
 }
 
 test('page executes: decision outcomes are visible through an allowlist, and a refusal never reads as success', async () => {
-  const cases: Array<[unknown, RegExp]> = [
+  const cases: [unknown, RegExp][] = [
     [safeResult('ok', 'decision-recorded', true), /^ok 200\noutcome: ok\nsafeReasonCode: decision-recorded\ndecisionId: decision-1\ntaskId: t1\ncontrolVersion: 3\nsafeNextAction: none$/u],
     [safeResult('paused', 'decision-recorded', true), /^ok 200\noutcome: paused\n/u],
     [safeResult('stale', 'decision-not-recorded', false), /^not recorded 200 \(outcome stale\)\noutcome: stale\nsafeReasonCode: decision-not-recorded\n[\s\S]*safeNextAction: retry-read$/u],
@@ -503,4 +529,68 @@ test('page executes: decision outcomes are visible through an allowlist, and a r
     assert.match(result, expected, result);
     for (const leak of ['{', '/etc/passwd', 'schemaVersion', 'uc05-approval', 'event-1', 'requestVersion', '<b>']) assert.equal(result.includes(leak), false, `leaked ${leak}`);
   }
+});
+
+// ---- Graph clarification group (SP-01, host-composition §8: 1-16 questions) ----
+
+/** A waiting-info catalog view with a generated graph clarification and no intake submission. */
+function clarificationView(questions: { questionId: string; text: string }[]) {
+  return viewOf({
+    version: 7,
+    status: 'waiting-info',
+    submission: null,
+    workflowClarification: { questionId: 'gq-group-1', questionDigest: 'a'.repeat(64), questions },
+  });
+}
+
+test('page executes: a paused graph clarification shows its question text', async () => {
+  const b = bootPage(viewResponder(clarificationView([{ questionId: 'gq-1', text: 'Which module owns retries?' }])));
+  await b.loadExperiment();
+  const group = b.groups().find(section => /Which module owns retries\?/u.test(textOf(section)));
+  assert.ok(group, 'clarification group with the question text was rendered');
+  // The group id and digest are shown so the operator can bind the answer request to them.
+  assert.match(textOf(group), /gq-group-1/u);
+  assert.match(textOf(group), new RegExp('a'.repeat(64), 'u'));
+});
+
+test('page executes: several questions submit one answer per question in order with the group binding', async () => {
+  const questions = [
+    { questionId: 'gq-1', text: 'Which module owns retries?' },
+    { questionId: 'gq-2', text: 'What is the retry ceiling?' },
+    { questionId: 'gq-3', text: 'Which test proves it?' },
+  ];
+  const view = clarificationView(questions);
+  const b = bootPage((path) => path.endsWith('/answers')
+    ? { ok: true, result: { experiment: view, receipt: { receiptId: 'rcpt-1', kind: 'answer', idempotencyKey: 'key-1', experimentId: 'exp-1', version: 8 } } }
+    : { ok: true, result: view });
+  await b.loadExperiment();
+  const group = b.groups().find(section => /Which module owns retries\?/u.test(textOf(section)));
+  assert.ok(group);
+  const inputs = textareasOf(group);
+  assert.equal(inputs.length, 3, 'one input per question');
+  inputs.forEach((input, index) => { input.value = `answer-${index + 1}`; });
+  const button = group.children.find(child => child.tagName === 'button');
+  assert.ok(button, 'explicit submit control');
+  button.handlers.click?.(EVENT);
+  await b.settle();
+  const call = b.calls.find(item => item.path === '/api/experiments/exp-1/answers');
+  assert.ok(call, 'answer request sent');
+  const body = JSON.parse(call.init.body ?? '{}') as Record<string, unknown>;
+  // Service shape: one group id/digest, expectedVersion, and one answer per question in order.
+  assert.equal(body['questionId'], 'gq-group-1');
+  assert.equal(body['questionDigest'], 'a'.repeat(64));
+  assert.equal(body['expectedVersion'], 7);
+  assert.deepEqual(body['answers'], ['answer-1', 'answer-2', 'answer-3']);
+  assert.equal(typeof body['idempotencyKey'], 'string');
+});
+
+test('page executes: hostile clarification text is shown as sanitized text only', async () => {
+  const hostile = '<img src=x onerror=alert(1)>\u202eevil\u2028control';
+  const b = bootPage(viewResponder(clarificationView([{ questionId: 'gq-1', text: hostile }])));
+  await b.loadExperiment();
+  const group = b.groups().find(section => /alert\(1\)/u.test(textOf(section)));
+  assert.ok(group, 'the hostile question reaches the page');
+  const text = textOf(group);
+  assert.ok(text.includes('<img src=x onerror=alert(1)>'), 'markup stays literal text');
+  assert.equal(/[\u0080-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(text), false, 'no raw bidi/control characters');
 });

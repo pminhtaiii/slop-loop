@@ -23,7 +23,7 @@ export const SCRIPT = `
 (function () {
   'use strict';
   var token = '';
-  var keys = { experiment: null, decision: null, answer: null, direction: null, continuation: null, comparison: null };
+  var keys = { experiment: null, decision: null, answer: null, group: null, direction: null, continuation: null, comparison: null };
   var pollTimer = null;
   var currentId = null;
   var profile = document.body.getAttribute('data-profile');
@@ -153,6 +153,71 @@ export const SCRIPT = `
     currentId = view.id;
     byId('experiment-id').value = view.id;
     show('experiment', formatExperiment(view));
+    renderClarification(view);
+  }
+
+  // A catalog task can pause on a generated graph clarification group (1-16 questions, no intake
+  // submission). Render it on demand through textContent only, one input per question in order.
+  var groupNode = null;
+  var groupKey = null;
+  var groupVersion = 0;
+
+  function el(tag, text) {
+    var node = document.createElement(tag);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function clearGroup() {
+    if (groupNode && groupNode.parentNode) groupNode.parentNode.removeChild(groupNode);
+    groupNode = null;
+    groupKey = null;
+  }
+
+  function renderClarification(view) {
+    var c = view.workflowClarification;
+    var answered = isObj(c) && Array.isArray(view.answers) && view.answers.some(function (a) { return isObj(a) && a.questionId === c.questionId; });
+    if (answered || !isObj(c) || typeof c.questionId !== 'string' || typeof c.questionDigest !== 'string' ||
+        !Array.isArray(c.questions) || c.questions.length < 1 || c.questions.length > 16 ||
+        !c.questions.every(function (q) { return isObj(q); })) { clearGroup(); return; }
+    var key = view.id + '/' + c.questionId + '/' + c.questionDigest;
+    if (key === groupKey) { groupVersion = view.version; return; }
+    clearGroup();
+    var section = el('section');
+    section.appendChild(el('h2', 'Task questions'));
+    section.appendChild(el('p', 'Question group ' + text1(c.questionId, 128) + ' (digest ' + text1(c.questionDigest, 128) + '). Answers are reporter data; they never resume.'));
+    var inputs = [];
+    c.questions.forEach(function (q, index) {
+      var id = 'group-question-' + (index + 1);
+      var label = el('label', 'Question ' + (index + 1) + ': ' + text1(q.text, 512));
+      label.htmlFor = id;
+      var input = el('textarea');
+      input.id = id;
+      inputs.push(input);
+      section.appendChild(label);
+      section.appendChild(input);
+    });
+    var button = el('button', 'Submit group answers');
+    button.type = 'button';
+    // Answers bind to the group id/digest and go in question order; a single retained key covers the group.
+    button.addEventListener('click', function () {
+      send(button, 'group', experimentPath('/answers'), function (key) {
+        return {
+          idempotencyKey: key,
+          questionId: c.questionId,
+          questionDigest: c.questionDigest,
+          expectedVersion: groupVersion,
+          answers: inputs.map(function (input) { return input.value; })
+        };
+      }).then(function (out) {
+        if (out && out.status === 200) clearGroup();
+      });
+    });
+    section.appendChild(button);
+    document.body.appendChild(section);
+    groupNode = section;
+    groupKey = key;
+    groupVersion = view.version;
   }
 
   function stopPolling() {

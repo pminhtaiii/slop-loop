@@ -42,8 +42,11 @@ function coderRefusal(reasons: readonly string[]): (typeof CODER_REFUSALS)[numbe
 }
 
 /**
- * The graph state carries no diagnostic annotation, so a non-complete route outcome can only be
- * reported from the persisted node and milestones. The failing component is never inferred here.
+ * The graph state carries no diagnostic annotation, so a non-complete route outcome is reported from
+ * the persisted node and milestones, optionally labelled with one recognised bounded coder-boundary
+ * refusal code (`REAL_PROFILE_GENERATION_INVALID: ...`) mapped to its observed category. An
+ * unrecognised code falls back to the generic `route-incomplete`/`workflow` unknown diagnostic. The
+ * failing component is never inferred here, and a recognised category is never claimed as a root cause.
  */
 export function diagnosticForOutcome(output: UC03GraphState): { readonly diagnostic?: EvaluationDiagnostic | undefined } {
   const outcome = output.finalReport?.outcome ?? output.terminalOutcome ?? output.state?.outcome ?? 'INCOMPLETE';

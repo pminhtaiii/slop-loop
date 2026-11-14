@@ -354,7 +354,7 @@ test('a malformed coder response is reported as an observed model-output refusal
   assert.equal(serialized.includes('MARKER_NOT_JSON'), false);
 });
 
-test('an inspect against a path the guarded read refuses is reported as an observed repository-tool refusal at investigate', async () => {
+test('an inspect against a missing repository file is reported as an observed repository-read refusal at investigate', async () => {
   const content = JSON.stringify({ kind: 'inspect', proposalId: 'controlled-inspect-1', operation: 'read_file', args: { path: 'src/missing_MARKER_ESCAPE.py' } });
   const { fixture, observed, serialized } = await observeCoderRefusal(content);
   assert.equal(observed.workflowOutcome, 'INCOMPLETE');
