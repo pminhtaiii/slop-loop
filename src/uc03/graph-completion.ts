@@ -21,6 +21,8 @@ import type { UC03GraphState } from './graph-state.ts';
 import type { UC03RepositoryAdmission } from './graph-types.ts';
 import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
 import { currentPlanApprovalIsCurrent } from './post-patch-verification-authority.ts';
+import { boundReviewEnabled, loadBoundReview } from './verification-review.ts';
+import type { UC03GraphConfig } from './graph-types.ts';
 
 type TrustedCompletion = NonNullable<NonNullable<StateTransitionOptions['trusted']>['completion']>;
 
@@ -39,6 +41,7 @@ export async function loadCompletionPredicateInput(args: {
   readonly hostAuthority: TrustedHostPort | undefined;
   readonly trustedExpectedContext: TrustedHostExpectedContext | undefined;
   readonly trustedCompletion: TrustedCompletion | undefined;
+  readonly boundReview?: UC03GraphConfig | undefined;
 }): Promise<CompletionInputResult> {
   const { task, state, baseline, verificationResults, reviewResult, diffInfo, reviewRequest, patchAdmission, patchReceipt, hostAuthority, trustedExpectedContext, trustedCompletion } = args;
   if (!baseline || !verificationResults?.length || !reviewResult || !trustedCompletion || !patchAdmission || !patchReceipt) {
@@ -188,6 +191,17 @@ export async function loadCompletionPredicateInput(args: {
     return { ok: false, reasons: ['Current diff changed-file inventory does not match persisted task state'] };
   }
 
+  let observation;
+  if (boundReviewEnabled(args.boundReview) && args.boundReview) {
+    try {
+      observation = await loadBoundReview(args.boundReview, task, state, diffInfo, verificationResults);
+    } catch {
+      observation = undefined;
+    }
+    if (!observation || observation.status !== 'accepted' || computeCanonicalSha256(observation.result) !== computeCanonicalSha256(reviewResult))
+      return { ok: false, reasons: ['EVIDENCE_UNACKNOWLEDGED: current bound review lookup failed'] };
+  }
+
   return {
     ok: true,
     input: {
@@ -203,6 +217,8 @@ export async function loadCompletionPredicateInput(args: {
       currentProtectedTestsDigest,
       trustedReviewRecord,
       authorizedDiffDigest: trustedCompletion.authorizedDiffDigest,
+      reviewContextRequired: boundReviewEnabled(args.boundReview),
+      trustedReviewObservation: observation,
     },
   };
 }
