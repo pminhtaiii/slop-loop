@@ -24,7 +24,7 @@
 - [X] T005 Implement cumulative reservations, scan/call/byte/time/token/cost accounting and cancellation in src/questions/budget.ts with tests/runtime/unit/question-budget.test.ts.
   - **Dependencies**: T001, T002.
   - **Acceptance**: Invalid config denies before IO, including missing retrieval limits; finite worst-case reservations including snapshot admission; exact settlement/uncertain hold; follow-ups retain ledger; each costly loop charged; late responses ignored. Exact-boundary tests show zero final IO after exhaustion; no source-bearing result without admitted final validation.
-- [ ] T006 Implement issued-span registry, citation validation and safe presentation in src/questions/evidence.ts and src/questions/presentation.ts with tests/runtime/unit/question-evidence.test.ts.
+- [X] T006 Implement issued-span registry, citation validation and safe presentation in src/questions/evidence.ts and src/questions/presentation.ts with tests/runtime/unit/question-evidence.test.ts.
   - **Dependencies**: T004, T005.
   - **Acceptance**: Verify safe path:Lstart-Lend rendering; reject unread/forged/copied/wrong-task/wrong-revision citations; full-line coverage and expected snapshot byte digests; final protection checks; no raw trace body leaks; final binding recheck only within admitted remaining budget, otherwise claim-free fallback.
 
