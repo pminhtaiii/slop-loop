@@ -250,7 +250,7 @@ interface FetchCall {
 
 const EVENT: FakeEvent = { preventDefault: () => undefined };
 
-function bootPage(responder: (path: string) => unknown) {
+function bootPage(responder: (path: string) => unknown, statusOf: (path: string) => number = () => 200) {
   const els = new Map<string, FakeEl>();
   for (const match of page.matchAll(/\sid="([^"]+)"/gu)) {
     els.set(match[1] ?? '', fakeEl('div'));
@@ -276,7 +276,7 @@ function bootPage(responder: (path: string) => unknown) {
     fetch: (path: string, init: FetchCall['init']) => {
       calls.push({ path, init });
       if (lost) return Promise.reject(new Error('lost response'));
-      return Promise.resolve({ status: 200, json: () => Promise.resolve(responder(path)) });
+      return Promise.resolve({ status: statusOf(path), json: () => Promise.resolve(responder(path)) });
     },
   };
   vm.runInNewContext(SCRIPT, context);
@@ -692,6 +692,72 @@ test('page executes: a retry after an edit replays the submitted answers with th
   assert.equal(body['idempotencyKey'], first.body?.['idempotencyKey'], 'retry reuses the key');
   assert.deepEqual(body['answers'], first.body?.['answers'], 'retry replays the submitted answers');
   assert.equal((body['answers'] as unknown[])[0], 'answer-1');
+});
+
+/** Clicks the rendered group's submit control after `fill` and returns the request it sent. */
+async function clickGroup(b: ReturnType<typeof bootPage>, text: RegExp, fill: (input: FakeEl) => void) {
+  const group = b.groups().find(section => text.test(textOf(section)));
+  assert.ok(group, 'clarification group rendered');
+  textareasOf(group).forEach(fill);
+  const before = b.calls.length;
+  group.children.find(child => child.tagName === 'button')?.handlers.click?.(EVENT);
+  await b.settle();
+  const call = b.calls.slice(before).find(item => item.path.endsWith('/answers'));
+  return { call, body: call ? (JSON.parse(call.init.body ?? '{}') as Record<string, unknown>) : null };
+}
+
+test('page executes: corrected answers after a definitive refusal go out under a fresh key', async () => {
+  const view = clarificationView([{ questionId: 'gq-1', text: 'Which module owns retries?' }]);
+  let status = 400;
+  const answerStatus = (path: string) => (path.endsWith('/answers') ? status : 200);
+  const b = bootPage(
+    path =>
+      !path.endsWith('/answers')
+        ? { ok: true, result: view }
+        : status === 400
+          ? { ok: false, error: 'INVALID_ANSWERS' }
+          : { ok: true, result: { experiment: view, receipt: { receiptId: 'rcpt-1', kind: 'answer', idempotencyKey: 'k', experimentId: 'exp-1', version: 8 } } },
+    answerStatus,
+  );
+  await b.loadExperiment();
+
+  // Empty answers are refused with 400 INVALID_ANSWERS before any store write.
+  const refused = await clickGroup(b, /Which module owns retries\?/u, input => {
+    input.value = '';
+  });
+  assert.ok(refused.body, 'refused submit sent');
+  assert.deepEqual(refused.body['answers'], ['']);
+  assert.match(b.el('result').textContent, /INVALID_ANSWERS/u);
+
+  // The refusal recorded nothing, so the corrected answers must not replay the refused payload.
+  status = 200;
+  const corrected = await clickGroup(b, /Which module owns retries\?/u, input => {
+    input.value = 'the retry module';
+  });
+  assert.ok(corrected.body, 'corrected submit sent');
+  assert.notEqual(corrected.body['idempotencyKey'], refused.body['idempotencyKey'], 'fresh key after a definitive refusal');
+  assert.deepEqual(corrected.body['answers'], ['the retry module']);
+});
+
+test('page executes: a busy refusal keeps its key, so the retry replays the same payload', async () => {
+  const view = clarificationView([{ questionId: 'gq-1', text: 'Which module owns retries?' }]);
+  let status = 409;
+  const b = bootPage(
+    path => (path.endsWith('/answers') && status === 409 ? { ok: false, error: 'EXPERIMENT_ACTIVE' } : { ok: true, result: view }),
+    path => (path.endsWith('/answers') ? status : 200),
+  );
+  await b.loadExperiment();
+
+  const busy = await clickGroup(b, /Which module owns retries\?/u, input => {
+    input.value = 'the retry module';
+  });
+  assert.ok(busy.body, 'busy submit sent');
+  status = 200;
+  const retry = await clickGroup(b, /Which module owns retries\?/u, input => {
+    input.value = 'edited after busy';
+  });
+  assert.equal(retry.body?.['idempotencyKey'], busy.body['idempotencyKey'], 'a busy outcome is uncertain: the key is retained');
+  assert.deepEqual(retry.body?.['answers'], busy.body['answers'], 'the retained key replays its own payload');
 });
 
 test('page executes: a pending group A response leaves group B controls and its key intact', async () => {

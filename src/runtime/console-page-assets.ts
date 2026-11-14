@@ -47,7 +47,7 @@ export const SCRIPT = `
     });
   }
 
-  // Result pane: allowlisted receipt/decision scalars only; views render via formatExperiment, never wholesale.
+  // Result pane: allowlisted receipt/decision scalars only; views render via formatExperiment.
   // A UC-05 decision arrives as a 200 SafeResult; only outcome ok/paused means it was recorded.
   function describe(out) {
     var d = isObj(out.data) ? out.data : {};
@@ -70,8 +70,8 @@ export const SCRIPT = `
     var payload = build(key);
     return api('POST', path, payload).then(function (out) {
       button.disabled = false;
-      // Only the slot's own key retires: a newer action in the same slot keeps its pending key.
-      if (out.status === 200 && keys[slot] === key) keys[slot] = null;
+      // 200 or a definitive refusal (non-409 4xx) retires this slot's key; 409/503 replay it.
+      if (out.status < 500 && out.status !== 409 && keys[slot] === key) keys[slot] = null;
       show('result', describe(out));
       return out;
     }, function () {
@@ -205,12 +205,11 @@ export const SCRIPT = `
     });
     var button = el('button', 'Submit group answers');
     button.type = 'button';
-    // Answers bind to the group id/digest and go in question order; a single retained key covers this
-    // group until it is answered or replaced, and clearGroup retires it with the controls.
+    // Answers bind to the group id/digest, in question order; a retained key covers this group
+    // until it is answered, and clearGroup retires it with the controls.
     button.addEventListener('click', function () {
       send(button, 'group', experimentPath('/answers'), function (key) {
-        // An uncertain retry replays the payload its key was minted with: the service fingerprints
-        // answers, so edited inputs under that key would be refused as a conflicting replay.
+        // An uncertain retry replays its key's payload: the service fingerprints answers.
         if (groupSent && groupSent.idempotencyKey === key) return groupSent;
         groupSent = {
           idempotencyKey: key,
