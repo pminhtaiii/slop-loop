@@ -56,7 +56,7 @@ export interface UC06QualityCaseDescriptor {
   readonly caseId: `Q${string}`;
   readonly name: string;
   readonly kind: 'clean' | 'faulty';
-  readonly defectCategory?: 'logic' | 'security' | 'missing-test';
+  readonly defectCategory?: 'logic' | 'security' | 'missing-test' | undefined;
   readonly diff: string;
   readonly file: string;
   readonly diffDigest: string;
@@ -74,39 +74,40 @@ export interface UC06QualityCaseLabel {
     readonly category: 'logic' | 'security' | 'missing-test';
     readonly severity: 'warning' | 'error';
     readonly rationale: string;
-    readonly signatureKeywords: readonly string[];
-  };
+    readonly requiredKeywordGroups: readonly (readonly string[])[];
+  } | undefined;
   readonly oracleDigest: string;
 }
 
 // -----------------------------------------------------------------------------
 // 12 Frozen Python Diffs: Q01-Q06 (Clean), Q07-Q12 (Faulty)
+// Validated against validateReviewDiff line count and hunk rules
 // -----------------------------------------------------------------------------
 
-const DIFF_Q01 = `--- a/src/math_util.py\n+++ b/src/math_util.py\n@@ -10,3 +10,4 @@\n def add(a: int, b: int) -> int:\n     return a + b\n+\n`;
-const DIFF_Q02 = `--- a/src/formatter.py\n+++ b/src/formatter.py\n@@ -5,3 +5,4 @@\n def format_name(first: str, last: str) -> str:\n-    return first + ' ' + last\n+    return f"{first.strip()} {last.strip()}"\n`;
-const DIFF_Q03 = `--- a/src/validator.py\n+++ b/src/validator.py\n@@ -8,3 +8,5 @@\n def is_positive(n: int) -> bool:\n-    return n > 0\n+    if not isinstance(n, int):\n+        raise TypeError("Expected integer")\n+    return n > 0\n`;
-const DIFF_Q04 = `--- a/src/counter.py\n+++ b/src/counter.py\n@@ -12,3 +12,4 @@\n class Counter:\n     def reset(self) -> None:\n-        self.val = 0\n+        self._count = 0\n`;
-const DIFF_Q05 = `--- a/src/cache.py\n+++ b/src/cache.py\n@@ -15,3 +15,5 @@\n def get_cached(key: str) -> str | None:\n-    return STORE.get(key)\n+    val = STORE.get(key)\n+    return str(val) if val is not None else None\n`;
-const DIFF_Q06 = `--- a/src/retry.py\n+++ b/src/retry.py\n@@ -20,3 +20,4 @@\n def compute_backoff(attempt: int, base: float = 1.5) -> float:\n-    return base ** attempt\n+    return min(60.0, base ** attempt)\n`;
+const DIFF_Q01 = ['--- a/src/math_util.py', '+++ b/src/math_util.py', '@@ -10,2 +10,3 @@', ' def add(a: int, b: int) -> int:', '     return a + b', '+    # math helper comment'].join('\n');
+const DIFF_Q02 = ['--- a/src/formatter.py', '+++ b/src/formatter.py', '@@ -5,2 +5,2 @@', ' def format_name(first: str, last: str) -> str:', "-    return first + ' ' + last", '+    return f"{first.strip()} {last.strip()}"'].join('\n');
+const DIFF_Q03 = ['--- a/src/validator.py', '+++ b/src/validator.py', '@@ -8,2 +8,4 @@', ' def is_positive(n: int) -> bool:', '+    if not isinstance(n, int):', '+        raise TypeError("Expected integer")', '     return n > 0'].join('\n');
+const DIFF_Q04 = ['--- a/src/counter.py', '+++ b/src/counter.py', '@@ -12,2 +12,2 @@', ' class Counter:', '-    def reset(self) -> None:', '+    def clear(self) -> None:'].join('\n');
+const DIFF_Q05 = ['--- a/src/cache.py', '+++ b/src/cache.py', '@@ -15,2 +15,3 @@', ' def get_cached(key: str) -> str | None:', '-    return STORE.get(key)', '+    val = STORE.get(key)', '+    return str(val) if val is not None else None'].join('\n');
+const DIFF_Q06 = ['--- a/src/retry.py', '+++ b/src/retry.py', '@@ -20,2 +20,2 @@', ' def compute_backoff(attempt: int, base: float = 1.5) -> float:', '-    return base ** attempt', '+    return min(60.0, base ** attempt)'].join('\n');
 
 // Faulty cases: Q07 & Q08 (Logic), Q09 & Q10 (Security), Q11 & Q12 (Missing-test)
-const DIFF_Q07 = `--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -14,3 +14,3 @@\n def divide(a: float, b: float) -> float:\n-    if b == 0.0:\n+    if b < 0.0:\n         raise ValueError("Division by zero")\n     return a / b\n`;
-const DIFF_Q08 = `--- a/src/inventory.py\n+++ b/src/inventory.py\n@@ -22,3 +22,3 @@\n def apply_discount(price: float, rate: float) -> float:\n-    return price * (1.0 - rate)\n+    return price * (1.0 + rate)\n`;
-const DIFF_Q09 = `--- a/src/db.py\n+++ b/src/db.py\n@@ -30,3 +30,3 @@\n def query_user(cursor, username: str):\n-    cursor.execute("SELECT * FROM users WHERE name = ?", (username,))\n+    cursor.execute(f"SELECT * FROM users WHERE name = '{username}'")\n`;
-const DIFF_Q10 = `--- a/src/auth.py\n+++ b/src/auth.py\n@@ -40,3 +40,3 @@\n def log_session_init(token: str):\n-    logger.info("Session started")\n+    logger.info(f"Session started with secret token: {token}")\n`;
-const DIFF_Q11 = `--- a/src/payments.py\n+++ b/src/payments.py\n@@ -50,3 +50,4 @@\n def charge(user_id: str, amount: int) -> bool:\n-    return gateway.process(user_id, amount)\n+    # Critical refund flow without required unit test coverage\n+    return gateway.refund(user_id, amount)\n`;
-const DIFF_Q12 = `--- a/src/rate_limiter.py\n+++ b/src/rate_limiter.py\n@@ -60,3 +60,4 @@\n def allow_request(ip: str) -> bool:\n-    return bucket.consume(ip)\n+    # Untested burst bypass window\n+    return True if ip.startswith("10.") else bucket.consume(ip)\n`;
+const DIFF_Q07 = ['--- a/src/calculator.py', '+++ b/src/calculator.py', '@@ -14,3 +14,3 @@', ' def divide(a: float, b: float) -> float:', '-    if b == 0.0:', '+    if b < 0.0:', '         raise ValueError("Division by zero")'].join('\n');
+const DIFF_Q08 = ['--- a/src/inventory.py', '+++ b/src/inventory.py', '@@ -22,2 +22,2 @@', ' def apply_discount(price: float, rate: float) -> float:', '-    return price * (1.0 - rate)', '+    return price * (1.0 + rate)'].join('\n');
+const DIFF_Q09 = ['--- a/src/db.py', '+++ b/src/db.py', '@@ -30,2 +30,2 @@', ' def query_user(cursor, username: str):', '-    cursor.execute("SELECT * FROM users WHERE name = ?", (username,))', '+    cursor.execute(f"SELECT * FROM users WHERE name = \'{username}\'")'].join('\n');
+const DIFF_Q10 = ['--- a/src/auth.py', '+++ b/src/auth.py', '@@ -40,2 +40,2 @@', ' def log_session_init(token: str):', '-    logger.info("Session started")', '+    logger.info(f"Session started with secret token: {token}")'].join('\n');
+const DIFF_Q11 = ['--- a/src/payments.py', '+++ b/src/payments.py', '@@ -50,2 +50,3 @@', ' def charge(user_id: str, amount: int) -> bool:', '-    return gateway.process(user_id, amount)', '+    # Critical refund flow without required unit test coverage', '+    return gateway.refund(user_id, amount)'].join('\n');
+const DIFF_Q12 = ['--- a/src/rate_limiter.py', '+++ b/src/rate_limiter.py', '@@ -60,2 +60,3 @@', ' def allow_request(ip: str) -> bool:', '-    return bucket.consume(ip)', '+    # Untested burst bypass window', '+    return True if ip.startswith("10.") else bucket.consume(ip)'].join('\n');
 
 export const UC06_QUALITY_CASES: readonly UC06QualityCaseDescriptor[] = [
-  { caseId: 'Q01', name: 'Clean trailing newline addition', kind: 'clean', diff: DIFF_Q01, file: 'src/math_util.py', diffDigest: hash(DIFF_Q01) },
+  { caseId: 'Q01', name: 'Clean trailing comment addition', kind: 'clean', diff: DIFF_Q01, file: 'src/math_util.py', diffDigest: hash(DIFF_Q01) },
   { caseId: 'Q02', name: 'Clean name trimming formatter', kind: 'clean', diff: DIFF_Q02, file: 'src/formatter.py', diffDigest: hash(DIFF_Q02) },
   { caseId: 'Q03', name: 'Clean type check in validator', kind: 'clean', diff: DIFF_Q03, file: 'src/validator.py', diffDigest: hash(DIFF_Q03) },
-  { caseId: 'Q04', name: 'Clean variable renaming in counter', kind: 'clean', diff: DIFF_Q04, file: 'src/counter.py', diffDigest: hash(DIFF_Q04) },
+  { caseId: 'Q04', name: 'Clean method renaming in counter', kind: 'clean', diff: DIFF_Q04, file: 'src/counter.py', diffDigest: hash(DIFF_Q04) },
   { caseId: 'Q05', name: 'Clean safe type conversion in cache', kind: 'clean', diff: DIFF_Q05, file: 'src/cache.py', diffDigest: hash(DIFF_Q05) },
   { caseId: 'Q06', name: 'Clean capped exponential backoff', kind: 'clean', diff: DIFF_Q06, file: 'src/retry.py', diffDigest: hash(DIFF_Q06) },
   { caseId: 'Q07', name: 'Logic inversion in zero division check', kind: 'faulty', defectCategory: 'logic', diff: DIFF_Q07, file: 'src/calculator.py', diffDigest: hash(DIFF_Q07) },
-  { caseId: 'Q08', name: 'Logic inversion in discount rate', kind: 'faulty', defectCategory: 'logic', diff: DIFF_Q08, file: 'src/inventory.py', diffDigest: hash(DIFF_Q08) },
+  { caseId: 'Q08', name: 'Logic inversion in discount rate calculation', kind: 'faulty', defectCategory: 'logic', diff: DIFF_Q08, file: 'src/inventory.py', diffDigest: hash(DIFF_Q08) },
   { caseId: 'Q09', name: 'SQL injection via f-string query', kind: 'faulty', defectCategory: 'security', diff: DIFF_Q09, file: 'src/db.py', diffDigest: hash(DIFF_Q09) },
   { caseId: 'Q10', name: 'Credential leak in session logger', kind: 'faulty', defectCategory: 'security', diff: DIFF_Q10, file: 'src/auth.py', diffDigest: hash(DIFF_Q10) },
   { caseId: 'Q11', name: 'Untested refund behavior change', kind: 'faulty', defectCategory: 'missing-test', diff: DIFF_Q11, file: 'src/payments.py', diffDigest: hash(DIFF_Q11) },
@@ -156,7 +157,7 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
       category: 'logic',
       severity: 'error',
       rationale: 'Zero division check compares b < 0.0 instead of b == 0.0, allowing division by zero.',
-      signatureKeywords: ['division', 'zero', 'b == 0'],
+      requiredKeywordGroups: [['division', 'zero', 'denominator'], ['<', 'invert', '==', 'check', 'zero division']],
     },
     oracleDigest: hash({ caseId: 'Q07', defect: 'DEF-Q07-DIV-ZERO' }),
   },
@@ -172,7 +173,7 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
       category: 'logic',
       severity: 'error',
       rationale: 'Discount rate adds rather than subtracts from original price, increasing cost.',
-      signatureKeywords: ['discount', 'subtract', 'add', 'rate'],
+      requiredKeywordGroups: [['discount'], ['+', 'add', 'increase', 'subtraction', 'subtract', 'minus', 'sign', 'rate']],
     },
     oracleDigest: hash({ caseId: 'Q08', defect: 'DEF-Q08-DISCOUNT-ADD' }),
   },
@@ -188,7 +189,7 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
       category: 'security',
       severity: 'error',
       rationale: 'Direct string interpolation inside SQL query introduces SQL injection vulnerability.',
-      signatureKeywords: ['sql', 'injection', 'parameter', 'interpolate'],
+      requiredKeywordGroups: [['sql', 'injection', 'interpolate', 'parameter', 'query']],
     },
     oracleDigest: hash({ caseId: 'Q09', defect: 'DEF-Q09-SQL-INJECTION' }),
   },
@@ -204,7 +205,7 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
       category: 'security',
       severity: 'error',
       rationale: 'Secret session token is logged in plaintext to logger, exposing credentials.',
-      signatureKeywords: ['token', 'secret', 'log', 'credential'],
+      requiredKeywordGroups: [['token', 'secret', 'credential'], ['log', 'leak', 'expose', 'plaintext']],
     },
     oracleDigest: hash({ caseId: 'Q10', defect: 'DEF-Q10-SECRET-LOGGING' }),
   },
@@ -220,7 +221,7 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
       category: 'missing-test',
       severity: 'error',
       rationale: 'Payment processing replaced with refund call without verified test coverage.',
-      signatureKeywords: ['refund', 'test', 'untested', 'coverage'],
+      requiredKeywordGroups: [['refund'], ['test', 'untested', 'coverage']],
     },
     oracleDigest: hash({ caseId: 'Q11', defect: 'DEF-Q11-UNTESTED-REFUND' }),
   },
@@ -236,7 +237,7 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
       category: 'missing-test',
       severity: 'warning',
       rationale: 'Internal subnet rate limit bypass logic introduced without required regression tests.',
-      signatureKeywords: ['rate limit', 'bypass', 'untested', 'test'],
+      requiredKeywordGroups: [['bypass', 'rate limit', 'subnet'], ['test', 'untested', 'coverage']],
     },
     oracleDigest: hash({ caseId: 'Q12', defect: 'DEF-Q12-UNTESTED-BYPASS' }),
   },

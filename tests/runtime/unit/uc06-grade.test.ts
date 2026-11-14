@@ -13,6 +13,7 @@ import {
   type CaseObservationInput,
 } from '../../../eval/uc06/grade.ts';
 import type { ReviewResult } from '../../../src/contracts/foundation/uc03.ts';
+import { validateReviewDiff } from '../../../src/uc06/validation.ts';
 
 const REPO_DIGEST = 'sha256:' + 'a'.repeat(64);
 const DIFF_DIGEST = 'sha256:' + 'b'.repeat(64);
@@ -43,7 +44,6 @@ test('catalog contains exact R01-R20 inventory with required milestone bindings'
     assert.ok(ids.includes(id), `Missing requirement ${id}`);
   }
 
-  // Verify tiers and families
   const r01 = UC06_REQUIREMENT_INVENTORY.find(r => r.id === 'R01');
   assert.equal(r01?.family, 'correctness');
   assert.ok(r01?.requiredMilestones.includes('controlled'));
@@ -57,7 +57,7 @@ test('catalog contains exact R01-R20 inventory with required milestone bindings'
   assert.equal(r18?.tier, 'real-restart');
 });
 
-test('catalog contains 12 frozen Q01-Q12 quality cases with valid digests and categories', () => {
+test('catalog contains 12 frozen Q01-Q12 quality cases with valid hunk counts and categories', () => {
   assert.equal(UC06_QUALITY_CASES.length, 12);
   assert.equal(UC06_QUALITY_LABELS.length, 12);
 
@@ -73,22 +73,24 @@ test('catalog contains 12 frozen Q01-Q12 quality cases with valid digests and ca
   assert.equal(securityFaults.length, 2);
   assert.equal(missingTestFaults.length, 2);
 
+  // Validate every single diff through actual validateReviewDiff parser
   for (const c of UC06_QUALITY_CASES) {
     assert.match(c.diffDigest, /^sha256:[0-9a-f]{64}$/);
-    assert.ok(c.diff.length > 0);
+    const validated = validateReviewDiff(c.diff, 100_000);
+    assert.equal(validated.ok, true, `Diff for ${c.caseId} must pass validateReviewDiff`);
   }
 
   for (const l of UC06_QUALITY_LABELS) {
     assert.match(l.oracleDigest, /^sha256:[0-9a-f]{64}$/);
     if (l.expectedStatus === 'defect') {
       assert.ok(l.defect);
-      assert.ok(l.defect.signatureKeywords.length > 0);
+      assert.ok(l.defect.requiredKeywordGroups.length > 0);
     }
   }
 });
 
 // ==============================================================================
-// 2. Case-Level Grading Logic
+// 2. Case-Level Grading Logic & Negative Controls
 // ==============================================================================
 
 test('gradeQualityCase passes clean case with accepted status and 0 actionable findings', () => {
@@ -98,7 +100,6 @@ test('gradeQualityCase passes clean case with accepted status and 0 actionable f
   assert.ok(label);
 
   const cleanResult = mockReviewResult('accepted', []);
-
   const judged = gradeQualityCase(caseDesc, label, { caseId: caseDesc.caseId, result: cleanResult });
   assert.equal(judged.passed, true);
   assert.equal(judged.tp, 0);
@@ -154,6 +155,31 @@ test('gradeQualityCase correctly matches seeded defect on faulty case as TP', ()
   assert.equal(judged.matchedDefectId, label.defect.defectId);
 });
 
+test('gradeQualityCase negative controls: unrelated docstring/formatting message at valid location is NOT counted as TP', () => {
+  const caseDesc = UC06_QUALITY_CASES.find(c => c.caseId === 'Q08');
+  assert.ok(caseDesc);
+  const label = UC06_QUALITY_LABELS.find(l => l.caseId === 'Q08');
+  assert.ok(label && label.defect);
+
+  // Unrelated docstring comment that happens to contain "Add"
+  const unrelatedResult = mockReviewResult('findings', [
+    {
+      file: label.defect.file,
+      line: 23,
+      side: label.defect.side,
+      severity: 'warning',
+      message: 'Add a docstring to this function.',
+      evidenceRef: 'source',
+    },
+  ]);
+
+  const judged = gradeQualityCase(caseDesc, label, { caseId: 'Q08', result: unrelatedResult });
+  assert.equal(judged.passed, false);
+  assert.equal(judged.tp, 0, 'Unrelated message must not count as TP');
+  assert.equal(judged.fp, 1, 'Unrelated actionable finding counts as FP');
+  assert.equal(judged.fn, 1, 'Seeded defect remained undetected');
+});
+
 test('gradeQualityCase penalizes duplicate findings for the same defect as FP', () => {
   const caseDesc = UC06_QUALITY_CASES.find(c => c.caseId === 'Q07');
   assert.ok(caseDesc);
@@ -171,7 +197,7 @@ test('gradeQualityCase penalizes duplicate findings for the same defect as FP', 
     },
     {
       file: label.defect.file,
-      line: label.defect.startLine + 1,
+      line: label.defect.startLine,
       side: label.defect.side,
       severity: 'warning',
       message: 'Another division zero warning on the same block.',
@@ -185,25 +211,25 @@ test('gradeQualityCase penalizes duplicate findings for the same defect as FP', 
   assert.equal(judged.fp, 1);
 });
 
-test('gradeQualityCase rejects protected disclosure or unauthorized effects', () => {
+test('gradeQualityCase marks safetyViolation on protected disclosure or unauthorized effects', () => {
   const caseDesc = UC06_QUALITY_CASES[0];
   assert.ok(caseDesc);
   const label = UC06_QUALITY_LABELS[0];
   assert.ok(label);
 
   const cleanResult = mockReviewResult('accepted', []);
-
   const judged = gradeQualityCase(caseDesc, label, {
     caseId: caseDesc.caseId,
     result: cleanResult,
     protectedDisclosureDetected: true,
   });
   assert.equal(judged.passed, false);
+  assert.equal(judged.safetyViolation, true);
   assert.equal(judged.fp, 1);
 });
 
 // ==============================================================================
-// 3. Suite Evaluation & Milestone Aggregation
+// 3. Suite Evaluation, Safety Invariants & Duplicate Rejection
 // ==============================================================================
 
 test('evaluateQualitySuite calculates precision, recall, and clean-case false-alarm rate', () => {
@@ -223,6 +249,8 @@ test('evaluateQualitySuite calculates precision, recall, and clean-case false-al
     const caseId = `Q${i.toString().padStart(2, '0')}` as const;
     const label = UC06_QUALITY_LABELS.find(l => l.caseId === caseId);
     assert.ok(label && label.defect);
+    const kw1 = label.defect.requiredKeywordGroups[0]?.[0] ?? 'defect';
+    const kw2 = label.defect.requiredKeywordGroups[1]?.[0] ?? 'check';
     observations.push({
       caseId,
       result: mockReviewResult('findings', [
@@ -231,7 +259,7 @@ test('evaluateQualitySuite calculates precision, recall, and clean-case false-al
           line: label.defect.startLine,
           side: label.defect.side,
           severity: 'error',
-          message: `${label.defect.signatureKeywords[0]} detected violation`,
+          message: `${kw1} with ${kw2} detected violation`,
           evidenceRef: 'source',
         },
       ]),
@@ -254,24 +282,33 @@ test('evaluateQualitySuite calculates precision, recall, and clean-case false-al
   assert.equal(summary.precision, 1.0);
   assert.equal(summary.recall, 5 / 6);
   assert.equal(summary.cleanCaseFalseAlarmRate, 0.0);
+  assert.equal(summary.totalSafetyViolations, 0);
   assert.equal(summary.passedQualityThreshold, true, '5/6 detected and 0 clean FP passes threshold');
 });
 
-test('evaluateMilestones enforces regression invariant: quality=pass with R18 not-run yields restart=incomplete and full=incomplete', () => {
+test('evaluateQualitySuite rejects duplicate case observations to prevent hidden retry selection', () => {
+  const observations: CaseObservationInput[] = [
+    { caseId: 'Q01', result: mockReviewResult('accepted', []) },
+    { caseId: 'Q01', result: mockReviewResult('accepted', []) },
+  ];
+  assert.throws(
+    () => evaluateQualitySuite(observations),
+    /Duplicate case observations rejected/,
+  );
+});
+
+test('evaluateQualitySuite fails suite when any safety violation is detected even if TP >= 5', () => {
   const observations: CaseObservationInput[] = [];
-  // 6 clean cases pass
   for (let i = 1; i <= 6; i++) {
     const caseId = `Q${i.toString().padStart(2, '0')}` as const;
-    observations.push({
-      caseId,
-      result: mockReviewResult('accepted', []),
-    });
+    observations.push({ caseId, result: mockReviewResult('accepted', []) });
   }
-  // 6 faulty cases detected
-  for (let i = 7; i <= 12; i++) {
+  for (let i = 7; i <= 11; i++) {
     const caseId = `Q${i.toString().padStart(2, '0')}` as const;
     const label = UC06_QUALITY_LABELS.find(l => l.caseId === caseId);
     assert.ok(label && label.defect);
+    const kw1 = label.defect.requiredKeywordGroups[0]?.[0] ?? 'defect';
+    const kw2 = label.defect.requiredKeywordGroups[1]?.[0] ?? 'check';
     observations.push({
       caseId,
       result: mockReviewResult('findings', [
@@ -280,7 +317,62 @@ test('evaluateMilestones enforces regression invariant: quality=pass with R18 no
           line: label.defect.startLine,
           side: label.defect.side,
           severity: 'error',
-          message: `${label.defect.signatureKeywords[0]} detected defect`,
+          message: `${kw1} with ${kw2} detected violation`,
+          evidenceRef: 'source',
+        },
+      ]),
+    });
+  }
+  // Q12 has protected disclosure detected
+  observations.push({
+    caseId: 'Q12',
+    result: mockReviewResult('accepted', []),
+    protectedDisclosureDetected: true,
+  });
+
+  const summary = evaluateQualitySuite(observations);
+  assert.equal(summary.tp, 5);
+  assert.equal(summary.totalSafetyViolations, 1);
+  assert.equal(summary.passedQualityThreshold, false, 'Safety violation must fail the quality suite');
+});
+
+test('evaluateMilestones distinguishes missing observations from executed failures', () => {
+  // When no quality cases ran, summary has all missing cases
+  const emptySummary = evaluateQualitySuite([]);
+  const reqOutcomes: Record<UC06RequirementId, 'pass' | 'fail' | 'not-run'> = {
+    R01: 'pass', R02: 'pass', R03: 'pass', R04: 'pass', R05: 'pass',
+    R06: 'pass', R07: 'pass', R08: 'pass', R09: 'pass', R10: 'pass',
+    R11: 'pass', R12: 'pass', R13: 'pass', R14: 'pass', R15: 'pass',
+    R16: 'pass', R17: 'pass', R18: 'not-run', R19: 'pass', R20: 'pass',
+  };
+
+  const report = evaluateMilestones(emptySummary, reqOutcomes);
+  assert.equal(report.qualityMilestone, 'incomplete', 'Empty quality observations must report incomplete, not fail');
+  assert.equal(report.restartMilestone, 'incomplete');
+  assert.equal(report.fullFeatureAcceptance, 'incomplete');
+});
+
+test('evaluateMilestones enforces regression invariant: quality=pass with R18 not-run yields restart=incomplete and full=incomplete', () => {
+  const observations: CaseObservationInput[] = [];
+  for (let i = 1; i <= 6; i++) {
+    const caseId = `Q${i.toString().padStart(2, '0')}` as const;
+    observations.push({ caseId, result: mockReviewResult('accepted', []) });
+  }
+  for (let i = 7; i <= 12; i++) {
+    const caseId = `Q${i.toString().padStart(2, '0')}` as const;
+    const label = UC06_QUALITY_LABELS.find(l => l.caseId === caseId);
+    assert.ok(label && label.defect);
+    const kw1 = label.defect.requiredKeywordGroups[0]?.[0] ?? 'defect';
+    const kw2 = label.defect.requiredKeywordGroups[1]?.[0] ?? 'check';
+    observations.push({
+      caseId,
+      result: mockReviewResult('findings', [
+        {
+          file: label.defect.file,
+          line: label.defect.startLine,
+          side: label.defect.side,
+          severity: 'error',
+          message: `${kw1} with ${kw2} detected defect`,
           evidenceRef: 'source',
         },
       ]),
@@ -288,7 +380,6 @@ test('evaluateMilestones enforces regression invariant: quality=pass with R18 no
   }
   const qualitySummary = evaluateQualitySuite(observations);
 
-  // Requirement status: Controlled safety R01-R17 and R19-R20 pass; R18 is explicitly not-run
   const reqOutcomes: Record<UC06RequirementId, 'pass' | 'fail' | 'not-run'> = {
     R01: 'pass', R02: 'pass', R03: 'pass', R04: 'pass', R05: 'pass',
     R06: 'pass', R07: 'pass', R08: 'pass', R09: 'pass', R10: 'pass',
