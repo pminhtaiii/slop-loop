@@ -1,7 +1,7 @@
 # Tasks: UC-06 — Reviewer Agent
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [context contract](contracts/review-context.md), [evaluation](contracts/evaluation.md), [decisions](contracts/decisions.md).
-**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 passed full independent source/controlled prerequisite verification on `6c08306`; see [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 in dependency order at the same bounded tier. T007–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
+**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 passed full independent source/controlled prerequisite verification on `6c08306`; see [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 in dependency order at the same bounded tier. T007 completed on 2026-11-14 with 12 passing security and adversarial tests at controlled tier. T008–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
 
 ## Phase 1: Setup
 
@@ -54,9 +54,10 @@
 **Goal**: Deny hostile actions and stop safely with truthful accounting.
 **Independent Test**: Real reviewer/model ingress against controlled owner/transport spies; assert returned outcome, journal charges and zero forbidden effects separately.
 
-- [ ] T007 [US2] Add adversarial authority/accounting vectors in tests/runtime/security/uc06-review-safety.test.ts.
+- [x] T007 [US2] Add adversarial authority/accounting vectors in tests/runtime/security/uc06-review-safety.test.ts.
   - **Dependencies**: T006.
   - **Owned Paths**: tests/runtime/security/uc06-review-safety.test.ts.
+  - **Verification Evidence**: Implemented 12 comprehensive adversarial security/accounting tests in `tests/runtime/security/uc06-review-safety.test.ts` (18,421 bytes, <= 20,000 bytes limit). All 12 tests pass in isolation and alongside full UC-06 suite (124/124 tests pass). Covers R11/R12 prompt injection in output and diff patch content, secret/grader protection, R12 forbidden proposal action rejections (patch/exec/install/write/delete), R13 task-wide paused/rejected control and missing/exceeded finiteBounds, R14 network timeouts, non-200 transport status, unknown usage uncertainty, invalid JSON handling, and R15 conflicting duplicate request denial without double dispatch. TypeScript 0 errors, ESLint clean.
   - **Acceptance Checks**: R11–R15/R19–R20, FR-006–009/012, SC-002/003; source/diff/log/convention injection, secret/grader access, write/patch/delete/install/command/tool attempts, task-wide pending/rejected pause, missing/exhausted/invalid time/review/token/cost bounds, timeout/invalid response/uncertain usage/settlement/observation acknowledgment. Exact duplicate/conflict/new-run behavior; owner high-water marks and no refund/retry. Reuse existing reviewer-v02-accounting tests without treating MemoryStatePortV02 as durable. Any production defect goes back to its exact owned task for repair, not unauthorized test-worker edits.
 
 ## Phase 5: User Story 3 - Repair and independent evaluation (Priority: P2)
