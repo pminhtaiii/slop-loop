@@ -155,6 +155,31 @@ test('gradeQualityCase correctly matches seeded defect on faulty case as TP', ()
   assert.equal(judged.matchedDefectId, label.defect.defectId);
 });
 
+test('gradeQualityCase negative controls: finding pointing to unchanged context line is rejected as unedited line (R05)', () => {
+  const caseDesc = UC06_QUALITY_CASES.find(c => c.caseId === 'Q07');
+  assert.ok(caseDesc);
+  const label = UC06_QUALITY_LABELS.find(l => l.caseId === 'Q07');
+  assert.ok(label && label.defect);
+
+  // Line 14 is unchanged context line in Q07 ("def divide(a: float, b: float) -> float:")
+  const unchangedLineResult = mockReviewResult('findings', [
+    {
+      file: label.defect.file,
+      line: 14,
+      side: label.defect.side,
+      severity: 'error',
+      message: 'Division by zero check is inverted: b < 0 allowing zero denominator.',
+      evidenceRef: 'source',
+    },
+  ]);
+
+  const judged = gradeQualityCase(caseDesc, label, { caseId: 'Q07', result: unchangedLineResult });
+  assert.equal(judged.passed, false);
+  assert.equal(judged.tp, 0, 'Unedited context line 14 must not count as TP');
+  assert.equal(judged.fp, 1, 'Finding on unedited line counts as FP');
+  assert.equal(judged.fn, 1, 'Actual defect on line 15 was not identified');
+});
+
 test('gradeQualityCase negative controls: unrelated docstring/formatting message at valid location is NOT counted as TP', () => {
   const caseDesc = UC06_QUALITY_CASES.find(c => c.caseId === 'Q08');
   assert.ok(caseDesc);
