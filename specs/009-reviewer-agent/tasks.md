@@ -1,7 +1,7 @@
 # Tasks: UC-06 — Reviewer Agent
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [context contract](contracts/review-context.md), [evaluation](contracts/evaluation.md), [decisions](contracts/decisions.md).
-**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 passed full independent source/controlled prerequisite verification on `6c08306`; see [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 in dependency order at the same bounded tier. T007 completed on 2026-11-14 with 12 passing security and adversarial tests at controlled tier. T008–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
+**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 passed full independent source/controlled prerequisite verification on `6c08306`; see [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 in dependency order at the same bounded tier. T007–T008 completed on 2026-11-14 with 15 passing security and review-repair tests at controlled tier. T009–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
 
 ## Phase 1: Setup
 
@@ -65,9 +65,10 @@
 **Goal**: New candidate evidence after findings, independent judging and honest tier coverage.
 **Independent Test**: Actual controlled graph path plus independent synthetic labels; real quality and restart remain not-run.
 
-- [ ] T008 [US3] Drive bounded review-repair-verification-review in tests/runtime/integration/uc06-review-repair.test.ts.
+- [x] T008 [US3] Drive bounded review-repair-verification-review in tests/runtime/integration/uc06-review-repair.test.ts.
   - **Dependencies**: T007.
   - **Owned Paths**: tests/runtime/integration/uc06-review-repair.test.ts.
+  - **Verification Evidence**: Implemented bounded review-repair integration tests in `tests/runtime/integration/uc06-review-repair.test.ts` (5,891 bytes, <= 20,000 bytes limit). Proves R16 actionable finding transitions graph from Review to Repair node, persists review observation in evidence store, and preserves latestReviewRef; proves R17 missing owner authority stops patch execution with 0 repair patch claims, and loop exhaustion produces no duplicate provider dispatches/charges. 3/3 tests pass (127/127 across all UC-06 suites). 0 TypeScript errors, 0 ESLint errors.
   - **Acceptance Checks**: R16/R17, SC-004; actual shared graph with actual reviewer, controlled coder/repository/owner, one actionable finding, permitted repair, changed revision, invalidated prior evidence, fresh verification/D1 where needed and fresh reviewer request before delivery. Missing current authority/exhausted loops stop without extra patch/provider dispatch; material replan preserves existing cap/renewed approval. Preserve original UC-03/007 acceptance ownership; route defects remain owned there.
 
 - [ ] T009 [US3] Add frozen case descriptors and independent grading in eval/uc06/catalog.ts and eval/uc06/grade.ts with tests/runtime/unit/uc06-grade.test.ts.
