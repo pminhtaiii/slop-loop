@@ -15,6 +15,7 @@ import {
 } from '../../contracts/approvals/contracts.ts';
 import type { DurableStore } from '../store.ts';
 import { isSafeStorageId } from '../store.ts';
+import { StatePortStore } from './state-port-v02-storage.ts';
 
 export interface DurableApprovalStoreOptions {
   readonly storageDir: string;
@@ -116,23 +117,31 @@ const isApprovalId = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,
  * The actual repository/workspace mapping for a first control write.
  *
  * A pending request wins because UC-05 refuses a request whose mapping differs from the
- * control; otherwise the persisted durable task record supplies the binding. A task with
- * neither — or with an unreadable record — keeps the controlled seed rather than blocking.
+ * control; otherwise the persisted task record supplies the binding. The durable v0.2 port is
+ * the production owner of the task, so its claim-directory `v02/task.json` wins over the legacy
+ * state path. A task with neither — or with an unreadable record — keeps the controlled seed.
  */
 export function initialControlMapping(durableStore: DurableStore | undefined, taskId: string, request: TaskMapping | undefined): TaskMapping {
   if (request !== undefined) return { repositoryId: request.repositoryId, workspaceId: request.workspaceId };
-  const taskPath = durableStore?.getTaskPath(taskId);
-  if (taskPath === undefined || !existsSync(taskPath)) return DEFAULT_TASK_MAPPING;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(taskPath, 'utf8'));
-  } catch {
-    return DEFAULT_TASK_MAPPING;
+  for (const taskPath of taskPaths(durableStore, taskId)) {
+    if (!existsSync(taskPath)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(taskPath, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== 'object' || parsed === null) continue;
+    const { repositoryId, workspaceId } = parsed as Record<string, unknown>;
+    if (typeof repositoryId === 'string' && isApprovalId(repositoryId) && typeof workspaceId === 'string' && isApprovalId(workspaceId)) return { repositoryId, workspaceId };
   }
-  if (typeof parsed !== 'object' || parsed === null) return DEFAULT_TASK_MAPPING;
-  const { repositoryId, workspaceId } = parsed as Record<string, unknown>;
-  if (typeof repositoryId !== 'string' || !isApprovalId(repositoryId) || typeof workspaceId !== 'string' || !isApprovalId(workspaceId)) return DEFAULT_TASK_MAPPING;
-  return { repositoryId, workspaceId };
+  return DEFAULT_TASK_MAPPING;
+}
+
+/** Task record locations in owner precedence order: the v0.2 claim directory, then the legacy state path. */
+function taskPaths(durableStore: DurableStore | undefined, taskId: string): readonly string[] {
+  if (durableStore === undefined) return [];
+  return [new StatePortStore(durableStore).statePath(taskId, 'task.json'), durableStore.getTaskPath(taskId)];
 }
 
 /** Generates initial default ApprovalTaskControl for a newly observed task.

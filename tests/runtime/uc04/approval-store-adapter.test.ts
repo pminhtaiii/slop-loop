@@ -9,8 +9,10 @@ import { ApprovalServiceError, createApprovalService } from '../../../src/approv
 import type { ApprovalStore } from '../../../src/approvals/service.ts';
 import { UC04_SCHEMA_VERSION, type TaskState } from '../../../src/persistence/contracts.ts';
 import { DurableApprovalStore } from '../../../src/persistence/adapters/approval-store-adapter.ts';
+import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { DEFAULT_POLICY_PROFILE } from '../../../src/persistence/adapters/approval-types.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
+import { createTestAdmissionTaskStateV02, createTestRepositoryCommandAdmissionContextV02 } from '../support/uc03/state-fixtures.ts';
 
 const actionDigest = `sha256:${'a'.repeat(64)}`;
 const presentationDigest = `sha256:${'b'.repeat(64)}`;
@@ -141,6 +143,8 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
     openRisks: [],
     nextAction: 'start',
   });
+
+  const contextFor = (taskId: string, repositoryId: string, workspaceId: string) => createTestRepositoryCommandAdmissionContextV02({ taskId, repositoryId, workspaceId });
 
   const contextOf = (repositoryId: string, workspaceId: string): unknown => ({
     action: interopAction,
@@ -623,12 +627,14 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
     });
   });
 
-  await t.test('UC-05 service accepts the file-backed store for a task-bound request', async () => {
+  await t.test('UC-05 service accepts the v0.2 owner task mapping from the claim directory', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'uc05-approval-interop-'));
     try {
       const durable = new DurableStore(dir);
+      await durable.init();
+      const port = new DurableStatePortV02({ store: durable });
+      await port.transition(createTestAdmissionTaskStateV02(contextFor(interopTaskId, 'repo-1', 'workspace-1')), 0);
       const approvals = new DurableApprovalStore({ storageDir: dir, durableStore: durable });
-      await durable.saveTask(taskStateOf('repo-1', 'workspace-1'));
       const service = createApprovalService({
         taskId: interopTaskId,
         profile: DEFAULT_POLICY_PROFILE,
