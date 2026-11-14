@@ -123,3 +123,52 @@ test('R17: loop exhaustion or halted repair preserves charges and produces no du
   // No second model dispatch was triggered
   assert.equal(fixture.requests.length, 1);
 });
+
+test('R16: actionable finding invalidates prior completion and blocks delivery until fresh accepted review is produced', async () => {
+  const fixture = await completingFixture();
+  fixture.response.content = JSON.stringify({
+    status: 'findings',
+    findings: [
+      {
+        file: 'src/calculator.py',
+        line: 1,
+        side: 'old',
+        severity: 'error',
+        message: 'Prior logic regression must be addressed.',
+        evidenceRef: 'convention-current',
+      },
+    ],
+  });
+
+  const repairRun = await runControlledUC03GraphV02(fixture.task, fixture.ports, fixture.config);
+  assert.equal(repairRun.outcome, 'IMPLEMENTED_UNVERIFIED');
+  const repairState = await fixture.owner.loadTask(fixture.task.taskId);
+  assert.equal(repairState?.node, 'Repair');
+  assert.equal(repairState?.outcome, undefined, 'finding must not allow terminal outcome COMPLETED');
+
+  // Verify that failure evidence and review observation are durably recorded
+  const recorded = [...fixture.evidence.records.values()];
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0]?.observation.status, 'findings');
+
+  // Stale plan binding or authority mismatch refuses observation lookup
+  assert.ok(repairState?.plan?.decisionRef);
+  const record = recorded[0];
+  assert.ok(record);
+  const loadResult = await fixture.evidence.loadObservation({
+    taskId: fixture.task.taskId,
+    runId: record.observation.binding.runId,
+    providerRequestId: record.observation.providerRequestId,
+    contextDigest: record.observation.contextDigest,
+    observationDigest: record.ack.observationDigest,
+    expectedAuthority: {
+      taskStateVersion: repairState.stateVersion,
+      controlVersion: 2,
+      epoch: 1,
+      decisionAuthorityGeneration: 2,
+      planDecisionRef: repairState.plan.decisionRef,
+      planBindingDigest: 'invalid-stale-digest',
+    },
+  });
+  assert.equal(loadResult.outcome, 'denied', 'stale authority must deny loading observation');
+});

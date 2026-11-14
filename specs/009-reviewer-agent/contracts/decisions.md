@@ -41,7 +41,7 @@ A public `validateBaseModelInputs` probe on the accepted foundation rejects ordi
 
 ## Phase 4 and Phase 5 T008 implementation completion — 2026-11-14
 
-On 2026-11-14, the user explicitly directed to proceed with Phase 4 (T007) and Phase 5 (T008) at the source/controlled tier. T007 is completed in its owned path `tests/runtime/security/uc06-review-safety.test.ts` (12 passing tests), and T008 is completed in `tests/runtime/integration/uc06-review-repair.test.ts` (3 passing tests), proving bounded review-repair transitions (R16), actionable findings persistence, authority exhaustion, and zero unauthorized replay/patch dispatches (R17). All checks pass in isolation and across all UC-06 suites (127/127 tests pass). T009 onward, actual owner deliveries, real provider calls, and quality/restart acceptance remain unreleased.
+On 2026-11-14, the user explicitly directed to proceed with Phase 4 (T007) and Phase 5 (T008) at the source/controlled tier. T007 is completed in its owned path `tests/runtime/security/uc06-review-safety.test.ts` (12 passing tests), and T008 is completed in `tests/runtime/integration/uc06-review-repair.test.ts` (4 passing tests), proving bounded review-repair transitions (R16), actionable findings persistence, authority exhaustion, and zero unauthorized replay/patch dispatches (R17). All checks pass in isolation and across all UC-06 suites (128/128 tests pass). T009 onward, actual owner deliveries, real provider calls, and quality/restart acceptance remain unreleased.
 
 ## Selected design proposals
 
