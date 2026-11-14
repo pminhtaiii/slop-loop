@@ -11,6 +11,7 @@ import type {
   ExecutionGuardReadCapability,
   RepositoryAttemptStartRecoveryResultV02,
   RepositoryDiffSourceOptions,
+  QuestionRepositoryOperationControl,
   TrustedFilesystemPort,
 } from './repository-types.ts';
 
@@ -30,9 +31,15 @@ export type {
   UnattemptedClaimClosureHandoffV02,
   UnattemptedClaimClosureRequestV02,
   RepositoryReadLimits,
+  QuestionRepositoryOperationControl,
+  QuestionRepositoryReadLimits,
+  QuestionRepositoryBindingPort,
+  QuestionSnapshotFileReadResult,
   RepositoryTaskControlReadPortV02,
   TrustedFilesystemEntry,
   TrustedFilesystemPort,
+  TrustedQuestionRepositorySnapshotLease,
+  TrustedQuestionRepositorySnapshotPort,
 } from './repository-types.ts';
 export { containsProtectedContent };
 
@@ -102,11 +109,29 @@ export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuard
   listDir(dirPath: string): Promise<readonly string[]> {
     return this.reader.listDir(dirPath);
   }
+  listDirectory(
+    request: { readonly path: string; readonly cursor?: string },
+    control: QuestionRepositoryOperationControl,
+  ): ReturnType<ControlledRepositoryReader['listDirectory']> {
+    return this.reader.listDirectory(request, control);
+  }
   readFile(filePath: string): Promise<SourceEvidence> {
     return this.reader.readFile(filePath);
   }
+  readSpan(
+    request: { readonly path: string; readonly startLine: number; readonly endLine: number },
+    control: QuestionRepositoryOperationControl,
+  ): ReturnType<ControlledRepositoryReader['readSpan']> {
+    return this.reader.readSpan(request, control);
+  }
   searchCode(query: string): Promise<readonly SourceEvidence[]> {
     return this.reader.searchCode(query);
+  }
+  searchLiteral(
+    request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string },
+    control: QuestionRepositoryOperationControl,
+  ): ReturnType<ControlledRepositoryReader['searchLiteral']> {
+    return this.reader.searchLiteral(request, control);
   }
   applyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
   applyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;

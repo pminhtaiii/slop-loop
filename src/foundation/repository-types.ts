@@ -14,6 +14,56 @@ import type { DockerWorkspaceManager, StructuredCommandExecutor } from './docker
 import type { RepositoryCommandResourcePolicy } from './repository-admission.ts';
 import type { RepositoryDiffSourceOptions } from './repository-diff-types.ts';
 export type { RepositoryDiffSourceOptions };
+import type {
+  QuestionIdentityV1,
+  RepositoryBindingV1,
+  RepositoryOperationLimitsV1,
+} from '../contracts/questions/contracts.ts';
+
+/** Caller-owned cancellation and wall-clock deadline for one question repository operation. */
+export interface QuestionRepositoryOperationControl {
+  readonly signal: AbortSignal;
+  readonly deadlineEpochMs: number;
+}
+
+/** Per-task source work ceilings plus finite per-operation and cursor bounds. */
+export interface QuestionRepositoryReadLimits extends RepositoryOperationLimitsV1 {
+  readonly maxScannedFiles: number;
+  readonly maxScannedBytes: number;
+  readonly maxReturnedBytes: number;
+  readonly maxCursors: number;
+  readonly contextLinesBefore: number;
+  readonly contextLinesAfter: number;
+}
+
+/** The host rechecks current owner/repository binding around each snapshot operation. */
+export interface QuestionRepositoryBindingPort {
+  checkBinding(expected: RepositoryBindingV1, control: QuestionRepositoryOperationControl): Promise<unknown>;
+}
+
+export type QuestionSnapshotFileReadResult =
+  | { readonly status: 'ok'; readonly bytes: Uint8Array; readonly scannedBytes: number }
+  | { readonly status: 'unreadable'; readonly scannedBytes: number }
+  | { readonly status: 'oversized'; readonly scannedBytes: number };
+
+/** A stable, host-owned view; it never forwards reads to a mutable workspace path. */
+export interface TrustedQuestionRepositorySnapshotLease {
+  readonly snapshot: unknown;
+  readFile(
+    canonicalPath: string,
+    maxBytes: number,
+    control: QuestionRepositoryOperationControl,
+  ): Promise<unknown>;
+}
+
+/** Acquires a stable immutable source lease under the supplied finite admission limits. */
+export interface TrustedQuestionRepositorySnapshotPort {
+  acquireSnapshot(request: {
+    readonly binding: RepositoryBindingV1;
+    readonly admissionLimits: Readonly<{ maxFiles: number; maxBytes: number; maxElapsedMs: number }>;
+    readonly control: QuestionRepositoryOperationControl;
+  }): Promise<unknown>;
+}
 
 export interface FileStat {
   readonly isFile: boolean;
@@ -30,10 +80,16 @@ export interface TrustedFilesystemEntry {
 }
 
 export interface TrustedFilesystemPort extends PortIdentity {
-  stat(canonicalPath: string): Promise<FileStat>;
-  lstat(canonicalPath: string): Promise<FileStat>;
-  realpath(canonicalPath: string): Promise<string>;
-  readDir(canonicalPath: string): Promise<readonly TrustedFilesystemEntry[]>;
+  stat(canonicalPath: string, control?: QuestionRepositoryOperationControl): Promise<FileStat>;
+  lstat(canonicalPath: string, control?: QuestionRepositoryOperationControl): Promise<FileStat>;
+  realpath(canonicalPath: string, control?: QuestionRepositoryOperationControl): Promise<string>;
+  readDir(canonicalPath: string, control?: QuestionRepositoryOperationControl): Promise<readonly TrustedFilesystemEntry[]>;
+  /** Bounded streaming enumeration; rejects when the directory exceeds maxEntries. */
+  readDirBounded?(
+    canonicalPath: string,
+    maxEntries: number,
+    control: QuestionRepositoryOperationControl,
+  ): Promise<readonly TrustedFilesystemEntry[]>;
   /**
    * If maxBytes is supplied, enforce it on raw bytes from the opened file handle
    * throughout the read, even if the file grows or is replaced after stat.
@@ -41,13 +97,18 @@ export interface TrustedFilesystemPort extends PortIdentity {
    * FILE_TOO_LARGE on overflow, and close the handle on success or failure.
    * Never load the whole oversized file and then validate or truncate it.
    */
-  readTextFile(canonicalPath: string, maxBytes?: number): Promise<string>;
+  readTextFile(canonicalPath: string, maxBytes?: number, control?: QuestionRepositoryOperationControl): Promise<string>;
   /**
    * If maxBytes is supplied, enforce it while hashing each file: read raw bytes from the
    * open handle with at most one maxBytes + 1 read, never loading the whole oversized file,
    * and reject with an Error whose message starts with FILE_TOO_LARGE on overflow.
    */
-  getCurrentRevisionDigest(maxBytes?: number): Promise<string>;
+  getCurrentRevisionDigest(maxBytes?: number, control?: QuestionRepositoryOperationControl): Promise<string>;
+  /** A digest traversal with explicit finite metadata, file and byte budgets. */
+  getCurrentRevisionDigestBounded?(
+    limits: Readonly<{ maxEntries: number; maxFiles: number; maxBytes: number }>,
+    control: QuestionRepositoryOperationControl,
+  ): Promise<string>;
 }
 
 export interface GuardedReadOperation<T = unknown> {
@@ -143,6 +204,10 @@ export interface ControlledRepositoryToolsOptions {
   /** Absent means `inspectDiff` stays fail-closed: no baseline, no measurement. */
   readonly repositoryDiff?: RepositoryDiffSourceOptions | undefined;
   readonly neutralStub?: boolean | undefined;
+  readonly questionIdentity?: QuestionIdentityV1 | undefined;
+  readonly questionLimits?: QuestionRepositoryReadLimits | undefined;
+  readonly questionBindingPort?: QuestionRepositoryBindingPort | undefined;
+  readonly questionSnapshotPort?: TrustedQuestionRepositorySnapshotPort | undefined;
 }
 
 export type ControlledRepositoryToolsV02Options = ControlledRepositoryToolsOptions;
@@ -155,4 +220,8 @@ export interface RepositoryReadOperationsOptions {
   readonly workspaceRoot?: string | undefined;
   readonly statePort?: StatePortV02 | undefined;
   readonly taskControl?: RepositoryTaskControlReadPortV02 | undefined;
+  readonly questionIdentity?: QuestionIdentityV1 | undefined;
+  readonly questionLimits?: QuestionRepositoryReadLimits | undefined;
+  readonly questionBindingPort?: QuestionRepositoryBindingPort | undefined;
+  readonly questionSnapshotPort?: TrustedQuestionRepositorySnapshotPort | undefined;
 }

@@ -2,6 +2,8 @@ import type { SourceEvidence } from '../contracts/foundation/uc03.ts';
 import { isCanonicalRelativePath, isProtectedPath, validateSourceEvidence } from '../contracts/foundation/uc03.ts';
 import { journalSnapshotV02 } from '../approvals/control-v02.ts';
 import { containsProtectedContent } from './docker-workspace-policy.ts';
+import { QuestionRepositoryReader } from './question-repository-read.ts';
+import { RepositoryPathGuard } from './repository-path-guard.ts';
 import type { RepositoryReadOperationsOptions, TrustedFilesystemEntry } from './repository-types.ts';
 export { containsProtectedContent };
 
@@ -11,8 +13,10 @@ export class ControlledRepositoryReader {
   private readonly limits: RepositoryReadOperationsOptions['limits'];
   private readonly expectedRevisionDigest?: string | undefined;
   private readonly workspaceRoot?: string | undefined;
+  private readonly pathGuard: RepositoryPathGuard;
   private readonly statePort: RepositoryReadOperationsOptions['statePort'];
   private readonly taskControl: RepositoryReadOperationsOptions['taskControl'];
+  private readonly questionReader: QuestionRepositoryReader;
 
   constructor(options: RepositoryReadOperationsOptions) {
     this.guardCapability = options.guardCapability;
@@ -25,7 +29,21 @@ export class ControlledRepositoryReader {
       this.workspaceRoot = root;
     }
     this.statePort = options.statePort;
+    this.pathGuard = new RepositoryPathGuard({
+      fsPort: this.fsPort,
+      workspaceRoot: this.workspaceRoot,
+      checkReadHold: () => this.checkReadHold(),
+    });
     this.taskControl = options.taskControl;
+    this.questionReader = new QuestionRepositoryReader({
+      guardCapability: this.guardCapability,
+      identity: options.questionIdentity,
+      limits: options.questionLimits,
+      bindingPort: options.questionBindingPort,
+      snapshotPort: options.questionSnapshotPort,
+      checkReadHold: () => this.checkReadHold(),
+      checkPathContainment: (path, control) => this.checkPathContainment(path, control),
+    });
   }
 
   private checkReadHold(): void {
@@ -63,125 +81,11 @@ export class ControlledRepositoryReader {
     return currentRev;
   }
 
-  private assertResolvedPathContainment(originalPath: string, resolvedTarget: string): string {
-    if (typeof resolvedTarget !== 'string') {
-      throw new Error(`WORKSPACE_ESCAPE: Path '${originalPath}' resolved to invalid non-string path`);
-    }
-
-    const normalized = resolvedTarget.replace(/\\/g, '/');
-
-    if (originalPath === '' || originalPath === '.') {
-      if (this.workspaceRoot !== undefined) {
-        if (normalized === '' || normalized === '.' || normalized === this.workspaceRoot) {
-          return this.workspaceRoot;
-        }
-        const rootPrefix = this.workspaceRoot.endsWith('/') ? this.workspaceRoot : `${this.workspaceRoot}/`;
-        if (normalized.startsWith(rootPrefix)) {
-          return normalized;
-        }
-        throw new Error(`WORKSPACE_ESCAPE: Repository root resolved to '${resolvedTarget}' which escapes workspace root '${this.workspaceRoot}'`);
-      }
-      if (normalized === '' || normalized === '.') {
-        return '';
-      }
-      if (normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized) || normalized.includes('..') || normalized.startsWith('../') || normalized === '..') {
-        throw new Error(`WORKSPACE_ESCAPE: Repository root resolved to '${resolvedTarget}' which escapes repository root`);
-      }
-      return normalized;
-    }
-
-    if (normalized.length === 0) {
-      throw new Error(`WORKSPACE_ESCAPE: Path '${originalPath}' resolved to empty path`);
-    }
-
-    if (this.workspaceRoot !== undefined) {
-      if (isCanonicalRelativePath(normalized)) {
-        if (isProtectedPath(normalized)) {
-          throw new Error(`FORBIDDEN_LINK_TARGET: Path '${originalPath}' resolved to protected path '${normalized}'`);
-        }
-        const rootPrefix = this.workspaceRoot.endsWith('/') ? this.workspaceRoot : `${this.workspaceRoot}/`;
-        return `${rootPrefix}${normalized}`;
-      }
-
-      const isExactMatch = normalized === this.workspaceRoot;
-      const rootPrefix = this.workspaceRoot.endsWith('/') ? this.workspaceRoot : `${this.workspaceRoot}/`;
-      const isChild = normalized.startsWith(rootPrefix);
-      if (!isExactMatch && !isChild) {
-        throw new Error(`WORKSPACE_ESCAPE: Path '${originalPath}' resolved to '${resolvedTarget}' which escapes workspace root '${this.workspaceRoot}'`);
-      }
-      const relativeToRoot = isExactMatch ? '' : normalized.slice(rootPrefix.length);
-      if (relativeToRoot.length > 0) {
-        if (relativeToRoot.includes('..') || relativeToRoot.startsWith('../') || relativeToRoot === '..') {
-          throw new Error(`WORKSPACE_ESCAPE: Path '${originalPath}' resolved to '${resolvedTarget}' which escapes workspace root`);
-        }
-        if (isProtectedPath(relativeToRoot)) {
-          throw new Error(`FORBIDDEN_LINK_TARGET: Path '${originalPath}' resolved to protected path '${relativeToRoot}'`);
-        }
-      }
-      return normalized;
-    }
-
-    if (normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized) || normalized.includes('..') || normalized.startsWith('../') || normalized === '..') {
-      throw new Error(`WORKSPACE_ESCAPE: Path '${originalPath}' resolved to '${resolvedTarget}' which escapes repository root`);
-    }
-    if (normalized.length > 0) {
-      if (!isCanonicalRelativePath(normalized)) {
-        throw new Error(`WORKSPACE_ESCAPE: Path '${originalPath}' resolved to non-canonical path '${resolvedTarget}'`);
-      }
-      if (isProtectedPath(normalized)) {
-        throw new Error(`FORBIDDEN_LINK_TARGET: Path '${originalPath}' resolved to protected path '${normalized}'`);
-      }
-    }
-    return normalized;
-  }
-
-  private async checkPathContainment(targetPath: string): Promise<{ readonly resolvedPath: string }> {
-    const normalizedTarget = targetPath === '.' ? '' : targetPath;
-    if (normalizedTarget.length > 0) {
-      if (!isCanonicalRelativePath(normalizedTarget)) {
-        throw new Error(`WORKSPACE_ESCAPE: Path '${targetPath}' must be a canonical relative path`);
-      }
-      if (isProtectedPath(normalizedTarget)) {
-        throw new Error(`PROTECTED_PATH_FORBIDDEN: Path '${targetPath}' is protected and cannot be accessed`);
-      }
-    }
-
-    this.checkReadHold();
-    const rootReal = await this.fsPort.realpath('');
-    this.assertResolvedPathContainment('', rootReal);
-
-    if (normalizedTarget.length === 0) {
-      return { resolvedPath: rootReal };
-    }
-
-    const segments = normalizedTarget.split('/');
-    let accumulatedPath = '';
-    let lastResolved = '';
-
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
-      if (seg === undefined) continue;
-      accumulatedPath = accumulatedPath.length === 0 ? seg : `${accumulatedPath}/${seg}`;
-
-      if (!isCanonicalRelativePath(accumulatedPath)) {
-        throw new Error(`WORKSPACE_ESCAPE: Ancestor path '${accumulatedPath}' is not a canonical relative path`);
-      }
-      if (isProtectedPath(accumulatedPath)) {
-        throw new Error(`PROTECTED_PATH_FORBIDDEN: Path '${targetPath}' contains protected path '${accumulatedPath}'`);
-      }
-
-      this.checkReadHold();
-      const lstat = await this.fsPort.lstat(accumulatedPath);
-      if (i < segments.length - 1 && lstat.isFile) {
-        throw new Error(`INVALID_PATH: Ancestor '${accumulatedPath}' is a file, not a directory`);
-      }
-
-      this.checkReadHold();
-      const resolved = await this.fsPort.realpath(accumulatedPath);
-      lastResolved = this.assertResolvedPathContainment(accumulatedPath, resolved);
-    }
-
-    return { resolvedPath: lastResolved };
+  private checkPathContainment(
+    targetPath: string,
+    control?: { readonly signal: AbortSignal; readonly deadlineEpochMs: number },
+  ): Promise<{ readonly resolvedPath: string }> {
+    return this.pathGuard.checkPathContainment(targetPath, control);
   }
 
   private createValidatedEvidence(filePath: string, content: string, revisionDigest: string): SourceEvidence {
@@ -409,5 +313,26 @@ export class ControlledRepositoryReader {
         return results;
       },
     });
+  }
+
+  listDirectory(
+    request: { readonly path: string; readonly cursor?: string },
+    control: { readonly signal: AbortSignal; readonly deadlineEpochMs: number },
+  ): ReturnType<QuestionRepositoryReader['listDirectory']> {
+    return this.questionReader.listDirectory(request, control);
+  }
+
+  readSpan(
+    request: { readonly path: string; readonly startLine: number; readonly endLine: number },
+    control: { readonly signal: AbortSignal; readonly deadlineEpochMs: number },
+  ): ReturnType<QuestionRepositoryReader['readSpan']> {
+    return this.questionReader.readSpan(request, control);
+  }
+
+  searchLiteral(
+    request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string },
+    control: { readonly signal: AbortSignal; readonly deadlineEpochMs: number },
+  ): ReturnType<QuestionRepositoryReader['searchLiteral']> {
+    return this.questionReader.searchLiteral(request, control);
   }
 }
