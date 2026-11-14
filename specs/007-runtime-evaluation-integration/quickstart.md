@@ -179,17 +179,18 @@ The `serve` CLI command (T035) launches the console only from real-ready provena
 
 For the focused repaired source/emitted/type checks, use the exact commands in `T030-repair-command-status.json`; for independent criteria and observed outcomes, use the T030-068 merger verdict. Neither should be replaced by the pre-repair 80/80 receipt or by an aggregate full-suite claim.
 
-## Real-tier prerequisites (T040–T055) — operator steps
+## Real-tier prerequisites (T040–T060) — operator steps
 
 Planned steps from the [real-tier contract](contracts/real-tier.md). Nothing below runs until T040–T050 are implemented and released after both planning review lanes pass. Each step is labelled with its tier. **T011 is a later, separately released step**: none of these commands runs `evaluate run`, and none claims G-REAL/SC-001, T017, a restart or G-OWNERS (still single-attested). **Privacy:** never paste the real endpoint host, port or URL into a tracked file, a commit message or a PR. This guide writes it as `http://<host>:<port>/v1`.
 
-### 1. Controlled tier: owner lanes, profile, endpoint, runaway stop and assembly (T040–T050)
+### 1. Controlled tier: owner lanes, profile, endpoint, runaway stop, assembly, recovery gate, scanner, CLI preflight and campaign gate (T040–T050, T057–T060)
 
 ```powershell
 node --test tests/runtime/uc04/state-port-v02-read-fence.test.ts tests/runtime/uc04/state-port-v02-operation-lookup.test.ts tests/runtime/uc04/baseline-evidence-store.test.ts tests/runtime/uc04/approval-store-adapter.test.ts tests/runtime/uc04/state-port-v02-authority.test.ts tests/runtime/uc04/material-replan-port.test.ts
 node --test tests/runtime/approvals/journal-acceptance-v02.test.ts tests/runtime/unit/console-approval-port.test.ts
 node --test tests/runtime/unit/real-tier-profile.test.ts tests/runtime/unit/docker-controller.test.ts tests/runtime/unit/docker-spawn.test.ts tests/runtime/unit/deepseek-transport.test.ts tests/runtime/unit/evaluation-profile.test.ts tests/runtime/unit/run-usage-limit.test.ts
-node --test tests/runtime/contract/real-tier-assembly.test.ts
+node --test tests/runtime/contract/real-tier-assembly.test.ts tests/runtime/integration/real-tier-uncertainty.test.ts
+node --test tests/runtime/unit/real-tier-endpoint-scan.test.ts tests/runtime/unit/docker-readiness.test.ts tests/runtime/unit/real-tier-cli-preflight.test.ts tests/runtime/integration/uc03-success-real-run-gate.test.ts
 pnpm run typecheck; pnpm run build
 ```
 
@@ -207,7 +208,7 @@ Then run the emitted counterparts under `dist/`. These checks use temp directori
    ```
 
    Record the base digest and the image ID in the profile.
-3. Create `$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json` from the shape in contract §(d). Put a `host.json` beside it whose `assembly` points to `dist/src/runtime/real-tier-assembly.js` and whose `requestedModel` is `po/deepseek-ai/deepseek-v4.1-flash-1017`. For a plain-`http` endpoint, set `"allowInsecureHttp": true` only after accepting the cleartext risk in contract §(d). Prefer TLS, or an SSH tunnel to `http://127.0.0.1:<local-port>/v1`.
+3. Create `$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json` from the shape in contract §(d). Create `host.json` beside it with `node dist/src/cli/real-tier-scan.js --print-host-template > "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"` (contract §(i)). The template sets `assembly` to `dist/src/runtime/real-tier-assembly.js`, `requestedModel` to `po/deepseek-ai/deepseek-v4.1-flash-1017`, and the computed identity digests; it never contains the endpoint. For a plain-`http` endpoint, set `"allowInsecureHttp": true` only after accepting the cleartext risk in contract §(d). Prefer TLS, or an SSH tunnel to `http://127.0.0.1:<local-port>/v1`.
 4. Set the variables for this shell session only. The key is never typed on a command line or stored in a file:
 
    ```powershell
@@ -218,7 +219,7 @@ Then run the emitted counterparts under `dist/`. These checks use temp directori
    $env:ANTHROPIC_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
    ```
 
-5. Readiness only, no run: `node dist/src/cli/evaluate.js preflight --host "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"`. It must report ready, with `endpointDigest`, the scheme and (for `http`) `insecure-http-acknowledged`. Any `credential-missing`, `endpoint-ambiguous`, `model-ambiguous`, `insecure-endpoint-unacknowledged`, `docker-unavailable` or `mock-delivery` reason stops here.
+5. Readiness only, no run: `node dist/src/cli/evaluate.js preflight --host "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"`. It must report the assembly ready and the operational preflight passing, with metadata `endpointDigest`, `endpointScheme`, `model`, `imageId` and (for `http`) `insecureHttpAcknowledged`. Any `credential-missing`, `endpoint-ambiguous`, `model-ambiguous`, `insecure-endpoint-unacknowledged`, `mock-delivery`, `docker-unavailable`, `image-mismatch`, `HOST_METADATA_INVALID` or `HOST_MODEL_MISMATCH` result stops here.
 
 ### 3. Real tier, zero model calls: T024 containment (T051) and T025 approval gating (T052)
 
@@ -230,26 +231,25 @@ node dist/tests/runtime/integration/uc03-approvals-real-probe.js
 
 Expected: every C06–C11 and C13 row passes, or the probe exits nonzero with fail/not-run; the transport makes zero fetches. Retain outputs under `.agent-work/<date>/uc03-real-tier/evidence/T051/` and `T052/`, with reports in the ignored `docs/verification/uc03-isolation.md` and `uc03-approvals.md`.
 
-### 4. Controlled tier: T026/T066 gaps (T053)
+### 4. Controlled tier: T026 gaps (T053) and T066 gaps (T056)
 
 ```powershell
-node --test tests/runtime/unit/uc03-graph.test.ts tests/runtime/contract/atomic-admission-matrix.test.ts
+node --test tests/runtime/unit/uc03-graph-gaps.test.ts tests/runtime/unit/uc03-graph.test.ts
+node --test tests/runtime/contract/atomic-admission-matrix-gaps.test.ts tests/runtime/contract/atomic-admission-matrix.test.ts
 ```
 
-Run the emitted counterparts after the build. Record each recorded gap as closed (with its asserting row) or still open.
+Run the emitted counterparts after the build. Record each recorded gap as closed (with its asserting row) or still open. The legacy files are only run, never edited.
 
 ### 5. Real tier, live calls to the self-hosted endpoint: T028 success route (T054)
 
 ```powershell
-node dist/tests/runtime/integration/uc03-success-real-run.js --conformance
-node dist/tests/runtime/integration/uc03-success-real-run.js --case C01
-node dist/tests/runtime/integration/uc03-success-real-run.js --case C02
-node dist/tests/runtime/integration/uc03-success-real-run.js --case C10
+node dist/tests/runtime/integration/uc03-success-real-run.js --campaign
 node dist/tests/runtime/integration/uc03-success-real-evidence.js --evidence .agent-work/<date>/uc03-real-tier/evidence/T054
+node dist/src/cli/real-tier-scan.js --dir .agent-work/<date>/uc03-real-tier/evidence
 ```
 
-The conformance call stops the campaign unless the returned model identity equals `po/deepseek-ai/deepseek-v4.1-flash-1017`. C01 pauses for the plan decision: the operator inspects the presentation and decides explicitly through the runner's decision prompt (T046 port); nothing approves automatically. There is no economic cap. A run stops only at its per-run call/token runaway limits, and reported cost is `estimate-unverified` or `unknown`. Stop at once if the checker finds credential bytes or the endpoint host or URL in any artifact. Failed attempts are retained, not retried automatically (at most two C01 attempts). The UC-03 ledger then judges T028, recording the delegated-attestation statement. This run does not check T011 or claim SC-001.
+The campaign runs the operational preflight, then one conformance call, then C01, C02, C16 and the C10 rows, in one process. It stops before any case unless the returned model identity equals `po/deepseek-ai/deepseek-v4.1-flash-1017`; a timeout, 5xx, 429 or unreachable endpoint also stops it after exactly one fetch. A later `--case <id>` rerun refuses unless the conformance receipt matches the same candidate, profile, endpoint and model. C01 pauses for the plan decision: the operator inspects the presentation and decides explicitly through the runner's decision prompt (T046 port); nothing approves automatically. There is no economic cap. A run stops only at its per-run call/token runaway limits, and reported cost is `estimate-unverified` or `unknown`. Stop at once if the scanner reports `SCAN_LEAK` (it prints only `path:line`, never the matched text). Failed attempts are retained, not retried automatically (at most two C01 attempts). The UC-03 ledger then judges T028, recording the delegated-attestation statement. This run does not check T011 or claim SC-001.
 
 ### 6. Afterwards
 
-Before any commit or PR from the session, confirm no staged change contains the endpoint: `git grep -nF -e $env:ANTHROPIC_BASE_URL --cached` must print nothing. T055 then refreshes context and this guide with the observed results. T011, T014's real half, T017 and restart acceptance each need their own release.
+Before any commit or PR from the session, run `node dist/src/cli/real-tier-scan.js --staged`; it must print `SCAN_CLEAN` and exit 0. It reads the endpoint from the profile or the environment and prints only `path:line ENDPOINT_LEAK` on a hit. T055 then refreshes context and this guide with the observed results. T011, T014's real half, T017 and restart acceptance each need their own release.

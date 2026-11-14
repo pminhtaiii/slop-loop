@@ -63,4 +63,15 @@ See the [real-tier contract](contracts/real-tier.md). There is no spend ledger. 
 | RunUsageCounters | taskId, runId, calls, inputTokensCharged, outputTokensCharged | In memory per transport instance. Each call is charged its admitted maxima before `fetch`, replaced by observed usage only for a validated 2xx with usage. A call over a limit is denied before dispatch. US1 |
 | CallUsageReport | callId, usage tokens or `unknown`, cost estimate with label `estimate-unverified` or `unknown` | Never zero for unknown usage; never used to block a call. US1/US2 |
 | RealTierDeliveryIdentity | component, implementation revision (commit SHA), contract version, attribution `delegated-single-attestation-2026-11-14` | Never names Thanh Tan/Trong Tan as deliverer. Counts toward X04-STATE/X05-GATE for these evidence runs only. Readiness built from it is not G-OWNERS. US1 |
-| RealTierEvidenceRecord | run task (T051–T054), mapped UC-03 task, candidate SHA, profile/image/model identities, `endpointDigest` and scheme, commands and exit codes, per-case pass/fail/not-run, usage totals and cost label, credential/endpoint scan result | Retained under the ignored session evidence directory, with no endpoint URL or host. The UC-03 ledger records acceptance; there is no G-REAL/SC-001 field. US1 |
+| RealTierEvidenceRecord | run task (T051–T054, T056, T059), mapped UC-03 task, candidate SHA, profile/image/model identities, `endpointDigest` and scheme, commands and exit codes, per-case pass/fail/not-run, usage totals and cost label, T057 scan verdict (`SCAN_CLEAN`/`SCAN_LEAK`/`SCAN_ERROR`) | Retained under the ignored session evidence directory, with no endpoint URL or host. The UC-03 ledger records acceptance; there is no G-REAL/SC-001 field. US1 |
+
+### Review-repair records (2026-11-14)
+
+| Record | Required fields | Invariants / stories |
+|---|---|---|
+| OperationRef | `uc04-journal:<claimId|operationId>` or `uc04-baseline:<sha256>` | Issued by the owning store before or atomically with the effect. `lookupOperation` (T040) and `lookupWrite` (T041) resolve it to `committed`, `absent` or `unknown`; any other prefix is `unknown`. Lookups never write. US1 |
+| RecoveryDecision | operationRef, owner, lookup result, decision `resume`/`fresh-attempt`/`blocked` | Provider and patch `unknown` stay `blocked`; `blocked` leaves the task hold unchanged and dispatches nothing (T058). US1 |
+| ReadinessMetadata | profileDigest, endpointDigest, endpointScheme, insecureHttpAcknowledged, model, imageId | Allowlisted keys only, with a fixed pattern per value; never the URL, host or credential. An unknown key gives `HOST_METADATA_INVALID`. The host-file `requestedModel` must equal `model` (T060). US1 |
+| OperationalPreflightResult | dockerServerVersion, imageId, or reason `docker-unavailable`/`image-mismatch` | Produced only by the two fixed argv commands with bounded timeout and output. A failure stops before any allocation (T060). US1 |
+| ConformanceReceipt | candidate SHA, profileDigest, endpointDigest, model, returned model, observedAt | Written only by a passing `--campaign` conformance call. `--case` requires an exact binding match, or it refuses with zero fetches (T059). US1 |
+| ScanResult | verdict `SCAN_CLEAN`/`SCAN_LEAK`/`SCAN_ERROR`, per-hit `path:line` and kind, error code | Never contains a needle or matched text. Exit 0/1/2 (T057). US1 |
