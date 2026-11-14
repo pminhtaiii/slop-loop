@@ -3,6 +3,12 @@ import test from 'node:test';
 import { QUESTION_CONTRACT_VERSIONS } from '../../../src/contracts/questions/contracts.ts';
 import {
   validateQuestionBudgetProfile,
+  validateAdmittedSpan,
+  validateDirectoryPage,
+  validateQuestionResult,
+  validateSearchPage,
+  validateSourceSnapshot,
+  validateSpanResult,
   validateQuestionDecision,
   validateQuestionAbsenceReceipt,
   validateQuestionIdentity,
@@ -74,6 +80,7 @@ const budgetProfile = {
 test('question contract versions identify runtime and retrieval schemas', () => {
   assert.deepEqual(QUESTION_CONTRACT_VERSIONS, {
     question: 'repository-question/1',
+    repository: 'question-repository/1',
     retrieval: 'question-retrieval/1',
     budget: 'question-budget/1',
   });
@@ -455,4 +462,90 @@ test('retrieval resource profile rejects limits above the pinned fixture ceiling
   assert.equal(overFileCeiling.ok, false);
   assert.equal(multipleWriters.ok, false);
   assert.equal(smallerProfile.ok, true);
+});
+
+test('question tool decisions reject drive-qualified paths and reserve the directory root for directory operations', () => {
+  for (const path of ['C:/src', 'D:src']) {
+    assert.equal(validateQuestionDecision({ kind: 'list', path }).ok, false);
+    assert.equal(validateQuestionDecision({ kind: 'search', query: 'dispatch', pathPrefix: path }).ok, false);
+    assert.equal(validateQuestionDecision({ kind: 'read', path, startLine: 1, endLine: 1 }).ok, false);
+  }
+  assert.equal(validateQuestionDecision({ kind: 'search', query: 'dispatch', pathPrefix: '.' }).ok, true);
+  assert.equal(validateQuestionDecision({ kind: 'read', path: '.', startLine: 1, endLine: 1 }).ok, false);
+});
+
+const repositoryLimits = budgetProfile.repository;
+const span = {
+  identity,
+  evidenceId: 'evidence-001',
+  snapshotId: 'snapshot-001',
+  manifestDigest: identity.configDigest,
+  path: 'src/handler.py',
+  range: { startLine: 12, endLine: 12 },
+  excerpt: 'dispatch()',
+  excerptDigest: identity.configDigest,
+  originalByteDigest: identity.binding.revisionDigest,
+  truncation: { kind: 'none' },
+};
+
+test('source snapshot validates a bounded canonical manifest and detaches its entries', () => {
+  const snapshot = {
+    snapshotId: span.snapshotId,
+    binding: identity.binding,
+    manifestDigest: span.manifestDigest,
+    acquisitionId: 'lease-001',
+    admissionLimits: { maxFiles: 2, maxBytes: 1_000, maxElapsedMs: 100 },
+    manifest: [{ path: span.path, originalByteDigest: span.originalByteDigest }],
+  };
+  const result = validateSourceSnapshot(snapshot);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(Object.isFrozen(result.value.manifest[0]), true);
+  snapshot.manifest[0]!.path = 'changed.py';
+  assert.equal(result.value.manifest[0]?.path, span.path);
+  assert.equal(validateSourceSnapshot({ ...snapshot, manifest: [{ ...snapshot.manifest[0], path: 'C:repo.py' }] }).ok, false);
+  assert.equal(validateSourceSnapshot({ ...snapshot, manifest: [...snapshot.manifest, ...snapshot.manifest] }).ok, false);
+});
+
+test('repository tool results enforce bounded evidence and distinguish partial coverage and failures', () => {
+  const page = { status: 'ok', path: '.', entries: [{ path: 'src', kind: 'directory' }], coverage: 'complete', omissionReasons: [] };
+  const hit = { span, line: 12, column: 1, matchLength: 8 };
+  const search = { status: 'ok', hits: [hit], coverage: 'partial', omissionReasons: ['scan-limit'] };
+  assert.equal(validateDirectoryPage(page, repositoryLimits).ok, true);
+  assert.equal(validateDirectoryPage({ ...page, entries: [{ path: 'C:src', kind: 'directory' }] }, repositoryLimits).ok, false);
+  assert.equal(validateSpanResult({ status: 'ok', span }, repositoryLimits).ok, true);
+  assert.equal(validateSpanResult({ status: 'invalid', reasonCode: 'out-of-range' }, repositoryLimits).ok, true);
+  assert.equal(validateSpanResult({ status: 'stale', reasonCode: 'binding-mismatch', span }, repositoryLimits).ok, false);
+  assert.equal(validateSearchPage(search, repositoryLimits).ok, true);
+  assert.equal(validateSearchPage({ ...search, nextCursor: 'cursor-001' }, repositoryLimits).ok, false);
+  assert.equal(validateSearchPage({ ...search, hits: [{ ...hit, column: 5 }] }, repositoryLimits).ok, false);
+  assert.equal(validateAdmittedSpan({ ...span, path: '.' }, repositoryLimits).ok, false);
+  assert.equal(validateAdmittedSpan({ ...span, range: { startLine: 12, endLine: 13 } }, repositoryLimits).ok, false);
+  assert.equal(validateAdmittedSpan(span, { ...repositoryLimits, maxSpanBytes: 9 }).ok, false);
+});
+
+test('terminal question results accept evidence or clarification and forbid claims after activity closes', () => {
+  const base = { schemaVersion: 'repository-question/1', identity, usage: { status: 'missing' } };
+  const citation = {
+    evidenceId: 'evidence-001',
+    range: { startLine: 12, endLine: 17 },
+    path: span.path,
+    originalByteDigest: span.originalByteDigest,
+    excerptDigest: span.excerptDigest,
+  };
+  const answer = { ...base, kind: 'answered', claims: validAnswer.claims, citations: [citation], limitations: validAnswer.limitations };
+  const clarification = {
+    clarificationId: 'turn-001',
+    round: 1,
+    question: 'Which recovery path do you mean?',
+    explanation: 'Two paths use the same term.',
+    unresolvedReferents: ['database recovery', 'request recovery'],
+  };
+  const closed = { ...base, kind: 'budget-exhausted', reasonCode: 'tool-limit' };
+  assert.equal(validateQuestionResult(answer).ok, true);
+  assert.equal(validateQuestionResult({ ...answer, citations: [] }).ok, false);
+  assert.equal(validateQuestionResult({ ...base, kind: 'awaiting-clarification', clarification }).ok, true);
+  assert.equal(validateQuestionResult(closed).ok, true);
+  assert.equal(validateQuestionResult({ ...closed, claims: validAnswer.claims }).ok, false);
+  assert.equal(validateQuestionResult({ ...closed, reasonCode: 'raw provider error text' }).ok, false);
 });

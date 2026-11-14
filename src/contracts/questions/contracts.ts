@@ -1,12 +1,14 @@
 /** Stable schemas and immutable boundary shapes for the read-only question runtime. */
 export const QUESTION_CONTRACT_VERSIONS = Object.freeze({
   question: 'repository-question/1',
+  repository: 'question-repository/1',
   retrieval: 'question-retrieval/1',
   budget: 'question-budget/1',
 } as const);
 
 export interface QuestionValidationError {
-  readonly code: 'invalid-shape' | 'invalid-id' | 'invalid-digest' | 'invalid-range' | 'invalid-limit' | 'invalid-decision' | 'invalid-usage' | 'invalid-retrieval';
+  readonly code:
+    'invalid-shape' | 'invalid-id' | 'invalid-digest' | 'invalid-range' | 'invalid-limit' | 'invalid-decision' | 'invalid-usage' | 'invalid-retrieval' | 'invalid-repository' | 'invalid-result';
   readonly path: string;
 }
 
@@ -101,7 +103,7 @@ export interface ListQuestionFilesDecisionV1 {
 export interface SearchQuestionFilesDecisionV1 {
   readonly kind: 'search';
   readonly query: string;
-  readonly path?: string;
+  readonly pathPrefix?: string;
   readonly cursor?: string;
 }
 
@@ -271,3 +273,118 @@ export interface QuestionAbsenceReceiptV1 {
   readonly guardedLiteralMatchCount: 0;
   readonly omissionReasons: readonly [];
 }
+
+export interface SourceManifestEntryV1 {
+  readonly path: string;
+  readonly originalByteDigest: string;
+}
+
+/** Metadata for a host-admitted source. Serialized metadata does not establish a snapshot lease. */
+export interface SourceSnapshotV1 {
+  readonly snapshotId: string;
+  readonly binding: RepositoryBindingV1;
+  readonly manifestDigest: string;
+  readonly acquisitionId: string;
+  readonly admissionLimits: Readonly<{ maxFiles: number; maxBytes: number; maxElapsedMs: number }>;
+  readonly manifest: readonly SourceManifestEntryV1[];
+}
+
+export type SpanTruncationV1 = { readonly kind: 'none' } | { readonly kind: 'truncated'; readonly nextLine: number };
+
+/** Whole normalized lines joined by LF. Only the current-run registry establishes issuance. */
+export interface AdmittedSpanV1 {
+  readonly identity: QuestionIdentityV1;
+  readonly evidenceId: string;
+  readonly snapshotId: string;
+  readonly manifestDigest: string;
+  readonly path: string;
+  readonly range: QuestionLineRangeV1;
+  readonly excerpt: string;
+  readonly excerptDigest: string;
+  readonly originalByteDigest: string;
+  readonly truncation: SpanTruncationV1;
+}
+
+export type RepositoryToolFailureV1 =
+  | { readonly status: 'denied'; readonly reasonCode: 'protected' | 'outside-scope' | 'read-not-authorized' }
+  | { readonly status: 'stale'; readonly reasonCode: 'binding-mismatch' | 'source-mismatch' }
+  | { readonly status: 'invalid'; readonly reasonCode: 'invalid-request' | 'invalid-cursor' | 'out-of-range' | 'line-too-large' }
+  | { readonly status: 'unavailable'; readonly reasonCode: 'unreadable' | 'binary' | 'oversized' | 'unsupported-adapter' }
+  | { readonly status: 'exhausted'; readonly reasonCode: 'scan-limit' | 'output-limit' | 'deadline' }
+  | { readonly status: 'cancelled'; readonly reasonCode: 'cancelled' };
+
+export type RepositoryOmissionReasonV1 = 'protected' | 'outside-scope' | 'unreadable' | 'binary' | 'oversized' | 'line-too-large' | 'scan-limit' | 'output-limit';
+
+interface RepositoryPageCoverageV1 {
+  readonly coverage: 'complete' | 'partial';
+  readonly omissionReasons: readonly RepositoryOmissionReasonV1[];
+  readonly nextCursor?: string;
+}
+
+export interface DirectoryEntryV1 {
+  readonly path: string;
+  readonly kind: 'file' | 'directory';
+}
+
+export type DirectoryPageV1 =
+  | RepositoryToolFailureV1
+  | (RepositoryPageCoverageV1 & {
+      readonly status: 'ok';
+      readonly path: string;
+      readonly entries: readonly DirectoryEntryV1[];
+    });
+
+export type SpanResultV1 = RepositoryToolFailureV1 | { readonly status: 'ok'; readonly span: AdmittedSpanV1 };
+
+export interface SearchHitV1 {
+  readonly span: AdmittedSpanV1;
+  readonly line: number;
+  readonly column: number;
+  readonly matchLength: number;
+}
+
+export type SearchPageV1 =
+  | RepositoryToolFailureV1
+  | (RepositoryPageCoverageV1 & {
+      readonly status: 'ok';
+      readonly hits: readonly SearchHitV1[];
+    });
+
+export interface QuestionCitationV1 extends QuestionEvidenceReferenceV1 {
+  readonly path: string;
+  readonly originalByteDigest: string;
+  readonly excerptDigest: string;
+}
+
+export interface QuestionClarificationV1 extends Omit<ClarifyQuestionDecisionV1, 'kind'> {
+  readonly clarificationId: string;
+  readonly round: number;
+}
+
+interface QuestionResultBaseV1 {
+  readonly schemaVersion: 'repository-question/1';
+  readonly identity: QuestionIdentityV1;
+  readonly usage: QuestionUsageV1;
+}
+
+export type QuestionClosedOutcomeV1 =
+  | { readonly kind: 'budget-exhausted'; readonly reasonCode: 'tool-limit' | 'model-limit' | 'scan-limit' | 'output-limit' | 'token-limit' | 'cost-limit' | 'elapsed-deadline' }
+  | { readonly kind: 'stale-repository'; readonly reasonCode: 'binding-mismatch' | 'source-mismatch' }
+  | { readonly kind: 'cancelled'; readonly reasonCode: 'cancelled' }
+  | { readonly kind: 'blocked'; readonly reasonCode: 'accounting-unknown' | 'owner-denied' | 'owner-unavailable' | 'context-limit' }
+  | { readonly kind: 'failed'; readonly reasonCode: 'invalid-decision' | 'invalid-citation' | 'protected-content' | 'invalid-usage' | 'render-limit' };
+
+/** A run outcome. Closed activity has no source-bearing or clarification payload. */
+export type QuestionResultV1 = QuestionResultBaseV1 &
+  (
+    | { readonly kind: 'answered'; readonly claims: readonly QuestionClaimV1[]; readonly citations: readonly QuestionCitationV1[]; readonly limitations: readonly string[] }
+    | { readonly kind: 'awaiting-clarification'; readonly clarification: QuestionClarificationV1 }
+    | {
+        readonly kind: 'insufficient-evidence';
+        readonly claims: readonly QuestionClaimV1[];
+        readonly citations: readonly QuestionCitationV1[];
+        readonly limitations: readonly string[];
+        readonly explanation: string;
+      }
+    | QuestionClosedOutcomeV1
+  );

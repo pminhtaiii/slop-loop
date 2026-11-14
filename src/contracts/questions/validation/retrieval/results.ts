@@ -204,7 +204,7 @@ export function validateQuestionAbsenceReceipt(input: unknown): QuestionValidati
   const scope: string[] = [];
   for (const path of scopeInput) {
     const previous = scope.at(-1);
-    if (!isCanonicalRelativePath(path) || scope.includes(path) || (previous !== undefined && compareText(previous, path) >= 0)) {
+    if (!isCanonicalRelativePath(path, true) || scope.includes(path) || (previous !== undefined && compareText(previous, path) >= 0)) {
       return invalid('invalid-retrieval', 'absenceReceipt.scope');
     }
     scope.push(path);

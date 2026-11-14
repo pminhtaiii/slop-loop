@@ -1,3 +1,4 @@
+import { isCanonicalRelativePath as isFoundationPath } from '../../foundation/uc03/identity.ts';
 import type { QuestionLineRangeV1, QuestionValidationError, QuestionValidationResult } from '../contracts.ts';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,13 +35,8 @@ export function isBoundedText(value: unknown, maxBytes = 8_192): value is string
   return typeof value === 'string' && value.trim().length > 0 && new TextEncoder().encode(value).length <= maxBytes && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u.test(value);
 }
 
-export function isCanonicalRelativePath(value: unknown): value is string {
-  if (value === '.') return true;
-  if (typeof value !== 'string' || value.length === 0 || value.length > 4_096 || value.startsWith('/') || value.endsWith('/')) {
-    return false;
-  }
-  if (value.includes('\\') || /[\u0000-\u001F\u007F]/u.test(value)) return false;
-  return value.split('/').every(part => part.length > 0 && part !== '.' && part !== '..');
+export function isCanonicalRelativePath(value: unknown, allowRoot = false): value is string {
+  return (allowRoot && value === '.') || (typeof value === 'string' && value.length <= 4_096 && isFoundationPath(value));
 }
 
 export function validCursor(value: unknown): value is string {
