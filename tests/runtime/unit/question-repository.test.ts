@@ -75,7 +75,7 @@ interface ToolFixtureOptions {
   readonly acquireSnapshot?: () => Promise<unknown>;
 }
 
-function makeTools(options: ToolFixtureOptions = {}): { readonly tools: ControlledRepositoryTools; readonly guard: ReadGuard; readonly reads: string[]; readonly files: ReadonlyMap<string, Uint8Array> } {
+function makeTools(options: ToolFixtureOptions = {}): { readonly tools: ControlledRepositoryTools; readonly guard: ReadGuard; readonly reads: string[]; readonly readCaps: number[]; readonly files: ReadonlyMap<string, Uint8Array> } {
   const guard = new ReadGuard();
   const files = options.files ?? new Map([['src/example.py', fileBytes]]);
   const manifest = options.manifest ?? [...files].map(([path, bytes]) => ({ path, originalByteDigest: computeFileDigest(bytes) }));
@@ -85,12 +85,15 @@ function makeTools(options: ToolFixtureOptions = {}): { readonly tools: Controll
     admissionLimits: { maxFiles: readLimits.maxScannedFiles, maxBytes: Math.min(1_024, readLimits.maxScannedBytes), maxElapsedMs: 1_000 }, manifest,
   };
   const reads: string[] = [];
+  const readCaps: number[] = [];
   const snapshotPort = options.omitSnapshotPort ? undefined : {
     acquireSnapshot: options.acquireSnapshot ?? (async () => ({
       snapshot,
-      readFile: async (path: string) => {
+      readFile: async (path: string, maxBytes: number) => {
         reads.push(path);
+        readCaps.push(maxBytes);
         const bytes = files.get(path);
+        if (bytes !== undefined && bytes.byteLength > maxBytes) return { status: 'oversized', scannedBytes: maxBytes + 1 };
         return bytes === undefined ? { status: 'unreadable', scannedBytes: 0 } : { status: 'ok', bytes: Buffer.from(bytes), scannedBytes: bytes.byteLength };
       },
     })),
@@ -104,7 +107,7 @@ function makeTools(options: ToolFixtureOptions = {}): { readonly tools: Controll
     questionBindingPort: options.bindingPort ?? { checkBinding: async () => ({ status: 'ok', binding }) },
     ...(snapshotPort === undefined ? {} : { questionSnapshotPort: snapshotPort }),
   } as unknown as ControlledRepositoryToolsOptions;
-  return { tools: new ControlledRepositoryTools(toolOptions), guard, reads, files };
+  return { tools: new ControlledRepositoryTools(toolOptions), guard, reads, readCaps, files };
 }
 
 test('readSpan returns normalized whole lines from the trusted snapshot and clamps end-of-file', async () => {
@@ -324,13 +327,22 @@ test('protected content outside the requested span excludes the whole file', asy
   assert.deepEqual(result, { status: 'denied', reasonCode: 'protected' });
 });
 
-test('task scan limits stop before an additional source file is opened', async () => {
-  const { tools, reads } = makeTools({ limits: { maxScannedFiles: 1 } });
-  const result = await questionTools(tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control()) as {
-    readonly status: string; readonly reasonCode?: string;
-  };
-  assert.deepEqual(result, { status: 'exhausted', reasonCode: 'scan-limit' });
-  assert.deepEqual(reads, []);
+test('span reads budget the overflow probe', async () => {
+  const path = 'src/example.py';
+  const manifestBytes = Buffer.byteLength(path) + Buffer.byteLength(DIGEST);
+  const request = { path, startLine: 1, endLine: 1 };
+  const exhausted = { status: 'exhausted', reasonCode: 'scan-limit' };
+  const maxScannedBytes = manifestBytes + 5;
+  for (const [limits, caps, result] of [
+    [{ maxScannedBytes: manifestBytes }, [], exhausted],
+    [{ maxScannedFiles: 1 }, [], exhausted],
+    [{ maxScannedBytes }, [4], exhausted],
+    [{ maxScannedBytes, maxFileBytes: 4 }, [4], { status: 'unavailable', reasonCode: 'oversized' }],
+  ] as const) {
+    const { tools, readCaps } = makeTools({ limits });
+    assert.deepEqual(await tools.readSpan(request, control()), result);
+    assert.deepEqual(readCaps, caps);
+  }
 });
 
 test('cancellation and expired deadlines stop before snapshot admission', async () => {

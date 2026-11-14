@@ -46,6 +46,7 @@ export class QuestionRepositorySnapshotReader {
   private admissionFailure: ToolFailure | undefined;
   private scannedFiles = 0;
   private scannedBytes = 0;
+  private reservedScanBytes = 0;
 
   constructor(options: QuestionRepositorySnapshotReaderOptions) {
     this.identity = options.identity;
@@ -118,7 +119,9 @@ export class QuestionRepositorySnapshotReader {
     if (!expected) return failure('denied', 'outside-scope');
     const before = activeControl(control);
     if (before) return before;
-    if (this.scannedFiles + 1 > limits.maxScannedFiles) return failure('exhausted', 'scan-limit');
+    if (this.scannedFiles >= limits.maxScannedFiles || this.scannedBytes >= limits.maxScannedBytes) {
+      return failure('exhausted', 'scan-limit');
+    }
     this.checkReadHold();
     const bindingBefore = await this.checkBinding(control);
     if (bindingBefore) return bindingBefore;
@@ -130,37 +133,37 @@ export class QuestionRepositorySnapshotReader {
     const bindingAfterContainment = await this.checkBinding(control);
     if (bindingAfterContainment) return bindingAfterContainment;
     this.checkReadHold();
+    const remainingBytes = limits.maxScannedBytes - this.scannedBytes - this.reservedScanBytes;
+    if (this.scannedFiles >= limits.maxScannedFiles || remainingBytes < 2) return failure('exhausted', 'scan-limit');
+    // A bounded read can consume one extra byte to detect overflow.
+    const maxReadBytes = Math.min(limits.maxFileBytes, remainingBytes - 1);
+    const reservation = maxReadBytes + 1;
+    const oversized = maxReadBytes < limits.maxFileBytes
+      ? failure('exhausted', 'scan-limit')
+      : failure('unavailable', 'oversized');
+    this.scannedFiles += 1;
+    this.reservedScanBytes += reservation;
     let input: unknown;
-    try { input = await admitted.readFile(path, limits.maxFileBytes, control); }
+    try { input = await admitted.readFile(path, maxReadBytes, control); }
     catch (error: unknown) {
+      this.scannedBytes += reservation;
       const mapped = safeExceptionFailure(error);
       if (mapped.status === 'exhausted' || mapped.status === 'cancelled') return mapped;
-      this.scannedFiles += 1;
-      if (mapped.status === 'unavailable' && mapped.reasonCode === 'oversized') {
-        const observedBytes = limits.maxFileBytes + 1;
-        if (this.scannedBytes + observedBytes > limits.maxScannedBytes) {
-          this.scannedBytes = limits.maxScannedBytes;
-          return failure('exhausted', 'scan-limit');
-        }
-        this.scannedBytes += observedBytes;
-        return mapped;
-      }
+      if (mapped.status === 'unavailable' && mapped.reasonCode === 'oversized') return oversized;
       return failure('unavailable', 'unreadable');
+    } finally {
+      this.reservedScanBytes -= reservation;
     }
     const afterRead = activeControl(control);
-    if (!validReadFileResult(input)) return afterRead ?? failure('unavailable', 'unsupported-adapter');
-    this.scannedFiles += 1;
-    if (input.scannedBytes > limits.maxFileBytes + 1 || (input.status === 'oversized' && input.scannedBytes !== limits.maxFileBytes + 1)) {
-      return failure('unavailable', 'unsupported-adapter');
-    }
-    if (this.scannedBytes + input.scannedBytes > limits.maxScannedBytes) {
-      this.scannedBytes = limits.maxScannedBytes;
-      return failure('exhausted', 'scan-limit');
+    if (!validReadFileResult(input) || input.scannedBytes > reservation ||
+      (input.status === 'oversized' && input.scannedBytes !== reservation)) {
+      this.scannedBytes += reservation;
+      return afterRead ?? failure('unavailable', 'unsupported-adapter');
     }
     this.scannedBytes += input.scannedBytes;
     if (afterRead) return afterRead;
-    if (input.status !== 'ok') return failure('unavailable', input.status === 'oversized' ? 'oversized' : 'unreadable');
-    if (input.scannedBytes > limits.maxFileBytes || input.bytes.byteLength > limits.maxFileBytes) return failure('unavailable', 'oversized');
+    if (input.status !== 'ok') return input.status === 'oversized' ? oversized : failure('unavailable', 'unreadable');
+    if (input.scannedBytes > maxReadBytes) return oversized;
     const ownedBytes = Buffer.from(input.bytes);
     if (computeFileDigest(ownedBytes) !== expected.originalByteDigest) return failure('stale', 'source-mismatch');
     const bindingAfterRead = await this.checkBinding(control);
