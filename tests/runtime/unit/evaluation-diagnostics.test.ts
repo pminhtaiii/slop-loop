@@ -199,13 +199,22 @@ test('recognized coder refusal codes become observed components, labelling only 
     ['MODEL_UNCERTAIN:TIMEOUT', 'provider', 'environment', 'coder-dispatch-failed'],
   ] as const) {
     const diagnostic = refused('Incomplete verification', `REAL_PROFILE_GENERATION_INVALID: ${reason}`);
-    assert.deepEqual([diagnostic?.stage, diagnostic?.component, diagnostic?.attribution, diagnostic?.attributionConfidence, diagnostic?.reasonCode], ['investigate', component, attribution, 'observed', code]);
+    assert.deepEqual(
+      [diagnostic?.stage, diagnostic?.component, diagnostic?.attribution, diagnostic?.attributionConfidence, diagnostic?.reasonCode],
+      ['investigate', component, attribution, 'observed', code],
+    );
     assert.equal(JSON.stringify(diagnostic).includes(reason), false);
   }
 });
 
 test('unrecognized or unprefixed coder reasons stay workflow/unknown/route-incomplete', () => {
-  for (const reasons of [['REAL_PROFILE_GENERATION_INVALID: SOMETHING_ELSE'], ['REAL_PROFILE_GENERATION_INVALID: TOOL_ERROR at C:/secret/x.ts'], ['TOOL_ERROR'], ['REAL_PROFILE_GENERATION_INVALID: PROPOSAL_INVALID:lower'], []]) {
+  for (const reasons of [
+    ['REAL_PROFILE_GENERATION_INVALID: SOMETHING_ELSE'],
+    ['REAL_PROFILE_GENERATION_INVALID: TOOL_ERROR at C:/secret/x.ts'],
+    ['TOOL_ERROR'],
+    ['REAL_PROFILE_GENERATION_INVALID: PROPOSAL_INVALID:lower'],
+    [],
+  ]) {
     const diagnostic = refused(...reasons);
     assert.deepEqual([diagnostic?.component, diagnostic?.attribution, diagnostic?.attributionConfidence, diagnostic?.reasonCode], ['workflow', 'unknown', 'unknown', 'route-incomplete']);
   }

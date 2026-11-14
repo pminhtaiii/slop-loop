@@ -22,11 +22,7 @@ function hostPathOf(args: readonly string[]): string | undefined {
 }
 
 /** Parse fully before calling a host loader, assembly resolver or readiness capability. */
-export async function runEvaluationConsoleCli(
-  args: readonly string[],
-  dependencies: EvaluationConsoleCliDependencies,
-  directExecution: boolean,
-): Promise<EvaluateCliResult> {
+export async function runEvaluationConsoleCli(args: readonly string[], dependencies: EvaluationConsoleCliDependencies, directExecution: boolean): Promise<EvaluateCliResult> {
   const path = hostPathOf(args);
   if (path === undefined) return refused(2, 'INVALID_ARGUMENTS');
   const loaded = dependencies.loadConfiguration(path);
@@ -58,7 +54,9 @@ function installShutdown(close: () => Promise<void>): void {
   const shutdown = (): void => {
     if (closing) return;
     detach();
-    closing = close().catch(() => { process.exitCode = 1; });
+    closing = close().catch(() => {
+      process.exitCode = 1;
+    });
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);

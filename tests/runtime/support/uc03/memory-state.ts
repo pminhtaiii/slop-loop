@@ -320,11 +320,14 @@ export class MemoryStatePort implements StatePort {
     };
     const isCompletionTransition = state.node === 'Deliver' && state.outcome === 'COMPLETED';
     const dynamicTransitionContext = this.transitionContextFor?.(structuredClone(state));
-    const trusted = isCompletionTransition && this.transitionContextFor !== undefined
-      ? (dynamicTransitionContext === undefined ? undefined : structuredClone(dynamicTransitionContext))
-      : dynamicTransitionContext === undefined
-        ? this.transitionContexts[state.stateVersion]
-        : structuredClone(dynamicTransitionContext);
+    const trusted =
+      isCompletionTransition && this.transitionContextFor !== undefined
+        ? dynamicTransitionContext === undefined
+          ? undefined
+          : structuredClone(dynamicTransitionContext)
+        : dynamicTransitionContext === undefined
+          ? this.transitionContexts[state.stateVersion]
+          : structuredClone(dynamicTransitionContext);
     const transitionRes = validateStateTransition(currentPrior, state, { allowSameNode: false, trusted });
     if (!transitionRes.ok) {
       const isCas = transitionRes.errors.some(e => e.code === 'CAS_CONFLICT');

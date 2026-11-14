@@ -126,41 +126,49 @@ export interface ControlledFixtureOptions {
 
 export async function controlledGeneratedPlanFixture(options: ControlledFixtureOptions = {}): Promise<ControlledGeneratedPlanFixture> {
   const fixtureSequence = ++controlledFixtureSequence;
-  const route = createPendingApprovalRoute(options.initialPlanDecision ?? 'pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {}, options.reproductionCheckId, options.hostTestFileContent, options.transitionContextFor);
+  const route = createPendingApprovalRoute(
+    options.initialPlanDecision ?? 'pending',
+    `dec-plan-${createFixtureBugTask().taskId}-1`,
+    options.transitionContexts ?? {},
+    options.reproductionCheckId,
+    options.hostTestFileContent,
+    options.transitionContextFor,
+  );
   const statePort = route.statePort;
   const task = route.task;
   const initialState = createGraphTaskState(task, options.taskState ?? {});
-  const graphState = options.initialReplanCount === undefined ? initialState : (() => {
-    const count = options.initialReplanCount;
-    if (!Number.isSafeInteger(count) || count < 1 || count > task.budgetLimits.maxReplanCount) throw new Error('Controlled fixture replan count is outside its task budget');
-    const baselineRef = `uc04://baseline/${task.taskId}/1`;
-    const decisionRef = `dec-plan-${task.taskId}-1`;
-    const strategy = 'Preserve the original cause while making the zero-denominator response explicit.';
-    const plan: FixPlan = {
-      planVersion: initialState.planVersion,
-      diagnosis: 'The first plan needs a narrower failure explanation.',
-      suspectedCauseLocations: ['src/calculator.py'],
-      evidenceRefs: [baselineRef],
-      strategy,
-      scopedChanges: ['src/calculator.py'],
-      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
-      baselineRef,
-      strategyDigest: computeCanonicalSha256(strategy),
-      decisionRef,
-    };
-    return {
-      ...initialState,
-      node: 'AwaitFeedback' as const,
-      nextAction: 'await-human-feedback-and-direction',
-      plan,
-      activeDecisionId: decisionRef,
-      evidenceRefs: [baselineRef],
-      replanCount: count,
-      budgetLedgers: initialState.budgetLedgers?.map(ledger =>
-        ledger.scope === 'task' && ledger.kind === 'replan' ? { ...ledger, consumed: count } : ledger,
-      ),
-    };
-  })();
+  const graphState =
+    options.initialReplanCount === undefined
+      ? initialState
+      : (() => {
+          const count = options.initialReplanCount;
+          if (!Number.isSafeInteger(count) || count < 1 || count > task.budgetLimits.maxReplanCount) throw new Error('Controlled fixture replan count is outside its task budget');
+          const baselineRef = `uc04://baseline/${task.taskId}/1`;
+          const decisionRef = `dec-plan-${task.taskId}-1`;
+          const strategy = 'Preserve the original cause while making the zero-denominator response explicit.';
+          const plan: FixPlan = {
+            planVersion: initialState.planVersion,
+            diagnosis: 'The first plan needs a narrower failure explanation.',
+            suspectedCauseLocations: ['src/calculator.py'],
+            evidenceRefs: [baselineRef],
+            strategy,
+            scopedChanges: ['src/calculator.py'],
+            checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+            baselineRef,
+            strategyDigest: computeCanonicalSha256(strategy),
+            decisionRef,
+          };
+          return {
+            ...initialState,
+            node: 'AwaitFeedback' as const,
+            nextAction: 'await-human-feedback-and-direction',
+            plan,
+            activeDecisionId: decisionRef,
+            evidenceRefs: [baselineRef],
+            replanCount: count,
+            budgetLedgers: initialState.budgetLedgers?.map(ledger => (ledger.scope === 'task' && ledger.kind === 'replan' ? { ...ledger, consumed: count } : ledger)),
+          };
+        })();
   await seedGraphTaskState(statePort, graphState);
   const routeRepository = route.ports.repositoryPort;
   if (!('executionGuardApiVersion' in routeRepository) || routeRepository.executionGuardApiVersion !== '0.2.0') {

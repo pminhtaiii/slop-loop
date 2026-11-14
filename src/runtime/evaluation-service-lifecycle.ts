@@ -56,14 +56,16 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
 
   const execute = async (experiment: ExperimentRecord, direction: ServiceControlReceipt | null = null): Promise<EvaluationGraphResult> => {
     const ports = deps.graph.portsFor(Object.freeze({ experimentId: experiment.id, source: experiment.startedSource }));
-    return deps.graph.run(Object.freeze({
-      experimentId: experiment.id,
-      source: experiment.startedSource,
-      ports,
-      priorState: experiment.task,
-      direction,
-      answers: Object.freeze([...experiment.answers]),
-    }));
+    return deps.graph.run(
+      Object.freeze({
+        experimentId: experiment.id,
+        source: experiment.startedSource,
+        ports,
+        priorState: experiment.task,
+        direction,
+        answers: Object.freeze([...experiment.answers]),
+      }),
+    );
   };
 
   const applyResult = (experiment: ExperimentRecord, result: EvaluationGraphResult): void => {
@@ -74,11 +76,14 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
     if (result.usage !== undefined) experiment.usage = Object.freeze({ tokensConsumed: result.usage.tokensConsumed, costUsd: result.usage.costUsd });
     if (result.workflowClarification !== undefined) {
       const clarification = result.workflowClarification;
-      experiment.workflowClarification = clarification === null ? null : Object.freeze({
-        questionId: clarification.questionId,
-        questionDigest: clarification.questionDigest,
-        questions: Object.freeze(clarification.questions.map(question => Object.freeze({ questionId: question.questionId, text: question.text }))),
-      });
+      experiment.workflowClarification =
+        clarification === null
+          ? null
+          : Object.freeze({
+              questionId: clarification.questionId,
+              questionDigest: clarification.questionDigest,
+              questions: Object.freeze(clarification.questions.map(question => Object.freeze({ questionId: question.questionId, text: question.text }))),
+            });
     }
     // Detach and freeze once: neither the graph's retained report nor a returned view rewrites stored evidence.
     // A result without a report has none: the previous execution's report is not the current one.
@@ -182,10 +187,10 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
       const submission = experiment.submission;
       const currentClarification = experiment.workflowClarification;
       const intakeQuestion = submission?.questions.find(item => item.questionId === request['questionId']);
-      const graphClarification = currentClarification !== null && currentClarification.questionId === request['questionId'] &&
-        currentClarification.questionDigest === request['questionDigest']
-        ? currentClarification
-        : undefined;
+      const graphClarification =
+        currentClarification !== null && currentClarification.questionId === request['questionId'] && currentClarification.questionDigest === request['questionDigest']
+          ? currentClarification
+          : undefined;
       const questionDigest = intakeQuestion?.questionDigest ?? graphClarification?.questionDigest;
       if (questionDigest === undefined || questionDigest !== request['questionDigest']) return fail('conflict', submission || currentClarification ? 'UNKNOWN_QUESTION' : 'NO_SUBMISSION');
       const answers = request['answers'];

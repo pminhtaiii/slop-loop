@@ -62,7 +62,11 @@ export function diagnosticForOutcome(output: UC03GraphState): { readonly diagnos
       reasonCode: refusal?.reasonCode ?? 'route-incomplete',
       evidenceRefs: output.state?.evidenceRefs ?? [],
       milestones: (output.milestones ?? []).map(milestone => milestone.kind),
-      limitations: [refusal ? 'Category observed from a bounded coder refusal code; the root cause is not established' : 'Route reported a non-complete outcome; the failing component was not observed at the result boundary'],
+      limitations: [
+        refusal
+          ? 'Category observed from a bounded coder refusal code; the root cause is not established'
+          : 'Route reported a non-complete outcome; the failing component was not observed at the result boundary',
+      ],
     }),
   };
 }

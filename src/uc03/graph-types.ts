@@ -48,9 +48,7 @@ import type { EvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts'
 export const UC03_GRAPH_RECURSION_LIMIT = 25;
 
 export function graphRecursionLimit(requested?: number): number {
-  return requested !== undefined && Number.isSafeInteger(requested) && requested > 0
-    ? Math.min(requested, UC03_GRAPH_RECURSION_LIMIT)
-    : UC03_GRAPH_RECURSION_LIMIT;
+  return requested !== undefined && Number.isSafeInteger(requested) && requested > 0 ? Math.min(requested, UC03_GRAPH_RECURSION_LIMIT) : UC03_GRAPH_RECURSION_LIMIT;
 }
 
 export function isGraphRecursionError(error: unknown): boolean {
@@ -125,9 +123,7 @@ export interface UC03CompletionContextRequest {
 }
 
 /** Host-owned lookup. Returned records still pass the complete shared completion validator. */
-export type UC03CompletionContextResolver = (
-  request: UC03CompletionContextRequest,
-) => UC03TrustedCompletion | undefined | Promise<UC03TrustedCompletion | undefined>;
+export type UC03CompletionContextResolver = (request: UC03CompletionContextRequest) => UC03TrustedCompletion | undefined | Promise<UC03TrustedCompletion | undefined>;
 
 export interface UC03CoderAdmissionRequest {
   readonly task: BugTask;
@@ -226,26 +222,26 @@ export function attachUC03ExecutionEvidence(
   const verificationResults = Array.isArray(raw.verificationResults) ? raw.verificationResults.map(item => validateVerificationResult(item)) : undefined;
   const reviewRequest = raw.reviewRequest === undefined ? undefined : validateProviderRequest(raw.reviewRequest);
   const reviewResult = raw.reviewResult === undefined ? undefined : validateReviewResult(raw.reviewResult);
-  const patchAdmission = raw.patchAdmission
-    ? validateRepositoryAdmissionV02(raw.patchAdmission.context, raw.patchAdmission.trustedContext)
-    : undefined;
-  const patchReceipt = raw.patchReceipt === undefined || !patchAdmission?.ok
-    ? undefined
-    : validateRepositoryExecutionReceiptV02(raw.patchReceipt, patchAdmission.value);
+  const patchAdmission = raw.patchAdmission ? validateRepositoryAdmissionV02(raw.patchAdmission.context, raw.patchAdmission.trustedContext) : undefined;
+  const patchReceipt = raw.patchReceipt === undefined || !patchAdmission?.ok ? undefined : validateRepositoryExecutionReceiptV02(raw.patchReceipt, patchAdmission.value);
   const candidateState = raw.finalState === undefined ? raw.state : raw.finalState;
   const finalState = candidateState === undefined || candidateState === null ? undefined : validateTaskState(candidateState);
   // Validators may return their input (or retain its arrays), so detach the projection before freezing it.
-  const evidence = freezeProjection(structuredClone({
-    ...(baseline?.ok ? { baseline: baseline.value } : {}),
-    ...(verificationResults?.every(item => item.ok) ? { verificationResults: verificationResults.map(item => item.value) } : {}),
-    ...(reviewRequest?.ok ? { reviewRequest: reviewRequest.value } : {}),
-    ...(reviewResult?.ok ? { reviewResult: reviewResult.value } : {}),
-    ...(patchAdmission?.ok && raw.patchAdmission ? {
-      patchAdmission: { context: patchAdmission.value, trustedContext: structuredClone(raw.patchAdmission.trustedContext) },
-    } : {}),
-    ...(patchReceipt?.ok ? { patchReceipt: patchReceipt.value } : {}),
-    finalState: finalState?.ok ? finalState.value : null,
-  }));
+  const evidence = freezeProjection(
+    structuredClone({
+      ...(baseline?.ok ? { baseline: baseline.value } : {}),
+      ...(verificationResults?.every(item => item.ok) ? { verificationResults: verificationResults.map(item => item.value) } : {}),
+      ...(reviewRequest?.ok ? { reviewRequest: reviewRequest.value } : {}),
+      ...(reviewResult?.ok ? { reviewResult: reviewResult.value } : {}),
+      ...(patchAdmission?.ok && raw.patchAdmission
+        ? {
+            patchAdmission: { context: patchAdmission.value, trustedContext: structuredClone(raw.patchAdmission.trustedContext) },
+          }
+        : {}),
+      ...(patchReceipt?.ok ? { patchReceipt: patchReceipt.value } : {}),
+      finalState: finalState?.ok ? finalState.value : null,
+    }),
+  );
   Object.defineProperty(result, 'executionEvidence', { value: evidence, enumerable: false, writable: false, configurable: false });
   return result;
 }

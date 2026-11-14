@@ -366,7 +366,10 @@ test('a malformed comparison body is refused before the comparison port is calle
 test('stored workflow reports use the selected guarded or strict comparison policy', async () => {
   const baseline = await workflowReport();
   const candidate = await workflowReport({ configDigest: digest('different-config') });
-  const byId = new Map<string, unknown>([['exp-001', baseline], ['exp-002', candidate]]);
+  const byId = new Map<string, unknown>([
+    ['exp-001', baseline],
+    ['exp-002', candidate],
+  ]);
   const lookups: string[] = [];
   const workflowReportLookup: ConsoleWorkflowReportLookup = {
     getWorkflowReport(id) {
@@ -375,21 +378,25 @@ test('stored workflow reports use the selected guarded or strict comparison poli
     },
   };
 
-  await withServer(async port => {
-    const guarded = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-guarded', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
-    const guardedResult = JSON.parse(guarded.body) as { ok: true; result: WorkflowComparisonReport };
-    assert.equal(guarded.status, 200);
-    assert.equal(guardedResult.result.compatible, true);
-    assert.deepEqual(guardedResult.result.failedGuards, []);
-    assert.deepEqual(guardedResult.result.changedFactors, ['configDigest']);
+  await withServer(
+    async port => {
+      const guarded = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-guarded', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+      const guardedResult = JSON.parse(guarded.body) as { ok: true; result: WorkflowComparisonReport };
+      assert.equal(guarded.status, 200);
+      assert.equal(guardedResult.result.compatible, true);
+      assert.deepEqual(guardedResult.result.failedGuards, []);
+      assert.deepEqual(guardedResult.result.changedFactors, ['configDigest']);
 
-    const strict = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-strict', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'strict' });
-    const strictResult = JSON.parse(strict.body) as { ok: true; result: WorkflowComparisonReport };
-    assert.equal(strict.status, 200);
-    assert.equal(strictResult.result.compatible, false);
-    assert.deepEqual(strictResult.result.failedGuards, ['strictSameConfig']);
-    assert.equal(strictResult.result.verdict, 'INCOMPLETE');
-  }, undefined, { workflowReportLookup });
+      const strict = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-strict', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'strict' });
+      const strictResult = JSON.parse(strict.body) as { ok: true; result: WorkflowComparisonReport };
+      assert.equal(strict.status, 200);
+      assert.equal(strictResult.result.compatible, false);
+      assert.deepEqual(strictResult.result.failedGuards, ['strictSameConfig']);
+      assert.equal(strictResult.result.verdict, 'INCOMPLETE');
+    },
+    undefined,
+    { workflowReportLookup },
+  );
 
   assert.deepEqual(lookups, ['exp-001', 'exp-002', 'exp-001', 'exp-002']);
 });
@@ -397,16 +404,23 @@ test('stored workflow reports use the selected guarded or strict comparison poli
 test('incompatible stored workflow reports return the comparator guard result', async () => {
   const baseline = await workflowReport();
   const candidate = await workflowReport({ repositoryId: 'repo-other', initialRepositoryDigest: digest('other-initial-repository') });
-  const byId = new Map<string, unknown>([['exp-001', baseline], ['exp-002', candidate]]);
+  const byId = new Map<string, unknown>([
+    ['exp-001', baseline],
+    ['exp-002', candidate],
+  ]);
   const workflowReportLookup: ConsoleWorkflowReportLookup = { getWorkflowReport: id => byId.get(id) };
 
-  await withServer(async port => {
-    const reply = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-incompatible', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
-    const result = JSON.parse(reply.body) as { ok: true; result: WorkflowComparisonReport };
-    assert.equal(reply.status, 200);
-    assert.equal(result.result.compatible, false);
-    assert.deepEqual(result.result.failedGuards, ['initialRepositoryDigest', 'repositoryId']);
-  }, undefined, { workflowReportLookup });
+  await withServer(
+    async port => {
+      const reply = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-incompatible', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+      const result = JSON.parse(reply.body) as { ok: true; result: WorkflowComparisonReport };
+      assert.equal(reply.status, 200);
+      assert.equal(result.result.compatible, false);
+      assert.deepEqual(result.result.failedGuards, ['initialRepositoryDigest', 'repositoryId']);
+    },
+    undefined,
+    { workflowReportLookup },
+  );
 });
 
 test('stored comparison bounds missing, malformed, and throwing report lookup outcomes', async () => {
@@ -433,7 +447,11 @@ test('stored comparison bounds missing, malformed, and throwing report lookup ou
     },
     {
       name: 'throwing lookup',
-      lookup: { getWorkflowReport: () => { throw new Error('C:\\private\\workspace\\operator-token-sentinel'); } },
+      lookup: {
+        getWorkflowReport: () => {
+          throw new Error('C:\\private\\workspace\\operator-token-sentinel');
+        },
+      },
       expectedStatus: 503,
       expectedError: 'WORKFLOW_REPORT_LOOKUP_UNAVAILABLE',
       privateText: 'operator-token-sentinel',
@@ -441,13 +459,17 @@ test('stored comparison bounds missing, malformed, and throwing report lookup ou
   ];
 
   for (const item of cases) {
-    await withServer(async port => {
-      const reply = await mutation(port, '/api/comparisons', { idempotencyKey: `key-${item.name.replaceAll(' ', '-')}`, baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
-      assert.equal(reply.status, item.expectedStatus, item.name);
-      assert.deepEqual(JSON.parse(reply.body), { ok: false, error: item.expectedError }, item.name);
-      if (item.privateText) assert.equal(reply.body.includes(item.privateText), false, item.name);
-      assert.equal(reply.body.includes('exp-001'), false, item.name);
-    }, undefined, { workflowReportLookup: item.lookup });
+    await withServer(
+      async port => {
+        const reply = await mutation(port, '/api/comparisons', { idempotencyKey: `key-${item.name.replaceAll(' ', '-')}`, baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+        assert.equal(reply.status, item.expectedStatus, item.name);
+        assert.deepEqual(JSON.parse(reply.body), { ok: false, error: item.expectedError }, item.name);
+        if (item.privateText) assert.equal(reply.body.includes(item.privateText), false, item.name);
+        assert.equal(reply.body.includes('exp-001'), false, item.name);
+      },
+      undefined,
+      { workflowReportLookup: item.lookup },
+    );
   }
 });
 
@@ -455,29 +477,33 @@ test('comparison authorization and body refusals happen before stored report loo
   const lookups: string[] = [];
   const workflowReportLookup: ConsoleWorkflowReportLookup = { getWorkflowReport: id => (lookups.push(id), undefined) };
 
-  await withServer(async port => {
-    const body = { idempotencyKey: 'key-compare', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' };
-    const missingToken = await call(port, 'POST', '/api/comparisons', {
-      body: JSON.stringify(body),
-      headers: { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' },
-    });
-    const wrongHost = await call(port, 'POST', '/api/comparisons', {
-      body: JSON.stringify(body),
-      headers: { host: 'evil.test', origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-operator-token': TOKEN },
-    });
-    const wrongOrigin = await mutation(port, '/api/comparisons', body, { origin: 'http://evil.test' });
-    const malformedBody = await mutation(port, '/api/comparisons', { ...body, report: { path: 'C:/private/report.json' } });
-    const invalidJson = await call(port, 'POST', '/api/comparisons', {
-      body: '{',
-      headers: { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-operator-token': TOKEN },
-    });
+  await withServer(
+    async port => {
+      const body = { idempotencyKey: 'key-compare', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' };
+      const missingToken = await call(port, 'POST', '/api/comparisons', {
+        body: JSON.stringify(body),
+        headers: { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' },
+      });
+      const wrongHost = await call(port, 'POST', '/api/comparisons', {
+        body: JSON.stringify(body),
+        headers: { host: 'evil.test', origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-operator-token': TOKEN },
+      });
+      const wrongOrigin = await mutation(port, '/api/comparisons', body, { origin: 'http://evil.test' });
+      const malformedBody = await mutation(port, '/api/comparisons', { ...body, report: { path: 'C:/private/report.json' } });
+      const invalidJson = await call(port, 'POST', '/api/comparisons', {
+        body: '{',
+        headers: { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-operator-token': TOKEN },
+      });
 
-    assert.equal(missingToken.status, 403);
-    assert.equal(wrongHost.status, 403);
-    assert.equal(wrongOrigin.status, 403);
-    assert.equal(malformedBody.status, 400);
-    assert.equal(invalidJson.status, 400);
-  }, undefined, { workflowReportLookup });
+      assert.equal(missingToken.status, 403);
+      assert.equal(wrongHost.status, 403);
+      assert.equal(wrongOrigin.status, 403);
+      assert.equal(malformedBody.status, 400);
+      assert.equal(invalidJson.status, 400);
+    },
+    undefined,
+    { workflowReportLookup },
+  );
 
   assert.deepEqual(lookups, []);
 });
@@ -486,26 +512,34 @@ test('an injected comparison port takes precedence over a stored report source',
   let injectedCalls = 0;
   const lookedUp: string[] = [];
   const comparison: ConsoleComparisonPort = {
-    compare: () => (injectedCalls += 1, { ok: true, value: { marker: 'injected-comparison' } }),
+    compare: () => ((injectedCalls += 1), { ok: true, value: { marker: 'injected-comparison' } }),
   };
   const workflowReportLookup: ConsoleWorkflowReportLookup = { getWorkflowReport: id => (lookedUp.push(id), undefined) };
 
-  await withServer(async port => {
-    const reply = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-injected', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
-    assert.equal(reply.status, 200);
-    assert.deepEqual(JSON.parse(reply.body), { ok: true, result: { marker: 'injected-comparison' } });
-  }, undefined, { comparison, workflowReportLookup });
+  await withServer(
+    async port => {
+      const reply = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-injected', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+      assert.equal(reply.status, 200);
+      assert.deepEqual(JSON.parse(reply.body), { ok: true, result: { marker: 'injected-comparison' } });
+    },
+    undefined,
+    { comparison, workflowReportLookup },
+  );
 
   assert.equal(injectedCalls, 1);
   assert.deepEqual(lookedUp, []);
 });
 
 test('existing server callers without a comparison source retain the bounded unavailable result', async () => {
-  await withServer(async port => {
-    const reply = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-unavailable', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
-    assert.equal(reply.status, 503);
-    assert.deepEqual(JSON.parse(reply.body), { ok: false, error: 'COMPARISON_UNAVAILABLE' });
-  }, undefined, {});
+  await withServer(
+    async port => {
+      const reply = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-unavailable', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+      assert.equal(reply.status, 503);
+      assert.deepEqual(JSON.parse(reply.body), { ok: false, error: 'COMPARISON_UNAVAILABLE' });
+    },
+    undefined,
+    {},
+  );
 });
 
 test('a duplicate idempotency key is forwarded twice: the service owns dedupe', async () => {

@@ -190,22 +190,19 @@ function isWait(outcome: WorkflowLifecycle): outcome is WorkflowWait {
   return outcome === 'waiting-approval' || outcome === 'waiting-info';
 }
 
-export function workflowCaseResult(
-  spec: EvaluationCaseSpec,
-  observation: WorkflowObservation,
-  binding: WorkflowBinding,
-  independentGrade?: WorkflowGradeDecision | undefined,
-): WorkflowCaseResult {
+export function workflowCaseResult(spec: EvaluationCaseSpec, observation: WorkflowObservation, binding: WorkflowBinding, independentGrade?: WorkflowGradeDecision | undefined): WorkflowCaseResult {
   const verdict = independentGrade
     ? { grade: independentGrade.grade, reason: independentGrade.reason }
     : binding.tier === 'real-integration'
-      ? { grade: 'not-run' as const, reason: observation.blocked ?? 'private-grading' as const }
+      ? { grade: 'not-run' as const, reason: observation.blocked ?? ('private-grading' as const) }
       : judgeObservation(observation, spec);
-  const gradingLimitations = independentGrade?.limitations ?? (observation.blocked !== null
-    ? []
-    : binding.tier === 'real-integration'
-      ? ['No independently validated final-snapshot grade was produced; real workflow evidence remains unverified.']
-      : ['Controlled lifecycle predicate only; no snapshot-bound independent grade was attached.']);
+  const gradingLimitations =
+    independentGrade?.limitations ??
+    (observation.blocked !== null
+      ? []
+      : binding.tier === 'real-integration'
+        ? ['No independently validated final-snapshot grade was produced; real workflow evidence remains unverified.']
+        : ['Controlled lifecycle predicate only; no snapshot-bound independent grade was attached.']);
   return {
     caseId: spec.caseId,
     repositoryId: observation.repositoryId,

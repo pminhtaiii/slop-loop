@@ -226,8 +226,7 @@ export function compareWorkflowEvaluations(baseline: unknown, candidate: unknown
 function isWorkflowReport(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const report = value as Record<string, unknown>;
-  return 'selectionResult' in report || 'suiteAcceptance' in report ||
-    (typeof report.contractVersion === 'string' && report.contractVersion.startsWith('uc03-workflow-evaluation/'));
+  return 'selectionResult' in report || 'suiteAcceptance' in report || (typeof report.contractVersion === 'string' && report.contractVersion.startsWith('uc03-workflow-evaluation/'));
 }
 
 function readJsonReport(path: string): unknown {

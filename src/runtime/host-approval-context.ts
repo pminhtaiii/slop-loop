@@ -11,10 +11,7 @@ export interface HostApprovalContextBacking {
   readonly approvals: Pick<DurableApprovalStore, 'provenance' | 'profile' | 'readRequest'>;
 }
 
-export function createHostApprovalContextProvider(
-  readiness: UC03HostReadiness,
-  backing: HostApprovalContextBacking,
-): ReturnType<typeof createRealContextProvider> {
+export function createHostApprovalContextProvider(readiness: UC03HostReadiness, backing: HostApprovalContextBacking): ReturnType<typeof createRealContextProvider> {
   if (readiness?.status !== 'ready') throw new Error('HOST_APPROVAL_CONTEXT_NOT_READY');
   if (checkProductionPortsV02(readiness.ports) !== null) throw new Error('HOST_APPROVAL_CONTEXT_PORTS_UNAVAILABLE');
   if (typeof backing?.durable?.loadTask !== 'function') throw new Error('HOST_APPROVAL_CONTEXT_DURABLE_REQUIRED');
@@ -23,7 +20,8 @@ export function createHostApprovalContextProvider(
     typeof backing.approvals.readRequest !== 'function' ||
     typeof backing.approvals.profile?.policyIdentity?.policyId !== 'string' ||
     typeof backing.approvals.profile.policyIdentity.policyVersion !== 'string'
-  ) throw new Error('HOST_APPROVAL_CONTEXT_APPROVALS_REQUIRED');
+  )
+    throw new Error('HOST_APPROVAL_CONTEXT_APPROVALS_REQUIRED');
   const source: RealContextSource = readiness.ports.contextSource;
   if (source.provenance !== 'real' || typeof source.observe !== 'function') throw new Error('HOST_APPROVAL_CONTEXT_SOURCE_UNAVAILABLE');
   return createRealContextProvider({ durable: backing.durable, approvals: backing.approvals, source });

@@ -89,9 +89,7 @@ function ownerCommits(statePort: CountingPortV02, committed: TaskState): void {
 /** The one durable replan slot the owner charges, keyed by the proposal identity. */
 function chargeReplan(state: TaskState): readonly BudgetLedger[] {
   return (state.budgetLedgers ?? []).map(ledger =>
-    ledger.kind === 'replan'
-      ? { ...ledger, reservations: [{ reservationId: 'res-1', keyedId: 'prop-1', amount: 1 }], version: ledger.version + 1 }
-      : ledger,
+    ledger.kind === 'replan' ? { ...ledger, reservations: [{ reservationId: 'res-1', keyedId: 'prop-1', amount: 1 }], version: ledger.version + 1 } : ledger,
   );
 }
 
@@ -259,14 +257,20 @@ test('replan: missing owner receipts cannot report a prepared replan', async () 
     replanCount: state.replanCount + 1,
     budgetLedgers: chargeReplan(state),
   };
-  for (const [reservationReceipt, transitionReceipt] of [[undefined, 'tr-1'], ['res-1', undefined], ['', 'tr-1'], ['res-1', '']] as const) {
+  for (const [reservationReceipt, transitionReceipt] of [
+    [undefined, 'tr-1'],
+    ['res-1', undefined],
+    ['', 'tr-1'],
+    ['res-1', ''],
+  ] as const) {
     const statePort = new CountingPortV02({ initialTaskState: state });
     const replanPort: MaterialReplanPortV02 = {
       provenance: 'mock',
       accept: async () => {
         ownerCommits(statePort, committed);
         return {
-          outcome: 'accepted', state: committed,
+          outcome: 'accepted',
+          state: committed,
           reservationReceipt: reservationReceipt as string,
           transitionReceipt: transitionReceipt as string,
         };

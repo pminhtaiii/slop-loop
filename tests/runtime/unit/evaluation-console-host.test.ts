@@ -146,7 +146,10 @@ test('one controlled graph and service back the loopback console and live report
     const catalogResponse = await fetch(`${origin}/api/catalog`);
     assert.equal(catalogResponse.status, 200);
     const catalog = (await catalogResponse.json()) as { readonly result: { readonly cases: readonly { readonly caseId: string }[] } };
-    assert.deepEqual(catalog.result.cases.map(row => row.caseId), ['C01']);
+    assert.deepEqual(
+      catalog.result.cases.map(row => row.caseId),
+      ['C01'],
+    );
 
     const headers = { 'content-type': 'application/json', origin, 'x-operator-token': fixture.token };
     const startResponse = await fetch(`${origin}/api/experiments`, {
@@ -155,7 +158,10 @@ test('one controlled graph and service back the loopback console and live report
       body: JSON.stringify({ profileId: fixture.profile.profileId, idempotencyKey: 'console-start', source: { kind: 'catalog', caseIds: ['C01'] } }),
     });
     assert.equal(startResponse.status, 200);
-    const start = (await startResponse.json()) as { readonly ok: boolean; readonly result: { readonly experiment: { readonly id: string; readonly status: string; readonly workflowReport: unknown } } };
+    const start = (await startResponse.json()) as {
+      readonly ok: boolean;
+      readonly result: { readonly experiment: { readonly id: string; readonly status: string; readonly workflowReport: unknown } };
+    };
     assert.equal(start.ok, true);
     assert.equal(start.result.experiment.status, 'waiting-approval');
     assert.ok(start.result.experiment.workflowReport, 'the exact graph result is retained by the shared service');
@@ -196,7 +202,9 @@ test('misbound identity and throwing route factories refuse before token lookup 
 
   const throwing: EvaluationConsoleAssembly = {
     ...fixture.assembly,
-    routesFor() { throw new Error('secret-route-factory-detail'); },
+    routesFor() {
+      throw new Error('secret-route-factory-detail');
+    },
   };
   const failed = await createEvaluationConsoleHost(fixture.readiness, fixture.configuration, () => throwing);
   assert.deepEqual(failed, { ok: false, reasonCode: 'HOST_CONSOLE_UNAVAILABLE' });
@@ -242,7 +250,9 @@ test('profile, catalog, route, budget, token, getter and factory faults fail clo
     },
   });
   await refuse(getter);
-  await refuse(fixture.assembly, () => { throw new Error('private-factory-exception'); });
+  await refuse(fixture.assembly, () => {
+    throw new Error('private-factory-exception');
+  });
   assert.equal(fixture.counters().tokenCalls, 0);
 });
 
@@ -261,16 +271,51 @@ test('serve uses one host load, assembly resolution and bootstrap, then closes o
     adapter: {
       provenance: 'real',
       ...portDeclarationsV02(component),
-      ...Object.fromEntries(REQUIRED_PORTS_V02_METHODS[component].map(method => [method, () => { ownerCalls += 1; return undefined; }])),
+      ...Object.fromEntries(
+        REQUIRED_PORTS_V02_METHODS[component].map(method => [
+          method,
+          () => {
+            ownerCalls += 1;
+            return undefined;
+          },
+        ]),
+      ),
     },
   })) as OwnerDelivery[];
   const host = {
     owner,
     producers: {
-      guardedRead: { provenance: 'real', mediateRead: () => { ownerCalls += 1; return undefined; } },
-      baselineEvidence: { provenance: 'real', persistBaselineEvidence: () => { ownerCalls += 1; return undefined; }, loadBaselineEvidence: () => { ownerCalls += 1; return undefined; } },
-      hostAuthority: { loadSnapshot: () => { ownerCalls += 1; return undefined; } },
-      contextSource: { provenance: 'real', observe: () => { ownerCalls += 1; return undefined; } },
+      guardedRead: {
+        provenance: 'real',
+        mediateRead: () => {
+          ownerCalls += 1;
+          return undefined;
+        },
+      },
+      baselineEvidence: {
+        provenance: 'real',
+        persistBaselineEvidence: () => {
+          ownerCalls += 1;
+          return undefined;
+        },
+        loadBaselineEvidence: () => {
+          ownerCalls += 1;
+          return undefined;
+        },
+      },
+      hostAuthority: {
+        loadSnapshot: () => {
+          ownerCalls += 1;
+          return undefined;
+        },
+      },
+      contextSource: {
+        provenance: 'real',
+        observe: () => {
+          ownerCalls += 1;
+          return undefined;
+        },
+      },
     } as never,
     config: fixture.fixture.host.inputs.config,
   } satisfies HostAssembly;
@@ -299,23 +344,27 @@ test('serve uses one host load, assembly resolution and bootstrap, then closes o
       return new Map([['C01', { ...route, workflowReport: undefined }]]);
     },
   };
-  const result = await runEvaluationConsoleCli(['serve', '--host', 'trusted-host.json'], {
-    loadConfiguration(path) {
-      loadCalls += 1;
-      assert.equal(path, 'trusted-host.json');
-      return loaded;
+  const result = await runEvaluationConsoleCli(
+    ['serve', '--host', 'trusted-host.json'],
+    {
+      loadConfiguration(path) {
+        loadCalls += 1;
+        assert.equal(path, 'trusted-host.json');
+        return loaded;
+      },
+      async resolveAssembly(configuration) {
+        resolutionCalls += 1;
+        assert.equal(configuration, loadedConfiguration);
+        return { host, console: () => assemblyForCli };
+      },
+      prepareAssembly(hostInput, configuration) {
+        prepareCalls += 1;
+        return prepareAssembly(hostInput, configuration);
+      },
+      readinessReport: () => 'unavailable',
     },
-    async resolveAssembly(configuration) {
-      resolutionCalls += 1;
-      assert.equal(configuration, loadedConfiguration);
-      return { host, console: () => assemblyForCli };
-    },
-    prepareAssembly(hostInput, configuration) {
-      prepareCalls += 1;
-      return prepareAssembly(hostInput, configuration);
-    },
-    readinessReport: () => 'unavailable',
-  }, true);
+    true,
+  );
   try {
     assert.equal(result.exitCode, 0, result.output);
     assert.deepEqual([loadCalls, resolutionCalls, prepareCalls], [1, 1, 1]);
@@ -337,21 +386,34 @@ test('serve uses one host load, assembly resolution and bootstrap, then closes o
 test('the production CLI refuses an explicitly controlled-ready bootstrap without starting a listener', async () => {
   const fixture = await controlledAssembly();
   let factoryCalls = 0;
-  const loaded: HostConfigurationLoad = { ok: true, value: {
-    identity: fixture.configuration.identity,
-    pins: fixture.fixture.host.inputs.pins,
-    profileDigest: fixture.configuration.profileDigest,
-    configDigest: fixture.configuration.configDigest,
-    pricingDigest: fixture.configuration.pricingDigest,
-    requestedModel: fixture.configuration.requestedModel,
-    adapterVersions: fixture.configuration.adapterVersions,
-  } };
-  const result = await runEvaluationConsoleCli(['serve', '--host', 'controlled.json'], {
-    loadConfiguration: () => loaded,
-    resolveAssembly: async () => ({ host: fixture.fixture.host.inputs, console: () => { factoryCalls += 1; return fixture.assembly; } }),
-    prepareAssembly: () => fixture.readiness,
-    readinessReport: () => 'unavailable',
-  }, false);
+  const loaded: HostConfigurationLoad = {
+    ok: true,
+    value: {
+      identity: fixture.configuration.identity,
+      pins: fixture.fixture.host.inputs.pins,
+      profileDigest: fixture.configuration.profileDigest,
+      configDigest: fixture.configuration.configDigest,
+      pricingDigest: fixture.configuration.pricingDigest,
+      requestedModel: fixture.configuration.requestedModel,
+      adapterVersions: fixture.configuration.adapterVersions,
+    },
+  };
+  const result = await runEvaluationConsoleCli(
+    ['serve', '--host', 'controlled.json'],
+    {
+      loadConfiguration: () => loaded,
+      resolveAssembly: async () => ({
+        host: fixture.fixture.host.inputs,
+        console: () => {
+          factoryCalls += 1;
+          return fixture.assembly;
+        },
+      }),
+      prepareAssembly: () => fixture.readiness,
+      readinessReport: () => 'unavailable',
+    },
+    false,
+  );
 
   assert.equal(result.exitCode, 4);
   assert.equal(JSON.parse(result.output).error, 'HOST_CONSOLE_UNAVAILABLE');
@@ -368,13 +430,26 @@ test('a bind failure returns a fixed reason and closes partial server resources'
   const descriptors = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(prototype, name)]));
   let closeCalls = 0;
   let connectionCleanupCalls = 0;
-  assert.equal(Reflect.set(prototype, 'listen', () => { throw new Error('private bind detail'); }), true);
-  assert.equal(Reflect.set(prototype, 'close', (callback?: unknown) => {
-    closeCalls += 1;
-    if (typeof callback === 'function') queueMicrotask(() => Reflect.apply(callback, undefined, []));
-    return undefined;
-  }), true);
-  assert.equal(Reflect.set(prototype, 'closeAllConnections', () => { connectionCleanupCalls += 1; }), true);
+  assert.equal(
+    Reflect.set(prototype, 'listen', () => {
+      throw new Error('private bind detail');
+    }),
+    true,
+  );
+  assert.equal(
+    Reflect.set(prototype, 'close', (callback?: unknown) => {
+      closeCalls += 1;
+      if (typeof callback === 'function') queueMicrotask(() => Reflect.apply(callback, undefined, []));
+      return undefined;
+    }),
+    true,
+  );
+  assert.equal(
+    Reflect.set(prototype, 'closeAllConnections', () => {
+      connectionCleanupCalls += 1;
+    }),
+    true,
+  );
   try {
     const result = await createEvaluationConsoleHost(fixture.readiness, fixture.configuration, () => fixture.assembly);
     assert.deepEqual(result, { ok: false, reasonCode: 'HOST_CONSOLE_LISTEN_FAILED' });

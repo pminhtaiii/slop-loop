@@ -54,7 +54,12 @@ export interface HostConfiguration {
 export type HostConfigurationLoad = Readonly<{ ok: true; value: HostConfiguration }> | Readonly<{ ok: false; error: EvaluateCliResult }>;
 
 /** What the operator's assembly module contributes: the host wiring and an optional route binding. */
-export type HostAssemblyResolution = Readonly<{ host: HostAssembly; production?: HostProduction | undefined; control?: EvaluationControlBindings | undefined; console?: EvaluationConsoleFactory | undefined }>;
+export type HostAssemblyResolution = Readonly<{
+  host: HostAssembly;
+  production?: HostProduction | undefined;
+  control?: EvaluationControlBindings | undefined;
+  console?: EvaluationConsoleFactory | undefined;
+}>;
 
 /** The one name an assembly module must export. It is a factory, so the module decides its own wiring. */
 const ASSEMBLY_FACTORY = 'createHostAssembly';
@@ -292,12 +297,16 @@ async function assemble(parsed: ParsedArgs, options: EvaluateCliOptions | undefi
 
 export async function runEvaluateCli(args: readonly string[], options?: EvaluateCliOptions): Promise<EvaluateCliResult> {
   if (args[0] === 'serve') {
-    return runEvaluationConsoleCli(args, {
-      loadConfiguration: loadHostConfiguration,
-      resolveAssembly: configuration => resolveHostAssembly(configuration),
-      prepareAssembly,
-      readinessReport,
-    }, isDirectExecution());
+    return runEvaluationConsoleCli(
+      args,
+      {
+        loadConfiguration: loadHostConfiguration,
+        resolveAssembly: configuration => resolveHostAssembly(configuration),
+        prepareAssembly,
+        readinessReport,
+      },
+      isDirectExecution(),
+    );
   }
   if (isEvaluationControlCommand(args[0])) {
     const parsedControl = parseEvaluationControlArgs(args);

@@ -157,7 +157,9 @@ test('a changing host control getter refuses safely before invoking the owner', 
   Reflect.set(globalThis, bindingKey, changingControl);
   try {
     let result: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
-    await assert.doesNotReject(async () => { result = await runEvaluateCli(args); });
+    await assert.doesNotReject(async () => {
+      result = await runEvaluateCli(args);
+    });
     assert.ok(result);
     assert.equal(result.exitCode, 4);
     assert.deepEqual(JSON.parse(result.output), { error: 'OPERATOR_CONTROL_UNAVAILABLE' });
@@ -262,12 +264,40 @@ test('host-file control routes status, decision, explicit direction, and continu
     assert.equal(statusResult.result.id, 'exp-1');
     assert.deepEqual(calls.statusIds, ['exp-1'], 'the host path is not passed to the service');
 
-    const decision = await runEvaluateCli(['decision', '--experiment', 'exp-1', '--presentation', presentation, '--version', '1', '--choice', 'approve', '--idempotency-key', 'host-decision-key', ...hostArgs]);
+    const decision = await runEvaluateCli([
+      'decision',
+      '--experiment',
+      'exp-1',
+      '--presentation',
+      presentation,
+      '--version',
+      '1',
+      '--choice',
+      'approve',
+      '--idempotency-key',
+      'host-decision-key',
+      ...hostArgs,
+    ]);
     assert.equal(decision.exitCode, 0, decision.output);
     assert.deepEqual(calls.decision, [{ experimentId: 'exp-1', presentationDigest: presentation, expectedVersion: 1, decision: 'approve', idempotencyKey: 'host-decision-key' }]);
     assert.equal(calls.graph, 1, 'recording a decision does not continue the graph');
 
-    const directionArgs = ['direction', '--experiment', 'exp-1', '--kind', 'resume', '--task-version', '1', '--control-version', '1', '--decision', 'decision-1', '--idempotency-key', 'host-direction-key', ...hostArgs];
+    const directionArgs = [
+      'direction',
+      '--experiment',
+      'exp-1',
+      '--kind',
+      'resume',
+      '--task-version',
+      '1',
+      '--control-version',
+      '1',
+      '--decision',
+      'decision-1',
+      '--idempotency-key',
+      'host-direction-key',
+      ...hostArgs,
+    ];
     const directed = await runEvaluateCli(directionArgs);
     assert.equal(directed.exitCode, 0, directed.output);
     assert.deepEqual(calls.directionInputs, [{ id: 'exp-1', kind: 'resume', expectedTaskVersion: 1, expectedControlVersion: 1, idempotencyKey: 'host-direction-key', decisionRef: 'decision-1' }]);
@@ -296,7 +326,9 @@ test('invalid host-file control arguments refuse before import or service calls'
   const { calls } = await fixture();
   const directory = mkdtempSync(join(tmpdir(), 'evaluation-control-invalid-'));
   const marker = join(directory, 'imported.txt');
-  const host = hostFileForAssembly(`import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'imported'); export function createHostAssembly() { return { host: {}, control: Reflect.get(globalThis, 'unused') }; }`);
+  const host = hostFileForAssembly(
+    `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'imported'); export function createHostAssembly() { return { host: {}, control: Reflect.get(globalThis, 'unused') }; }`,
+  );
   const beforeGraphCalls = calls.graph;
   const response = await runEvaluateCli(['status', '--experiment', 'exp-1', '--host', host.configPath, '--host', host.configPath]);
   assert.equal(response.exitCode, 2);
@@ -310,7 +342,9 @@ test('an explicit control binding wins without importing the host assembly', asy
   const { options } = await fixture();
   const directory = mkdtempSync(join(tmpdir(), 'evaluation-control-precedence-'));
   const marker = join(directory, 'imported.txt');
-  const host = hostFileForAssembly(`import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'imported'); export function createHostAssembly() { return { host: {}, control: {} }; }`);
+  const host = hostFileForAssembly(
+    `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'imported'); export function createHostAssembly() { return { host: {}, control: {} }; }`,
+  );
   const response = await runEvaluateCli(['status', '--experiment', 'exp-1', '--host', host.configPath], options);
   assert.equal(response.exitCode, 0, response.output);
   assert.equal(existsSync(marker), false, 'the unused host module must not be imported');
@@ -321,8 +355,11 @@ test('missing, malformed, and throwing host control deliveries are bounded and r
   const secret = 'C:\\private\\operator-token-sentinel';
   const cases = [
     { source: 'export function createHostAssembly() { return { host: {} }; }', privateText: undefined },
-    { source: "export function createHostAssembly() { return { host: {}, control: { service: { getExperiment() { return { ok: true, value: {} }; } } } }; }", privateText: undefined },
-    { source: `export function createHostAssembly() { const result = { host: {} }; Object.defineProperty(result, 'control', { get() { throw new Error(${JSON.stringify(secret)}); } }); return result; }`, privateText: secret },
+    { source: 'export function createHostAssembly() { return { host: {}, control: { service: { getExperiment() { return { ok: true, value: {} }; } } } }; }', privateText: undefined },
+    {
+      source: `export function createHostAssembly() { const result = { host: {} }; Object.defineProperty(result, 'control', { get() { throw new Error(${JSON.stringify(secret)}); } }); return result; }`,
+      privateText: secret,
+    },
   ] as const;
   for (const item of cases) {
     const host = hostFileForAssembly(item.source);

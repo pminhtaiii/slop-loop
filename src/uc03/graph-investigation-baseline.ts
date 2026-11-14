@@ -13,9 +13,7 @@ interface RetainedBaseline {
   readonly candidate: BaselineEvidenceCandidate;
 }
 
-export type RetainedBaselineResult =
-  | Readonly<{ ok: true; baseline: BaselineEvidenceCandidate }>
-  | Readonly<{ ok: false; reason: string }>;
+export type RetainedBaselineResult = Readonly<{ ok: true; baseline: BaselineEvidenceCandidate }> | Readonly<{ ok: false; reason: string }>;
 
 const retained = new WeakMap<object, RetainedBaseline>();
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
@@ -35,17 +33,22 @@ function detachedCandidate(candidate: BaselineEvidenceCandidate): BaselineEviden
   });
 }
 
-function expectedBinding(task: BugTask, state: TaskState): Readonly<{
-  readonly taskId: string;
-  readonly runId: string;
-  readonly workspaceId: string;
-  readonly repositoryId: string;
-  readonly revisionDigest: string;
-  readonly criteriaDigest: string;
-  readonly checkSetDigest: string;
-  readonly expectedTestFiles: readonly string[];
-  readonly reproductionCheckId: string;
-}> | undefined {
+function expectedBinding(
+  task: BugTask,
+  state: TaskState,
+):
+  | Readonly<{
+      readonly taskId: string;
+      readonly runId: string;
+      readonly workspaceId: string;
+      readonly repositoryId: string;
+      readonly revisionDigest: string;
+      readonly criteriaDigest: string;
+      readonly checkSetDigest: string;
+      readonly expectedTestFiles: readonly string[];
+      readonly reproductionCheckId: string;
+    }>
+  | undefined {
   const reproductionChecks = task.requiredChecks.filter(check => check.purpose === 'reproduction');
   if (reproductionChecks.length !== 1 || state.taskId !== task.taskId || state.repositoryId !== task.repositoryId || state.repositoryRevisionDigest !== task.initialRevisionDigest) return undefined;
   const reproductionCheck = reproductionChecks[0];
@@ -80,7 +83,8 @@ function candidateMatches(candidate: BaselineEvidenceCandidate, task: BugTask, b
     sameList(candidate.expectedPassingCheckIds, expectedPassingCheckIds) &&
     sameList(candidate.expectedTestFiles, binding.expectedTestFiles) &&
     SHA256.test(candidate.testProtectionDigest) &&
-    typeof candidate.reproductionFailureSignature === 'string' && candidate.reproductionFailureSignature.length > 0 &&
+    typeof candidate.reproductionFailureSignature === 'string' &&
+    candidate.reproductionFailureSignature.length > 0 &&
     candidate.checkResults.length === task.requiredChecks.length &&
     task.requiredChecks.every((check, index) => {
       const result = candidate.checkResults[index];
@@ -90,12 +94,7 @@ function candidateMatches(candidate: BaselineEvidenceCandidate, task: BugTask, b
 }
 
 /** Retains only a validated candidate for the exact generation object used by this task/run. */
-export function retainClarificationBaseline(
-  generation: object | undefined,
-  task: BugTask,
-  state: TaskState,
-  candidate: BaselineEvidenceCandidate,
-): boolean {
+export function retainClarificationBaseline(generation: object | undefined, task: BugTask, state: TaskState, candidate: BaselineEvidenceCandidate): boolean {
   if (!generation) return false;
   const binding = expectedBinding(task, state);
   if (!binding || !candidateMatches(candidate, task, binding)) return false;
@@ -124,11 +123,15 @@ export async function reuseClarificationBaseline(input: {
   }
   const expectedContext = input.expectedContext;
   if (
-    expectedContext.taskId !== binding.taskId || expectedContext.workspaceId !== binding.workspaceId ||
-    expectedContext.repositoryId !== binding.repositoryId || expectedContext.revisionDigest !== binding.revisionDigest ||
-    expectedContext.criteriaDigest !== binding.criteriaDigest || expectedContext.checkSetDigest !== binding.checkSetDigest ||
+    expectedContext.taskId !== binding.taskId ||
+    expectedContext.workspaceId !== binding.workspaceId ||
+    expectedContext.repositoryId !== binding.repositoryId ||
+    expectedContext.revisionDigest !== binding.revisionDigest ||
+    expectedContext.criteriaDigest !== binding.criteriaDigest ||
+    expectedContext.checkSetDigest !== binding.checkSetDigest ||
     !sameList(expectedContext.expectedTestFiles, binding.expectedTestFiles)
-  ) return { ok: false, reason: 'CLARIFICATION_BASELINE_STALE: trusted task or check bindings changed' };
+  )
+    return { ok: false, reason: 'CLARIFICATION_BASELINE_STALE: trusted task or check bindings changed' };
 
   let current: TaskState | null;
   try {
@@ -154,15 +157,19 @@ export async function reuseClarificationBaseline(input: {
   } catch {
     return { ok: false, reason: 'CLARIFICATION_BASELINE_STALE: protected-test snapshot could not be reloaded' };
   }
-  const snapshotFacts = validateHostSnapshotFacts(snapshot, {
-    taskId: binding.taskId,
-    workspaceId: binding.workspaceId,
-    repositoryId: binding.repositoryId,
-    revisionDigest: binding.revisionDigest,
-    criteriaDigest: binding.criteriaDigest,
-    checkSetDigest: binding.checkSetDigest,
-    expectedTestFiles: binding.expectedTestFiles,
-  }, input.task.requiredChecks);
+  const snapshotFacts = validateHostSnapshotFacts(
+    snapshot,
+    {
+      taskId: binding.taskId,
+      workspaceId: binding.workspaceId,
+      repositoryId: binding.repositoryId,
+      revisionDigest: binding.revisionDigest,
+      criteriaDigest: binding.criteriaDigest,
+      checkSetDigest: binding.checkSetDigest,
+      expectedTestFiles: binding.expectedTestFiles,
+    },
+    input.task.requiredChecks,
+  );
   if (!snapshotFacts.ok || snapshotFacts.testProtectionDigest !== baseline.candidate.testProtectionDigest) {
     return { ok: false, reason: 'CLARIFICATION_BASELINE_STALE: protected-test snapshot changed' };
   }

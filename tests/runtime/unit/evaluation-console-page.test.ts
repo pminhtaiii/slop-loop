@@ -201,20 +201,45 @@ interface FakeEl {
 function fakeEl(tagName: string): FakeEl {
   let text = '';
   const el = {
-    value: '', disabled: false, tagName,
+    value: '',
+    disabled: false,
+    tagName,
     children: [] as FakeEl[],
     parentNode: null as FakeEl | null,
     handlers: {} as Record<string, (event: FakeEvent) => void>,
-    addEventListener(type: string, handler: (event: FakeEvent) => void): void { el.handlers[type] = handler; },
-    getAttribute(): string | null { return null; },
-    appendChild(child: FakeEl): void { el.children.push(child); child.parentNode = el; },
-    insertBefore(child: FakeEl): void { el.children.push(child); child.parentNode = el; },
-    removeChild(child: FakeEl): void { const index = el.children.indexOf(child); if (index >= 0) el.children.splice(index, 1); },
+    addEventListener(type: string, handler: (event: FakeEvent) => void): void {
+      el.handlers[type] = handler;
+    },
+    getAttribute(): string | null {
+      return null;
+    },
+    appendChild(child: FakeEl): void {
+      el.children.push(child);
+      child.parentNode = el;
+    },
+    insertBefore(child: FakeEl): void {
+      el.children.push(child);
+      child.parentNode = el;
+    },
+    removeChild(child: FakeEl): void {
+      const index = el.children.indexOf(child);
+      if (index >= 0) el.children.splice(index, 1);
+    },
   } as unknown as FakeEl;
-  Object.defineProperty(el, 'textContent', { get: () => text, set: (v: string) => { text = String(v); el.children.length = 0; } });
+  Object.defineProperty(el, 'textContent', {
+    get: () => text,
+    set: (v: string) => {
+      text = String(v);
+      el.children.length = 0;
+    },
+  });
   Object.defineProperty(el, 'firstChild', { get: () => el.children[0] ?? null });
   for (const sink of ['innerHTML', 'outerHTML']) {
-    Object.defineProperty(el, sink, { set() { throw new Error(`HTML sink ${sink} used`); } });
+    Object.defineProperty(el, sink, {
+      set() {
+        throw new Error(`HTML sink ${sink} used`);
+      },
+    });
   }
   return el;
 }
@@ -269,7 +294,9 @@ function bootPage(responder: (path: string) => unknown) {
   /** Clarification groups the script appends to the document body. */
   const groups = () => body.children.filter(child => child.tagName === 'section');
   /** Simulates a committed request whose response never reaches the page. */
-  const loseResponse = (value: boolean) => { lost = value; };
+  const loseResponse = (value: boolean) => {
+    lost = value;
+  };
   return { el, body, calls, settle, loadExperiment, groups, loseResponse };
 }
 
@@ -387,8 +414,7 @@ test('page executes: missing or invalid reports are unknown, never a pass', asyn
 });
 
 test('page executes: output is bounded (cases, diagnostic, refs, total)', async () => {
-  const mk = (count: number, diagnostic: string) =>
-    Array.from({ length: count }, (_, i) => caseResult({ caseId: `C${i}`, diagnostic, artifacts: [`a${i}`] }));
+  const mk = (count: number, diagnostic: string) => Array.from({ length: count }, (_, i) => caseResult({ caseId: `C${i}`, diagnostic, artifacts: [`a${i}`] }));
   const run = (cases: unknown[]) => bootPage(viewResponder(viewOf({ workflowReport: reportOf({ cases }) }))).loadExperiment();
   const rows = await run(mk(60, 'short'));
   assert.equal((rows.match(/^case /gmu) ?? []).length, 32);
@@ -416,7 +442,10 @@ test('page executes: only unique regex-valid artifact refs are listed and reques
   const text = await b.loadExperiment();
   assert.match(text, /artifact refs: ok-1, ok-2(\n|$)/u);
   assert.equal(b.el('artifact-id').value, '');
-  assert.equal(b.calls.some(call => call.path.includes('passwd')), false);
+  assert.equal(
+    b.calls.some(call => call.path.includes('passwd')),
+    false,
+  );
 });
 
 test('page executes: manual artifact load validates the id and uses the encoded endpoint with the token header', async () => {
@@ -439,21 +468,7 @@ test('page executes: manual artifact load validates the id and uses the encoded 
   assert.equal(b.calls.length, 1, 'invalid ids must not fetch');
 });
 
-const REPORT_LEAKS = [
-  'aaaa',
-  'bbbb',
-  'ffff',
-  'secret-model',
-  '/etc/passwd',
-  'hidden-limitation',
-  'limitations',
-  'returnedModel',
-  'repositoryId',
-  'graderDigest',
-  'workflowReport',
-  'outcome',
-  '{',
-];
+const REPORT_LEAKS = ['aaaa', 'bbbb', 'ffff', 'secret-model', '/etc/passwd', 'hidden-limitation', 'limitations', 'returnedModel', 'repositoryId', 'graderDigest', 'workflowReport', 'outcome', '{'];
 
 test('page executes: mutation responses show only a bounded receipt in the result pane', async () => {
   // isRealVerified: true makes the report invalid, so a raw "outcome": "pass" must not surface anywhere.
@@ -477,7 +492,11 @@ test('page executes: mutation responses show only a bounded receipt in the resul
 });
 
 test('page executes: error codes in the result pane are opaque or UNKNOWN', async () => {
-  for (const [error, shown] of [['INVALID_EXPERIMENT_ID', 'INVALID_EXPERIMENT_ID'], ['/etc/passwd <b>', 'UNKNOWN'], [{ path: '/etc/passwd' }, 'UNKNOWN']] as const) {
+  for (const [error, shown] of [
+    ['INVALID_EXPERIMENT_ID', 'INVALID_EXPERIMENT_ID'],
+    ['/etc/passwd <b>', 'UNKNOWN'],
+    [{ path: '/etc/passwd' }, 'UNKNOWN'],
+  ] as const) {
     const b = bootPage(() => ({ ok: false, error }));
     b.el('submit-continue').handlers.click?.(EVENT);
     await b.settle();
@@ -493,7 +512,10 @@ test('page executes: a diagnostic cannot forge a line or reorder text with Unico
 });
 
 test('page executes: a selected pass with failed or incomplete cases is unknown', async () => {
-  for (const counts of [{ passed: 1, failed: 1, incomplete: 0 }, { passed: 1, failed: 0, incomplete: 1 }]) {
+  for (const counts of [
+    { passed: 1, failed: 1, incomplete: 0 },
+    { passed: 1, failed: 0, incomplete: 1 },
+  ]) {
     const workflowReport = reportOf({ selectionResult: { selected: ['C01'], pendingWaits: [], outcome: 'pass', ...counts } });
     const text = await bootPage(viewResponder(viewOf({ workflowReport }))).loadExperiment();
     assert.match(text, /^selected result: unknown$/mu);
@@ -565,15 +587,19 @@ test('page executes: several questions submit one answer per question in order w
     { questionId: 'gq-3', text: 'Which test proves it?' },
   ];
   const view = clarificationView(questions);
-  const b = bootPage((path) => path.endsWith('/answers')
-    ? { ok: true, result: { experiment: view, receipt: { receiptId: 'rcpt-1', kind: 'answer', idempotencyKey: 'key-1', experimentId: 'exp-1', version: 8 } } }
-    : { ok: true, result: view });
+  const b = bootPage(path =>
+    path.endsWith('/answers')
+      ? { ok: true, result: { experiment: view, receipt: { receiptId: 'rcpt-1', kind: 'answer', idempotencyKey: 'key-1', experimentId: 'exp-1', version: 8 } } }
+      : { ok: true, result: view },
+  );
   await b.loadExperiment();
   const group = b.groups().find(section => /Which module owns retries\?/u.test(textOf(section)));
   assert.ok(group);
   const inputs = textareasOf(group);
   assert.equal(inputs.length, 3, 'one input per question');
-  inputs.forEach((input, index) => { input.value = `answer-${index + 1}`; });
+  inputs.forEach((input, index) => {
+    input.value = `answer-${index + 1}`;
+  });
   const button = group.children.find(child => child.tagName === 'button');
   assert.ok(button, 'explicit submit control');
   button.handlers.click?.(EVENT);
@@ -604,12 +630,14 @@ test('page executes: hostile clarification text is shown as sanitized text only'
 async function submitGroup(b: ReturnType<typeof bootPage>, text: RegExp) {
   const group = b.groups().find(section => text.test(textOf(section)));
   assert.ok(group, 'clarification group rendered');
-  textareasOf(group).forEach((input, index) => { input.value = `answer-${index + 1}`; });
+  textareasOf(group).forEach((input, index) => {
+    input.value = `answer-${index + 1}`;
+  });
   const before = b.calls.length;
   group.children.find(child => child.tagName === 'button')?.handlers.click?.(EVENT);
   await b.settle();
   const call = b.calls.slice(before).find(item => item.path.endsWith('/answers'));
-  return { group, call, body: call ? JSON.parse(call.init.body ?? '{}') as Record<string, unknown> : null };
+  return { group, call, body: call ? (JSON.parse(call.init.body ?? '{}') as Record<string, unknown>) : null };
 }
 
 test('page executes: an uncertain retry of the same unanswered group reuses its key and payload', async () => {
@@ -652,7 +680,9 @@ test('page executes: a retry after an edit replays the submitted answers with th
   await b.loadExperiment();
   const group = b.groups().find(section => /Which module owns retries\?/u.test(textOf(section)));
   assert.ok(group, 'clarification group rendered');
-  textareasOf(group).forEach(input => { input.value = 'edited after the lost response'; });
+  textareasOf(group).forEach(input => {
+    input.value = 'edited after the lost response';
+  });
   const before = b.calls.length;
   group.children.find(child => child.tagName === 'button')?.handlers.click?.(EVENT);
   await b.settle();
@@ -673,9 +703,11 @@ test('page executes: a pending group A response leaves group B controls and its 
     workflowClarification: { questionId: 'gq-group-2', questionDigest: 'b'.repeat(64), questions: [{ questionId: 'gq-9', text: 'Which test proves it?' }] },
   });
   let release!: (value: unknown) => void;
-  const held = new Promise<unknown>(resolve => { release = resolve; });
+  const held = new Promise<unknown>(resolve => {
+    release = resolve;
+  });
   let answerCalls = 0;
-  const b = bootPage((path) => {
+  const b = bootPage(path => {
     if (!path.endsWith('/answers')) return { ok: true, result: path.includes('exp-2') ? viewB : viewA };
     answerCalls += 1;
     return answerCalls === 1 ? held : { ok: true, result: viewB };
@@ -698,7 +730,10 @@ test('page executes: a pending group A response leaves group B controls and its 
   // Group A's late 200 must not remove B's controls or release B's pending key.
   release({ ok: true, result: { experiment: viewA, receipt: { receiptId: 'rcpt-a', kind: 'answer', idempotencyKey: 'key-a', experimentId: 'exp-1', version: 8 } } });
   await b.settle();
-  assert.ok(b.groups().some(section => /Which test proves it\?/u.test(textOf(section))), 'group B controls survive');
+  assert.ok(
+    b.groups().some(section => /Which test proves it\?/u.test(textOf(section))),
+    'group B controls survive',
+  );
   const retryB = await submitGroup(b, /Which test proves it\?/u);
   assert.equal(retryB.body?.['idempotencyKey'], firstB.body?.['idempotencyKey'], 'group B keeps its pending key');
 });

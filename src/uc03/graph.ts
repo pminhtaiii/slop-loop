@@ -10,7 +10,15 @@ import { incompleteDelivery, loadCompletionPredicateInput, reportForPredicate } 
 import { evaluateDeterministicCompletion } from './verification.ts';
 import { buildFinalReport, type Milestone } from './report.ts';
 import { UC03StateAnnotation, type UC03GraphNode, type UC03GraphState } from './graph-state.ts';
-import { attachUC03ExecutionEvidence, graphRecursionLimit, isGraphRecursionError, type UC03ExecutionEvidence, type UC03GraphConfig, type UC03GraphPorts, type UC03WorkflowResult } from './graph-types.ts';
+import {
+  attachUC03ExecutionEvidence,
+  graphRecursionLimit,
+  isGraphRecursionError,
+  type UC03ExecutionEvidence,
+  type UC03GraphConfig,
+  type UC03GraphPorts,
+  type UC03WorkflowResult,
+} from './graph-types.ts';
 import { createReviewNode } from './graph-review.ts';
 import { usesCanonicalReviewerIngress } from '../foundation/reviewer.ts';
 import { handlePlanRejection } from './repair.ts';
@@ -213,19 +221,24 @@ export async function runUC03Graph(task: BugTask, ports: UC03GraphPorts, config?
     const output = await app.invoke({ task, state: initialState, reasons: [], milestones: [] }, { recursionLimit: graphRecursionLimit(config?.recursionLimit) });
     const reportOutcome = output.finalReport?.outcome;
     const outcome = reportOutcome ?? output.terminalOutcome ?? output.state?.outcome ?? 'INCOMPLETE';
-    return attachUC03ExecutionEvidence({
-      outcome,
-      state: output.state ?? null,
-      finalReport: output.finalReport,
-      reasons: output.finalReport?.failureReasons ?? output.reasons ?? [],
-      milestones: output.milestones ?? [],
-      ...diagnosticForOutcome(output),
-    }, output);
+    return attachUC03ExecutionEvidence(
+      {
+        outcome,
+        state: output.state ?? null,
+        finalReport: output.finalReport,
+        reasons: output.finalReport?.failureReasons ?? output.reasons ?? [],
+        milestones: output.milestones ?? [],
+        ...diagnosticForOutcome(output),
+      },
+      output,
+    );
   } catch (error) {
     let current: TaskState | null = null;
     try {
       current = await ports.statePort.loadTask(task.taskId);
-    } catch { /* No authoritative state is available. */ }
+    } catch {
+      /* No authoritative state is available. */
+    }
     const outcome = current?.changedPaths.length ? 'IMPLEMENTED_UNVERIFIED' : 'INCOMPLETE';
     const exhausted = isGraphRecursionError(error);
     return {

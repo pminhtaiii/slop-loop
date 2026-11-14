@@ -298,15 +298,31 @@ async function assertControlledBaselineRefusal(
   const diagnosticClaims = journal.claims.slice(claimsBefore);
   const diagnosticClaimIds = fixture.route.repositoryPort.v02Calls.map(call => call.claimId);
   assert.equal(diagnosticClaims.length, 2, 'only the two admitted diagnostic commands claim owner capacity');
-  assert.deepEqual(diagnosticClaims.map(claim => claim.status), ['settled', 'settled']);
+  assert.deepEqual(
+    diagnosticClaims.map(claim => claim.status),
+    ['settled', 'settled'],
+  );
   assert.equal(diagnosticClaimIds.filter((claimId): claimId is string => typeof claimId === 'string').length, 2);
-  assert.deepEqual(diagnosticClaims.map(claim => claim.claimId), diagnosticClaimIds);
-  assert.equal(journal.claims.some(claim => claim.claimId.startsWith('claim-controlled-')), false, 'no coder claim or model generation follows the refusal');
-  assert.ok(fixture.statePort.getLedgers().some((ledger, index) => ledger.consumed > (ledgersBefore[index]?.consumed ?? 0)), 'the two settled diagnostics retain their finite resource accounting');
+  assert.deepEqual(
+    diagnosticClaims.map(claim => claim.claimId),
+    diagnosticClaimIds,
+  );
+  assert.equal(
+    journal.claims.some(claim => claim.claimId.startsWith('claim-controlled-')),
+    false,
+    'no coder claim or model generation follows the refusal',
+  );
+  assert.ok(
+    fixture.statePort.getLedgers().some((ledger, index) => ledger.consumed > (ledgersBefore[index]?.consumed ?? 0)),
+    'the two settled diagnostics retain their finite resource accounting',
+  );
   assert.deepEqual(fixture.modelCalls, []);
   assert.deepEqual(fixture.coderAdmissions, []);
   assert.deepEqual(fixture.route.repositoryPort.patches, []);
-  assert.deepEqual(fixture.route.repositoryPort.commands.map(command => command.purpose), ['reproduction', 'regression']);
+  assert.deepEqual(
+    fixture.route.repositoryPort.commands.map(command => command.purpose),
+    ['reproduction', 'regression'],
+  );
   assert.equal(fixture.route.repositoryPort.v02Calls.length, 2);
 }
 

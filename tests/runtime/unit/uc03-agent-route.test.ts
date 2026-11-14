@@ -601,7 +601,13 @@ test('a revise direction at AwaitFeedback persists a replan that keeps the basel
 
   // A candidate that swaps the evidence ID for the revision digest is refused, not silently persisted.
   const rejecting = setup();
-  const stale = await seed(rejecting.task, rejecting.statePort, { node: 'AwaitFeedback', plan, activeDecisionId: plan.decisionRef, evidenceRefs: [baselineRef], nextAction: 'await-human-feedback-and-direction' });
+  const stale = await seed(rejecting.task, rejecting.statePort, {
+    node: 'AwaitFeedback',
+    plan,
+    activeDecisionId: plan.decisionRef,
+    evidenceRefs: [baselineRef],
+    nextAction: 'await-human-feedback-and-direction',
+  });
   const refused = await createAwaitFeedbackNode(rejecting.ports, {
     mode: 'development',
     trustedDirection: { ...direction, taskId: stale.taskId, stateVersion: stale.stateVersion },

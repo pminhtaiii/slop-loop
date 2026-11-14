@@ -1,6 +1,14 @@
 /** Source adapter from the existing evaluation service to the shared UC-03 v0.2 graph. */
 
-import { computeCanonicalSha256, computeClarificationAnswerDigest, validateBugTask, validateTaskState, type BugTask, type ClarificationQuestion, type TaskState } from '../contracts/foundation/uc03.ts';
+import {
+  computeCanonicalSha256,
+  computeClarificationAnswerDigest,
+  validateBugTask,
+  validateTaskState,
+  type BugTask,
+  type ClarificationQuestion,
+  type TaskState,
+} from '../contracts/foundation/uc03.ts';
 import type { CoderBudget } from '../uc03/agent-types.ts';
 import { recordClarificationAnswer } from '../uc03/clarification.ts';
 import { reuseClarificationBaseline } from '../uc03/graph-investigation-baseline.ts';
@@ -157,7 +165,8 @@ function validClarificationReceipt(
   questionDigest: string,
   answerDigest: string,
 ): receipt is ClarificationResumeReceipt {
-  return receipt !== undefined &&
+  return (
+    receipt !== undefined &&
     receipt.receiptRef === direction.receiptRef &&
     receipt.controlVersion === direction.controlVersion &&
     receipt.taskId === state.taskId &&
@@ -166,7 +175,8 @@ function validClarificationReceipt(
     receipt.stateVersion === state.stateVersion &&
     receipt.questionId === questionId &&
     receipt.questionDigest === questionDigest &&
-    receipt.answerDigest === answerDigest;
+    receipt.answerDigest === answerDigest
+  );
 }
 
 function clarificationView(state: TaskState | null): EvaluationGraphResult['workflowClarification'] {
@@ -248,10 +258,8 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         return incomplete(input.priorState);
       }
       if (!current || !validateTaskState(current).ok || current.taskId !== task.taskId || current.repositoryId !== task.repositoryId) return incomplete(input.priorState);
-      if (
-        input.priorState !== null &&
-        (input.priorState.taskId !== current.taskId || input.priorState.runId !== current.runId || input.priorState.workspaceId !== current.workspaceId)
-      ) return incomplete(input.priorState);
+      if (input.priorState !== null && (input.priorState.taskId !== current.taskId || input.priorState.runId !== current.runId || input.priorState.workspaceId !== current.workspaceId))
+        return incomplete(input.priorState);
       if (input.direction && input.direction.taskId !== current.taskId) return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
 
       const priorSession = sessions.get(input.experimentId);
@@ -347,27 +355,27 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         generation: session.generation,
         trustedDirection,
       };
-      const graphResult = readiness.status === 'ready'
-        ? await runUC03GraphV02(task, readiness.ports, config, graphInitialState)
-        : await runControlledUC03GraphV02(task, readiness.ports, config, graphInitialState);
+      const graphResult =
+        readiness.status === 'ready' ? await runUC03GraphV02(task, readiness.ports, config, graphInitialState) : await runControlledUC03GraphV02(task, readiness.ports, config, graphInitialState);
       const state = graphResult.executionEvidence?.finalState ?? graphResult.state;
       const reportBinding = readiness.status === 'controlled-ready' ? reportBindings.get(route) : undefined;
-      const workflowReport = reportBinding && route.entry
-        ? await reportUC03GraphResult({
-            host: {
-              entry: route.entry,
-              task,
-              expectedWait: route.expectedWait,
-              ...(reportBinding.workflowEvidence === undefined ? {} : { workflowEvidence: reportBinding.workflowEvidence }),
-            } satisfies WorkflowCaseHost,
-            result: graphResult,
-            ports: readiness.ports,
-            generation: session.generation,
-            trustedExpectedContext: readiness.config.trustedExpectedContext,
-            binding: reportBinding,
-            mode: 'mock',
-          })
-        : undefined;
+      const workflowReport =
+        reportBinding && route.entry
+          ? await reportUC03GraphResult({
+              host: {
+                entry: route.entry,
+                task,
+                expectedWait: route.expectedWait,
+                ...(reportBinding.workflowEvidence === undefined ? {} : { workflowEvidence: reportBinding.workflowEvidence }),
+              } satisfies WorkflowCaseHost,
+              result: graphResult,
+              ports: readiness.ports,
+              generation: session.generation,
+              trustedExpectedContext: readiness.config.trustedExpectedContext,
+              binding: reportBinding,
+              mode: 'mock',
+            })
+          : undefined;
       return {
         outcome: graphResult.outcome,
         state: state ? { taskId: state.taskId, runId: state.runId, workspaceId: state.workspaceId } : null,

@@ -159,8 +159,15 @@ test('repair success accepts only the pinned admitted hidden check with a comple
       assert.equal(request.checkId, 'hidden-c01');
       assert.equal(request.admission.checkId, 'hidden-c01');
       return {
-        finalSnapshot: request.finalSnapshot, profile: request.profile, executorId: request.executorId, checkId: request.checkId,
-        status: 'pass', actualOutcome: 'COMPLETED', durationMs: 10, cpuMs: 5, outputBytes: 32,
+        finalSnapshot: request.finalSnapshot,
+        profile: request.profile,
+        executorId: request.executorId,
+        checkId: request.checkId,
+        status: 'pass',
+        actualOutcome: 'COMPLETED',
+        durationMs: 10,
+        cpuMs: 5,
+        outputBytes: 32,
       };
     },
   };
@@ -174,24 +181,41 @@ test('repair success accepts only the pinned admitted hidden check with a comple
   noPrivatePayload(result);
 
   for (const checkId of [undefined, 'hidden-other']) {
-    const invalid = await grader({ executor: {
-      executorId: 'executor-1',
-      execute: request => ({
-        finalSnapshot: request.finalSnapshot, profile: request.profile, executorId: request.executorId,
-        ...(checkId === undefined ? {} : { checkId }),
-        status: 'pass', actualOutcome: 'COMPLETED', durationMs: 10, cpuMs: 5, outputBytes: 32,
-      }),
-    } }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
+    const invalid = await grader({
+      executor: {
+        executorId: 'executor-1',
+        execute: request => ({
+          finalSnapshot: request.finalSnapshot,
+          profile: request.profile,
+          executorId: request.executorId,
+          ...(checkId === undefined ? {} : { checkId }),
+          status: 'pass',
+          actualOutcome: 'COMPLETED',
+          durationMs: 10,
+          cpuMs: 5,
+          outputBytes: 32,
+        }),
+      },
+    }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
     assert.equal(invalid.grade, 'not-run');
     assert.equal(invalid.reason, 'private-grading');
   }
-  const incomplete = await grader({ executor: {
-    executorId: 'executor-1',
-    execute: request => ({
-      finalSnapshot: request.finalSnapshot, profile: request.profile, executorId: request.executorId, checkId: request.checkId,
-      status: 'pass', actualOutcome: 'FAILED', durationMs: 10, cpuMs: 5, outputBytes: 32,
-    }),
-  } }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
+  const incomplete = await grader({
+    executor: {
+      executorId: 'executor-1',
+      execute: request => ({
+        finalSnapshot: request.finalSnapshot,
+        profile: request.profile,
+        executorId: request.executorId,
+        checkId: request.checkId,
+        status: 'pass',
+        actualOutcome: 'FAILED',
+        durationMs: 10,
+        cpuMs: 5,
+        outputBytes: 32,
+      }),
+    },
+  }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
   assert.equal(incomplete.grade, 'fail', 'a passing status cannot upgrade an unsuccessful hidden outcome');
 });
 

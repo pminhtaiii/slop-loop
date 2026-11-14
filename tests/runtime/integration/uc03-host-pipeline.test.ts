@@ -116,11 +116,13 @@ function admittedServiceProfile(entry: NonNullable<WorkflowCaseHost['entry']>) {
   const graderPath = join(root, 'grader.json');
   writeFileSync(fixturePath, '{}', 'utf8');
   writeFileSync(graderPath, '{}', 'utf8');
-  const catalog = [{
-    ...entry,
-    fixturePath,
-    grader: { ...entry.grader, path: graderPath },
-  }];
+  const catalog = [
+    {
+      ...entry,
+      fixturePath,
+      grader: { ...entry.grader, path: graderPath },
+    },
+  ];
   const raw = {
     endpoint: 'https://api.deepseek.com/v1/messages',
     model: 'controlled-model',
@@ -449,32 +451,43 @@ test('the controlled EvaluationService drives one bound graph run through owner 
   });
   const taskResolutions: unknown[] = [];
   const graph = createUC03EvaluationGraph({
-    catalogRoutes: new Map([['C01', {
-      entry,
-      readiness,
-      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-      expectedWait: null,
-      workflowReport: {
-        profileDigest: profile.profileDigest,
-        configDigest: profile.configDigest,
-        pricingDigest: profile.pricingDigest,
-        adapterVersions: profile.adapterVersions,
-        requestedModel: profile.model,
-        timestamp: '2026-11-13T00:00:00.000Z',
-        workflowEvidence: {
-          grader,
-          finalTree: {
-            async freezeFinalTree(binding) { freezeCalls += 1; return finalTreeFor(binding); },
-            async recheckCurrentFinalTree(binding) { recheckCalls += 1; return finalTreeFor(binding); },
+    catalogRoutes: new Map([
+      [
+        'C01',
+        {
+          entry,
+          readiness,
+          coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+          expectedWait: null,
+          workflowReport: {
+            profileDigest: profile.profileDigest,
+            configDigest: profile.configDigest,
+            pricingDigest: profile.pricingDigest,
+            adapterVersions: profile.adapterVersions,
+            requestedModel: profile.model,
+            timestamp: '2026-11-13T00:00:00.000Z',
+            workflowEvidence: {
+              grader,
+              finalTree: {
+                async freezeFinalTree(binding) {
+                  freezeCalls += 1;
+                  return finalTreeFor(binding);
+                },
+                async recheckCurrentFinalTree(binding) {
+                  recheckCalls += 1;
+                  return finalTreeFor(binding);
+                },
+              },
+            },
           },
+          async resolveTask(input) {
+            taskResolutions.push(input.priorState);
+            return fixture.task;
+          },
+          resolveDirection: () => undefined,
         },
-      },
-      async resolveTask(input) {
-        taskResolutions.push(input.priorState);
-        return fixture.task;
-      },
-      resolveDirection: () => undefined,
-    }]]),
+      ],
+    ]),
   });
   const issuedDirections: { expectedTaskVersion: number; expectedControlVersion: number }[] = [];
   const service = createEvaluationService({
@@ -561,11 +574,19 @@ test('the controlled EvaluationService drives one bound graph run through owner 
     idempotencyKey: 'service-C01-d1-continue',
   });
   assert.ok(completed.ok);
-  assert.equal(completed.value.experiment.status, 'completed', JSON.stringify({ report: completed.value.experiment.workflowReport?.cases[0], state: await fixture.statePort.loadTask(fixture.task.taskId) }));
+  assert.equal(
+    completed.value.experiment.status,
+    'completed',
+    JSON.stringify({ report: completed.value.experiment.workflowReport?.cases[0], state: await fixture.statePort.loadTask(fixture.task.taskId) }),
+  );
   assert.equal(completed.value.experiment.taskId, fixture.task.taskId);
   assert.equal(completed.value.experiment.runId, firstOwnerState.runId);
   assert.equal(completed.value.experiment.workflowReport?.cases[0]?.workflowOutcome, 'COMPLETED');
-  assert.equal(completed.value.experiment.workflowReport?.cases[0]?.grade, 'pass', JSON.stringify({ report: completed.value.experiment.workflowReport?.cases[0], freezeCalls, recheckCalls, hiddenExecutions }));
+  assert.equal(
+    completed.value.experiment.workflowReport?.cases[0]?.grade,
+    'pass',
+    JSON.stringify({ report: completed.value.experiment.workflowReport?.cases[0], freezeCalls, recheckCalls, hiddenExecutions }),
+  );
   assert.equal(completed.value.experiment.workflowReport?.cases[0]?.gradeReason, 'criteria-satisfied');
   assert.equal(completed.value.experiment.workflowReport?.cases[0]?.requestedModel, profile.model);
   assert.equal(completed.value.experiment.workflowReport?.cases[0]?.returnedModel, null, 'the fixture transport publishes no returned-model identity');
@@ -636,10 +657,7 @@ test('a live completion resolver cannot bypass the graph completion predicate', 
 
   const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.deepEqual(result.reasons, [
-    'Incomplete verification or review evidence for completion',
-    'Owner-provided completion evidence is stale or does not match the current route',
-  ]);
+  assert.deepEqual(result.reasons, ['Incomplete verification or review evidence for completion', 'Owner-provided completion evidence is stale or does not match the current route']);
   assert.equal(resolverCalls, 1);
   const current = await fixture.statePort.loadTask(fixture.task.taskId);
   assert.equal(current?.node, 'Repair');
@@ -725,96 +743,96 @@ test('a generated material replan reaches the controlled owner transaction and w
       async accept(request: MaterialReplanRequestV02) {
         ownerAccepts += 1;
         try {
-        const current = await fixture.statePort.loadTask(request.taskId);
-        assert.ok(current);
-        assert.equal(current.node, 'AwaitFeedback');
-        assert.equal(current.stateVersion, request.priorStateVersion);
-        assert.equal(current.runId, request.runId);
-        assert.equal(current.planVersion, request.priorPlanVersion);
-        assert.equal(current.replanCount, request.priorReplanCount);
-        assert.equal(computeCanonicalSha256(request.candidatePlan), request.candidatePlanDigest);
+          const current = await fixture.statePort.loadTask(request.taskId);
+          assert.ok(current);
+          assert.equal(current.node, 'AwaitFeedback');
+          assert.equal(current.stateVersion, request.priorStateVersion);
+          assert.equal(current.runId, request.runId);
+          assert.equal(current.planVersion, request.priorPlanVersion);
+          assert.equal(current.replanCount, request.priorReplanCount);
+          assert.equal(computeCanonicalSha256(request.candidatePlan), request.candidatePlanDigest);
 
-        const reservationId = await fixture.statePort.getUnderlying().reserve('task', 'replan', 1, request.proposalId);
-        const renewedDecisionId = `renewed-${sha256Text(request.proposalId).slice(0, 24)}`;
-        const planWithoutDecision = {
-          ...request.candidatePlan,
-          planVersion: request.priorPlanVersion + 1,
-          decisionRef: undefined,
-        };
-        const trustedReplan = {
-          replanReservation: {
-            proposalId: request.proposalId,
+          const reservationId = await fixture.statePort.getUnderlying().reserve('task', 'replan', 1, request.proposalId);
+          const renewedDecisionId = `renewed-${sha256Text(request.proposalId).slice(0, 24)}`;
+          const planWithoutDecision = {
+            ...request.candidatePlan,
+            planVersion: request.priorPlanVersion + 1,
+            decisionRef: undefined,
+          };
+          const trustedReplan = {
+            replanReservation: {
+              proposalId: request.proposalId,
+              taskId: current.taskId,
+              configurationId: fixture.task.configId,
+              priorCount: request.priorReplanCount,
+              nextCount: request.expectedNextReplanCount,
+              reservationId,
+            },
+          };
+          const investigate = {
+            ...current,
+            stateVersion: current.stateVersion + 1,
+            node: 'Investigate' as const,
+            nextAction: 'propose-fix-plan',
+            planVersion: planWithoutDecision.planVersion,
+            plan: planWithoutDecision,
+            activeDecisionId: undefined,
+            latestReviewRef: undefined,
+            reviewRefs: [],
+            replanCount: request.expectedNextReplanCount,
+            budgetLedgers: fixture.statePort.getLedgers(),
+          };
+          transitionContexts.set(investigate.stateVersion, trustedReplan);
+          const investigated = await fixture.statePort.transition(investigate, current.stateVersion);
+          const renewedPlan = { ...planWithoutDecision, decisionRef: renewedDecisionId };
+          const pendingBinding: ApprovalBinding = {
+            decisionId: renewedDecisionId,
+            actionKind: 'fix_plan',
+            normalizedActionDigest: computeCanonicalSha256({
+              actionId: renewedDecisionId,
+              kind: 'approve_fix_plan',
+              planVersion: renewedPlan.planVersion,
+              strategyDigest: renewedPlan.strategyDigest,
+              diagnosisEvidenceRefs: renewedPlan.evidenceRefs,
+              checkSetDigest: renewedPlan.checkSetDigest,
+            }),
             taskId: current.taskId,
-            configurationId: fixture.task.configId,
-            priorCount: request.priorReplanCount,
-            nextCount: request.expectedNextReplanCount,
-            reservationId,
-          },
-        };
-        const investigate = {
-          ...current,
-          stateVersion: current.stateVersion + 1,
-          node: 'Investigate' as const,
-          nextAction: 'propose-fix-plan',
-          planVersion: planWithoutDecision.planVersion,
-          plan: planWithoutDecision,
-          activeDecisionId: undefined,
-          latestReviewRef: undefined,
-          reviewRefs: [],
-          replanCount: request.expectedNextReplanCount,
-          budgetLedgers: fixture.statePort.getLedgers(),
-        };
-        transitionContexts.set(investigate.stateVersion, trustedReplan);
-        const investigated = await fixture.statePort.transition(investigate, current.stateVersion);
-        const renewedPlan = { ...planWithoutDecision, decisionRef: renewedDecisionId };
-        const pendingBinding: ApprovalBinding = {
-          decisionId: renewedDecisionId,
-          actionKind: 'fix_plan',
-          normalizedActionDigest: computeCanonicalSha256({
-            actionId: renewedDecisionId,
-            kind: 'approve_fix_plan',
+            workspaceId: current.workspaceId,
+            repositoryRevisionDigest: current.repositoryRevisionDigest,
+            policyId: fixture.task.configId,
+            policyVersion: fixture.task.configVersion,
             planVersion: renewedPlan.planVersion,
             strategyDigest: renewedPlan.strategyDigest,
-            diagnosisEvidenceRefs: renewedPlan.evidenceRefs,
+            baselineRef: renewedPlan.baselineRef,
+            evidenceRefs: renewedPlan.evidenceRefs,
+            criteriaDigest: computeCanonicalSha256(fixture.task.acceptanceCriteria),
             checkSetDigest: renewedPlan.checkSetDigest,
-          }),
-          taskId: current.taskId,
-          workspaceId: current.workspaceId,
-          repositoryRevisionDigest: current.repositoryRevisionDigest,
-          policyId: fixture.task.configId,
-          policyVersion: fixture.task.configVersion,
-          planVersion: renewedPlan.planVersion,
-          strategyDigest: renewedPlan.strategyDigest,
-          baselineRef: renewedPlan.baselineRef,
-          evidenceRefs: renewedPlan.evidenceRefs,
-          criteriaDigest: computeCanonicalSha256(fixture.task.acceptanceCriteria),
-          checkSetDigest: renewedPlan.checkSetDigest,
-          status: 'pending' as const,
-        };
-        fixture.route.approvalPort.scriptDecision(pendingBinding);
-        assert.equal(pendingBinding.status, 'pending');
+            status: 'pending' as const,
+          };
+          fixture.route.approvalPort.scriptDecision(pendingBinding);
+          assert.equal(pendingBinding.status, 'pending');
 
-        const next = {
-          ...investigated,
-          stateVersion: investigated.stateVersion + 1,
-          node: 'AwaitPlan' as const,
-          nextAction: 'approve-fix-plan',
-          planVersion: renewedPlan.planVersion,
-          plan: renewedPlan,
-          activeDecisionId: renewedDecisionId,
-          latestReviewRef: undefined,
-          reviewRefs: [],
-          replanCount: request.expectedNextReplanCount,
-          budgetLedgers: fixture.statePort.getLedgers(),
-        };
-        transitionContexts.set(next.stateVersion, trustedReplan);
-        const saved = await fixture.statePort.transition(next, investigated.stateVersion);
-        return {
-          outcome: 'accepted' as const,
-          state: saved,
-          reservationReceipt: reservationId,
-          transitionReceipt: `transition-${request.proposalId}`,
-        };
+          const next = {
+            ...investigated,
+            stateVersion: investigated.stateVersion + 1,
+            node: 'AwaitPlan' as const,
+            nextAction: 'approve-fix-plan',
+            planVersion: renewedPlan.planVersion,
+            plan: renewedPlan,
+            activeDecisionId: renewedDecisionId,
+            latestReviewRef: undefined,
+            reviewRefs: [],
+            replanCount: request.expectedNextReplanCount,
+            budgetLedgers: fixture.statePort.getLedgers(),
+          };
+          transitionContexts.set(next.stateVersion, trustedReplan);
+          const saved = await fixture.statePort.transition(next, investigated.stateVersion);
+          return {
+            outcome: 'accepted' as const,
+            state: saved,
+            reservationReceipt: reservationId,
+            transitionReceipt: `transition-${request.proposalId}`,
+          };
         } catch (error) {
           ownerFailure = error instanceof Error ? error.message : String(error);
           throw error;
@@ -915,18 +933,21 @@ test('a stale accepted material-replan result cannot overwrite a competing owner
         const current = await fixture.statePort.loadTask(request.taskId);
         assert.ok(current);
         returnedStaleVersion = current.stateVersion;
-        const competing = await fixture.statePort.transition({
-          ...current,
-          stateVersion: current.stateVersion + 1,
-          node: 'Incomplete',
-          outcome: 'INCOMPLETE',
-          nextAction: 'human-directed-termination',
-          activeDecisionId: undefined,
-          plan: current.plan ? { ...current.plan, decisionRef: undefined } : undefined,
-          latestReviewRef: undefined,
-          reviewRefs: [],
-          budgetLedgers: fixture.statePort.getLedgers(),
-        }, current.stateVersion);
+        const competing = await fixture.statePort.transition(
+          {
+            ...current,
+            stateVersion: current.stateVersion + 1,
+            node: 'Incomplete',
+            outcome: 'INCOMPLETE',
+            nextAction: 'human-directed-termination',
+            activeDecisionId: undefined,
+            plan: current.plan ? { ...current.plan, decisionRef: undefined } : undefined,
+            latestReviewRef: undefined,
+            reviewRefs: [],
+            budgetLedgers: fixture.statePort.getLedgers(),
+          },
+          current.stateVersion,
+        );
         assert.equal(competing.node, 'Incomplete');
         return { outcome: 'accepted' as const, state: current, reservationReceipt: 'stale-owner-reservation', transitionReceipt: 'stale-owner-transition' };
       },

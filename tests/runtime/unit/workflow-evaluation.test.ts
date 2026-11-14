@@ -370,14 +370,17 @@ async function runGeneratedAskGrade(predicate: 'clarification' | 'regression', d
     executor: { executorId: 'controlled-grader', execute: () => undefined },
     graderPayload: null,
   });
-  const snapshotFor = (binding: {
-    readonly taskId: string;
-    readonly runId: string;
-    readonly workspaceId: string;
-    readonly repositoryId: string;
-    readonly initialRevisionDigest: string;
-    readonly finalRevisionDigest: string;
-  }, drift: boolean) => ({
+  const snapshotFor = (
+    binding: {
+      readonly taskId: string;
+      readonly runId: string;
+      readonly workspaceId: string;
+      readonly repositoryId: string;
+      readonly initialRevisionDigest: string;
+      readonly finalRevisionDigest: string;
+    },
+    drift: boolean,
+  ) => ({
     ...binding,
     snapshotId: `snapshot-${binding.runId}`,
     complete: completeSnapshot,
@@ -475,8 +478,10 @@ test('driver constructs the controlled host coder and runs the same versioned gr
   assert.equal(fixture.coderAdmissions.length, 2);
   assert.notEqual(fixture.coderAdmissions[0], fixture.coderAdmissions[1], 'the Inspect observation is followed by a newly admitted coder turn');
   assert.deepEqual(fixture.coderAdmissionEvidence[0], []);
-  assert.ok(fixture.coderAdmissionEvidence[1]?.some(item => item.path === 'src/calculator.py' && item.boundedExcerpt.includes('divide')),
-    'the fresh owner admission binds the source observation returned by the actual Inspect tool');
+  assert.ok(
+    fixture.coderAdmissionEvidence[1]?.some(item => item.path === 'src/calculator.py' && item.boundedExcerpt.includes('divide')),
+    'the fresh owner admission binds the source observation returned by the actual Inspect tool',
+  );
 });
 
 test('parsed provider identity reaches the graph case report without leaking into an unobserved run', async () => {
@@ -489,15 +494,23 @@ test('parsed provider identity reaches the graph case report without leaking int
     pricing: { inputRate: 1, outputRate: 1, cacheRate: 1, overheadRate: 0, denominator: 1 },
     fetch: async () => {
       fetches += 1;
-      return new Response(JSON.stringify({
-        id: 'msg-identity-ask',
-        type: 'message',
-        role: 'assistant',
-        model: returnedModel,
-        content: [{ type: 'text', text: JSON.stringify({ kind: 'request-info', proposalId: 'identity-ask', questions: [{ questionId: 'q-denominator', text: 'What should zero division return?' }], evidenceRefs: [] }) }],
-        stop_reason: 'end_turn',
-        usage: { input_tokens: 10, output_tokens: 10 },
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
+      return new Response(
+        JSON.stringify({
+          id: 'msg-identity-ask',
+          type: 'message',
+          role: 'assistant',
+          model: returnedModel,
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ kind: 'request-info', proposalId: 'identity-ask', questions: [{ questionId: 'q-denominator', text: 'What should zero division return?' }], evidenceRefs: [] }),
+            },
+          ],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 10, output_tokens: 10 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
     },
   });
   const hostFor = (fixture: Awaited<ReturnType<typeof controlledGeneratedPlanFixture>>): WorkflowCaseHost => {
@@ -527,18 +540,19 @@ test('parsed provider identity reaches the graph case report without leaking int
       },
     };
   };
-  const run = async (host: WorkflowCaseHost) => runEvaluation({
-    contractVersion: WORKFLOW_EVALUATION_VERSION,
-    mode: 'mock',
-    cases: ['C02'],
-    profileDigest: digest('identity-profile'),
-    configDigest: digest('identity-config'),
-    pricingDigest: digest('identity-pricing'),
-    adapterVersions: ['controlled-identity-adapter'],
-    requestedModel,
-    driver: createWorkflowDriver(new Map([['C02', host]])),
-    timestamp: '2026-11-13T00:00:00.000Z',
-  });
+  const run = async (host: WorkflowCaseHost) =>
+    runEvaluation({
+      contractVersion: WORKFLOW_EVALUATION_VERSION,
+      mode: 'mock',
+      cases: ['C02'],
+      profileDigest: digest('identity-profile'),
+      configDigest: digest('identity-config'),
+      pricingDigest: digest('identity-pricing'),
+      adapterVersions: ['controlled-identity-adapter'],
+      requestedModel,
+      driver: createWorkflowDriver(new Map([['C02', host]])),
+      timestamp: '2026-11-13T00:00:00.000Z',
+    });
   const fixture = await controlledGeneratedPlanFixture();
   const report = await run(hostFor(fixture));
   assert.ok('selectionResult' in report);
@@ -613,16 +627,16 @@ test('workflow grader accepts graph verification IDs only when every required bi
   }));
 
   assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, results), { required: true, focused: true });
-  const misbound = results.map((result, index) => index === 0 ? { ...result, runId: 'foreign-run' } : result);
+  const misbound = results.map((result, index) => (index === 0 ? { ...result, runId: 'foreign-run' } : result));
   assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, misbound), { required: false, focused: false });
-  const duplicateEvidenceId = results.map((result, index) => index === 1 ? { ...result, evidenceId: results[0]?.evidenceId ?? result.evidenceId } : result);
+  const duplicateEvidenceId = results.map((result, index) => (index === 1 ? { ...result, evidenceId: results[0]?.evidenceId ?? result.evidenceId } : result));
   assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, duplicateEvidenceId), { required: false, focused: false });
 
   // A regression failure withholds required completion but must not erase the correctly bound focused pass.
-  const regressionFailed = results.map((result, index) => index === 1 ? { ...result, outcome: 'fail' as const } : result);
+  const regressionFailed = results.map((result, index) => (index === 1 ? { ...result, outcome: 'fail' as const } : result));
   assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, regressionFailed), { required: false, focused: true });
   // A focused pass with a foreign binding is still refused, even while the regression check fails.
-  const focusedMisbound = regressionFailed.map((result, index) => index === 0 ? { ...result, diffDigest: digest('foreign-diff') } : result);
+  const focusedMisbound = regressionFailed.map((result, index) => (index === 0 ? { ...result, diffDigest: digest('foreign-diff') } : result));
   assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, focusedMisbound), { required: false, focused: false });
 });
 
@@ -672,9 +686,20 @@ test('a blocked regression check keeps its bound focused pass and reaches the sn
   });
   const grade = await grader.grade('C02', {
     observation: validateWorkflowObservation({
-      repositoryId: task.repositoryId, taskId: task.taskId, runId: state.runId, returnedModel: 'controlled-model', graderDigest: null,
-      initialRepositoryDigest: null, workflowOutcome: 'IMPLEMENTED_UNVERIFIED', expectedWait: null, blocked: null,
-      effects: 'observed', usage: 'observed', diagnostic: null, artifacts: [], limitations: [],
+      repositoryId: task.repositoryId,
+      taskId: task.taskId,
+      runId: state.runId,
+      returnedModel: 'controlled-model',
+      graderDigest: null,
+      initialRepositoryDigest: null,
+      workflowOutcome: 'IMPLEMENTED_UNVERIFIED',
+      expectedWait: null,
+      blocked: null,
+      effects: 'observed',
+      usage: 'observed',
+      diagnostic: null,
+      artifacts: [],
+      limitations: [],
     }),
     snapshot,
     evidence: {
@@ -733,9 +758,20 @@ test('real mode cannot turn a matching lifecycle wait into a pass without indepe
     requestedModel: 'deepseek-v4.1',
   };
   const observation = validateWorkflowObservation({
-    repositoryId: 'repo-real-evidence', taskId: 'task-real-evidence', runId: 'run-real-evidence', returnedModel: 'deepseek-v4.1',
-    graderDigest: digest('grader-real-evidence'), initialRepositoryDigest: digest('initial-real-evidence'), workflowOutcome: 'waiting-info',
-    expectedWait: 'waiting-info', blocked: null, effects: 'observed', usage: 'observed', diagnostic: null, artifacts: [], limitations: [],
+    repositoryId: 'repo-real-evidence',
+    taskId: 'task-real-evidence',
+    runId: 'run-real-evidence',
+    returnedModel: 'deepseek-v4.1',
+    graderDigest: digest('grader-real-evidence'),
+    initialRepositoryDigest: digest('initial-real-evidence'),
+    workflowOutcome: 'waiting-info',
+    expectedWait: 'waiting-info',
+    blocked: null,
+    effects: 'observed',
+    usage: 'observed',
+    diagnostic: null,
+    artifacts: [],
+    limitations: [],
   });
   const report = await runEvaluation({
     contractVersion: WORKFLOW_EVALUATION_VERSION,
@@ -1058,29 +1094,34 @@ test('the service evaluation graph runs the selected v0.2 route and reuses owner
   const selectedDirections: (ServiceControlReceipt | null)[] = [];
   const currentStates: TaskState[] = [];
   const graph = createUC03EvaluationGraph({
-    catalogRoutes: new Map([['C01', {
-      entry,
-      readiness,
-      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-      expectedWait: 'waiting-approval',
-      workflowReport: {
-        profileDigest: readiness.identity.profileDigest ?? '',
-        configDigest: readiness.identity.configDigest ?? '',
-        pricingDigest: readiness.identity.pricingDigest ?? '',
-        adapterVersions: ['controlled-service-adapter-1'],
-        requestedModel: 'controlled-service-model',
-        timestamp: '2026-11-13T00:00:00.000Z',
-      },
-      async resolveTask(input) {
-        taskResolutions.push({ priorState: input.priorState, sourceKind: input.source.kind });
-        return fixture.task;
-      },
-      async resolveDirection(input) {
-        selectedDirections.push(input.direction);
-        currentStates.push(input.currentState);
-        return undefined;
-      },
-    }]]),
+    catalogRoutes: new Map([
+      [
+        'C01',
+        {
+          entry,
+          readiness,
+          coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+          expectedWait: 'waiting-approval',
+          workflowReport: {
+            profileDigest: readiness.identity.profileDigest ?? '',
+            configDigest: readiness.identity.configDigest ?? '',
+            pricingDigest: readiness.identity.pricingDigest ?? '',
+            adapterVersions: ['controlled-service-adapter-1'],
+            requestedModel: 'controlled-service-model',
+            timestamp: '2026-11-13T00:00:00.000Z',
+          },
+          async resolveTask(input) {
+            taskResolutions.push({ priorState: input.priorState, sourceKind: input.source.kind });
+            return fixture.task;
+          },
+          async resolveDirection(input) {
+            selectedDirections.push(input.direction);
+            currentStates.push(input.currentState);
+            return undefined;
+          },
+        },
+      ],
+    ]),
   });
   const controlCalls: { expectedTaskVersion: number; expectedControlVersion: number }[] = [];
   const evaluationProfile = admittedProfile([entry]);
@@ -1191,14 +1232,17 @@ async function runServiceClarificationReportGrade(predicate: 'clarification' | '
   });
   let freezeCalls = 0;
   let recheckCalls = 0;
-  const finalTreeFor = async (binding: {
-    readonly taskId: string;
-    readonly runId: string;
-    readonly workspaceId: string;
-    readonly repositoryId: string;
-    readonly initialRevisionDigest: string;
-    readonly finalRevisionDigest: string;
-  }, drift: boolean) => {
+  const finalTreeFor = async (
+    binding: {
+      readonly taskId: string;
+      readonly runId: string;
+      readonly workspaceId: string;
+      readonly repositoryId: string;
+      readonly initialRevisionDigest: string;
+      readonly finalRevisionDigest: string;
+    },
+    drift: boolean,
+  ) => {
     const implementation = await fixture.route.repositoryPort.readFile('src/calculator.py');
     const hostSnapshot = await readiness.ports.hostAuthority.loadSnapshot({
       taskId: binding.taskId,
@@ -1223,29 +1267,40 @@ async function runServiceClarificationReportGrade(predicate: 'clarification' | '
     };
   };
   const graph = createUC03EvaluationGraph({
-    catalogRoutes: new Map([['C02', {
-      entry,
-      readiness,
-      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-      expectedWait: 'waiting-info',
-      workflowReport: {
-        profileDigest: profile.profileDigest,
-        configDigest: profile.configDigest,
-        pricingDigest: profile.pricingDigest,
-        adapterVersions: profile.adapterVersions,
-        requestedModel: profile.model,
-        timestamp: '2026-11-13T00:00:00.000Z',
-        workflowEvidence: {
-          grader,
-          finalTree: {
-            async freezeFinalTree(binding) { freezeCalls += 1; return finalTreeFor(binding, false); },
-            async recheckCurrentFinalTree(binding) { recheckCalls += 1; return finalTreeFor(binding, driftAfterGrade); },
+    catalogRoutes: new Map([
+      [
+        'C02',
+        {
+          entry,
+          readiness,
+          coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+          expectedWait: 'waiting-info',
+          workflowReport: {
+            profileDigest: profile.profileDigest,
+            configDigest: profile.configDigest,
+            pricingDigest: profile.pricingDigest,
+            adapterVersions: profile.adapterVersions,
+            requestedModel: profile.model,
+            timestamp: '2026-11-13T00:00:00.000Z',
+            workflowEvidence: {
+              grader,
+              finalTree: {
+                async freezeFinalTree(binding) {
+                  freezeCalls += 1;
+                  return finalTreeFor(binding, false);
+                },
+                async recheckCurrentFinalTree(binding) {
+                  recheckCalls += 1;
+                  return finalTreeFor(binding, driftAfterGrade);
+                },
+              },
+            },
           },
+          resolveTask: () => fixture.task,
+          resolveDirection: () => undefined,
         },
-      },
-      resolveTask: () => fixture.task,
-      resolveDirection: () => undefined,
-    }]]),
+      ],
+    ]),
   });
   const service = createEvaluationService({
     profile,
@@ -1346,23 +1401,35 @@ test('a workflow report with a mismatched host identity is rejected before owner
   };
 
   for (const field of ['profileDigest', 'configDigest', 'pricingDigest'] as const) {
-    assert.throws(() => createUC03EvaluationGraph({
-      catalogRoutes: new Map([['C01', {
-        entry,
-        readiness,
-        coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-        expectedWait: 'waiting-approval',
-        workflowReport: {
-          profileDigest: field === 'profileDigest' ? digest(`wrong-${field}`) : reportIdentity.profileDigest,
-          configDigest: field === 'configDigest' ? digest(`wrong-${field}`) : reportIdentity.configDigest,
-          pricingDigest: field === 'pricingDigest' ? digest(`wrong-${field}`) : reportIdentity.pricingDigest,
-          adapterVersions: reportIdentity.adapterVersions,
-          requestedModel: reportIdentity.requestedModel,
-        },
-        resolveTask() { taskResolutions += 1; return fixture.task; },
-        resolveDirection: () => undefined,
-      }]]),
-    }), /does not match the validated host route/u);
+    assert.throws(
+      () =>
+        createUC03EvaluationGraph({
+          catalogRoutes: new Map([
+            [
+              'C01',
+              {
+                entry,
+                readiness,
+                coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+                expectedWait: 'waiting-approval',
+                workflowReport: {
+                  profileDigest: field === 'profileDigest' ? digest(`wrong-${field}`) : reportIdentity.profileDigest,
+                  configDigest: field === 'configDigest' ? digest(`wrong-${field}`) : reportIdentity.configDigest,
+                  pricingDigest: field === 'pricingDigest' ? digest(`wrong-${field}`) : reportIdentity.pricingDigest,
+                  adapterVersions: reportIdentity.adapterVersions,
+                  requestedModel: reportIdentity.requestedModel,
+                },
+                resolveTask() {
+                  taskResolutions += 1;
+                  return fixture.task;
+                },
+                resolveDirection: () => undefined,
+              },
+            ],
+          ]),
+        }),
+      /does not match the validated host route/u,
+    );
     assert.equal(ownerReads, 0);
     assert.equal(taskResolutions, 0);
     assert.deepEqual(fixture.modelCalls, []);
@@ -1389,36 +1456,46 @@ test('graph clarification answers stay reporter-only until an owner-bound resume
 
   const ownerDirections = new Map<string, Readonly<{ receipt: ServiceControlReceipt; taskVersion: number }>>();
   const graph = createUC03EvaluationGraph({
-    catalogRoutes: new Map([['C02', {
-      entry,
-      readiness,
-      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-      expectedWait: 'waiting-info',
-      resolveTask: () => fixture.task,
-      resolveDirection: () => undefined,
-      async resolveClarificationResume(input) {
-        const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
-        const stored = input.direction ? ownerDirections.get(input.direction.receiptRef) : undefined;
-        if (!ownerState || !stored || !input.direction ||
-          stored.receipt.receiptRef !== input.direction.receiptRef ||
-          stored.receipt.kind !== input.direction.kind ||
-          stored.receipt.taskId !== input.direction.taskId ||
-          stored.receipt.controlVersion !== input.direction.controlVersion ||
-          stored.taskVersion !== ownerState.stateVersion) return undefined;
-        if (ownerState.node !== 'NeedsInfo' || !ownerState.clarification || ownerState.clarification.answer) return undefined;
-        return {
-          receiptRef: input.direction.receiptRef,
-          controlVersion: input.direction.controlVersion,
-          taskId: ownerState.taskId,
-          runId: ownerState.runId,
-          workspaceId: ownerState.workspaceId,
-          stateVersion: ownerState.stateVersion,
-          questionId: ownerState.clarification.questionId,
-          questionDigest: ownerState.clarification.questionDigest,
-          answerDigest: input.expectedAnswerDigest,
-        };
-      },
-    }]]),
+    catalogRoutes: new Map([
+      [
+        'C02',
+        {
+          entry,
+          readiness,
+          coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+          expectedWait: 'waiting-info',
+          resolveTask: () => fixture.task,
+          resolveDirection: () => undefined,
+          async resolveClarificationResume(input) {
+            const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
+            const stored = input.direction ? ownerDirections.get(input.direction.receiptRef) : undefined;
+            if (
+              !ownerState ||
+              !stored ||
+              !input.direction ||
+              stored.receipt.receiptRef !== input.direction.receiptRef ||
+              stored.receipt.kind !== input.direction.kind ||
+              stored.receipt.taskId !== input.direction.taskId ||
+              stored.receipt.controlVersion !== input.direction.controlVersion ||
+              stored.taskVersion !== ownerState.stateVersion
+            )
+              return undefined;
+            if (ownerState.node !== 'NeedsInfo' || !ownerState.clarification || ownerState.clarification.answer) return undefined;
+            return {
+              receiptRef: input.direction.receiptRef,
+              controlVersion: input.direction.controlVersion,
+              taskId: ownerState.taskId,
+              runId: ownerState.runId,
+              workspaceId: ownerState.workspaceId,
+              stateVersion: ownerState.stateVersion,
+              questionId: ownerState.clarification.questionId,
+              questionDigest: ownerState.clarification.questionDigest,
+              answerDigest: input.expectedAnswerDigest,
+            };
+          },
+        },
+      ],
+    ]),
   });
   const evaluationProfile = admittedProfile([entry]);
   const service = createEvaluationService({
@@ -1465,44 +1542,57 @@ test('graph clarification answers stay reporter-only until an owner-bound resume
   const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
   assert.ok(ownerState);
   const direction = await service.issueDirection({
-    id: 'exp-C02', expectedTaskVersion: ownerState.stateVersion, expectedControlVersion: 7, kind: 'resume', idempotencyKey: 'key-C02-direction',
+    id: 'exp-C02',
+    expectedTaskVersion: ownerState.stateVersion,
+    expectedControlVersion: 7,
+    kind: 'resume',
+    idempotencyKey: 'key-C02-direction',
   });
   assert.ok(direction.ok);
   assert.ok('receiptRef' in direction.value.receipt);
   const baselineCommandCount = fixture.route.repositoryPort.commands.length;
   assert.equal(baselineCommandCount, 2, 'the initial investigation runs exactly the two admitted baseline commands');
   const freshGraph = createUC03EvaluationGraph({
-    catalogRoutes: new Map([['C02', {
-      entry,
-      readiness,
-      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-      expectedWait: 'waiting-info',
-      resolveTask: () => fixture.task,
-      resolveDirection: () => undefined,
-      async resolveClarificationResume(input) {
-        const current = await fixture.statePort.loadTask(fixture.task.taskId);
-        const stored = input.direction ? ownerDirections.get(input.direction.receiptRef) : undefined;
-        if (!current || !stored || !input.direction || stored.taskVersion !== current.stateVersion || current.node !== 'NeedsInfo' || !current.clarification || current.clarification.answer) return undefined;
-        return {
-          receiptRef: input.direction.receiptRef,
-          controlVersion: input.direction.controlVersion,
-          taskId: current.taskId,
-          runId: current.runId,
-          workspaceId: current.workspaceId,
-          stateVersion: current.stateVersion,
-          questionId: current.clarification.questionId,
-          questionDigest: current.clarification.questionDigest,
-          answerDigest: input.expectedAnswerDigest,
-        };
-      },
-    }]]),
+    catalogRoutes: new Map([
+      [
+        'C02',
+        {
+          entry,
+          readiness,
+          coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+          expectedWait: 'waiting-info',
+          resolveTask: () => fixture.task,
+          resolveDirection: () => undefined,
+          async resolveClarificationResume(input) {
+            const current = await fixture.statePort.loadTask(fixture.task.taskId);
+            const stored = input.direction ? ownerDirections.get(input.direction.receiptRef) : undefined;
+            if (!current || !stored || !input.direction || stored.taskVersion !== current.stateVersion || current.node !== 'NeedsInfo' || !current.clarification || current.clarification.answer)
+              return undefined;
+            return {
+              receiptRef: input.direction.receiptRef,
+              controlVersion: input.direction.controlVersion,
+              taskId: current.taskId,
+              runId: current.runId,
+              workspaceId: current.workspaceId,
+              stateVersion: current.stateVersion,
+              questionId: current.clarification.questionId,
+              questionDigest: current.clarification.questionDigest,
+              answerDigest: input.expectedAnswerDigest,
+            };
+          },
+        },
+      ],
+    ]),
   });
-  const freshBound = bindEvaluationSource({ kind: 'catalog', caseIds: ['C02'] }, {
-    profile: evaluationProfile,
-    catalog: [entry],
-    repositoryIds: [fixture.task.repositoryId],
-    checkSetIds: ['checks-configured'],
-  });
+  const freshBound = bindEvaluationSource(
+    { kind: 'catalog', caseIds: ['C02'] },
+    {
+      profile: evaluationProfile,
+      catalog: [entry],
+      repositoryIds: [fixture.task.repositoryId],
+      checkSetIds: ['checks-configured'],
+    },
+  );
   assert.ok(freshBound.ok);
   if (!freshBound.ok) return;
   const freshSource = freshBound.value;
@@ -1540,10 +1630,22 @@ test('graph clarification answers stay reporter-only until an owner-bound resume
   assert.equal(fixture.route.repositoryPort.commands.length, baselineCommandCount, 'missing evidence does not rerun a baseline command');
   assert.deepEqual(fixture.modelCalls, ['coder:propose-plan'], 'missing evidence does not dispatch another provider turn');
   const continued = await service.continueExperiment({
-    id: 'exp-C02', expectedVersion: direction.value.experiment.version, directionRef: direction.value.receipt.receiptRef, idempotencyKey: 'key-C02-continue',
+    id: 'exp-C02',
+    expectedVersion: direction.value.experiment.version,
+    directionRef: direction.value.receipt.receiptRef,
+    idempotencyKey: 'key-C02-continue',
   });
   assert.ok(continued.ok);
-  assert.equal(continued.value.experiment.status, 'waiting-approval', JSON.stringify({ answers: continued.value.experiment.answers, workflowClarification: continued.value.experiment.workflowClarification, modelCalls: fixture.modelCalls, ownerState: await fixture.statePort.loadTask(fixture.task.taskId) }));
+  assert.equal(
+    continued.value.experiment.status,
+    'waiting-approval',
+    JSON.stringify({
+      answers: continued.value.experiment.answers,
+      workflowClarification: continued.value.experiment.workflowClarification,
+      modelCalls: fixture.modelCalls,
+      ownerState: await fixture.statePort.loadTask(fixture.task.taskId),
+    }),
+  );
   assert.equal(continued.value.experiment.taskId, fixture.task.taskId);
   assert.equal(continued.value.experiment.runId, ownerState.runId);
   assert.equal(continued.value.experiment.workflowClarification, null);
@@ -1573,33 +1675,38 @@ test('a foreign-task resume receipt refuses before clarification owner calls or 
   let directionLookups = 0;
   let clarificationLookups = 0;
   const graph = createUC03EvaluationGraph({
-    catalogRoutes: new Map([['C02', {
-      entry,
-      readiness,
-      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-      expectedWait: 'waiting-info',
-      resolveTask: () => fixture.task,
-      resolveDirection() {
-        directionLookups += 1;
-        return undefined;
-      },
-      async resolveClarificationResume(input) {
-        clarificationLookups += 1;
-        const current = await fixture.statePort.loadTask(fixture.task.taskId);
-        if (!current?.clarification || !input.direction) return undefined;
-        return {
-          receiptRef: input.direction.receiptRef,
-          controlVersion: input.direction.controlVersion,
-          taskId: current.taskId,
-          runId: current.runId,
-          workspaceId: current.workspaceId,
-          stateVersion: current.stateVersion,
-          questionId: current.clarification.questionId,
-          questionDigest: current.clarification.questionDigest,
-          answerDigest: input.expectedAnswerDigest,
-        };
-      },
-    }]]),
+    catalogRoutes: new Map([
+      [
+        'C02',
+        {
+          entry,
+          readiness,
+          coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+          expectedWait: 'waiting-info',
+          resolveTask: () => fixture.task,
+          resolveDirection() {
+            directionLookups += 1;
+            return undefined;
+          },
+          async resolveClarificationResume(input) {
+            clarificationLookups += 1;
+            const current = await fixture.statePort.loadTask(fixture.task.taskId);
+            if (!current?.clarification || !input.direction) return undefined;
+            return {
+              receiptRef: input.direction.receiptRef,
+              controlVersion: input.direction.controlVersion,
+              taskId: current.taskId,
+              runId: current.runId,
+              workspaceId: current.workspaceId,
+              stateVersion: current.stateVersion,
+              questionId: current.clarification.questionId,
+              questionDigest: current.clarification.questionDigest,
+              answerDigest: input.expectedAnswerDigest,
+            };
+          },
+        },
+      ],
+    ]),
   });
   const service = createEvaluationService({
     profile: admittedProfile([entry]),
@@ -1633,7 +1740,12 @@ test('a foreign-task resume receipt refuses before clarification owner calls or 
   const commandsBefore = fixture.route.repositoryPort.commands.length;
   const modelCallsBefore = [...fixture.modelCalls];
 
-  const continued = await service.continueExperiment({ id: 'exp-foreign-task', expectedVersion: direction.value.experiment.version, directionRef: direction.value.receipt.receiptRef, idempotencyKey: 'foreign-continue' });
+  const continued = await service.continueExperiment({
+    id: 'exp-foreign-task',
+    expectedVersion: direction.value.experiment.version,
+    directionRef: direction.value.receipt.receiptRef,
+    idempotencyKey: 'foreign-continue',
+  });
 
   assert.ok(continued.ok);
   assert.equal(continued.value.experiment.status, 'incomplete');
@@ -1660,19 +1772,40 @@ test('service stores a frozen detached copy of the graph workflow report', async
     selectionResult: { selected: ['C01'], passed: 0, failed: 0, incomplete: 1, pendingWaits: [], outcome: 'incomplete' },
     suiteAcceptance: { scope: 'catalog', requiredCases: 17, satisfiedCases: 0, outcome: 'incomplete' },
     exitCode: 3,
-    cases: [{
-      caseId: 'C01', repositoryId: 'repo-1', taskId: 'task-1', runId: 'run-1', requestedModel: 'm', returnedModel: 'm',
-      profileDigest: digest('profile'), configDigest: digest('config'), pricingDigest: digest('pricing'), adapterVersions: ['a@1'],
-      graderDigest: null, initialRepositoryDigest: null, workflowOutcome: 'waiting-approval' as const, expectedOutcome: 'COMPLETED',
-      tier: 'controlled', grade: 'not-run', gradeReason: 'unresolved-wait', effects: 'observed',
-      usage: 'observed', diagnostic: null, artifacts: [], limitations: ['paused'],
-    }],
+    cases: [
+      {
+        caseId: 'C01',
+        repositoryId: 'repo-1',
+        taskId: 'task-1',
+        runId: 'run-1',
+        requestedModel: 'm',
+        returnedModel: 'm',
+        profileDigest: digest('profile'),
+        configDigest: digest('config'),
+        pricingDigest: digest('pricing'),
+        adapterVersions: ['a@1'],
+        graderDigest: null,
+        initialRepositoryDigest: null,
+        workflowOutcome: 'waiting-approval' as const,
+        expectedOutcome: 'COMPLETED',
+        tier: 'controlled',
+        grade: 'not-run',
+        gradeReason: 'unresolved-wait',
+        effects: 'observed',
+        usage: 'observed',
+        diagnostic: null,
+        artifacts: [],
+        limitations: ['paused'],
+      },
+    ],
     limitations: ['controlled only'],
   };
-  const { service } = createService({ graph: {
-    portsFor: () => ({}),
-    run: async () => ({ outcome: 'pending-approval', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' }, workflowReport: report }),
-  } });
+  const { service } = createService({
+    graph: {
+      portsFor: () => ({}),
+      run: async () => ({ outcome: 'pending-approval', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' }, workflowReport: report }),
+    },
+  });
   const started = await service.startExperiment({ source: catalogSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-report' });
   assert.ok(started.ok);
 
@@ -1705,23 +1838,45 @@ test('a continuation result without a report clears the previous execution repor
     selectionResult: { selected: ['C01'], passed: 1, failed: 0, incomplete: 0, pendingWaits: [], outcome: 'pass' },
     suiteAcceptance: { scope: 'catalog', requiredCases: 17, satisfiedCases: 1, outcome: 'incomplete' },
     exitCode: 0,
-    cases: [{
-      caseId: 'C01', repositoryId: 'repo-1', taskId: 'task-1', runId: 'run-1', requestedModel: 'm', returnedModel: 'm',
-      profileDigest: digest('profile'), configDigest: digest('config'), pricingDigest: digest('pricing'), adapterVersions: ['a@1'],
-      graderDigest: null, initialRepositoryDigest: null, workflowOutcome: 'COMPLETED', expectedOutcome: 'COMPLETED',
-      tier: 'controlled', grade: 'pass', gradeReason: 'criteria-satisfied', effects: 'observed',
-      usage: 'observed', diagnostic: null, artifacts: [], limitations: [],
-    }],
+    cases: [
+      {
+        caseId: 'C01',
+        repositoryId: 'repo-1',
+        taskId: 'task-1',
+        runId: 'run-1',
+        requestedModel: 'm',
+        returnedModel: 'm',
+        profileDigest: digest('profile'),
+        configDigest: digest('config'),
+        pricingDigest: digest('pricing'),
+        adapterVersions: ['a@1'],
+        graderDigest: null,
+        initialRepositoryDigest: null,
+        workflowOutcome: 'COMPLETED',
+        expectedOutcome: 'COMPLETED',
+        tier: 'controlled',
+        grade: 'pass',
+        gradeReason: 'criteria-satisfied',
+        effects: 'observed',
+        usage: 'observed',
+        diagnostic: null,
+        artifacts: [],
+        limitations: [],
+      },
+    ],
     limitations: ['controlled only'],
   };
   let stop = false;
-  const { service } = createService({ graph: {
-    portsFor: () => ({}),
-    // The second execution is a refused continuation: the graph returns INCOMPLETE with no report.
-    run: async () => (stop
-      ? { outcome: 'INCOMPLETE', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' } }
-      : { outcome: 'pending-approval', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' }, workflowReport: report }),
-  } });
+  const { service } = createService({
+    graph: {
+      portsFor: () => ({}),
+      // The second execution is a refused continuation: the graph returns INCOMPLETE with no report.
+      run: async () =>
+        stop
+          ? { outcome: 'INCOMPLETE', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' } }
+          : { outcome: 'pending-approval', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' }, workflowReport: report },
+    },
+  });
   const started = await service.startExperiment({ source: catalogSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-stale-report-start' });
   assert.ok(started.ok);
   assert.ok(started.value.experiment.workflowReport, 'the start execution retained its report');
@@ -1910,23 +2065,43 @@ test('a patch-free Repair stop counts as no patch only when the stop evidence co
 
 test('a private verdict is bound to its case id and exact graded observation contents', async () => {
   const observation = {
-    repositoryId: 'repo-calc', taskId: 'task-calc-001', runId: 'run-001', returnedModel: null,
-    graderDigest: null, initialRepositoryDigest: null, workflowOutcome: 'waiting-approval' as const,
-    expectedWait: 'waiting-approval' as const, blocked: null, effects: 'observed' as const, usage: 'unavailable' as const,
-    diagnostic: null, artifacts: [], limitations: [],
+    repositoryId: 'repo-calc',
+    taskId: 'task-calc-001',
+    runId: 'run-001',
+    returnedModel: null,
+    graderDigest: null,
+    initialRepositoryDigest: null,
+    workflowOutcome: 'waiting-approval' as const,
+    expectedWait: 'waiting-approval' as const,
+    blocked: null,
+    effects: 'observed' as const,
+    usage: 'unavailable' as const,
+    diagnostic: null,
+    artifacts: [],
+    limitations: [],
   };
   // Without task state and ports the facts never certify a snapshot, so the producer records its
   // bounded not-run verdict against the exact observation object it was handed.
   const grader: SnapshotGrader = {
     grade: async (caseId: string): Promise<SnapshotGradeResult> => ({
-      caseId: caseId as Exclude<SnapshotGradeResult['caseId'], null>, criterionId: null,
-      grade: 'not-run' as const, reason: 'private-grading' as const,
-      evidenceIds: [], snapshot: null, evidenceDigest: null, criteriaDigest: digest('criteria'), limitations: [],
+      caseId: caseId as Exclude<SnapshotGradeResult['caseId'], null>,
+      criterionId: null,
+      grade: 'not-run' as const,
+      reason: 'private-grading' as const,
+      evidenceIds: [],
+      snapshot: null,
+      evidenceDigest: null,
+      criteriaDigest: digest('criteria'),
+      limitations: [],
     }),
   };
   await produceWorkflowEvidence({
-    caseId: 'C01', task: createFixtureBugTask(), result: { outcome: 'pending-approval', state: null, reasons: [], milestones: [] },
-    observation, repository: undefined, host: { grader, finalTree: { freezeFinalTree: () => ({}), recheckCurrentFinalTree: () => ({}) } },
+    caseId: 'C01',
+    task: createFixtureBugTask(),
+    result: { outcome: 'pending-approval', state: null, reasons: [], milestones: [] },
+    observation,
+    repository: undefined,
+    host: { grader, finalTree: { freezeFinalTree: () => ({}), recheckCurrentFinalTree: () => ({}) } },
   });
 
   const stored = workflowEvidenceDecision('C01', observation);

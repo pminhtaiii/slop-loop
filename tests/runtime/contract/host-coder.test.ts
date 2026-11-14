@@ -34,8 +34,13 @@ function input(taskId: string, runId: string): CoderTurnInputV02 {
 function ports(overrides: { readonly guardedRead?: unknown; readonly checkResolver?: unknown } = {}) {
   const model = { provenance: 'mock', propose: async () => ({ outcome: 'denied' }) } as unknown as ModelPortV02;
   const repository = {
-    listDir: async () => [], readFile: async () => undefined, searchCode: async () => [], applyPatch: async () => undefined,
-    runCommand: async () => undefined, runTests: async () => undefined, inspectDiff: async () => undefined,
+    listDir: async () => [],
+    readFile: async () => undefined,
+    searchCode: async () => [],
+    applyPatch: async () => undefined,
+    runCommand: async () => undefined,
+    runTests: async () => undefined,
+    inspectDiff: async () => undefined,
   } as unknown as RepositoryPortV02;
   const guardedRead = overrides.guardedRead ?? { provenance: 'mock', mediateRead: async () => undefined };
   const checkResolver = overrides.checkResolver ?? (async () => undefined);
@@ -94,13 +99,45 @@ test('the selected run agent mediates inspect, uses exact check admission, and k
   const stateB1 = createFixtureTaskState({ taskId: taskB.taskId, runId: 'run-b1', taskContext: taskB, requiredCheckIds: [check.checkId] });
   const responses = [
     JSON.stringify({ kind: 'inspect', proposalId: 'i-a1', operation: 'read_file', args: { path: 'src/calculator.py' } }),
-    JSON.stringify({ kind: 'propose-plan', proposalId: 'p-a1', diagnosis: 'd', strategy: 's', suspectedLocations: ['src/calculator.py'], scopedPaths: ['src/calculator.py'], evidenceRefs: ['evidence-baseline-001'] }),
+    JSON.stringify({
+      kind: 'propose-plan',
+      proposalId: 'p-a1',
+      diagnosis: 'd',
+      strategy: 's',
+      suspectedLocations: ['src/calculator.py'],
+      scopedPaths: ['src/calculator.py'],
+      evidenceRefs: ['evidence-baseline-001'],
+    }),
     JSON.stringify({ kind: 'inspect', proposalId: 'i-b1', operation: 'run_check', args: { checkId: check.checkId } }),
-    JSON.stringify({ kind: 'propose-plan', proposalId: 'p-b1', diagnosis: 'd', strategy: 's', suspectedLocations: ['src/calculator.py'], scopedPaths: ['src/calculator.py'], evidenceRefs: ['evidence-baseline-001'] }),
+    JSON.stringify({
+      kind: 'propose-plan',
+      proposalId: 'p-b1',
+      diagnosis: 'd',
+      strategy: 's',
+      suspectedLocations: ['src/calculator.py'],
+      scopedPaths: ['src/calculator.py'],
+      evidenceRefs: ['evidence-baseline-001'],
+    }),
     JSON.stringify({ kind: 'inspect', proposalId: 'i-a2', operation: 'read_file', args: { path: 'src/calculator.py' } }),
-    JSON.stringify({ kind: 'propose-plan', proposalId: 'p-a2', diagnosis: 'd', strategy: 's', suspectedLocations: ['src/calculator.py'], scopedPaths: ['src/calculator.py'], evidenceRefs: ['evidence-baseline-001'] }),
+    JSON.stringify({
+      kind: 'propose-plan',
+      proposalId: 'p-a2',
+      diagnosis: 'd',
+      strategy: 's',
+      suspectedLocations: ['src/calculator.py'],
+      scopedPaths: ['src/calculator.py'],
+      evidenceRefs: ['evidence-baseline-001'],
+    }),
     JSON.stringify({ kind: 'inspect', proposalId: 'i-a1-next', operation: 'run_check', args: { checkId: check.checkId } }),
-    JSON.stringify({ kind: 'propose-plan', proposalId: 'p-a1-next', diagnosis: 'd', strategy: 's', suspectedLocations: ['src/calculator.py'], scopedPaths: ['src/calculator.py'], evidenceRefs: ['evidence-baseline-001'] }),
+    JSON.stringify({
+      kind: 'propose-plan',
+      proposalId: 'p-a1-next',
+      diagnosis: 'd',
+      strategy: 's',
+      suspectedLocations: ['src/calculator.py'],
+      scopedPaths: ['src/calculator.py'],
+      evidenceRefs: ['evidence-baseline-001'],
+    }),
   ];
   const model: ModelPortV02 = {
     provenance: 'mock',
@@ -113,7 +150,10 @@ test('the selected run agent mediates inspect, uses exact check admission, and k
   const repository = new FakeRepositoryPort({ initialRevision: taskA.initialRevisionDigest, initialFiles: { 'src/calculator.py': 'def divide(a, b): return a / b\n' } });
   const readKinds: string[] = [];
   const guardedRead: ExecutionGuardReadCapability = {
-    provenance: 'mock', capabilityId: 'guarded-read-test', taskId: taskA.taskId, workspaceId: stateA1.workspaceId,
+    provenance: 'mock',
+    capabilityId: 'guarded-read-test',
+    taskId: taskA.taskId,
+    workspaceId: stateA1.workspaceId,
     async mediateRead<T>(operation: { readonly kind: 'list' | 'read' | 'search'; readonly execute: () => Promise<T> }): Promise<T> {
       readKinds.push(operation.kind);
       return operation.execute();
@@ -179,10 +219,13 @@ test('the selected run agent mediates inspect, uses exact check admission, and k
   assert.equal(continuedA1.counters.modelCalls, 4, 'continuation reuses the same run agent and its counters');
   assert.deepEqual(readKinds, ['read', 'read']);
   assert.equal(checkRequests.length, 2);
-  assert.deepEqual(checkRequests.map(item => item.action), [
-    { actionId: check.checkId, kind: 'run_command', executable: check.executable, argv: [...check.argv], workingDirectory: check.workingDirectory, purpose: check.purpose },
-    { actionId: check.checkId, kind: 'run_command', executable: check.executable, argv: [...check.argv], workingDirectory: check.workingDirectory, purpose: check.purpose },
-  ]);
+  assert.deepEqual(
+    checkRequests.map(item => item.action),
+    [
+      { actionId: check.checkId, kind: 'run_command', executable: check.executable, argv: [...check.argv], workingDirectory: check.workingDirectory, purpose: check.purpose },
+      { actionId: check.checkId, kind: 'run_command', executable: check.executable, argv: [...check.argv], workingDirectory: check.workingDirectory, purpose: check.purpose },
+    ],
+  );
   assert.equal(checkRequests[0]?.state.runId, stateB1.runId);
   assert.equal(checkRequests[1]?.state.runId, stateA1.runId);
   assert.equal(responses.length, 0);

@@ -37,14 +37,16 @@ export type EvaluationTaskIdentity = NonNullable<EvaluationGraphResult['state']>
 export interface EvaluationGraph {
   /** Resolved only after complete intake, so a preflight block never reaches owner ports. */
   portsFor(input: Readonly<{ experimentId: string; source: BoundSource }>): unknown;
-  run(input: Readonly<{
-    experimentId: string;
-    source: BoundSource;
-    ports: unknown;
-    priorState: EvaluationTaskIdentity | null;
-    direction: ServiceControlReceipt | null;
-    answers: readonly AnswerRecord[];
-  }>): Promise<EvaluationGraphResult>;
+  run(
+    input: Readonly<{
+      experimentId: string;
+      source: BoundSource;
+      ports: unknown;
+      priorState: EvaluationTaskIdentity | null;
+      direction: ServiceControlReceipt | null;
+      answers: readonly AnswerRecord[];
+    }>,
+  ): Promise<EvaluationGraphResult>;
 }
 
 export interface EvaluationServiceDeps {

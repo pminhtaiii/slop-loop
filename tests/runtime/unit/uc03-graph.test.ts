@@ -1084,18 +1084,26 @@ test('Generated AwaitFeedback revisions call the owner once and require renewed 
     const scripted = new ScriptedModelPort({
       statePort,
       executorIdentity: createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }),
-      responses: [{
-        outcome: 'observed',
-        result: { observedUsage: { inputTokens: 1, outputTokens: 1, costUsd: 0.01, billableTokens: 2 }, proposal: { proposalId: `model-${requestId}`, content: JSON.stringify({
-          kind: 'propose-plan',
-          proposalId: `proposal-${requestId}`,
-          diagnosis: 'The denominator guard is missing.',
-          strategy: 'Check zero before division, then raise the domain error.',
-          suspectedLocations: ['src/calculator.py'],
-          scopedPaths: ['src/calculator.py'],
-          evidenceRefs: [task.initialRevisionDigest],
-        }) } },
-      }],
+      responses: [
+        {
+          outcome: 'observed',
+          result: {
+            observedUsage: { inputTokens: 1, outputTokens: 1, costUsd: 0.01, billableTokens: 2 },
+            proposal: {
+              proposalId: `model-${requestId}`,
+              content: JSON.stringify({
+                kind: 'propose-plan',
+                proposalId: `proposal-${requestId}`,
+                diagnosis: 'The denominator guard is missing.',
+                strategy: 'Check zero before division, then raise the domain error.',
+                suspectedLocations: ['src/calculator.py'],
+                scopedPaths: ['src/calculator.py'],
+                evidenceRefs: [task.initialRevisionDigest],
+              }),
+            },
+          },
+        },
+      ],
     });
     const agent = createCoderAgentV02({
       model: new ScriptedModelPortV02(scripted),

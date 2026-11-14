@@ -13,9 +13,19 @@ export type { DerivedWorkflowFacts, FinalTreeBinding, TrustedFinalTreeSnapshotPo
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const GRADES = new Set<WorkflowGrade>(['pass', 'fail', 'not-run']);
 const REASONS = new Set<WorkflowReason>([
-  'criteria-satisfied', 'expected-wait-satisfied', 'criteria-violation', 'unresolved-wait', 'unpinned-criteria',
-  'real-execution-unavailable', 'driver-unavailable', 'invalid-observation', 'not-selected', 'private-grading',
-  'prerequisite-unavailable', 'busy', 'reconciliation-required',
+  'criteria-satisfied',
+  'expected-wait-satisfied',
+  'criteria-violation',
+  'unresolved-wait',
+  'unpinned-criteria',
+  'real-execution-unavailable',
+  'driver-unavailable',
+  'invalid-observation',
+  'not-selected',
+  'private-grading',
+  'prerequisite-unavailable',
+  'busy',
+  'reconciliation-required',
 ]);
 
 export interface WorkflowEvidenceHost {
@@ -39,10 +49,17 @@ function remember(key: object, caseId: string, graded: unknown, decision: Workfl
 
 function decisionFrom(result: SnapshotGradeResult, caseId: string, snapshot?: EvaluationSnapshotIdentity, evidenceDigest?: string): WorkflowGradeDecision | undefined {
   if (
-    result.caseId !== caseId || !GRADES.has(result.grade) || !REASONS.has(result.reason) ||
-    !Array.isArray(result.evidenceIds) || result.evidenceIds.length > 32 || !result.evidenceIds.every(item => typeof item === 'string' && ID.test(item)) ||
-    !Array.isArray(result.limitations) || result.limitations.length > 16 || !result.limitations.every(item => typeof item === 'string' && Buffer.byteLength(item, 'utf8') <= 512)
-  ) return undefined;
+    result.caseId !== caseId ||
+    !GRADES.has(result.grade) ||
+    !REASONS.has(result.reason) ||
+    !Array.isArray(result.evidenceIds) ||
+    result.evidenceIds.length > 32 ||
+    !result.evidenceIds.every(item => typeof item === 'string' && ID.test(item)) ||
+    !Array.isArray(result.limitations) ||
+    result.limitations.length > 16 ||
+    !result.limitations.every(item => typeof item === 'string' && Buffer.byteLength(item, 'utf8') <= 512)
+  )
+    return undefined;
   if (result.snapshot === null) {
     if (result.grade !== 'not-run' || snapshot !== undefined) return undefined;
   } else if (!snapshot || !evidenceDigest || !isSnapshotGradeCurrent(result, snapshot, evidenceDigest)) return undefined;
@@ -59,7 +76,9 @@ async function notRunDecision(grader: SnapshotGrader, caseId: string, reason: st
     const result = await grader.grade(caseId, {});
     const decision = decisionFrom(result, caseId);
     if (decision) return Object.freeze({ ...decision, limitations: Object.freeze([...decision.limitations, reason]) });
-  } catch { /* Translate a host grader failure into a bounded not-run result. */ }
+  } catch {
+    /* Translate a host grader failure into a bounded not-run result. */
+  }
   return Object.freeze({ grade: 'not-run', reason: 'private-grading', evidenceIds: Object.freeze([]), limitations: Object.freeze([reason]) });
 }
 
@@ -102,7 +121,12 @@ export async function produceWorkflowEvidence(input: {
     return;
   }
   if (!facts) {
-    remember(key, input.caseId, observation, await notRunDecision(input.host.grader, input.caseId, 'Required task, snapshot, diff, protected-test, check, review or patch-effect evidence was missing or inconsistent.'));
+    remember(
+      key,
+      input.caseId,
+      observation,
+      await notRunDecision(input.host.grader, input.caseId, 'Required task, snapshot, diff, protected-test, check, review or patch-effect evidence was missing or inconsistent.'),
+    );
     return;
   }
   let grade: SnapshotGradeResult;
@@ -158,7 +182,5 @@ export async function produceWorkflowEvidence(input: {
 export function workflowEvidenceDecision(caseId: string, observation: unknown): WorkflowGradeDecision | undefined {
   if (typeof observation !== 'object' || observation === null) return undefined;
   const stored = decisions.get(observation);
-  return stored !== undefined && stored.caseId === caseId && stored.fingerprint === computeCanonicalSha256(observation)
-    ? stored.decision
-    : undefined;
+  return stored !== undefined && stored.caseId === caseId && stored.fingerprint === computeCanonicalSha256(observation) ? stored.decision : undefined;
 }

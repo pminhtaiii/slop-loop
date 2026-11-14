@@ -117,7 +117,8 @@ function isOutcome(value: unknown): value is EvaluationOutcome {
 }
 
 function safeResult(value: unknown, request: EvaluationGraderExecutionRequest): SafeEvaluationGradingResult | undefined {
-  if (!isRecord(value) || !hasExactKeys(value, gradingKeys(['finalSnapshot', 'profile', 'executorId', 'status', 'actualOutcome', 'durationMs', 'cpuMs', 'outputBytes'], request.checkId))) return undefined;
+  if (!isRecord(value) || !hasExactKeys(value, gradingKeys(['finalSnapshot', 'profile', 'executorId', 'status', 'actualOutcome', 'durationMs', 'cpuMs', 'outputBytes'], request.checkId)))
+    return undefined;
   const durationMs = value['durationMs'];
   const cpuMs = value['cpuMs'];
   const outputBytes = value['outputBytes'];

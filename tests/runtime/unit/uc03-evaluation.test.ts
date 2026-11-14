@@ -311,8 +311,15 @@ test('grading: a pinned check identity is admitted and executed with the exact s
     result: request => {
       execution = request;
       return {
-        finalSnapshot: request['finalSnapshot'], profile: request['profile'], executorId: request['executorId'], checkId: request['checkId'],
-        status: 'pass', actualOutcome: 'COMPLETED', durationMs: 12, cpuMs: 8, outputBytes: 128,
+        finalSnapshot: request['finalSnapshot'],
+        profile: request['profile'],
+        executorId: request['executorId'],
+        checkId: request['checkId'],
+        status: 'pass',
+        actualOutcome: 'COMPLETED',
+        durationMs: 12,
+        cpuMs: 8,
+        outputBytes: 128,
       };
     },
   });
@@ -380,8 +387,11 @@ test('grading: a bound check refuses missing or substituted identity without a s
   for (const checkId of [undefined, 'hidden-other']) {
     const wrongAdmission = createMockPrivateGrading({
       admission: request => ({
-        kind: 'injected-mock-isolation-admission', admissionId: 'wrong-check',
-        finalSnapshot: request['finalSnapshot'], profile: request['profile'], executorId: request['executorId'],
+        kind: 'injected-mock-isolation-admission',
+        admissionId: 'wrong-check',
+        finalSnapshot: request['finalSnapshot'],
+        profile: request['profile'],
+        executorId: request['executorId'],
         ...(checkId === undefined ? {} : { checkId }),
       }),
     });
@@ -400,8 +410,15 @@ test('grading: a bound check refuses missing or substituted identity without a s
     const wrongResult = createMockPrivateGrading({
       admission: request => ({ kind: 'injected-mock-isolation-admission', admissionId: 'bound-check', ...request }),
       result: request => ({
-        finalSnapshot: request['finalSnapshot'], profile: request['profile'], executorId: request['executorId'],
-        status: 'pass', actualOutcome: 'COMPLETED', durationMs: 12, cpuMs: 8, outputBytes: 128, ...override,
+        finalSnapshot: request['finalSnapshot'],
+        profile: request['profile'],
+        executorId: request['executorId'],
+        status: 'pass',
+        actualOutcome: 'COMPLETED',
+        durationMs: 12,
+        cpuMs: 8,
+        outputBytes: 128,
+        ...override,
       }),
     });
     assert.equal(await executeMockPrivateGrading({ ...wrongResult.boundary, checkId: 'hidden-c01' }), undefined);

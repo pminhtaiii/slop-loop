@@ -12,7 +12,12 @@ test('the direct controlled resume retains its reproduced baseline so a later ro
   const fixture = await controlledGeneratedPlanFixture({
     firstResponse: {
       proposalId: 'fallback-ask-2',
-      content: JSON.stringify({ kind: 'request-info', proposalId: 'fallback-ask-2', questions: [{ questionId: 'q-guard', text: 'Which error type should an unguarded denominator raise?' }], evidenceRefs: [] }),
+      content: JSON.stringify({
+        kind: 'request-info',
+        proposalId: 'fallback-ask-2',
+        questions: [{ questionId: 'q-guard', text: 'Which error type should an unguarded denominator raise?' }],
+        evidenceRefs: [],
+      }),
     },
   });
   const readiness = prepareControlledUC03Host(fixture.host.inputs);

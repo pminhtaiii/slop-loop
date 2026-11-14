@@ -84,12 +84,19 @@ function treeContentDigest(content: string | Uint8Array): Readonly<{ digest: str
 export function parseWorkflowFinalTree(value: unknown, binding: FinalTreeBinding): Readonly<{ tree: WorkflowFinalTreeSnapshot; snapshot: EvaluationSnapshotIdentity }> | undefined {
   if (!isRecord(value) || !keysExactly(value, ['taskId', 'runId', 'workspaceId', 'repositoryId', 'initialRevisionDigest', 'finalRevisionDigest', 'snapshotId', 'complete', 'files'])) return undefined;
   if (
-    value['taskId'] !== binding.taskId || value['runId'] !== binding.runId || value['workspaceId'] !== binding.workspaceId ||
-    value['repositoryId'] !== binding.repositoryId || value['initialRevisionDigest'] !== binding.initialRevisionDigest ||
-    value['finalRevisionDigest'] !== binding.finalRevisionDigest || value['complete'] !== true ||
-    typeof value['snapshotId'] !== 'string' || !ID.test(value['snapshotId']) || !Array.isArray(value['files']) ||
+    value['taskId'] !== binding.taskId ||
+    value['runId'] !== binding.runId ||
+    value['workspaceId'] !== binding.workspaceId ||
+    value['repositoryId'] !== binding.repositoryId ||
+    value['initialRevisionDigest'] !== binding.initialRevisionDigest ||
+    value['finalRevisionDigest'] !== binding.finalRevisionDigest ||
+    value['complete'] !== true ||
+    typeof value['snapshotId'] !== 'string' ||
+    !ID.test(value['snapshotId']) ||
+    !Array.isArray(value['files']) ||
     value['files'].length > MAX_FILES
-  ) return undefined;
+  )
+    return undefined;
 
   const files: { path: string; content: string | Uint8Array }[] = [];
   const digestEntries: { path: string; contentDigest: string; byteLength: number }[] = [];
@@ -135,13 +142,7 @@ export function patchFreeFacts(state: TaskState, stoppedOnBudget: boolean): bool
   return (state.node === 'Repair' || state.node === 'Incomplete') && stoppedOnBudget ? false : undefined;
 }
 
-async function ownerAndPatchFacts(
-  evidence: UC03ExecutionEvidence,
-  task: BugTask,
-  state: TaskState,
-  owner: StatePortV02 | undefined,
-  stoppedOnBudget: boolean,
-): Promise<boolean | undefined> {
+async function ownerAndPatchFacts(evidence: UC03ExecutionEvidence, task: BugTask, state: TaskState, owner: StatePortV02 | undefined, stoppedOnBudget: boolean): Promise<boolean | undefined> {
   if (evidence.patchAdmission === undefined && evidence.patchReceipt === undefined) return patchFreeFacts(state, stoppedOnBudget);
   if (!owner || !evidence.patchAdmission || !evidence.patchReceipt) return undefined;
   let ancestry;
@@ -155,11 +156,16 @@ async function ownerAndPatchFacts(
     computeCanonicalSha256(ancestry.admission) !== computeCanonicalSha256(evidence.patchAdmission) ||
     computeCanonicalSha256(ancestry.receipt) !== computeCanonicalSha256(evidence.patchReceipt) ||
     ancestry.receipt.outcome.observedResultRevisionDigest !== state.repositoryRevisionDigest
-  ) return undefined;
+  )
+    return undefined;
   return true;
 }
 
-function verifyBaseline(baseline: Baseline | BaselineEvidenceCandidate | undefined, task: BugTask, state: TaskState): Readonly<{ failed: boolean; evidenceId: string; testProtectionDigest: string }> | undefined {
+function verifyBaseline(
+  baseline: Baseline | BaselineEvidenceCandidate | undefined,
+  task: BugTask,
+  state: TaskState,
+): Readonly<{ failed: boolean; evidenceId: string; testProtectionDigest: string }> | undefined {
   if (!baseline) return undefined;
   const reproductions = task.requiredChecks.filter(check => check.purpose === 'reproduction');
   if (reproductions.length !== 1) return undefined;
@@ -168,15 +174,23 @@ function verifyBaseline(baseline: Baseline | BaselineEvidenceCandidate | undefin
   const expectedPassing = task.requiredChecks.filter(check => check.checkId !== reproduction.checkId).map(check => check.checkId);
   if ('taskId' in baseline) {
     if (
-      baseline.taskId !== task.taskId || baseline.workspaceId !== state.workspaceId || baseline.repositoryId !== task.repositoryId ||
-      baseline.repositorySnapshotDigest !== task.initialRevisionDigest || baseline.criteriaDigest !== computeCanonicalSha256(task.acceptanceCriteria) ||
-      baseline.checkSetDigest !== computeCheckSetDigest(task.requiredChecks) || baseline.reproductionCheckId !== reproduction.checkId ||
+      baseline.taskId !== task.taskId ||
+      baseline.workspaceId !== state.workspaceId ||
+      baseline.repositoryId !== task.repositoryId ||
+      baseline.repositorySnapshotDigest !== task.initialRevisionDigest ||
+      baseline.criteriaDigest !== computeCanonicalSha256(task.acceptanceCriteria) ||
+      baseline.checkSetDigest !== computeCheckSetDigest(task.requiredChecks) ||
+      baseline.reproductionCheckId !== reproduction.checkId ||
       computeCanonicalSha256(baseline.requiredChecks) !== computeCanonicalSha256(task.requiredChecks) ||
       !samePaths(baseline.expectedPassingCheckIds, expectedPassing) ||
-      !samePaths(baseline.expectedTestFiles, resolveExpectedTestFiles(task)) || !SHA256.test(baseline.testProtectionDigest) ||
+      !samePaths(baseline.expectedTestFiles, resolveExpectedTestFiles(task)) ||
+      !SHA256.test(baseline.testProtectionDigest) ||
       baseline.checkResults.length !== task.requiredChecks.length ||
-      !task.requiredChecks.every((check, index) => baseline.checkResults[index]?.checkId === check.checkId && baseline.checkResults[index]?.outcome === (check.checkId === reproduction.checkId ? 'fail' : 'pass'))
-    ) return undefined;
+      !task.requiredChecks.every(
+        (check, index) => baseline.checkResults[index]?.checkId === check.checkId && baseline.checkResults[index]?.outcome === (check.checkId === reproduction.checkId ? 'fail' : 'pass'),
+      )
+    )
+      return undefined;
     return { failed: true, evidenceId: computeCanonicalSha256(baseline), testProtectionDigest: baseline.testProtectionDigest };
   }
 
@@ -220,14 +234,17 @@ export function deriveVerificationFacts(task: BugTask, state: TaskState, diffDig
     }
     const expectedPhase = check.purpose === 'reproduction' ? 'focused' : check.purpose;
     // Admit identity, phase and binding per check as pass; a non-pass outcome then only withholds `required`.
-    const admission = validateVerificationAdmission({ ...result, outcome: 'pass' }, {
-      expectedTaskId: task.taskId,
-      expectedRunId: state.runId,
-      expectedRepoDigest: state.repositoryRevisionDigest,
-      expectedDiffDigest: diffDigest,
-      expectedCheckId: check.checkId,
-      requiredPhase: expectedPhase,
-    });
+    const admission = validateVerificationAdmission(
+      { ...result, outcome: 'pass' },
+      {
+        expectedTaskId: task.taskId,
+        expectedRunId: state.runId,
+        expectedRepoDigest: state.repositoryRevisionDigest,
+        expectedDiffDigest: diffDigest,
+        expectedCheckId: check.checkId,
+        requiredPhase: expectedPhase,
+      },
+    );
     if (!admission.ok) return { required: false, focused: false };
     matchedResults.add(result);
     if (check === reproduction) focusedPassed = result.outcome === 'pass';
@@ -237,15 +254,23 @@ export function deriveVerificationFacts(task: BugTask, state: TaskState, diffDig
   return { required, focused: focusedPassed };
 }
 
-
-
 function reviewFacts(evidence: UC03ExecutionEvidence, state: TaskState, diffDigest: string): Readonly<{ accepted: boolean; reviewedDiffDigest: string | null }> | undefined {
   const review = evidence.reviewResult;
   const request = evidence.reviewRequest;
   if (!review && !request) return state.latestReviewRef || (state.reviewRefs?.length ?? 0) > 0 ? undefined : { accepted: false, reviewedDiffDigest: null };
-  if (!review || !request || review.reviewId !== state.latestReviewRef || !state.reviewRefs?.includes(review.reviewId) ||
-    review.diffDigest !== diffDigest || request.role !== 'reviewer' || request.purpose !== 'final-review' ||
-    request.taskId !== state.taskId || request.runId !== state.runId || request.reservationRef !== review.iterationReservationRef) return undefined;
+  if (
+    !review ||
+    !request ||
+    review.reviewId !== state.latestReviewRef ||
+    !state.reviewRefs?.includes(review.reviewId) ||
+    review.diffDigest !== diffDigest ||
+    request.role !== 'reviewer' ||
+    request.purpose !== 'final-review' ||
+    request.taskId !== state.taskId ||
+    request.runId !== state.runId ||
+    request.reservationRef !== review.iterationReservationRef
+  )
+    return undefined;
   return { accepted: review.status === 'accepted', reviewedDiffDigest: review.diffDigest };
 }
 
@@ -267,10 +292,21 @@ export async function deriveWorkflowEvidenceFacts(input: {
 }): Promise<DerivedWorkflowFacts | undefined> {
   const execution = input.result.executionEvidence;
   const state = execution?.finalState;
-  if (!execution || !state || !input.repository || !input.observation.taskId || !input.observation.runId || !input.observation.repositoryId ||
-    state.taskId !== input.observation.taskId || state.runId !== input.observation.runId || state.repositoryId !== input.observation.repositoryId ||
-    state.taskId !== input.task.taskId || state.repositoryId !== input.task.repositoryId ||
-    input.observation.initialRepositoryDigest?.replace(/^sha256:/u, '') !== input.task.initialRevisionDigest.replace(/^sha256:/u, '')) return undefined;
+  if (
+    !execution ||
+    !state ||
+    !input.repository ||
+    !input.observation.taskId ||
+    !input.observation.runId ||
+    !input.observation.repositoryId ||
+    state.taskId !== input.observation.taskId ||
+    state.runId !== input.observation.runId ||
+    state.repositoryId !== input.observation.repositoryId ||
+    state.taskId !== input.task.taskId ||
+    state.repositoryId !== input.task.repositoryId ||
+    input.observation.initialRepositoryDigest?.replace(/^sha256:/u, '') !== input.task.initialRevisionDigest.replace(/^sha256:/u, '')
+  )
+    return undefined;
 
   const binding: FinalTreeBinding = Object.freeze({
     taskId: state.taskId,
@@ -285,10 +321,7 @@ export async function deriveWorkflowEvidenceFacts(input: {
   let rawTree: unknown;
   let diffInfo: unknown;
   try {
-    [rawTree, diffInfo] = await Promise.all([
-      input.finalTree.freezeFinalTree(binding),
-      input.repository.inspectDiff(input.task.initialRevisionDigest),
-    ]);
+    [rawTree, diffInfo] = await Promise.all([input.finalTree.freezeFinalTree(binding), input.repository.inspectDiff(input.task.initialRevisionDigest)]);
   } catch {
     return undefined;
   }

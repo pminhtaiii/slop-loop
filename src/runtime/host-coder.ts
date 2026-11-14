@@ -35,7 +35,8 @@ function requireHostCoderOptions(options: HostCoderOptions): void {
     typeof options.repository.runCommand !== 'function' ||
     typeof options.repository.runTests !== 'function' ||
     typeof options.repository.inspectDiff !== 'function'
-  ) throw new Error('HOST_CODER_REPOSITORY_REQUIRED');
+  )
+    throw new Error('HOST_CODER_REPOSITORY_REQUIRED');
   if (typeof options.guardedRead?.mediateRead !== 'function') throw new Error('HOST_CODER_GUARDED_READ_REQUIRED');
   if (typeof options.admissionContextForCheck !== 'function') throw new Error('HOST_CODER_CHECK_ADMISSION_REQUIRED');
   if (!validBudget(options.budget)) throw new Error('HOST_CODER_BUDGET_REQUIRED');

@@ -354,7 +354,10 @@ test('the shared replan count takes the greater persisted or in-run value withou
   assert.equal(third.outcome, 'invalid');
   assert.ok(third.outcome === 'invalid' && third.reason === 'REPLAN_BUDGET_EXHAUSTED');
   assert.equal(model.calls.length, 3);
-  assert.deepEqual(model.calls.map(call => call.state.replanCount), [1, 1, 1]);
+  assert.deepEqual(
+    model.calls.map(call => call.state.replanCount),
+    [1, 1, 1],
+  );
 });
 
 test('the exact owner-issued context reaches the model fourth argument', async () => {

@@ -63,9 +63,7 @@ function driver(overrides: Partial<WorkflowObservation> = {}): { executeCase: (s
 const run = (overrides: Partial<WorkflowEvaluationOptions> = {}) => runEvaluation(options(overrides));
 const comparisonCliExtension = import.meta.url.endsWith('.ts') ? 'ts' : 'js';
 const comparisonCli = fileURLToPath(new URL(`../../../eval/uc03/compare.${comparisonCliExtension}`, import.meta.url));
-const runComparisonCli = (args: readonly string[]) => spawnSync(process.execPath, [
-  '--experimental-strip-types', comparisonCli, ...args,
-], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
+const runComparisonCli = (args: readonly string[]) => spawnSync(process.execPath, ['--experimental-strip-types', comparisonCli, ...args], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
 
 test('the comparison CLI dispatches tagged workflow reports and writes workflow comparison JSON', async () => {
   const baseline = await run({ driver: driver() });

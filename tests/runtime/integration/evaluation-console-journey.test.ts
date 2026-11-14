@@ -65,8 +65,19 @@ async function composeControlledConsole() {
     adapterVersions: ['controlled-journey-adapter-1'],
     pricing: { pricingId: 'journey-price-1', inputRate: 1, outputRate: 1, cacheRate: 0, overheadRate: 0, denominator: 1 },
     limits: {
-      totalModelCalls: 24, inputTokensPerRequest: 32768, outputTokensPerRequest: 8192, providerTimeoutMs: 60000, activeExecutionMs: 900000,
-      repairs: 2, reviewerIterations: 2, materialReplans: 3, commandTimeoutMs: 30000, outputBytes: 1048576, memoryBytes: 2147483648, cpus: 2, processes: 64,
+      totalModelCalls: 24,
+      inputTokensPerRequest: 32768,
+      outputTokensPerRequest: 8192,
+      providerTimeoutMs: 60000,
+      activeExecutionMs: 900000,
+      repairs: 2,
+      reviewerIterations: 2,
+      materialReplans: 3,
+      commandTimeoutMs: 30000,
+      outputBytes: 1048576,
+      memoryBytes: 2147483648,
+      cpus: 2,
+      processes: 64,
     },
     catalog: [entry],
   });
@@ -113,8 +124,12 @@ async function composeControlledConsole() {
   const finalTreeFor = async (binding: { taskId: string; runId: string; workspaceId: string; repositoryId: string; initialRevisionDigest: string; finalRevisionDigest: string }) => {
     const source = await fixture.route.repositoryPort.readFile('src/calculator.py');
     const snapshot = await readiness.ports.hostAuthority.loadSnapshot({
-      taskId: binding.taskId, workspaceId: binding.workspaceId, repositoryId: binding.repositoryId, expectedRevisionDigest: binding.finalRevisionDigest,
-      expectedCriteriaDigest: computeCanonicalSha256(fixture.task.acceptanceCriteria), expectedCheckSetDigest: computeCheckSetDigest(fixture.task.requiredChecks),
+      taskId: binding.taskId,
+      workspaceId: binding.workspaceId,
+      repositoryId: binding.repositoryId,
+      expectedRevisionDigest: binding.finalRevisionDigest,
+      expectedCriteriaDigest: computeCanonicalSha256(fixture.task.acceptanceCriteria),
+      expectedCheckSetDigest: computeCheckSetDigest(fixture.task.requiredChecks),
       expectedTestFiles: ['tests/test_calculator.py'],
     });
     const protectedTest = snapshot?.testFiles.find(file => file.path === 'tests/test_calculator.py');
@@ -123,26 +138,44 @@ async function composeControlledConsole() {
       ...binding,
       snapshotId: `full.tree.${binding.finalRevisionDigest.replace(/^sha256:/u, '')}`,
       complete: true as const,
-      files: [{ path: 'src/calculator.py', content: source.boundedExcerpt }, { path: protectedTest.path, content: protectedTest.content }],
+      files: [
+        { path: 'src/calculator.py', content: source.boundedExcerpt },
+        { path: protectedTest.path, content: protectedTest.content },
+      ],
     };
   };
   const grader = createSnapshotGrader({
-    criteria: { digest: `sha256:${sha256Text('journey-criteria')}`, criteria: [{ criterionId: 'criterion-C01-journey', caseId: 'C01', predicate: 'repair-success', hiddenCheckId: 'hidden-C01-journey' }] },
+    criteria: {
+      digest: `sha256:${sha256Text('journey-criteria')}`,
+      criteria: [{ criterionId: 'criterion-C01-journey', caseId: 'C01', predicate: 'repair-success', hiddenCheckId: 'hidden-C01-journey' }],
+    },
     profile: {
-      profileId: 'controlled-journey-grader', digest: `sha256:${sha256Text('journey-grader-profile')}`,
+      profileId: 'controlled-journey-grader',
+      digest: `sha256:${sha256Text('journey-grader-profile')}`,
       bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
     },
     isolationAuthority: {
       admit: (request: EvaluationGradingAdmissionRequest) => ({
-        kind: 'injected-mock-isolation-admission', admissionId: sha256Text(`mock-isolation-${request.finalSnapshot.digest}`), checkId: request.checkId,
-        finalSnapshot: request.finalSnapshot, profile: request.profile, executorId: request.executorId,
+        kind: 'injected-mock-isolation-admission',
+        admissionId: sha256Text(`mock-isolation-${request.finalSnapshot.digest}`),
+        checkId: request.checkId,
+        finalSnapshot: request.finalSnapshot,
+        profile: request.profile,
+        executorId: request.executorId,
       }),
     },
     executor: {
       executorId: 'controlled-journey-hidden-check',
       execute: (request: EvaluationGraderExecutionRequest) => ({
-        checkId: request.checkId, finalSnapshot: request.finalSnapshot, profile: request.profile, executorId: request.executorId,
-        status: 'pass' as const, actualOutcome: 'COMPLETED' as const, durationMs: 1, cpuMs: 1, outputBytes: 1,
+        checkId: request.checkId,
+        finalSnapshot: request.finalSnapshot,
+        profile: request.profile,
+        executorId: request.executorId,
+        status: 'pass' as const,
+        actualOutcome: 'COMPLETED' as const,
+        durationMs: 1,
+        cpuMs: 1,
+        outputBytes: 1,
       }),
     },
     graderPayload: null,
@@ -196,25 +229,38 @@ async function composeControlledConsole() {
     },
     routesFor(ready, catalog) {
       routeCalls += 1;
-      return new Map([['C01', {
-        entry: catalog[0],
-        readiness: ready,
-        coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-        expectedWait: null,
-        workflowReport: {
-          profileDigest: profile.profileDigest, configDigest: profile.configDigest, pricingDigest: profile.pricingDigest,
-          adapterVersions: profile.adapterVersions, requestedModel: profile.model, timestamp: '2026-11-13T00:00:00.000Z',
-          workflowEvidence: {
-            grader,
-            finalTree: {
-              async freezeFinalTree(binding: Parameters<typeof finalTreeFor>[0]) { return finalTreeFor(binding); },
-              async recheckCurrentFinalTree(binding: Parameters<typeof finalTreeFor>[0]) { return finalTreeFor(binding); },
+      return new Map([
+        [
+          'C01',
+          {
+            entry: catalog[0],
+            readiness: ready,
+            coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+            expectedWait: null,
+            workflowReport: {
+              profileDigest: profile.profileDigest,
+              configDigest: profile.configDigest,
+              pricingDigest: profile.pricingDigest,
+              adapterVersions: profile.adapterVersions,
+              requestedModel: profile.model,
+              timestamp: '2026-11-13T00:00:00.000Z',
+              workflowEvidence: {
+                grader,
+                finalTree: {
+                  async freezeFinalTree(binding: Parameters<typeof finalTreeFor>[0]) {
+                    return finalTreeFor(binding);
+                  },
+                  async recheckCurrentFinalTree(binding: Parameters<typeof finalTreeFor>[0]) {
+                    return finalTreeFor(binding);
+                  },
+                },
+              },
             },
+            resolveTask: () => fixture.task,
+            resolveDirection: () => undefined,
           },
-        },
-        resolveTask: () => fixture.task,
-        resolveDirection: () => undefined,
-      }]]);
+        ],
+      ]);
     },
     operatorToken: () => TOKEN,
   };
@@ -266,7 +312,11 @@ test('controlled HTTP journey: one composed console host drives intake, approval
     assert.ok(questions.some(question => question.questionId === 'q-reproduction'));
     const replayIntake = await post('/api/experiments', { profileId: profile.profileId, idempotencyKey: 'journey-intake', source: bugSource });
     assert.equal(replayIntake.body.result.experiment.id, custom.id, 'the same key and body returns the one stored experiment');
-    const alteredIntake = await post('/api/experiments', { profileId: profile.profileId, idempotencyKey: 'journey-intake', source: { ...bugSource, bugInput: { ...bugSource.bugInput, goal: 'Changed goal' } } });
+    const alteredIntake = await post('/api/experiments', {
+      profileId: profile.profileId,
+      idempotencyKey: 'journey-intake',
+      source: { ...bugSource, bugInput: { ...bugSource.bugInput, goal: 'Changed goal' } },
+    });
     assert.deepEqual([alteredIntake.status, alteredIntake.body], [409, { ok: false, error: 'CONFLICTING_REPLAY' }]);
 
     const question = questions.find(item => item.questionId === 'q-reproduction');
@@ -394,7 +444,10 @@ test('controlled HTTP journey: one composed console host drives intake, approval
     assert.equal(compare.body.result.verdict, 'REGRESSED', 'a completed pass followed by a not-run attempt is a regression, not a pass');
 
     // Unknown or report-less experiments refuse; the ended custom intake never produced a report.
-    for (const [key, baselineId] of [['journey-compare-unknown', 'exp-missing'], ['journey-compare-noreport', custom.id]] as const) {
+    for (const [key, baselineId] of [
+      ['journey-compare-unknown', 'exp-missing'],
+      ['journey-compare-noreport', custom.id],
+    ] as const) {
       const refused = await post('/api/comparisons', { idempotencyKey: key, baselineId, candidateId: attempt1.id, policy: 'guarded' });
       assert.deepEqual([refused.status, refused.body], [404, { ok: false, error: 'WORKFLOW_REPORT_NOT_FOUND' }]);
     }

@@ -68,7 +68,21 @@ export async function loadCompletionPredicateInput(args: {
   readonly trustedCompletion: TrustedCompletion | undefined;
   readonly completionContextFor?: UC03CompletionContextResolver | undefined;
 }): Promise<CompletionInputResult> {
-  const { task, state, baseline, verificationResults, reviewResult, diffInfo, reviewRequest, patchAdmission, patchReceipt, hostAuthority, trustedExpectedContext, trustedCompletion, completionContextFor } = args;
+  const {
+    task,
+    state,
+    baseline,
+    verificationResults,
+    reviewResult,
+    diffInfo,
+    reviewRequest,
+    patchAdmission,
+    patchReceipt,
+    hostAuthority,
+    trustedExpectedContext,
+    trustedCompletion,
+    completionContextFor,
+  } = args;
   if (!baseline || !verificationResults?.length || !reviewResult || (trustedCompletion === undefined && completionContextFor === undefined) || !patchAdmission || !patchReceipt) {
     return { ok: false, reasons: ['Independent baseline, verification, patch settlement, review, and completion authority are required'] };
   }

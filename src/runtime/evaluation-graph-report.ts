@@ -19,16 +19,9 @@ export interface EvaluationGraphReportBinding {
 }
 
 /** Validates trusted host report metadata before the service can allocate or run a task. */
-export function validateEvaluationGraphReportBinding(
-  caseId: string,
-  identity: Readonly<Record<string, string>>,
-  binding: EvaluationGraphReportBinding,
-): EvaluationGraphReportBinding {
-  if (
-    binding.profileDigest !== identity.profileDigest ||
-    binding.configDigest !== identity.configDigest ||
-    binding.pricingDigest !== identity.pricingDigest
-  ) throw new Error('Workflow report identity does not match the validated host route');
+export function validateEvaluationGraphReportBinding(caseId: string, identity: Readonly<Record<string, string>>, binding: EvaluationGraphReportBinding): EvaluationGraphReportBinding {
+  if (binding.profileDigest !== identity.profileDigest || binding.configDigest !== identity.configDigest || binding.pricingDigest !== identity.pricingDigest)
+    throw new Error('Workflow report identity does not match the validated host route');
   const checked = validateWorkflowEvaluationOptions({
     contractVersion: WORKFLOW_EVALUATION_VERSION,
     mode: 'mock',
@@ -67,18 +60,8 @@ export async function reportUC03GraphResult(input: {
 }): Promise<WorkflowEvaluationReport | undefined> {
   // An approval wait is an unfinished service step, not a failed repair predicate. Leave that
   // lifecycle pending for the runner; a later completed result still enters the independent grader.
-  const host = input.result.outcome === 'pending-approval'
-    ? { ...input.host, workflowEvidence: undefined }
-    : input.host;
-  const observation = await observeAndGradeWorkflowResult(
-    host,
-    input.result,
-    input.ports,
-    input.binding.requestedModel,
-    input.mode,
-    input.generation,
-    input.trustedExpectedContext,
-  );
+  const host = input.result.outcome === 'pending-approval' ? { ...input.host, workflowEvidence: undefined } : input.host;
+  const observation = await observeAndGradeWorkflowResult(host, input.result, input.ports, input.binding.requestedModel, input.mode, input.generation, input.trustedExpectedContext);
   const options = {
     contractVersion: WORKFLOW_EVALUATION_VERSION,
     mode: input.mode,

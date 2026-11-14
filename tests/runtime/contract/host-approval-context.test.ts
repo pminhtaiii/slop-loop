@@ -30,21 +30,42 @@ function readyInputs(source: RealContextSource): UC03HostInputs {
       hostAuthority: { loadSnapshot: async () => undefined } as never,
       contextSource: source,
     },
-    config: { trustedExpectedContext: { taskId: 'task-a', workspaceId: 'workspace-a', repositoryId: 'repo-a', revisionDigest: HASH, criteriaDigest: HASH, checkSetDigest: HASH, expectedTestFiles: ['tests/test_a.py'] } },
+    config: {
+      trustedExpectedContext: {
+        taskId: 'task-a',
+        workspaceId: 'workspace-a',
+        repositoryId: 'repo-a',
+        revisionDigest: HASH,
+        criteriaDigest: HASH,
+        checkSetDigest: HASH,
+        expectedTestFiles: ['tests/test_a.py'],
+      },
+    },
     identity: { profileId: 'profile-a', profileDigest: HASH, configDigest: HASH, pricingDigest: HASH },
   };
 }
 
 test('host approval context uses the exact context source from validated readiness', async () => {
   const observed: string[] = [];
-  const source: RealContextSource = { provenance: 'real', observe: (taskId, actionId) => { observed.push(`${taskId}:${actionId}`); return null; } };
+  const source: RealContextSource = {
+    provenance: 'real',
+    observe: (taskId, actionId) => {
+      observed.push(`${taskId}:${actionId}`);
+      return null;
+    },
+  };
   const readiness = prepareUC03Host(readyInputs(source));
   assert.equal(readiness.status, 'ready');
   if (readiness.status !== 'ready') return;
 
   let loaded = false;
   const provider = createHostApprovalContextProvider(readiness, {
-    durable: { loadTask: async () => { loaded = true; return { taskId: 'task-a', runId: 'run-a', workspaceId: 'workspace-a', repositoryId: 'repo-a' } as unknown as DurableTaskState; } },
+    durable: {
+      loadTask: async () => {
+        loaded = true;
+        return { taskId: 'task-a', runId: 'run-a', workspaceId: 'workspace-a', repositoryId: 'repo-a' } as unknown as DurableTaskState;
+      },
+    },
     approvals: { provenance: 'real', profile: DEFAULT_POLICY_PROFILE, readRequest: () => ({ safe: { outcome: 'denied' } }) } as never,
   });
 
@@ -57,9 +78,28 @@ test('host approval context uses the exact context source from validated readine
 
 test('host approval context refuses unavailable readiness before owner access', () => {
   let ownerCalls = 0;
-  assert.throws(() => createHostApprovalContextProvider({ status: 'unavailable', reasons: [] }, {
-    durable: { loadTask: async () => { ownerCalls += 1; return null; } },
-    approvals: { provenance: 'real', profile: DEFAULT_POLICY_PROFILE, readRequest: () => { ownerCalls += 1; return undefined; } } as never,
-  }), /HOST_APPROVAL_CONTEXT_NOT_READY/u);
+  assert.throws(
+    () =>
+      createHostApprovalContextProvider(
+        { status: 'unavailable', reasons: [] },
+        {
+          durable: {
+            loadTask: async () => {
+              ownerCalls += 1;
+              return null;
+            },
+          },
+          approvals: {
+            provenance: 'real',
+            profile: DEFAULT_POLICY_PROFILE,
+            readRequest: () => {
+              ownerCalls += 1;
+              return undefined;
+            },
+          } as never,
+        },
+      ),
+    /HOST_APPROVAL_CONTEXT_NOT_READY/u,
+  );
   assert.equal(ownerCalls, 0);
 });

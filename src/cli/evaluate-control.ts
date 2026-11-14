@@ -94,7 +94,8 @@ export function isEvaluationControlBindings(value: unknown): value is Evaluation
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
     const service: unknown = Reflect.get(value, 'service');
     if (typeof service !== 'object' || service === null || Array.isArray(service)) return false;
-    if (typeof Reflect.get(service, 'getExperiment') !== 'function' || typeof Reflect.get(service, 'issueDirection') !== 'function' || typeof Reflect.get(service, 'continueExperiment') !== 'function') return false;
+    if (typeof Reflect.get(service, 'getExperiment') !== 'function' || typeof Reflect.get(service, 'issueDirection') !== 'function' || typeof Reflect.get(service, 'continueExperiment') !== 'function')
+      return false;
     const approval: unknown = Reflect.get(value, 'approval');
     if (approval === undefined) return true;
     return typeof approval === 'object' && approval !== null && !Array.isArray(approval) && typeof Reflect.get(approval, 'decide') === 'function';
