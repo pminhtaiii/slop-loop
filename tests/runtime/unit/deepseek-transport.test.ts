@@ -45,8 +45,8 @@ function request(overrides: Partial<ProviderRequest> = {}): ProviderRequest {
   return createFixtureProviderRequest({ modelId: 'deepseek-flash', maxCostUsd: 0.1, ...overrides });
 }
 
-function payloadFor(overrides: Partial<ProviderRequest> = {}): HostModelTransportPayload {
-  const state = createFixtureTaskState();
+function payloadFor(overrides: Partial<ProviderRequest> = {}, stateOverrides: Partial<ReturnType<typeof createFixtureTaskState>> = {}): HostModelTransportPayload {
+  const state = createFixtureTaskState(stateOverrides);
   return buildTransportPayload(state, [createFixtureSourceEvidence()], request(overrides));
 }
 
@@ -121,6 +121,27 @@ test('dispatches one nonstreaming, thinking-disabled JSON request with host-only
 
   const executed = await executeTransport(subject, payload, payload.request);
   assert.equal(executed.outcome, 'observed');
+});
+
+test('returned model identity is bound to each task/run/request and inconsistent runs stay unknown', async () => {
+  let responseIndex = 0;
+  const { fetchImpl } = fakeFetch(() => messageResponse({ model: responseIndex++ === 0 ? 'deepseek-run-a' : 'deepseek-run-b' }));
+  const subject = transport(fetchImpl);
+  const runA = payloadFor({ providerRequestId: 'request-a' }, { taskId: 'task-a', runId: 'run-a' });
+  const runB = payloadFor({ providerRequestId: 'request-b' }, { taskId: 'task-b', runId: 'run-b' });
+
+  await subject.execute(runA);
+  await subject.execute(runB);
+
+  assert.deepEqual(subject.identityForRequest('task-a', 'run-a', 'request-a'), { requested: 'deepseek-flash', returned: 'deepseek-run-a' });
+  assert.deepEqual(subject.identityForRun('task-a', 'run-a'), { requested: 'deepseek-flash', returned: 'deepseek-run-a' });
+  assert.deepEqual(subject.identityForRun('task-b', 'run-b'), { requested: 'deepseek-flash', returned: 'deepseek-run-b' });
+  assert.equal(subject.identityForRequest('task-a', 'run-b', 'request-a'), undefined);
+  assert.equal(subject.identityForRun('task-a', 'run-b'), undefined);
+
+  const inconsistent = payloadFor({ providerRequestId: 'request-a-2' }, { taskId: 'task-a', runId: 'run-a' });
+  await subject.execute(inconsistent);
+  assert.equal(subject.identityForRun('task-a', 'run-a'), undefined);
 });
 
 test('denies admission before any fetch when bounds are unsupported or the request is malformed', async () => {

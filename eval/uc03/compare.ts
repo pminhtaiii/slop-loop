@@ -8,10 +8,12 @@
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { parseArgs } from 'node:util';
 import { validateWorkflowEvaluationReport } from './validation.ts';
 import { EVALUATION_CASE_IDS, WORKFLOW_EVALUATION_VERSION } from './types.ts';
 import type { EvaluationCaseId, WorkflowEvaluationReport, WorkflowGrade, WorkflowSuiteAcceptance } from './types.ts';
-import { main } from './compare-legacy.ts';
+import { main as legacyMain } from './compare-legacy.ts';
 
 export * from './compare-legacy.ts';
 
@@ -219,6 +221,81 @@ export function compareWorkflowEvaluations(baseline: unknown, candidate: unknown
       ...(unknownUsageCases > 0 ? [`Usage is unknown for ${unknownUsageCases} case observation(s); cost and token deltas are null, never zero.`] : []),
     ],
   };
+}
+
+function isWorkflowReport(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const report = value as Record<string, unknown>;
+  return 'selectionResult' in report || 'suiteAcceptance' in report || (typeof report.contractVersion === 'string' && report.contractVersion.startsWith('uc03-workflow-evaluation/'));
+}
+
+function readJsonReport(path: string): unknown {
+  return JSON.parse(readFileSync(resolve(process.cwd(), path), 'utf8')) as unknown;
+}
+
+const COMPARISON_CLI_OPTIONS = {
+  baseline: { type: 'string' },
+  candidate: { type: 'string' },
+  output: { type: 'string' },
+  'strict-same-config': { type: 'boolean' },
+} as const;
+
+function parseComparisonArgs(args: readonly string[]) {
+  return parseArgs({ args, options: COMPARISON_CLI_OPTIONS, allowPositionals: false });
+}
+
+export async function main(): Promise<void> {
+  let values: ReturnType<typeof parseComparisonArgs>['values'];
+  try {
+    ({ values } = parseComparisonArgs(process.argv.slice(2)));
+  } catch {
+    console.error('UC-03 comparison refused: invalid or incomparable report inputs.');
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!values.baseline || !values.candidate) {
+    await legacyMain();
+    return;
+  }
+
+  let baseline: unknown;
+  let candidate: unknown;
+  try {
+    baseline = readJsonReport(values.baseline);
+    candidate = readJsonReport(values.candidate);
+  } catch {
+    // Keep the legacy entry's established missing-file and malformed-JSON behavior.
+    await legacyMain();
+    return;
+  }
+
+  const baselineIsWorkflow = isWorkflowReport(baseline);
+  const candidateIsWorkflow = isWorkflowReport(candidate);
+  if (!baselineIsWorkflow && !candidateIsWorkflow) {
+    await legacyMain();
+    return;
+  }
+  if (baselineIsWorkflow !== candidateIsWorkflow) {
+    console.error('UC-03 comparison refused: invalid or incomparable report inputs.');
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    const comparison = compareWorkflowEvaluations(baseline, candidate, {
+      ...(values['strict-same-config'] ? { strictSameConfig: true } : {}),
+    });
+    if (values.output) {
+      writeFileSync(resolve(process.cwd(), values.output), JSON.stringify(comparison, null, 2), 'utf8');
+    }
+    console.log(`UC-03 Workflow Comparison: Verdict = ${comparison.verdict}, ExitCode = ${comparison.exitCode}`);
+    console.log(`Summary: ${comparison.summary.totalCommon} common, ${comparison.summary.regressionsCount} regressions, ${comparison.summary.improvementsCount} improvements`);
+    process.exitCode = comparison.exitCode;
+  } catch {
+    console.error('UC-03 comparison refused: invalid or incomparable report inputs.');
+    process.exitCode = 1;
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

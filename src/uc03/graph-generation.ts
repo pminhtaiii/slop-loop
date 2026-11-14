@@ -10,6 +10,7 @@ import {
   type TaskState,
 } from '../contracts/foundation/uc03.ts';
 import type { CoderProposal, CoderToolResult, CoderTurnInputV02, CoderTurnResult } from './agent.ts';
+import type { CoderAgentV02, CoderTurnResultV02 } from './agent-types.ts';
 import type { UC03CoderAdmission, UC03GraphConfig } from './graph-types.ts';
 import type { UC03GraphGenerationV02 } from './graph-types-v02.ts';
 import { computeContextDigest } from '../foundation/model.ts';
@@ -95,6 +96,9 @@ async function generateObservedPlan(
 ): Promise<CoderGeneration> {
   const source = config.coderAdmission;
   if (!source) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
+  const fixedAgent = generation.agent;
+  const selector = generation.agentFor;
+  if ((fixedAgent !== undefined) === (selector !== undefined)) return { ok: false, reason: 'HOST_CODER_CONFIGURATION_INVALID: exactly one agent or run-scoped selector is required' };
   let state = initialState;
   const evidence = new Map(initialEvidence.map(item => [item.path, item]));
   const requests = new Set<string>();
@@ -106,10 +110,22 @@ async function generateObservedPlan(
     }
     if (requests.has(admission.request.providerRequestId)) return { ok: false, reason: 'Coder admission reused a provider request within the generation loop' };
     requests.add(admission.request.providerRequestId);
-    const beforeCalls = generation.agent.counters.modelCalls;
-    const result = await generateV02(generation, { task, state, purpose, evidence: observed, admission });
+    const input = { task, state, purpose, evidence: observed, admission } satisfies CoderTurnInputV02;
+    let agent: CoderAgentV02;
+    try {
+      if (selector !== undefined) agent = selector(input);
+      else if (fixedAgent !== undefined) agent = fixedAgent;
+      else return { ok: false, reason: 'HOST_CODER_CONFIGURATION_INVALID: agent selection is unavailable' };
+    } catch {
+      return { ok: false, reason: 'HOST_CODER_UNAVAILABLE: run-scoped agent selection failed' };
+    }
+    if (typeof agent?.turn !== 'function' || typeof agent.counters?.modelCalls !== 'number') {
+      return { ok: false, reason: 'HOST_CODER_UNAVAILABLE: selected agent is invalid' };
+    }
+    const beforeCalls = agent.counters.modelCalls;
+    const result = await generateV02(agent, input);
     if (!result.ok || result.proposal.kind !== 'inspect') return result;
-    if (!result.tool || generation.agent.counters.modelCalls <= beforeCalls) return { ok: false, reason: 'Inspect did not produce a bounded model turn and observation' };
+    if (!result.tool || agent.counters.modelCalls <= beforeCalls) return { ok: false, reason: 'Inspect did not produce a bounded model turn and observation' };
     for (const item of toolEvidence(result.tool, state.repositoryRevisionDigest)) evidence.set(item.path, item);
     const owner = config.trustedExpectedContext?.statePort;
     if (owner) {
@@ -182,8 +198,8 @@ function validCoderClaim(claim: ClaimReceiptV02 | undefined, admission: Provider
  * v0.2 generation: no claim here. The model boundary (`ModelPortV02.propose`) alone reserves,
  * begins the attempt and records the outcome, so a claim on this side would be a second one.
  */
-export async function generateV02(generation: UC03GraphGenerationV02, input: CoderTurnInputV02): Promise<CoderGeneration> {
-  const turn = await generation.agent.turn(input);
+export async function generateV02(agent: CoderAgentV02, input: CoderTurnInputV02): Promise<CoderGeneration> {
+  const turn: CoderTurnResultV02 = await agent.turn(input);
   if (turn.outcome === 'proposal') return { ok: true, proposal: turn.proposal, tool: turn.tool };
   // `waiting` is a human pause, not a failure; other outcomes carry a safe code and no model text.
   return { ok: false, reason: turn.outcome === 'waiting' ? `HUMAN_WAIT:${turn.reason}` : `REAL_PROFILE_GENERATION_INVALID: ${turn.reason}` };

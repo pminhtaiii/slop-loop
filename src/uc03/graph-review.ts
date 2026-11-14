@@ -27,7 +27,7 @@ import { boundReviewEnabled, prepareBoundReview, persistBoundReview, loadBoundRe
 type ReviewPorts = Pick<UC03GraphPorts, 'statePort' | 'repositoryPort' | 'reviewerPort' | 'hostAuthority'>;
 type ReviewConfig = Pick<
   UC03GraphConfig,
-  'reviewerAdmission' | 'trustedExpectedContext' | 'trustedTransitionContext' | 'reviewContext' | 'reviewEvidence' | 'reviewPrompt' | 'reviewerContextResolver' | 'mode'
+  'reviewerAdmission' | 'trustedExpectedContext' | 'trustedTransitionContext' | 'completionContextFor' | 'reviewContext' | 'reviewEvidence' | 'reviewPrompt' | 'reviewerContextResolver' | 'mode'
 >;
 
 export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC03GraphNode {
@@ -210,6 +210,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
       hostAuthority: ports.hostAuthority,
       trustedExpectedContext: config?.trustedExpectedContext,
       trustedCompletion: config?.trustedTransitionContext?.completion,
+      completionContextFor: config?.completionContextFor,
       patchAdmission: state.patchAdmission,
       patchReceipt: state.patchReceipt,
       boundReview: config,

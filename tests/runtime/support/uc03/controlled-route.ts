@@ -220,6 +220,7 @@ export function createPendingApprovalRoute(
   extraTransitionContexts: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> = {},
   reproductionCheckId = 'check-pytest-reproduction',
   hostTestFileContent?: string,
+  transitionContextFor?: (next: Readonly<TaskState>) => NonNullable<StateTransitionOptions['trusted']> | undefined,
 ): {
   readonly task: BugTask;
   readonly ports: UC03GraphPorts;
@@ -252,6 +253,7 @@ export function createPendingApprovalRoute(
   const autoApprovingPort = approvalPort;
   const statePort = new MemoryStatePortV02({
     transitionContexts: { ...transitionContexts, ...extraTransitionContexts },
+    transitionContextFor,
     initialAuthorityRef: authorityRef,
     verificationApprovalVerifier: autoApprovingPort,
   });

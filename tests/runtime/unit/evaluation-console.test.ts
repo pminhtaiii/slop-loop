@@ -9,11 +9,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 
-import { createConsoleServer, type ConsoleArtifact, type ConsoleComparisonRequest } from '../../../src/runtime/console-server.ts';
+import { createConsoleServer, type ConsoleArtifact, type ConsoleComparisonPort, type ConsoleComparisonRequest, type ConsoleWorkflowReportLookup } from '../../../src/runtime/console-server.ts';
 import type { CatalogEntry } from '../../../src/runtime/evaluation-profile.ts';
 import type { EvaluationService, ExperimentReceipt, ExperimentView, ServiceResult } from '../../../src/runtime/evaluation-service.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import type { WorkflowComparisonReport } from '../../../eval/uc03/compare.ts';
+import { runEvaluation } from '../../../eval/uc03/runner.ts';
+import { WORKFLOW_EVALUATION_VERSION, type WorkflowEvaluationOptions, type WorkflowObservation } from '../../../eval/uc03/types.ts';
 
 const TOKEN = 'operator-token-for-controlled-console-tests';
 const digest = (seed: string): string => sha256Text(seed);
@@ -42,6 +44,8 @@ const view = (id: string): ExperimentView => ({
   runId: 'run-001',
   workspaceId: 'ws-001',
   usage: null,
+  workflowReport: null,
+  workflowClarification: null,
   answers: [],
   directions: [],
 });
@@ -163,7 +167,11 @@ const mutation = (port: number, path: string, body: unknown, extra: Record<strin
     },
   });
 
-async function withServer(run: (port: number, stub: ReturnType<typeof createStub>) => Promise<void>, artifacts?: ReadonlyMap<string, ConsoleArtifact>): Promise<void> {
+async function withServer(
+  run: (port: number, stub: ReturnType<typeof createStub>) => Promise<void>,
+  artifacts?: ReadonlyMap<string, ConsoleArtifact>,
+  comparisonWiring?: Readonly<{ comparison?: ConsoleComparisonPort; workflowReportLookup?: ConsoleWorkflowReportLookup }>,
+): Promise<void> {
   const stub = createStub();
   const server = createConsoleServer({
     service: stub.service,
@@ -171,7 +179,7 @@ async function withServer(run: (port: number, stub: ReturnType<typeof createStub
     operatorToken: TOKEN,
     artifacts,
     approval: stub.approval,
-    comparison: stub.comparison,
+    ...(comparisonWiring ?? { comparison: stub.comparison }),
   });
   const address = await server.listen(0);
   try {
@@ -180,6 +188,39 @@ async function withServer(run: (port: number, stub: ReturnType<typeof createStub
     await server.close();
   }
 }
+
+function workflowOptions(overrides: { configDigest?: string; repositoryId?: string; initialRepositoryDigest?: string } = {}): WorkflowEvaluationOptions {
+  const caseObservation: WorkflowObservation = {
+    repositoryId: overrides.repositoryId ?? 'repo-1',
+    taskId: 'task-1',
+    runId: 'run-1',
+    returnedModel: 'mock-model-v1',
+    graderDigest: digest('grader'),
+    initialRepositoryDigest: overrides.initialRepositoryDigest ?? digest('initial-repository'),
+    workflowOutcome: 'COMPLETED',
+    expectedWait: null,
+    blocked: null,
+    effects: 'none',
+    usage: 'observed',
+    diagnostic: null,
+    artifacts: [],
+    limitations: [],
+  };
+  return {
+    contractVersion: WORKFLOW_EVALUATION_VERSION,
+    mode: 'mock',
+    cases: ['C01', 'C02'],
+    profileDigest: digest('profile'),
+    configDigest: overrides.configDigest ?? digest('config'),
+    pricingDigest: digest('pricing'),
+    adapterVersions: ['controlled-adapter-v1'],
+    requestedModel: 'mock-model-v1',
+    timestamp: '2026-11-12T00:00:00.000Z',
+    driver: { executeCase: () => caseObservation },
+  };
+}
+
+const workflowReport = (overrides: Parameters<typeof workflowOptions>[0] = {}) => runEvaluation(workflowOptions(overrides));
 
 test('console binds loopback only and keeps the token out of every response', async () => {
   await withServer(async (port, stub) => {
@@ -320,6 +361,185 @@ test('a malformed comparison body is refused before the comparison port is calle
     assert.equal((await mutation(port, '/api/comparisons', { ...valid, policy: 'strict' })).status, 200);
     assert.equal(stub.calls.filter(call => call.method === 'comparison.compare').length, 2);
   });
+});
+
+test('stored workflow reports use the selected guarded or strict comparison policy', async () => {
+  const baseline = await workflowReport();
+  const candidate = await workflowReport({ configDigest: digest('different-config') });
+  const byId = new Map<string, unknown>([
+    ['exp-001', baseline],
+    ['exp-002', candidate],
+  ]);
+  const lookups: string[] = [];
+  const workflowReportLookup: ConsoleWorkflowReportLookup = {
+    getWorkflowReport(id) {
+      lookups.push(id);
+      return byId.get(id);
+    },
+  };
+
+  await withServer(
+    async port => {
+      const guarded = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-guarded', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+      const guardedResult = JSON.parse(guarded.body) as { ok: true; result: WorkflowComparisonReport };
+      assert.equal(guarded.status, 200);
+      assert.equal(guardedResult.result.compatible, true);
+      assert.deepEqual(guardedResult.result.failedGuards, []);
+      assert.deepEqual(guardedResult.result.changedFactors, ['configDigest']);
+
+      const strict = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-strict', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'strict' });
+      const strictResult = JSON.parse(strict.body) as { ok: true; result: WorkflowComparisonReport };
+      assert.equal(strict.status, 200);
+      assert.equal(strictResult.result.compatible, false);
+      assert.deepEqual(strictResult.result.failedGuards, ['strictSameConfig']);
+      assert.equal(strictResult.result.verdict, 'INCOMPLETE');
+    },
+    undefined,
+    { workflowReportLookup },
+  );
+
+  assert.deepEqual(lookups, ['exp-001', 'exp-002', 'exp-001', 'exp-002']);
+});
+
+test('incompatible stored workflow reports return the comparator guard result', async () => {
+  const baseline = await workflowReport();
+  const candidate = await workflowReport({ repositoryId: 'repo-other', initialRepositoryDigest: digest('other-initial-repository') });
+  const byId = new Map<string, unknown>([
+    ['exp-001', baseline],
+    ['exp-002', candidate],
+  ]);
+  const workflowReportLookup: ConsoleWorkflowReportLookup = { getWorkflowReport: id => byId.get(id) };
+
+  await withServer(
+    async port => {
+      const reply = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-incompatible', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+      const result = JSON.parse(reply.body) as { ok: true; result: WorkflowComparisonReport };
+      assert.equal(reply.status, 200);
+      assert.equal(result.result.compatible, false);
+      assert.deepEqual(result.result.failedGuards, ['initialRepositoryDigest', 'repositoryId']);
+    },
+    undefined,
+    { workflowReportLookup },
+  );
+});
+
+test('stored comparison bounds missing, malformed, and throwing report lookup outcomes', async () => {
+  const valid = await workflowReport();
+  const cases: readonly Readonly<{
+    name: string;
+    lookup: ConsoleWorkflowReportLookup;
+    expectedStatus: number;
+    expectedError: string;
+    privateText?: string;
+  }>[] = [
+    {
+      name: 'missing report',
+      lookup: { getWorkflowReport: id => (id === 'exp-001' ? valid : undefined) },
+      expectedStatus: 404,
+      expectedError: 'WORKFLOW_REPORT_NOT_FOUND',
+    },
+    {
+      name: 'malformed report',
+      lookup: { getWorkflowReport: id => (id === 'exp-001' ? { secret: 'private-payload-sentinel' } : valid) },
+      expectedStatus: 400,
+      expectedError: 'INVALID_WORKFLOW_REPORT',
+      privateText: 'private-payload-sentinel',
+    },
+    {
+      name: 'throwing lookup',
+      lookup: {
+        getWorkflowReport: () => {
+          throw new Error('C:\\private\\workspace\\operator-token-sentinel');
+        },
+      },
+      expectedStatus: 503,
+      expectedError: 'WORKFLOW_REPORT_LOOKUP_UNAVAILABLE',
+      privateText: 'operator-token-sentinel',
+    },
+  ];
+
+  for (const item of cases) {
+    await withServer(
+      async port => {
+        const reply = await mutation(port, '/api/comparisons', { idempotencyKey: `key-${item.name.replaceAll(' ', '-')}`, baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+        assert.equal(reply.status, item.expectedStatus, item.name);
+        assert.deepEqual(JSON.parse(reply.body), { ok: false, error: item.expectedError }, item.name);
+        if (item.privateText) assert.equal(reply.body.includes(item.privateText), false, item.name);
+        assert.equal(reply.body.includes('exp-001'), false, item.name);
+      },
+      undefined,
+      { workflowReportLookup: item.lookup },
+    );
+  }
+});
+
+test('comparison authorization and body refusals happen before stored report lookup', async () => {
+  const lookups: string[] = [];
+  const workflowReportLookup: ConsoleWorkflowReportLookup = { getWorkflowReport: id => (lookups.push(id), undefined) };
+
+  await withServer(
+    async port => {
+      const body = { idempotencyKey: 'key-compare', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' };
+      const missingToken = await call(port, 'POST', '/api/comparisons', {
+        body: JSON.stringify(body),
+        headers: { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' },
+      });
+      const wrongHost = await call(port, 'POST', '/api/comparisons', {
+        body: JSON.stringify(body),
+        headers: { host: 'evil.test', origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-operator-token': TOKEN },
+      });
+      const wrongOrigin = await mutation(port, '/api/comparisons', body, { origin: 'http://evil.test' });
+      const malformedBody = await mutation(port, '/api/comparisons', { ...body, report: { path: 'C:/private/report.json' } });
+      const invalidJson = await call(port, 'POST', '/api/comparisons', {
+        body: '{',
+        headers: { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-operator-token': TOKEN },
+      });
+
+      assert.equal(missingToken.status, 403);
+      assert.equal(wrongHost.status, 403);
+      assert.equal(wrongOrigin.status, 403);
+      assert.equal(malformedBody.status, 400);
+      assert.equal(invalidJson.status, 400);
+    },
+    undefined,
+    { workflowReportLookup },
+  );
+
+  assert.deepEqual(lookups, []);
+});
+
+test('an injected comparison port takes precedence over a stored report source', async () => {
+  let injectedCalls = 0;
+  const lookedUp: string[] = [];
+  const comparison: ConsoleComparisonPort = {
+    compare: () => ((injectedCalls += 1), { ok: true, value: { marker: 'injected-comparison' } }),
+  };
+  const workflowReportLookup: ConsoleWorkflowReportLookup = { getWorkflowReport: id => (lookedUp.push(id), undefined) };
+
+  await withServer(
+    async port => {
+      const reply = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-injected', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+      assert.equal(reply.status, 200);
+      assert.deepEqual(JSON.parse(reply.body), { ok: true, result: { marker: 'injected-comparison' } });
+    },
+    undefined,
+    { comparison, workflowReportLookup },
+  );
+
+  assert.equal(injectedCalls, 1);
+  assert.deepEqual(lookedUp, []);
+});
+
+test('existing server callers without a comparison source retain the bounded unavailable result', async () => {
+  await withServer(
+    async port => {
+      const reply = await mutation(port, '/api/comparisons', { idempotencyKey: 'key-unavailable', baselineId: 'exp-001', candidateId: 'exp-002', policy: 'guarded' });
+      assert.equal(reply.status, 503);
+      assert.deepEqual(JSON.parse(reply.body), { ok: false, error: 'COMPARISON_UNAVAILABLE' });
+    },
+    undefined,
+    {},
+  );
 });
 
 test('a duplicate idempotency key is forwarded twice: the service owns dedupe', async () => {

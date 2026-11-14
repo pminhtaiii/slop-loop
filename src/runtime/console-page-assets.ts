@@ -23,7 +23,7 @@ export const SCRIPT = `
 (function () {
   'use strict';
   var token = '';
-  var keys = { experiment: null, decision: null, answer: null, direction: null, continuation: null, comparison: null };
+  var keys = { experiment: null, decision: null, answer: null, group: null, direction: null, continuation: null, comparison: null };
   var pollTimer = null;
   var currentId = null;
   var profile = document.body.getAttribute('data-profile');
@@ -47,9 +47,18 @@ export const SCRIPT = `
     });
   }
 
+  // Result pane: allowlisted receipt/decision scalars only; views render via formatExperiment.
+  // A UC-05 decision arrives as a 200 SafeResult; only outcome ok/paused means it was recorded.
   function describe(out) {
-    if (out.data && out.data.ok) return 'ok ' + out.status + '\\n' + JSON.stringify(out.data.result, null, 2);
-    return 'error ' + out.status + ' ' + ((out.data && out.data.error) || 'UNKNOWN');
+    var d = isObj(out.data) ? out.data : {};
+    if (d.ok !== true) return 'error ' + out.status + ' ' + (typeof d.error === 'string' && OPAQUE.test(d.error) ? d.error : 'UNKNOWN');
+    var r = isObj(d.result) ? (isObj(d.result.receipt) ? d.result.receipt : d.result) : {};
+    var o = typeof r.outcome === 'string' && OPAQUE.test(r.outcome) ? r.outcome : 'unknown';
+    var text = [r.outcome === undefined || o === 'ok' || o === 'paused' ? 'ok ' + out.status : 'not recorded ' + out.status + ' (outcome ' + o + ')'];
+    ['outcome', 'decision', 'status', 'safeReasonCode', 'reasonCode', 'kind', 'receiptId', 'receiptRef', 'decisionId', 'experimentId', 'taskId', 'version', 'controlVersion', 'safeNextAction'].forEach(function (k) {
+      if ((typeof r[k] === 'string' && OPAQUE.test(r[k])) || cnt(r[k]) !== null) text.push(k + ': ' + r[k]);
+    });
+    return text.join('\\n');
   }
 
   // One key per pending action: a disabled control plus the retained key makes a double submit harmless.
@@ -57,10 +66,12 @@ export const SCRIPT = `
     if (button.disabled) return null;
     if (!keys[slot]) keys[slot] = freshKey();
     button.disabled = true;
-    var payload = build(keys[slot]);
+    var key = keys[slot];
+    var payload = build(key);
     return api('POST', path, payload).then(function (out) {
       button.disabled = false;
-      if (out.status === 200) keys[slot] = null;
+      // 200 or a definitive refusal (non-409 4xx) retires this slot's key; 409/503 replay it.
+      if (out.status < 500 && out.status !== 409 && keys[slot] === key) keys[slot] = null;
       show('result', describe(out));
       return out;
     }, function () {
@@ -72,6 +83,53 @@ export const SCRIPT = `
 
   function lines(text) { return text ? text.split('\\n').map(function (line) { return line.trim(); }).filter(Boolean) : []; }
   function num(id) { return Number(byId(id).value); }
+
+  // Safe report projection: explicit allowlists only; nothing is stringified wholesale.
+  var OPAQUE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+  function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+  function pick(v, allowed) { return typeof v === 'string' && allowed.indexOf(v) >= 0 ? v : 'unknown'; }
+  function cnt(v) { return typeof v === 'number' && v >= 0 && v <= 1000000 && Math.floor(v) === v ? v : null; }
+  function text1(v, max) { return String(v).replace(/[\\u0000-\\u001f\\u007f-\\u009f\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+/g, ' ').slice(0, max); }
+  var OUTCOMES = ['pass', 'fail', 'incomplete'];
+
+  function formatReport(view) {
+    if (view.graded !== true || view.scope === 'exploratory') return ['workflow report: custom submission, ungraded; no grade or acceptance shown'];
+    var r = view.workflowReport;
+    var sel = isObj(r) ? r.selectionResult : null;
+    var suite = isObj(r) ? r.suiteAcceptance : null;
+    if (!isObj(r) || r.suite !== 'uc03' || r.contractVersion !== 'uc03-workflow-evaluation/1' || r.isRealVerified !== false ||
+        (r.tier !== 'controlled' && r.tier !== 'real-integration') || !isObj(sel) || !isObj(suite) || !Array.isArray(r.cases)) {
+      return ['workflow report: unavailable or invalid; acceptance unknown'];
+    }
+    var p = cnt(sel.passed), f = cnt(sel.failed), i = cnt(sel.incomplete);
+    var selOut = pick(sel.outcome, OUTCOMES);
+    if (p === null || f === null || i === null || (selOut === 'pass' && (f !== 0 || i !== 0))) selOut = 'unknown';
+    var need = cnt(suite.requiredCases), have = cnt(suite.satisfiedCases);
+    var suiteOut = pick(suite.outcome, OUTCOMES.concat(['not-applicable']));
+    if (need === null || have === null || (suiteOut === 'pass' && have !== need)) suiteOut = 'unknown';
+    var out = [
+      'workflow report: available (' + r.tier + ')',
+      'real verified: no',
+      'selected result: ' + selOut + (selOut === 'unknown' ? '' : ' (' + p + ' passed, ' + f + ' failed, ' + i + ' incomplete)'),
+      pick(suite.scope, ['catalog', 'exploratory']) + ' acceptance: ' + suiteOut + (need === null || have === null ? '' : ' (' + have + ' of ' + need + ' required)')
+    ];
+    var refs = [];
+    r.cases.slice(0, 32).forEach(function (c) {
+      if (!isObj(c)) { out.push('case unknown'); return; }
+      var id = typeof c.caseId === 'string' && OPAQUE.test(c.caseId) ? c.caseId : 'unknown';
+      out.push('case ' + id + ': workflow ' + pick(c.workflowOutcome, ['COMPLETED', 'IMPLEMENTED_UNVERIFIED', 'FAILED', 'INCOMPLETE', 'waiting-approval', 'waiting-info', 'not-observed']) +
+        '; grade ' + pick(c.grade, ['pass', 'fail', 'not-run']) + ' (' + (typeof c.gradeReason === 'string' && OPAQUE.test(c.gradeReason) ? c.gradeReason : 'unknown') + ')' +
+        '; effects ' + pick(c.effects, ['none', 'observed', 'uncertain']) + '; usage ' + pick(c.usage, ['observed', 'uncertain', 'unavailable']));
+      if (typeof c.diagnostic === 'string' && c.diagnostic) out.push('diagnostic ' + id + ': ' + text1(c.diagnostic, 512));
+      (Array.isArray(c.artifacts) ? c.artifacts.slice(0, 16) : []).forEach(function (a) {
+        if (typeof a === 'string' && OPAQUE.test(a) && refs.indexOf(a) < 0 && refs.length < 16) refs.push(a);
+      });
+    });
+    if (r.cases.length > 32) out.push('additional items omitted');
+    if (refs.length) out.push('artifact refs: ' + refs.join(', '));
+    var joined = out.join('\\n');
+    return joined.length > 8192 ? [joined.slice(0, 8192), 'additional items omitted'] : out;
+  }
 
   function formatExperiment(view) {
     var out = [];
@@ -90,13 +148,87 @@ export const SCRIPT = `
     (view.submission ? view.submission.questions : []).forEach(function (q) {
       out.push('question ' + q.questionId + ': ' + q.text + ' [digest ' + q.questionDigest + ']');
     });
-    return out.join('\\n');
+    return out.concat(formatReport(view)).join('\\n');
   }
 
   function renderExperiment(view) {
     currentId = view.id;
     byId('experiment-id').value = view.id;
     show('experiment', formatExperiment(view));
+    renderClarification(view);
+  }
+
+  // A catalog task can pause on a generated graph clarification group (1-16 questions, no intake
+  // submission). Render it on demand through textContent only, one input per question in order.
+  var groupNode = null;
+  var groupKey = null;
+  var groupSent = null;
+  var groupVersion = 0;
+
+  function el(tag, text) {
+    var node = document.createElement(tag);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function clearGroup() {
+    if (groupNode && groupNode.parentNode) groupNode.parentNode.removeChild(groupNode);
+    groupNode = null;
+    groupKey = null;
+    groupSent = null;
+    // The group's retained key dies with the group: a later group must never replay it as a conflict.
+    keys.group = null;
+  }
+
+  function renderClarification(view) {
+    var c = view.workflowClarification;
+    var answered = isObj(c) && Array.isArray(view.answers) && view.answers.some(function (a) { return isObj(a) && a.questionId === c.questionId; });
+    if (answered || !isObj(c) || typeof c.questionId !== 'string' || typeof c.questionDigest !== 'string' ||
+        !Array.isArray(c.questions) || c.questions.length < 1 || c.questions.length > 16 ||
+        !c.questions.every(function (q) { return isObj(q); })) { clearGroup(); return; }
+    var key = view.id + '/' + c.questionId + '/' + c.questionDigest;
+    if (key === groupKey) { groupVersion = view.version; return; }
+    clearGroup();
+    var section = el('section');
+    section.appendChild(el('h2', 'Task questions'));
+    section.appendChild(el('p', 'Question group ' + text1(c.questionId, 128) + ' (digest ' + text1(c.questionDigest, 128) + '). Answers are reporter data; they never resume.'));
+    var inputs = [];
+    c.questions.forEach(function (q, index) {
+      var id = 'group-question-' + (index + 1);
+      var label = el('label', 'Question ' + (index + 1) + ': ' + text1(q.text, 512));
+      label.htmlFor = id;
+      var input = el('textarea');
+      input.id = id;
+      inputs.push(input);
+      section.appendChild(label);
+      section.appendChild(input);
+    });
+    var button = el('button', 'Submit group answers');
+    button.type = 'button';
+    // Answers bind to the group id/digest, in question order; a retained key covers this group
+    // until it is answered, and clearGroup retires it with the controls.
+    button.addEventListener('click', function () {
+      send(button, 'group', experimentPath('/answers'), function (key) {
+        // An uncertain retry replays its key's payload: the service fingerprints answers.
+        if (groupSent && groupSent.idempotencyKey === key) return groupSent;
+        groupSent = {
+          idempotencyKey: key,
+          questionId: c.questionId,
+          questionDigest: c.questionDigest,
+          expectedVersion: groupVersion,
+          answers: inputs.map(function (input) { return input.value; })
+        };
+        return groupSent;
+      }).then(function (out) {
+        // A late response for a superseded group must not remove the current group's controls or key.
+        if (out && out.status === 200 && groupKey === key) clearGroup();
+      });
+    });
+    section.appendChild(button);
+    document.body.appendChild(section);
+    groupNode = section;
+    groupKey = key;
+    groupVersion = view.version;
   }
 
   function stopPolling() {
@@ -230,6 +362,7 @@ export const SCRIPT = `
 
   byId('load-artifact').addEventListener('click', function () {
     var id = byId('artifact-id').value.trim();
+    if (!OPAQUE.test(id)) { show('artifact', 'artifact unavailable'); return; }
     api('GET', '/api/artifacts/' + encodeURIComponent(id), null).then(function (out) {
       show('artifact', out.data && out.data.ok ? out.data.result.mediaType + ' sha256:' + out.data.result.digest + '\\n' + out.data.result.text : describe(out));
     }, function () { show('artifact', 'artifact unavailable'); });

@@ -1760,6 +1760,8 @@ test('replan: plan rejection transitions state to AwaitFeedback and pauses witho
 
   assert.equal(res.outcome, 'AWAIT_FEEDBACK');
   assert.equal(res.state.node, 'AwaitFeedback');
+  assert.equal(res.state.activeDecisionId, state.plan?.decisionRef, 'Rejection retains the exact decision as a binding pointer');
+  assert.equal(res.state.plan?.decisionRef, state.plan?.decisionRef);
   assert.ok(res.reasons.some(r => r.includes('rejected') || r.includes('direction')));
 });
 
@@ -1893,7 +1895,7 @@ test('replan: rejection in AwaitFeedback requires explicit direction; feedback t
   );
   assert.equal(rejectionRes.outcome, 'AWAIT_FEEDBACK');
   assert.equal(rejectionRes.state.node, 'AwaitFeedback');
-  assert.equal(rejectionRes.state.activeDecisionId, undefined, 'Rejection must invalidate activeDecisionId');
+  assert.equal(rejectionRes.state.activeDecisionId, rejectionRes.state.plan?.decisionRef, 'The rejected decision remains a binding pointer, not approval');
 });
 
 test('replan: three sequential revisions persist through a public StatePort wrapper and the fourth stops', async () => {
@@ -2023,7 +2025,7 @@ test('replan: explicit bound revise direction prepares a new plan but never appr
   const { state: initial, task, plan } = createRepairStateFixture({ node: 'AwaitFeedback' });
   const rejectedDecisionId = plan.decisionRef;
   assert.ok(rejectedDecisionId);
-  const state: TaskState = { ...initial, stateVersion: initial.stateVersion + 1, activeDecisionId: undefined };
+  const state: TaskState = { ...initial, stateVersion: initial.stateVersion + 1, activeDecisionId: rejectedDecisionId };
   const proposalId = 'directed-replan';
   const trustedTransitionContext = createReplanTransitionContext(state, proposalId);
   const statePort = new MemoryStatePort({
@@ -2065,7 +2067,7 @@ test('replan: stale trusted direction cannot resume a newer paused plan', async 
   const { state: initial, task, plan } = createRepairStateFixture({ node: 'AwaitFeedback' });
   const rejectedDecisionId = plan.decisionRef;
   assert.ok(rejectedDecisionId);
-  const state: TaskState = { ...initial, stateVersion: initial.stateVersion + 1, activeDecisionId: undefined };
+  const state: TaskState = { ...initial, stateVersion: initial.stateVersion + 1, activeDecisionId: rejectedDecisionId };
   const proposalId = 'stale-directed-replan';
   const trustedTransitionContext = createReplanTransitionContext(state, proposalId);
   const memoryState = new MemoryStatePort({
@@ -2116,7 +2118,7 @@ test('replan: stale trusted direction cannot resume a newer paused plan', async 
 
 test('replan: malformed trusted direction cannot authorize a paused-plan transition', async () => {
   const { state: initial, task, plan } = createRepairStateFixture({ node: 'AwaitFeedback' });
-  const state: TaskState = { ...initial, activeDecisionId: undefined };
+  const state: TaskState = { ...initial, activeDecisionId: plan.decisionRef };
   const proposalId = 'malformed-direction-proposal';
   const trustedTransitionContext = createReplanTransitionContext(state, proposalId);
   const memoryState = new MemoryStatePort({

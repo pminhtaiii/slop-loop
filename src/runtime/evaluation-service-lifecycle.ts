@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { deepFreeze } from '../contracts/foundation/uc03/v02/admission/snapshot.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import { bindEvaluationSource, isAdmittedEvaluationProfile, type BoundSource, type EvaluationProfile } from './evaluation-profile.ts';
 import {
@@ -53,9 +54,18 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
     return ok(bound.value);
   };
 
-  const execute = async (experiment: ExperimentRecord): Promise<EvaluationGraphResult> => {
+  const execute = async (experiment: ExperimentRecord, direction: ServiceControlReceipt | null = null): Promise<EvaluationGraphResult> => {
     const ports = deps.graph.portsFor(Object.freeze({ experimentId: experiment.id, source: experiment.startedSource }));
-    return deps.graph.run(Object.freeze({ experimentId: experiment.id, source: experiment.startedSource, ports }));
+    return deps.graph.run(
+      Object.freeze({
+        experimentId: experiment.id,
+        source: experiment.startedSource,
+        ports,
+        priorState: experiment.task,
+        direction,
+        answers: Object.freeze([...experiment.answers]),
+      }),
+    );
   };
 
   const applyResult = (experiment: ExperimentRecord, result: EvaluationGraphResult): void => {
@@ -64,7 +74,22 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
     // Task identity comes from owner state only; a continuation never reallocates it.
     if (result.state !== null) experiment.task = Object.freeze({ taskId: result.state.taskId, runId: result.state.runId, workspaceId: result.state.workspaceId });
     if (result.usage !== undefined) experiment.usage = Object.freeze({ tokensConsumed: result.usage.tokensConsumed, costUsd: result.usage.costUsd });
-    if (result.state === null && TERMINAL.has(experiment.status)) activeId = activeId === experiment.id ? undefined : activeId;
+    if (result.workflowClarification !== undefined) {
+      const clarification = result.workflowClarification;
+      experiment.workflowClarification =
+        clarification === null
+          ? null
+          : Object.freeze({
+              questionId: clarification.questionId,
+              questionDigest: clarification.questionDigest,
+              questions: Object.freeze(clarification.questions.map(question => Object.freeze({ questionId: question.questionId, text: question.text }))),
+            });
+    }
+    // Detach and freeze once: neither the graph's retained report nor a returned view rewrites stored evidence.
+    // A result without a report has none: the previous execution's report is not the current one.
+    const report = result.workflowReport;
+    experiment.workflowReport = report == null ? null : deepFreeze(structuredClone(report));
+    if (TERMINAL.has(experiment.status)) activeId = activeId === experiment.id ? undefined : activeId;
   };
 
   return {
@@ -114,6 +139,8 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
         status: 'running',
         version: 1,
         usage: null,
+        workflowClarification: null,
+        workflowReport: null,
         answers: [],
         directions: [],
       };
@@ -158,18 +185,25 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
       if (!experiment) return fail('not-found', 'UNKNOWN_EXPERIMENT');
       if (experiment.version !== version) return fail('conflict', 'STALE_VERSION');
       const submission = experiment.submission;
-      if (!submission) return fail('conflict', 'NO_SUBMISSION');
-      const question = submission.questions.find(item => item.questionId === request['questionId']);
-      if (!question || question.questionDigest !== request['questionDigest']) return fail('conflict', 'UNKNOWN_QUESTION');
+      const currentClarification = experiment.workflowClarification;
+      const intakeQuestion = submission?.questions.find(item => item.questionId === request['questionId']);
+      const graphClarification =
+        currentClarification !== null && currentClarification.questionId === request['questionId'] && currentClarification.questionDigest === request['questionDigest']
+          ? currentClarification
+          : undefined;
+      const questionDigest = intakeQuestion?.questionDigest ?? graphClarification?.questionDigest;
+      if (questionDigest === undefined || questionDigest !== request['questionDigest']) return fail('conflict', submission || currentClarification ? 'UNKNOWN_QUESTION' : 'NO_SUBMISSION');
       const answers = request['answers'];
       if (!Array.isArray(answers) || answers.length === 0 || answers.length > 16 || answers.some(answer => textValue(answer, 1024) === undefined)) {
         return fail('invalid-input', 'INVALID_ANSWERS');
       }
+      if (graphClarification && answers.length !== graphClarification.questions.length) return fail('invalid-input', 'INVALID_ANSWERS');
+      if (experiment.answers.some(answer => answer.questionId === request['questionId'])) return fail('conflict', 'QUESTION_ALREADY_ANSWERED');
 
       // Reporter data only: answers never approve, resume or advance the task.
       experiment.answers = [
         ...experiment.answers,
-        Object.freeze({ questionId: question.questionId, questionDigest: question.questionDigest, answers: Object.freeze([...(answers as string[])]), recordedAt: now() }),
+        Object.freeze({ questionId: request['questionId'] as string, questionDigest, answers: Object.freeze([...(answers as string[])]), recordedAt: now() }),
       ];
       experiment.version += 1;
       const receipt = remember(key, fingerprint, {
@@ -276,7 +310,9 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
       if (!experiment.directions.some(receipt => receipt.receiptRef === directionRef)) return fail('conflict', 'UNKNOWN_DIRECTION');
 
       // Reload owner state; continuation preserves task identity and accumulated usage.
-      applyResult(experiment, await execute(experiment));
+      const direction = experiment.directions.find(receipt => receipt.receiptRef === directionRef);
+      if (!direction) return fail('conflict', 'UNKNOWN_DIRECTION');
+      applyResult(experiment, await execute(experiment, direction));
       const receipt = remember(key, fingerprint, {
         receiptId: `rcpt-continue-${experiment.id}-${experiment.version}`,
         kind: 'continue',

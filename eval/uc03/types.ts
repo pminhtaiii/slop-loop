@@ -122,6 +122,8 @@ export interface EvaluationGradingProfile {
 }
 
 export interface EvaluationGradingAdmissionRequest {
+  /** Present for a pinned independent criterion; omitted by legacy mock-grading callers. */
+  readonly checkId?: string;
   readonly finalSnapshot: EvaluationSnapshotIdentity;
   readonly profile: EvaluationGradingProfile;
   readonly executorId: string;
@@ -148,6 +150,7 @@ export interface EvaluationIsolationAuthority {
 }
 
 export interface MockPrivateGradingBoundary {
+  readonly checkId?: string;
   readonly finalSnapshot: EvaluationSnapshotIdentity;
   readonly profile: EvaluationGradingProfile;
   readonly graderPayload: unknown;
@@ -156,6 +159,7 @@ export interface MockPrivateGradingBoundary {
 }
 
 export interface SafeEvaluationGradingResult {
+  readonly checkId?: string;
   readonly finalSnapshot: EvaluationSnapshotIdentity;
   readonly profile: EvaluationGradingProfile;
   readonly executorId: string;

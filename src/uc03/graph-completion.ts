@@ -3,6 +3,7 @@ import {
   computeCheckSetDigest,
   type Baseline,
   type BugTask,
+  type ProviderRequest,
   type ReviewResult,
   type StateTransitionOptions,
   type TaskState,
@@ -18,13 +19,39 @@ import type { evaluateDeterministicCompletion, CompletionPredicateInput, Trusted
 import { buildFinalReport, type FinalReport } from './report.ts';
 import { samePaths } from './graph-validation.ts';
 import type { UC03GraphState } from './graph-state.ts';
-import type { UC03RepositoryAdmission } from './graph-types.ts';
+import type { UC03CompletionContextRequest, UC03CompletionContextResolver, UC03RepositoryAdmission } from './graph-types.ts';
 import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
 import { currentPlanApprovalIsCurrent } from './post-patch-verification-authority.ts';
 import { boundReviewEnabled, loadBoundReview } from './verification-review.ts';
 import type { UC03GraphConfig } from './graph-types.ts';
 
 type TrustedCompletion = NonNullable<NonNullable<StateTransitionOptions['trusted']>['completion']>;
+
+function detachedFrozen<T>(value: T): T {
+  const detached = structuredClone(value);
+  const freeze = (candidate: unknown): void => {
+    if (candidate === null || typeof candidate !== 'object' || Object.isFrozen(candidate) || ArrayBuffer.isView(candidate) || candidate instanceof ArrayBuffer) return;
+    for (const child of Object.values(candidate as Record<string, unknown>)) freeze(child);
+    Object.freeze(candidate);
+  };
+  freeze(detached);
+  return detached;
+}
+
+async function resolveTrustedCompletion(
+  resolver: UC03CompletionContextResolver | undefined,
+  compatibilityRecord: TrustedCompletion | undefined,
+  facts: UC03CompletionContextRequest,
+): Promise<TrustedCompletion | undefined> {
+  if (resolver === undefined) return compatibilityRecord;
+  if (typeof resolver !== 'function') return undefined;
+  try {
+    const record = await resolver(detachedFrozen(facts));
+    return record && typeof record === 'object' ? detachedFrozen(record) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type CompletionInputResult = { readonly ok: true; readonly input: CompletionPredicateInput } | { readonly ok: false; readonly reasons: readonly string[] };
 
@@ -35,16 +62,31 @@ export async function loadCompletionPredicateInput(args: {
   readonly verificationResults: readonly VerificationResult[] | undefined;
   readonly reviewResult: ReviewResult | undefined;
   readonly diffInfo: { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] };
-  readonly reviewRequest: { readonly reservationRef: string };
+  readonly reviewRequest: Pick<ProviderRequest, 'reservationRef'>;
   readonly patchAdmission: UC03RepositoryAdmission | undefined;
   readonly patchReceipt: RepositoryExecutionReceiptV02 | undefined;
   readonly hostAuthority: TrustedHostPort | undefined;
   readonly trustedExpectedContext: TrustedHostExpectedContext | undefined;
   readonly trustedCompletion: TrustedCompletion | undefined;
+  readonly completionContextFor?: UC03CompletionContextResolver | undefined;
   readonly boundReview?: UC03GraphConfig | undefined;
 }): Promise<CompletionInputResult> {
-  const { task, state, baseline, verificationResults, reviewResult, diffInfo, reviewRequest, patchAdmission, patchReceipt, hostAuthority, trustedExpectedContext, trustedCompletion } = args;
-  if (!baseline || !verificationResults?.length || !reviewResult || !trustedCompletion || !patchAdmission || !patchReceipt) {
+  const {
+    task,
+    state,
+    baseline,
+    verificationResults,
+    reviewResult,
+    diffInfo,
+    reviewRequest,
+    patchAdmission,
+    patchReceipt,
+    hostAuthority,
+    trustedExpectedContext,
+    trustedCompletion,
+    completionContextFor,
+  } = args;
+  if (!baseline || !verificationResults?.length || !reviewResult || (trustedCompletion === undefined && completionContextFor === undefined) || !patchAdmission || !patchReceipt) {
     return { ok: false, reasons: ['Independent baseline, verification, patch settlement, review, and completion authority are required'] };
   }
   if (!hostAuthority || !trustedExpectedContext || !hostContextMatchesTask(trustedExpectedContext, task, state)) {
@@ -127,7 +169,24 @@ export async function loadCompletionPredicateInput(args: {
     return { ok: false, reasons: [snapshotValidation.reason] };
   }
 
-  const review = trustedCompletion.review;
+  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
+  const ownerCompletion = await resolveTrustedCompletion(completionContextFor, trustedCompletion, {
+    task,
+    state,
+    baseline,
+    verificationResults,
+    reviewRequest,
+    reviewResult,
+    diffInfo: { diffDigest: diffInfo.diffDigest, changedFiles: [...diffInfo.changedFiles] },
+    patchAdmission,
+    patchReceipt,
+    checkSetDigest,
+    originalProtectedTestsDigest: baseline.testProtectionDigest,
+    protectedTestsDigest: snapshotValidation.testProtectionDigest,
+  });
+  if (!ownerCompletion) return { ok: false, reasons: ['Owner-provided completion context is unavailable for the current verified route'] };
+
+  const review = ownerCompletion.review;
   if (
     !review ||
     !('reviewerRoleConfigId' in review) ||
@@ -150,20 +209,19 @@ export async function loadCompletionPredicateInput(args: {
     status: review.status,
   };
   const currentProtectedTestsDigest = snapshotValidation.testProtectionDigest;
-  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
   if (
-    trustedCompletion.taskId !== task.taskId ||
-    trustedCompletion.runId !== state.runId ||
-    trustedCompletion.repositoryRevisionDigest !== state.repositoryRevisionDigest ||
-    trustedCompletion.diffDigest !== diffInfo.diffDigest ||
-    trustedCompletion.authorizedDiffDigest !== diffInfo.diffDigest ||
-    trustedCompletion.baselineRef !== baseline.evidenceId ||
-    trustedCompletion.criteriaDigest !== computeCanonicalSha256(task.acceptanceCriteria) ||
-    trustedCompletion.checkSetDigest !== checkSetDigest ||
-    trustedCompletion.originalProtectedTestsDigest !== baseline.testProtectionDigest ||
-    trustedCompletion.protectedTestsDigest !== currentProtectedTestsDigest ||
-    trustedCompletion.reviewerRoleConfigId !== reviewResult.reviewerRoleConfigId ||
-    trustedCompletion.reviewIterationReservationRef !== reviewRequest.reservationRef ||
+    ownerCompletion.taskId !== task.taskId ||
+    ownerCompletion.runId !== state.runId ||
+    ownerCompletion.repositoryRevisionDigest !== state.repositoryRevisionDigest ||
+    ownerCompletion.diffDigest !== diffInfo.diffDigest ||
+    ownerCompletion.authorizedDiffDigest !== diffInfo.diffDigest ||
+    ownerCompletion.baselineRef !== baseline.evidenceId ||
+    ownerCompletion.criteriaDigest !== computeCanonicalSha256(task.acceptanceCriteria) ||
+    ownerCompletion.checkSetDigest !== checkSetDigest ||
+    ownerCompletion.originalProtectedTestsDigest !== baseline.testProtectionDigest ||
+    ownerCompletion.protectedTestsDigest !== currentProtectedTestsDigest ||
+    ownerCompletion.reviewerRoleConfigId !== reviewResult.reviewerRoleConfigId ||
+    ownerCompletion.reviewIterationReservationRef !== reviewRequest.reservationRef ||
     !plan.baselineRef ||
     !plan.evidenceRefs.includes(plan.baselineRef) ||
     plan.checkSetDigest !== checkSetDigest ||
@@ -184,7 +242,7 @@ export async function loadCompletionPredicateInput(args: {
   ) {
     return { ok: false, reasons: ['Owner-provided completion evidence is stale or does not match the current route'] };
   }
-  if (!trustedChecksMatch(task, state, diffInfo.diffDigest, verificationResults, trustedCompletion.checks)) {
+  if (!trustedChecksMatch(task, state, diffInfo.diffDigest, verificationResults, ownerCompletion.checks)) {
     return { ok: false, reasons: ['Owner-provided verification receipts do not match the current passing checks'] };
   }
   if (!samePaths(diffInfo.changedFiles, state.changedPaths)) {
@@ -216,7 +274,7 @@ export async function loadCompletionPredicateInput(args: {
       originalProtectedTestsDigest: baseline.testProtectionDigest,
       currentProtectedTestsDigest,
       trustedReviewRecord,
-      authorizedDiffDigest: trustedCompletion.authorizedDiffDigest,
+      authorizedDiffDigest: ownerCompletion.authorizedDiffDigest,
       reviewContextRequired: boundReviewEnabled(args.boundReview),
       trustedReviewObservation: observation,
     },

@@ -1,6 +1,7 @@
 /** UC-03 workflow dependencies and configuration. */
 import type {
   ApprovalPort,
+  Baseline,
   BugTask,
   ClaimReceiptV02,
   FixPlan,
@@ -13,6 +14,7 @@ import type {
   RepositoryAdmissionTrustedContextV02,
   RepositoryPort,
   RepositoryPortV02,
+  RepositoryExecutionReceiptV02,
   ReviewResult,
   SourceEvidence,
   StatePort,
@@ -23,6 +25,16 @@ import type {
   TelemetryPort,
   VerificationResult,
 } from '../contracts/foundation/uc03.ts';
+import {
+  validateBaseline,
+  validateProviderRequest,
+  validateRepositoryAdmissionV02,
+  validateRepositoryExecutionReceiptV02,
+  validateReviewResult,
+  validateTaskState,
+  validateVerificationResult,
+} from '../contracts/foundation/uc03.ts';
+import { GraphRecursionError } from '@langchain/langgraph';
 import type { ExecutionGuardV02 } from '../foundation/execution-guard.ts';
 import type { CoderAgent, CoderBudget, UC03CoderAdmission } from './agent.ts';
 import type { MaterialReplanPortV02, UC03GraphGenerationV02 } from './graph-types-v02.ts';
@@ -36,6 +48,16 @@ import type { PreparedReviewContext } from '../uc06/context.ts';
 import type { ReviewContextV1, ReviewEvidencePortV1 } from '../contracts/review.ts';
 import type { DeepSeekReviewPrompt } from '../foundation/deepseek-transport.ts';
 import type { RuntimeReviewerOptions } from '../foundation/reviewer.ts';
+
+export const UC03_GRAPH_RECURSION_LIMIT = 25;
+
+export function graphRecursionLimit(requested?: number): number {
+  return requested !== undefined && Number.isSafeInteger(requested) && requested > 0 ? Math.min(requested, UC03_GRAPH_RECURSION_LIMIT) : UC03_GRAPH_RECURSION_LIMIT;
+}
+
+export function isGraphRecursionError(error: unknown): boolean {
+  return error instanceof GraphRecursionError;
+}
 
 export interface UC03GraphPorts {
   readonly statePort: StatePort | StatePortV02;
@@ -93,6 +115,28 @@ export interface UC03RepositoryAdmission {
   readonly trustedContext: RepositoryAdmissionTrustedContextV02;
 }
 
+export type UC03TrustedCompletion = NonNullable<NonNullable<StateTransitionOptions['trusted']>['completion']>;
+
+/** Exact validated workflow facts presented to the host completion authority. */
+export interface UC03CompletionContextRequest {
+  readonly task: BugTask;
+  readonly state: TaskState;
+  readonly baseline: Baseline;
+  readonly verificationResults: readonly VerificationResult[];
+  /** Only the persisted reservation ref survives TaskState-only review recovery. */
+  readonly reviewRequest: Pick<ProviderRequest, 'reservationRef'>;
+  readonly reviewResult: ReviewResult;
+  readonly diffInfo: Readonly<{ diffDigest: string; changedFiles: readonly string[] }>;
+  readonly patchAdmission: UC03RepositoryAdmission;
+  readonly patchReceipt: RepositoryExecutionReceiptV02;
+  readonly checkSetDigest: string;
+  readonly originalProtectedTestsDigest: string;
+  readonly protectedTestsDigest: string;
+}
+
+/** Host-owned lookup. Returned records still pass the complete shared completion validator. */
+export type UC03CompletionContextResolver = (request: UC03CompletionContextRequest) => UC03TrustedCompletion | undefined | Promise<UC03TrustedCompletion | undefined>;
+
 export interface UC03CoderAdmissionRequest {
   readonly task: BugTask;
   readonly state: TaskState;
@@ -117,11 +161,15 @@ export interface UC03GraphGeneration {
 
 export interface UC03GraphConfig {
   readonly mode?: 'development' | 'production' | 'controlled' | undefined;
+  /** Lower the project-owned 25-step ceiling for controlled checks; larger values are clamped. */
+  readonly recursionLimit?: number | undefined;
   readonly generation?: UC03GraphGeneration | undefined;
   readonly generationV02?: UC03GraphGenerationV02 | undefined;
   readonly trustedExpectedContext?: TrustedHostExpectedContext | undefined;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+  /** Live owner lookup takes precedence over the static compatibility record. */
+  readonly completionContextFor?: UC03CompletionContextResolver | undefined;
   readonly admissionContext?: UC03RepositoryAdmission | UC03PatchAdmissionResolver | undefined;
   readonly reviewerAdmission?: UC03ReviewerAdmission | UC03ReviewerAdmissionResolver | undefined;
   readonly reviewContext?: UC03ReviewContextResolver | undefined;
@@ -151,4 +199,66 @@ export interface UC03WorkflowResult {
   readonly reasons: readonly string[];
   readonly milestones: readonly Milestone[];
   readonly diagnostic?: EvaluationDiagnostic | undefined;
+  /** Host-only validated evidence; attached non-enumerably so CLI/report serialization omits it. */
+  readonly executionEvidence?: UC03ExecutionEvidence | undefined;
+}
+
+export interface UC03ExecutionEvidence {
+  readonly baseline?: Baseline | undefined;
+  readonly verificationResults?: readonly VerificationResult[] | undefined;
+  readonly reviewRequest?: ProviderRequest | undefined;
+  readonly reviewResult?: ReviewResult | undefined;
+  readonly patchAdmission?: UC03RepositoryAdmission | undefined;
+  readonly patchReceipt?: RepositoryExecutionReceiptV02 | undefined;
+  readonly finalState: TaskState | null;
+}
+
+function freezeProjection<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) freezeProjection(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/** Keep grader input on the host-held result object, outside JSON reports and spread copies. */
+export function attachUC03ExecutionEvidence(
+  result: UC03WorkflowResult,
+  raw: {
+    readonly baseline?: unknown;
+    readonly verificationResults?: unknown;
+    readonly reviewRequest?: unknown;
+    readonly reviewResult?: unknown;
+    readonly patchAdmission?: UC03RepositoryAdmission | undefined;
+    readonly patchReceipt?: unknown;
+    readonly finalState?: unknown;
+    readonly state?: unknown;
+  },
+): UC03WorkflowResult {
+  const baseline = raw.baseline === undefined ? undefined : validateBaseline(raw.baseline);
+  const verificationResults = Array.isArray(raw.verificationResults) ? raw.verificationResults.map(item => validateVerificationResult(item)) : undefined;
+  const reviewRequest = raw.reviewRequest === undefined ? undefined : validateProviderRequest(raw.reviewRequest);
+  const reviewResult = raw.reviewResult === undefined ? undefined : validateReviewResult(raw.reviewResult);
+  const patchAdmission = raw.patchAdmission ? validateRepositoryAdmissionV02(raw.patchAdmission.context, raw.patchAdmission.trustedContext) : undefined;
+  const patchReceipt = raw.patchReceipt === undefined || !patchAdmission?.ok ? undefined : validateRepositoryExecutionReceiptV02(raw.patchReceipt, patchAdmission.value);
+  const candidateState = raw.finalState === undefined ? raw.state : raw.finalState;
+  const finalState = candidateState === undefined || candidateState === null ? undefined : validateTaskState(candidateState);
+  // Validators may return their input (or retain its arrays), so detach the projection before freezing it.
+  const evidence = freezeProjection(
+    structuredClone({
+      ...(baseline?.ok ? { baseline: baseline.value } : {}),
+      ...(verificationResults?.every(item => item.ok) ? { verificationResults: verificationResults.map(item => item.value) } : {}),
+      ...(reviewRequest?.ok ? { reviewRequest: reviewRequest.value } : {}),
+      ...(reviewResult?.ok ? { reviewResult: reviewResult.value } : {}),
+      ...(patchAdmission?.ok && raw.patchAdmission
+        ? {
+            patchAdmission: { context: patchAdmission.value, trustedContext: structuredClone(raw.patchAdmission.trustedContext) },
+          }
+        : {}),
+      ...(patchReceipt?.ok ? { patchReceipt: patchReceipt.value } : {}),
+      finalState: finalState?.ok ? finalState.value : null,
+    }),
+  );
+  Object.defineProperty(result, 'executionEvidence', { value: evidence, enumerable: false, writable: false, configurable: false });
+  return result;
 }
