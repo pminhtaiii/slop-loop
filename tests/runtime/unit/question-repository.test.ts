@@ -10,7 +10,8 @@ import {
 } from '../../../src/foundation/repository-tools.ts';
 import { computeFileDigest } from '../../../src/foundation/docker-workspace-policy.ts';
 import { computeSourceManifestDigest } from '../../../src/foundation/question-repository-read.ts';
-import type { SourceManifestEntryV1, SourceSnapshotV1 } from '../../../src/contracts/questions/contracts.ts';
+import type { RepositoryBindingV1, SourceManifestEntryV1, SourceSnapshotV1 } from '../../../src/contracts/questions/contracts.ts';
+import { createQuestionRepositoryPort, type QuestionRepositoryReadPort } from '../../../src/questions/repository.ts';
 
 const DIGEST = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const binding = Object.freeze({ repositoryId: 'repo-1', workspaceId: 'ws-test', revisionDigest: DIGEST, policyDigest: DIGEST });
@@ -51,14 +52,8 @@ const questionLimits = Object.freeze({
   maxReturnedBytes: 1_024, maxCursors: 4, contextLinesBefore: 1, contextLinesAfter: 1,
 });
 
-interface QuestionTools {
-  listDirectory(request: { readonly path: string; readonly cursor?: string }, control: { readonly signal: AbortSignal; readonly deadlineEpochMs: number }): Promise<unknown>;
-  readSpan(request: { readonly path: string; readonly startLine: number; readonly endLine: number }, control: { readonly signal: AbortSignal; readonly deadlineEpochMs: number }): Promise<unknown>;
-  searchLiteral(request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string }, control: { readonly signal: AbortSignal; readonly deadlineEpochMs: number }): Promise<unknown>;
-}
-
-function questionTools(tools: ControlledRepositoryTools): QuestionTools {
-  return tools as unknown as QuestionTools;
+function questionTools(tools: ControlledRepositoryTools): QuestionRepositoryReadPort {
+  return tools as unknown as QuestionRepositoryReadPort;
 }
 
 function control(): { readonly signal: AbortSignal; readonly deadlineEpochMs: number } {
@@ -355,4 +350,72 @@ test('cancellation and expired deadlines stop before snapshot admission', async 
   const expired = await questionTools(fixture.tools).listDirectory({ path: '.' }, { signal: new AbortController().signal, deadlineEpochMs: Date.now() - 1 }) as { readonly status: string; readonly reasonCode?: string };
   assert.deepEqual(expired, { status: 'exhausted', reasonCode: 'deadline' });
   assert.equal(acquisitions, 0);
+});
+
+test('question repository exposes only four read and binding operations with an immutable captured binding', async () => {
+  const suppliedBinding: { repositoryId: string; workspaceId: string; revisionDigest: string; policyDigest: string } = { ...binding };
+  const checkedBindings: RepositoryBindingV1[] = [];
+  const bindingPort = {
+    checkBinding: async (expected: RepositoryBindingV1) => {
+      checkedBindings.push(expected);
+      return { status: 'ok', binding: expected };
+    },
+  };
+  const { tools } = makeTools({ bindingPort });
+  const port = createQuestionRepositoryPort({
+    binding: suppliedBinding,
+    reader: questionTools(tools),
+    bindingPort,
+  });
+
+  suppliedBinding.revisionDigest = 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+  assert.deepEqual(Reflect.ownKeys(port).sort(), ['checkBinding', 'listDirectory', 'readSpan', 'searchLiteral']);
+  assert.equal(Object.isFrozen(port), true);
+
+  const result = await port.checkBinding(control());
+  assert.deepEqual(result, { status: 'ok', binding });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.binding), true);
+  assert.equal(checkedBindings[0]?.revisionDigest, DIGEST);
+  assert.equal(Object.isFrozen(checkedBindings[0]), true);
+});
+
+test('question repository refuses forged cursors and returns stale when the bound revision changes', async () => {
+  const files = new Map<string, Uint8Array>([
+    ['a.py', Buffer.from('a')],
+    ['b.py', Buffer.from('b')],
+  ]);
+  let currentBinding: RepositoryBindingV1 = binding;
+  const bindingPort = {
+    checkBinding: async () => ({ status: 'ok', binding: currentBinding }),
+  };
+  const fixture = makeTools({ files, limits: { maxPageEntries: 1 }, bindingPort });
+  const port = createQuestionRepositoryPort({ binding, reader: questionTools(fixture.tools), bindingPort });
+
+  const forged = await port.listDirectory({ path: '.', cursor: 'forged-cursor-123456' }, control());
+  assert.deepEqual(forged, { status: 'invalid', reasonCode: 'invalid-cursor' });
+
+  const first = await port.listDirectory({ path: '.' }, control());
+  assert.equal(first.status, 'ok');
+  if (first.status !== 'ok' || first.nextCursor === undefined) assert.fail('expected a resumable first page');
+
+  currentBinding = { ...binding, revisionDigest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' };
+  const stale = await port.listDirectory({ path: '.', cursor: first.nextCursor }, control());
+  assert.deepEqual(stale, { status: 'stale', reasonCode: 'binding-mismatch' });
+});
+
+test('question repository keeps root selection host-owned and exposes no mutation or execution operations', async () => {
+  const { tools, reads } = makeTools();
+  const bindingPort = { checkBinding: async () => ({ status: 'ok', binding }) };
+  const port = createQuestionRepositoryPort({ binding, reader: questionTools(tools), bindingPort });
+
+  assert.equal('applyPatch' in port, false);
+  assert.equal('executeCommand' in port, false);
+  assert.deepEqual(await port.readSpan({ path: '../../outside.py', startLine: 1, endLine: 1 }, control()), {
+    status: 'invalid', reasonCode: 'invalid-request',
+  });
+  assert.deepEqual(await port.readSpan({ path: '.git/config', startLine: 1, endLine: 1 }, control()), {
+    status: 'denied', reasonCode: 'protected',
+  });
+  assert.deepEqual(reads, []);
 });
