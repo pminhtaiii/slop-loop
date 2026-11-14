@@ -151,7 +151,9 @@ test('replan: owner-committed state must bind to this task, run and one-step rep
     budgetLedgers: charged,
   };
   const committedPlan = committed.plan;
+  const taskContext = state.taskContext;
   assert.ok(committedPlan);
+  assert.ok(taskContext);
   const cases: readonly (readonly [string, Partial<TaskState>, string])[] = [
     ['bound', {}, 'REPLAN_PREPARED'],
     ['replanCount does not advance', { replanCount: 0 }, 'INCOMPLETE'],
@@ -166,8 +168,8 @@ test('replan: owner-committed state must bind to this task, run and one-step rep
     ['different workspace', { workspaceId: 'workspace-other' }, 'INCOMPLETE'],
     ['different repository', { repositoryId: 'repository-other' }, 'INCOMPLETE'],
     ['different repository revision', { repositoryRevisionDigest: 'revision-other' }, 'INCOMPLETE'],
-    ['different configuration id', { taskContext: { ...state.taskContext!, configId: 'config-other' } }, 'INCOMPLETE'],
-    ['different configuration version', { taskContext: { ...state.taskContext!, configVersion: 'config-version-other' } }, 'INCOMPLETE'],
+    ['different configuration id', { taskContext: { ...taskContext, configId: 'config-other' } }, 'INCOMPLETE'],
+    ['different configuration version', { taskContext: { ...taskContext, configVersion: 'config-version-other' } }, 'INCOMPLETE'],
   ];
   for (const [label, override, expected] of cases) {
     const statePort = new CountingPort({ initialTaskState: state });

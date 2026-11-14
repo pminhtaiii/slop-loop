@@ -882,7 +882,7 @@ test('generated fourth replan reaches the graph cap and refuses before owner cha
   Object.assign(readiness.ports, {
     replanPort: {
       provenance: 'mock' as const,
-      async accept(_request: MaterialReplanRequestV02) {
+      async accept() {
         ownerCalls += 1;
         return { outcome: 'denied' as const, reason: 'must-not-reach-owner-after-budget-cap' };
       },
