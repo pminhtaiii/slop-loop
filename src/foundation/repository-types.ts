@@ -16,10 +16,23 @@ import type { RepositoryDiffSourceOptions } from './repository-diff-types.ts';
 export type { RepositoryDiffSourceOptions };
 import type { QuestionIdentityV1, RepositoryBindingV1, RepositoryOperationLimitsV1 } from '../contracts/questions/contracts.ts';
 
+export interface QuestionRepositoryWork {
+  readonly scannedFiles?: number;
+  readonly scannedBytes?: number;
+  readonly returnedBytes?: number;
+}
+
+/** Shared admission for the entire operation. Charge before dispatching work. */
+export interface QuestionRepositoryWorkMeter {
+  remaining(key: keyof QuestionRepositoryWork): number;
+  charge(work: QuestionRepositoryWork): boolean;
+}
+
 /** Caller-owned cancellation and wall-clock deadline for one question repository operation. */
 export interface QuestionRepositoryOperationControl {
   readonly signal: AbortSignal;
   readonly deadlineEpochMs: number;
+  readonly work?: QuestionRepositoryWorkMeter;
 }
 
 /** Per-task source work ceilings plus finite per-operation and cursor bounds. */
@@ -34,6 +47,8 @@ export interface QuestionRepositoryReadLimits extends RepositoryOperationLimitsV
 
 /** The host rechecks current owner/repository binding around each snapshot operation. */
 export interface QuestionRepositoryBindingPort {
+  /** Checks the binding with all traversal charged to control.work before IO. */
+  checkBindingBounded?(expected: RepositoryBindingV1, control: QuestionRepositoryOperationControl & { readonly work: QuestionRepositoryWorkMeter }): Promise<unknown>;
   checkBinding(expected: RepositoryBindingV1, control: QuestionRepositoryOperationControl): Promise<unknown>;
 }
 
@@ -50,6 +65,12 @@ export interface TrustedQuestionRepositorySnapshotLease {
 
 /** Acquires a stable immutable source lease under the supplied finite admission limits. */
 export interface TrustedQuestionRepositorySnapshotPort {
+  /** Acquires the stable source while charging actual scan work before IO. */
+  acquireSnapshotBounded?(request: {
+    readonly binding: RepositoryBindingV1;
+    readonly admissionLimits: Readonly<{ maxFiles: number; maxBytes: number; maxElapsedMs: number }>;
+    readonly control: QuestionRepositoryOperationControl & { readonly work: QuestionRepositoryWorkMeter };
+  }): Promise<unknown>;
   acquireSnapshot(request: {
     readonly binding: RepositoryBindingV1;
     readonly admissionLimits: Readonly<{ maxFiles: number; maxBytes: number; maxElapsedMs: number }>;

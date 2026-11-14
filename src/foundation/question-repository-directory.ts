@@ -2,7 +2,18 @@ import { Buffer } from 'node:buffer';
 import type { DirectoryEntryV1, DirectoryPageV1 } from '../contracts/questions/contracts.ts';
 import type { QuestionRepositoryOperationControl, QuestionRepositoryReadLimits } from './repository-types.ts';
 import { validateDirectoryPage } from '../contracts/questions/validation.ts';
-import { activeControl, createCursorId, failure, isFailure, type AdmittedSnapshot, type CursorState, type DirectoryCursor, type ReturnedByteCounter } from './question-repository-primitives.ts';
+import {
+  activeControl,
+  commitOutputBytes,
+  createCursorId,
+  failure,
+  isFailure,
+  remainingOutputBytes,
+  type AdmittedSnapshot,
+  type CursorState,
+  type DirectoryCursor,
+  type ReturnedByteCounter,
+} from './question-repository-primitives.ts';
 import type { QuestionRepositorySnapshotReader } from './question-repository-snapshot.ts';
 
 export interface DirectoryOperationContext {
@@ -35,22 +46,41 @@ export async function listDirectoryGuarded(
 
   const page: DirectoryEntryV1[] = [];
   let outputBytes = 0;
+  let scanLimited = false;
   while (offset < entries.length && page.length < context.limits.maxPageEntries) {
     const entry = entries[offset];
     if (!entry) break;
-    const size = Buffer.byteLength(entry.path, 'utf8') + 24;
-    if (context.returnedBytes.value + outputBytes + size > context.limits.maxReturnedBytes) break;
+    const pathBytes = Buffer.byteLength(entry.path, 'utf8');
+    if (control.work && !control.work.charge({ scannedBytes: pathBytes })) {
+      scanLimited = true;
+      break;
+    }
+    const size = pathBytes + 24;
+    if (outputBytes + size > remainingOutputBytes(context.returnedBytes, context.limits, control)) break;
     page.push(entry);
     outputBytes += size;
     offset += 1;
   }
-  if (page.length === 0 && offset < entries.length) return failure('exhausted', 'output-limit');
+  if (page.length === 0 && offset < entries.length) return failure('exhausted', scanLimited ? 'scan-limit' : 'output-limit');
   const more = offset < entries.length;
-  let nextCursor: string | undefined;
-  if (more) {
-    if (context.cursors.size >= context.limits.maxCursors) return failure('exhausted', 'output-limit');
-    const id = createCursorId();
-    context.cursors.set(id, {
+  const after = await context.snapshotReader.checkBinding(control);
+  if (after) return after;
+  const resumable = more && !scanLimited;
+  if (resumable && context.cursors.size >= context.limits.maxCursors) return failure('exhausted', 'output-limit');
+  const nextCursor = resumable ? createCursorId() : undefined;
+  const result = {
+    status: 'ok',
+    path: request.path,
+    entries: page,
+    coverage: more ? 'partial' : 'complete',
+    omissionReasons: scanLimited ? ['scan-limit'] : [],
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+  } as const;
+  const validated = validateDirectoryPage(result, context.limits);
+  if (!validated.ok) return failure('unavailable', 'unsupported-adapter');
+  if (!commitOutputBytes(outputBytes, context.returnedBytes, context.limits, control)) return failure('exhausted', 'output-limit');
+  if (nextCursor !== undefined) {
+    context.cursors.set(nextCursor, {
       kind: 'directory',
       path: request.path,
       bindingDigest: admitted.bindingDigest,
@@ -60,21 +90,8 @@ export async function listDirectoryGuarded(
       offset,
       expiresAt: Date.now() + admitted.snapshot.admissionLimits.maxElapsedMs,
     });
-    nextCursor = id;
   }
-  context.returnedBytes.value += outputBytes;
-  const after = await context.snapshotReader.checkBinding(control);
-  if (after) return after;
-  const result = {
-    status: 'ok',
-    path: request.path,
-    entries: page,
-    coverage: more ? 'partial' : 'complete',
-    omissionReasons: [],
-    ...(nextCursor === undefined ? {} : { nextCursor }),
-  } as const;
-  const validated = validateDirectoryPage(result, context.limits);
-  return validated.ok ? validated.value : failure('unavailable', 'unsupported-adapter');
+  return validated.value;
 }
 
 function matchesSnapshot(state: DirectoryCursor, admitted: AdmittedSnapshot): boolean {

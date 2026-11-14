@@ -271,43 +271,35 @@ export function planSnapshotAdmission(profile: QuestionBudgetProfileV1): BudgetR
 export function planRepositoryOperation(profile: QuestionBudgetProfileV1, available: BudgetCounters, kind: 'list' | 'search' | 'read'): BudgetReservationPlanResultV1 {
   const counters = emptyCounters();
   counters['toolCalls'] = 1;
-  const work: QuestionBudgetWorkV1 = {};
+  const scannedFiles = available['scannedFiles'];
+  const scannedBytes = available['scannedBytes'];
+  if (scannedFiles <= 0 || scannedBytes <= 0) return denied('scan-limit');
+  counters['scannedFiles'] = scannedFiles;
+  counters['scannedBytes'] = scannedBytes;
+  const work = { scannedFiles, scannedBytes };
 
   if (kind === 'list') {
-    const pageBytes = BigInt(profile.repository.maxPageEntries) * BigInt(profile.repository.maxPathBytes);
+    const pageBytes = BigInt(profile.repository.maxPageEntries) * (BigInt(profile.repository.maxPathBytes) + 24n);
     const returnedBytes = Math.min(available['returnedBytes'], pageBytes > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(pageBytes));
     if (returnedBytes <= 0) return denied('output-limit');
     counters['returnedBytes'] = returnedBytes;
-    Object.assign(work, { returnedBytes });
-    return plan('repository-list', counters, work, available['elapsedMs']);
+    return plan('repository-list', counters, { ...work, returnedBytes }, available['elapsedMs']);
   }
 
   if (kind === 'read') {
-    const scannedFiles = Math.min(1, available['scannedFiles']);
-    const scannedBytes = Math.min(profile.repository.maxFileBytes, available['scannedBytes']);
-    const returnedBytes = Math.min(profile.repository.maxSpanBytes, available['returnedBytes']);
-    if (scannedFiles <= 0 || scannedBytes <= 0) return denied('scan-limit');
+    const maximumSpanBytes = BigInt(profile.repository.maxSpanBytes) + BigInt(profile.repository.maxPathBytes) + 128n;
+    const returnedBytes = maximumSpanBytes < BigInt(available['returnedBytes']) ? Number(maximumSpanBytes) : available['returnedBytes'];
     if (returnedBytes <= 0) return denied('output-limit');
-    counters['scannedFiles'] = scannedFiles;
-    counters['scannedBytes'] = scannedBytes;
     counters['returnedBytes'] = returnedBytes;
-    Object.assign(work, { scannedFiles, scannedBytes, returnedBytes });
-    return plan('repository-read', counters, work, available['elapsedMs']);
+    return plan('repository-read', counters, { ...work, returnedBytes }, available['elapsedMs']);
   }
-
-  const scannedFiles = available['scannedFiles'];
-  const scannedBytes = available['scannedBytes'];
-  const outputPerHit = BigInt(profile.repository.maxSpanBytes) + BigInt(profile.repository.maxPathBytes);
+  const outputPerHit = BigInt(profile.repository.maxSpanBytes) + BigInt(profile.repository.maxPathBytes) + 64n;
   const maximumHitsBytes = outputPerHit * BigInt(profile.repository.maxSearchHits);
   const boundedHitBytes = maximumHitsBytes > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(maximumHitsBytes);
   const returnedBytes = Math.min(available['returnedBytes'], boundedHitBytes);
-  if (scannedFiles <= 0 || scannedBytes <= 0) return denied('scan-limit');
   if (returnedBytes <= 0) return denied('output-limit');
-  counters['scannedFiles'] = scannedFiles;
-  counters['scannedBytes'] = scannedBytes;
   counters['returnedBytes'] = returnedBytes;
-  Object.assign(work, { scannedFiles, scannedBytes, returnedBytes });
-  return plan('repository-search', counters, work, available['elapsedMs']);
+  return plan('repository-search', counters, { ...work, returnedBytes }, available['elapsedMs']);
 }
 
 export function planFinalValidation(profile: QuestionBudgetProfileV1, available: BudgetCounters): BudgetReservationPlanResultV1 {
@@ -315,7 +307,9 @@ export function planFinalValidation(profile: QuestionBudgetProfileV1, available:
   const counters = emptyCounters();
   counters['toolCalls'] = 1;
   counters['finalBytes'] = profile.runtime.maxFinalBytes;
-  return plan('final-validation', counters, { finalBytes: profile.runtime.maxFinalBytes }, available['elapsedMs']);
+  counters['scannedFiles'] = available['scannedFiles'];
+  counters['scannedBytes'] = available['scannedBytes'];
+  return plan('final-validation', counters, maxWork(counters), available['elapsedMs']);
 }
 
 export function planSummary(available: BudgetCounters, projectedBytes: number): BudgetReservationPlanResultV1 {

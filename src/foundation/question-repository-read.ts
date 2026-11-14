@@ -7,6 +7,7 @@ import type { ExecutionGuardReadCapability, QuestionRepositoryOperationControl, 
 import type { QuestionRepositoryBindingPort, TrustedQuestionRepositorySnapshotPort } from './repository-types.ts';
 import {
   activeControl,
+  commitOutputBytes,
   createAdmittedSpan,
   decodeFile,
   failure,
@@ -74,7 +75,7 @@ export class QuestionRepositoryReader {
     if (isProtectedPath(request.path)) return failure('denied', 'protected');
     const path = request.path;
     const cursorId = request.cursor;
-    const safeControl = Object.freeze({ signal: control.signal, deadlineEpochMs: control.deadlineEpochMs });
+    const safeControl = copyControl(control);
     const stopped = activeControl(safeControl);
     if (stopped) return stopped;
     const cursor = this.getActiveCursor(cursorId);
@@ -117,7 +118,7 @@ export class QuestionRepositoryReader {
     }
     if (isProtectedPath(request.path)) return failure('denied', 'protected');
     const safeRequest = Object.freeze({ path: request.path, startLine: request.startLine, endLine: request.endLine });
-    const safeControl = Object.freeze({ signal: control.signal, deadlineEpochMs: control.deadlineEpochMs });
+    const safeControl = copyControl(control);
     return await this.mediate('read', safeRequest.path, undefined, safeControl, async () => await this.readSpanGuarded(safeRequest, safeControl));
   }
 
@@ -141,7 +142,7 @@ export class QuestionRepositoryReader {
     }
     if (request.pathPrefix !== undefined && isProtectedPath(request.pathPrefix)) return failure('denied', 'protected');
     const { query, pathPrefix, cursor: cursorId } = request;
-    const safeControl = Object.freeze({ signal: control.signal, deadlineEpochMs: control.deadlineEpochMs });
+    const safeControl = copyControl(control);
     const stopped = activeControl(safeControl);
     if (stopped) return stopped;
     const cursor = this.getActiveCursor(cursorId);
@@ -205,26 +206,24 @@ export class QuestionRepositoryReader {
     const requestedEnd = Math.min(request.endLine, lines.length);
     const startIndex = request.startLine - 1;
     let endIndex = Math.min(requestedEnd - 1, startIndex + (this.limits?.maxSpanLines ?? 1) - 1);
-    let excerpt = '';
+    let excerptBytes = 0;
     for (let candidate = startIndex; candidate <= endIndex; candidate += 1) {
       const line = lines[candidate];
       if (line === undefined) break;
-      const next = excerpt.length === 0 ? line : excerpt + '\n' + line;
-      if (Buffer.byteLength(next, 'utf8') > (this.limits?.maxSpanBytes ?? 0)) {
+      const nextBytes = excerptBytes + Buffer.byteLength(line, 'utf8') + (candidate === startIndex ? 0 : 1);
+      if (nextBytes > (this.limits?.maxSpanBytes ?? 0)) {
         if (candidate === startIndex) return failure('invalid', 'line-too-large');
         endIndex = candidate - 1;
         break;
       }
-      excerpt = next;
+      excerptBytes = nextBytes;
     }
-    if (excerpt.length === 0) return failure('invalid', 'out-of-range');
     const actualEnd = endIndex + 1;
     const truncated = actualEnd < requestedEnd;
     const span = createAdmittedSpan({
       identity: this.identity as QuestionIdentityV1,
       limits: this.limits as QuestionRepositoryReadLimits,
       admitted,
-      counter: this.returnedBytes,
       path: request.path,
       lines,
       startLine: request.startLine,
@@ -237,6 +236,8 @@ export class QuestionRepositoryReader {
     if (!result.ok) return failure('unavailable', 'unsupported-adapter');
     const after = await this.snapshotReader.checkBinding(control);
     if (after) return after;
+    const outputBytes = excerptBytes + Buffer.byteLength(request.path, 'utf8') + 128;
+    if (!commitOutputBytes(outputBytes, this.returnedBytes, this.limits as QuestionRepositoryReadLimits, control)) return failure('exhausted', 'output-limit');
     return result.value;
   }
 
@@ -269,4 +270,9 @@ export class QuestionRepositoryReader {
     }
     return cursor;
   }
+}
+
+function copyControl(control: QuestionRepositoryOperationControl): QuestionRepositoryOperationControl {
+  const { signal, deadlineEpochMs, work } = control;
+  return Object.freeze({ signal, deadlineEpochMs, ...(work === undefined ? {} : { work }) });
 }

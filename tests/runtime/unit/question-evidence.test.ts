@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { AdmittedSpanV1, QuestionBudgetProfileV1, RepositoryBindingV1, SourceManifestEntryV1, SourceSnapshotV1 } from '../../../src/contracts/questions/contracts.ts';
+import { QuestionRepositoryReader } from '../../../src/foundation/question-repository-read.ts';
+import type { QuestionRepositoryBindingPort, TrustedQuestionRepositorySnapshotPort } from '../../../src/foundation/repository-types.ts';
 import { computeFileDigest } from '../../../src/foundation/docker-workspace-policy.ts';
 import { computeSourceManifestDigest } from '../../../src/foundation/question-repository-primitives.ts';
 import { createQuestionBudgetLedger } from '../../../src/questions/budget.ts';
@@ -68,7 +70,7 @@ function profile(maxToolCalls = 5): QuestionBudgetProfileV1 {
   };
 }
 
-function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = {}, staleAfterChecks?: number, now?: () => number) {
+function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = {}, staleAfterChecks?: number, now?: () => number, finalBinding = binding) {
   let bindingChecks = 0;
   let reads = 0;
   const deadlines: number[] = [];
@@ -101,7 +103,10 @@ function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = 
     binding,
     reader,
     bindingPort: {
-      async checkBinding(_binding, operationControl) {
+      async checkBinding() {
+        throw new Error('Unexpected legacy binding check');
+      },
+      async checkBindingBounded(_binding, operationControl) {
         deadlines.push(operationControl.deadlineEpochMs);
         bindingChecks += 1;
         return staleAfterChecks !== undefined && bindingChecks > staleAfterChecks ? { status: 'stale' } : { status: 'ok', binding };
@@ -117,7 +122,13 @@ function makeFixture(maxToolCalls = 5, spanOverrides: Partial<AdmittedSpanV1> = 
   const registryResult = createQuestionEvidenceRegistry({
     identity,
     snapshot,
-    repository,
+    repository: {
+      ...repository,
+      async checkBinding(operationControl) {
+        const outcome = await repository.checkBinding(operationControl);
+        return outcome.status === 'ok' && bindingChecks > 1 ? { status: 'ok', binding: finalBinding } : outcome;
+      },
+    },
     budget: budgetResult.value,
     repositoryLimits: profile().repository,
   });
@@ -385,4 +396,133 @@ test('oversized rendered output is refused without final repository IO', async (
   assert.equal(fixture.bindingChecks(), 1);
   assert.equal(fixture.budget.snapshot().consumed.toolCalls, 1);
   assert.equal(fixture.budget.snapshot().reserved.finalBytes, 0);
+});
+
+test('a valid different final binding cannot deliver evidence issued for this run', async () => {
+  const current = makeFixture(5, {}, undefined, undefined, { ...binding, workspaceId: 'workspace-2' });
+  const read = await current.registry.readSpan({ path: SOURCE_PATH, startLine: 2, endLine: 3 }, control());
+  assert.equal(read.status, 'ok');
+  const result = await presentQuestionAnswer(
+    current.registry,
+    {
+      claims: [{ claimId: 'claim-1', text: 'A supported fact.', kind: 'observation', evidence: [{ evidenceId: read.span.evidenceId, range: read.span.range }] }],
+      limitations: [],
+    },
+    control(),
+  );
+  assert.deepEqual(result, { kind: 'stale-repository', reasonCode: 'binding-mismatch' });
+});
+
+function makeComposedFixture(maxScannedBytes: number, finalDigestBytes = 0) {
+  const effects = { snapshots: 0, opens: 0, digestScans: 0, acquisitionBytes: 0 };
+  let finalCheck = false;
+  const bindingPort: QuestionRepositoryBindingPort = {
+    async checkBinding() {
+      throw new Error('Unexpected legacy binding check');
+    },
+    async checkBindingBounded(expected, operationControl) {
+      if (finalCheck) {
+        if (!operationControl.work.charge({ scannedFiles: 1, scannedBytes: finalDigestBytes })) return { status: 'exhausted', reasonCode: 'scan-limit' };
+        effects.digestScans += 1;
+      }
+      return { status: 'ok', binding: expected };
+    },
+  };
+  const snapshotPort: TrustedQuestionRepositorySnapshotPort = {
+    async acquireSnapshot() {
+      throw new Error('Unexpected legacy acquisition');
+    },
+    async acquireSnapshotBounded({ admissionLimits, control: operationControl }) {
+      effects.acquisitionBytes = admissionLimits.maxBytes;
+      const acquisition = { scannedFiles: 1, scannedBytes: source.length };
+      if (acquisition.scannedBytes > admissionLimits.maxBytes || !operationControl.work.charge(acquisition)) {
+        return { status: 'exhausted', reasonCode: 'scan-limit' };
+      }
+      effects.snapshots += 1;
+      return {
+        snapshot: { ...snapshot, admissionLimits },
+        async readFile(_path: string, maxBytes: number) {
+          effects.opens += 1;
+          return source.length > maxBytes ? { status: 'oversized', scannedBytes: maxBytes + 1 } : { status: 'ok', bytes: source, scannedBytes: source.length };
+        },
+      };
+    },
+  };
+  const reader = new QuestionRepositoryReader({
+    identity,
+    limits: {
+      ...profile().repository,
+      maxScannedFiles: 100,
+      maxScannedBytes: 10_000,
+      maxReturnedBytes: 1_000,
+      maxCursors: 1,
+      contextLinesBefore: 1,
+      contextLinesAfter: 1,
+    },
+    guardCapability: {
+      provenance: 'mock',
+      capabilityId: 'guard-1',
+      workspaceId: binding.workspaceId,
+      taskId: identity.taskId,
+      async mediateRead(operation) {
+        return await operation.execute();
+      },
+    },
+    bindingPort,
+    snapshotPort,
+    checkReadHold() {
+      return undefined;
+    },
+    async checkPathContainment(path) {
+      return { resolvedPath: path };
+    },
+  });
+  const repository = createQuestionRepositoryPort({ binding, bindingPort, reader });
+  const options = profile();
+  const budget = createQuestionBudgetLedger(
+    { ...options, runtime: { ...options.runtime, maxScannedBytes } },
+    { pricing: { inputMicrosPerMillionTokens: 100_000, outputMicrosPerMillionTokens: 200_000 } },
+  );
+  assert.ok(budget.ok);
+  const registry = createQuestionEvidenceRegistry({ identity, snapshot, repository, budget: budget.value, repositoryLimits: options.repository });
+  assert.ok(registry.ok);
+  return {
+    registry: registry.value,
+    budget: budget.value,
+    effects,
+    enableFinalDigest: () => {
+      finalCheck = true;
+    },
+  };
+}
+
+test('a cold composed reader caps snapshot admission at the ledger scan budget', async () => {
+  const { registry, budget, effects } = makeComposedFixture(5);
+  assert.deepEqual(await registry.readSpan({ path: SOURCE_PATH, startLine: 2, endLine: 3 }, control()), { status: 'budget-exhausted', reasonCode: 'scan-limit' });
+  assert.deepEqual(effects, { snapshots: 0, opens: 0, digestScans: 0, acquisitionBytes: 5 });
+  assert.equal(budget.snapshot().consumed.scannedBytes, 0);
+});
+
+test('final validation cannot start a composed binding digest beyond the remaining scan budget', async () => {
+  const fixture = makeComposedFixture(250, 100);
+  const read = await fixture.registry.readSpan({ path: SOURCE_PATH, startLine: 2, endLine: 3 }, control());
+  assert.equal(read.status, 'ok');
+  assert.equal(fixture.effects.opens, 1);
+  const sourceReadBytes = source.length * 3 + Buffer.byteLength(SOURCE_PATH, 'utf8') * 3 + sourceDigest.length;
+  assert.equal(fixture.budget.snapshot().consumed.scannedFiles, 3);
+  assert.equal(fixture.budget.snapshot().consumed.scannedBytes, sourceReadBytes);
+  assert.equal(fixture.budget.snapshot().consumed.returnedBytes, Buffer.byteLength('two\nthree') + Buffer.byteLength(SOURCE_PATH) + 128);
+  fixture.enableFinalDigest();
+  const result = await presentQuestionAnswer(
+    fixture.registry,
+    {
+      claims: [{ claimId: 'claim-1', text: 'A supported fact.', kind: 'observation', evidence: [{ evidenceId: read.span.evidenceId, range: read.span.range }] }],
+      limitations: [],
+    },
+    control(),
+  );
+  assert.deepEqual(result, { kind: 'budget-exhausted', reasonCode: 'scan-limit' });
+  assert.equal(fixture.budget.snapshot().status, 'exhausted');
+  assert.equal(fixture.effects.digestScans, 0);
+  assert.equal(fixture.budget.snapshot().consumed.scannedBytes, sourceReadBytes);
 });

@@ -50,9 +50,12 @@ export function createQuestionRepositoryPort(options: CreateQuestionRepositoryPo
     if (typeof bindingPort?.checkBinding !== 'function') return unavailable('unsupported-adapter');
 
     const safeControl = Object.freeze({ signal: control.signal, deadlineEpochMs: control.deadlineEpochMs });
+    const work = control.work;
+    if (work && typeof bindingPort.checkBindingBounded !== 'function') return unavailable('unsupported-adapter');
+    if (work && (work.remaining('scannedFiles') <= 0 || work.remaining('scannedBytes') <= 0)) return Object.freeze({ status: 'exhausted', reasonCode: 'scan-limit' });
     let result: unknown;
     try {
-      result = await bindingPort.checkBinding(expected, safeControl);
+      result = work ? await bindingPort.checkBindingBounded?.(expected, Object.freeze({ ...safeControl, work })) : await bindingPort.checkBinding(expected, safeControl);
     } catch {
       return unavailable('unreadable');
     }
@@ -60,6 +63,7 @@ export function createQuestionRepositoryPort(options: CreateQuestionRepositoryPo
     const stoppedAfterCheck = activeFailure(safeControl);
     if (stoppedAfterCheck) return stoppedAfterCheck;
     if (!isRecord(result) || typeof result['status'] !== 'string') return unavailable('unsupported-adapter');
+    if (result['status'] === 'exhausted' && result['reasonCode'] === 'scan-limit') return Object.freeze({ status: 'exhausted', reasonCode: 'scan-limit' });
     if (result['status'] === 'stale') return staleBinding();
     if (result['status'] === 'denied') return deniedRead();
     if (result['status'] === 'unavailable') return unavailable('unsupported-adapter');

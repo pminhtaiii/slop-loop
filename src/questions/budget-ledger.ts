@@ -13,6 +13,7 @@ import {
   emptyCounters,
   fitsCounters,
   freezeCounters,
+  isRecord,
   maxWork,
   planClarification,
   planFinalValidation,
@@ -100,7 +101,10 @@ export type QuestionBudgetRefusalCodeV1 =
 export type QuestionBudgetOperationKindV1 =
   'snapshot-admission' | 'repository-list' | 'repository-search' | 'repository-read' | 'retrieval-index' | 'retrieval-query' | 'model-call' | 'final-validation' | 'summary' | 'clarification';
 
-export type QuestionBudgetAccountingReceiptV1 = { readonly kind: 'work'; readonly work: unknown } | { readonly kind: 'model-usage'; readonly usage: unknown };
+export type QuestionBudgetAccountingReceiptV1 =
+  | { readonly kind: 'work'; readonly work: unknown }
+  | { readonly kind: 'work-exhausted'; readonly work: unknown; readonly reasonCode: 'scan-limit' | 'output-limit' | 'elapsed-deadline' }
+  | { readonly kind: 'model-usage'; readonly usage: unknown };
 
 export interface QuestionBudgetExecutionContextV1 {
   readonly signal: AbortSignal;
@@ -124,7 +128,6 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   private activeReservationId: string | undefined;
   private readonly reservations = new Map<string, InternalReservation>();
 
-  /** @internal Instantiate through createQuestionBudgetLedger in the public entry module. */
   public constructor(profile: QuestionBudgetProfileV1, pricing: QuestionBudgetPricingV1, now: () => number) {
     this.profile = profile;
     this.pricing = pricing;
@@ -257,7 +260,12 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
       this.ignoreLate(internal);
       return { ok: false, reasonCode: this.terminalReason ?? 'cancelled' };
     }
-    const settlement = settleBudgetReceipt(receipt, internal.kind, internal.maximumWork, internal.reservedCounters, internal.maximumInputTokens, internal.maximumOutputTokens, this.pricing);
+    const terminalWork =
+      isRecord(receipt) && receipt['kind'] === 'work-exhausted' && (receipt['reasonCode'] === 'scan-limit' || receipt['reasonCode'] === 'output-limit' || receipt['reasonCode'] === 'elapsed-deadline')
+        ? receipt['reasonCode']
+        : undefined;
+    const accounting = terminalWork && isRecord(receipt) ? { kind: 'work', work: receipt['work'] } : receipt;
+    const settlement = settleBudgetReceipt(accounting, internal.kind, internal.maximumWork, internal.reservedCounters, internal.maximumInputTokens, internal.maximumOutputTokens, this.pricing);
     if (!settlement.ok) {
       this.hold(internal, 'accounting-unknown');
       return { ok: false, reasonCode: settlement.reasonCode };
@@ -269,7 +277,10 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     }
     settlement.counters['elapsedMs'] = elapsedMs;
     if (internal.kind.startsWith('repository-') || internal.kind === 'final-validation') settlement.counters['toolCalls'] = 1;
-    return this.settleCounters(internal, settlement.counters);
+    const settled = this.settleCounters(internal, settlement.counters);
+    if (!settled.ok || terminalWork === undefined) return settled;
+    this.exhaust(terminalWork);
+    return { ok: false, reasonCode: terminalWork };
   }
 
   private settleCounters(internal: InternalReservation, actual: BudgetCounters): QuestionBudgetExecutionResultV1<undefined> {
@@ -436,7 +447,6 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   }
 }
 
-/** Validates the full profile, including repository and retrieval limits, before a ledger exists. */
 /** @internal Instantiates the ledger after the public entry point validates configuration. */
 export function createQuestionBudgetLedgerEngine(profile: QuestionBudgetProfileV1, pricing: QuestionBudgetPricingV1, now: () => number): QuestionBudgetLedgerPortV1 {
   return new BudgetLedgerEngine(profile, pricing, now);

@@ -7,6 +7,7 @@ import { containsProtectedContent } from './docker-workspace-policy.ts';
 import {
   activeControl,
   addOmission,
+  commitOutputBytes,
   createAdmittedSpan,
   createCursorId,
   decodeFile,
@@ -14,6 +15,7 @@ import {
   isFailure,
   lineArray,
   pathWithinPrefix,
+  remainingOutputBytes,
   type AdmittedSnapshot,
   type CursorState,
   type ReturnedByteCounter,
@@ -83,7 +85,7 @@ export async function searchLiteralGuarded(
           } else {
             const hit: SearchHitV1 = Object.freeze({ span, line: lineIndex + 1, column: columnIndex + 1, matchLength: request.query.length });
             const byteCost = Buffer.byteLength(span.excerpt, 'utf8') + Buffer.byteLength(span.path, 'utf8') + 64;
-            if (context.returnedBytes.value + outputBytes + byteCost > context.limits.maxReturnedBytes) {
+            if (outputBytes + byteCost > remainingOutputBytes(context.returnedBytes, context.limits, control)) {
               stopped = failure('exhausted', 'output-limit');
               break;
             }
@@ -102,7 +104,6 @@ export async function searchLiteralGuarded(
         break;
       }
       fileState = undefined;
-      manifestIndex += 1;
       continue;
     }
 
@@ -146,6 +147,8 @@ export async function searchLiteralGuarded(
   if (stopped?.status === 'exhausted') addOmission(omissions, stopped.reasonCode === 'output-limit' ? 'output-limit' : 'scan-limit');
 
   const hasMore = fileState !== undefined || (admitted.pathIndex[manifestIndex] !== undefined && (prefix === undefined || pathWithinPrefix(admitted.pathIndex[manifestIndex] ?? '', prefix)));
+  const after = await context.snapshotReader.checkBinding(control);
+  if (after) return after;
   let nextCursor: string | undefined;
   if (hasMore && !stopped && !omissions.includes('scan-limit') && !omissions.includes('output-limit')) {
     if (context.cursors.size >= context.limits.maxCursors) {
@@ -153,24 +156,8 @@ export async function searchLiteralGuarded(
       addOmission(omissions, 'output-limit');
     } else {
       nextCursor = createCursorId();
-      context.cursors.set(nextCursor, {
-        kind: 'search',
-        query: request.query,
-        pathPrefix: prefix,
-        bindingDigest: admitted.bindingDigest,
-        snapshotId: admitted.snapshot.snapshotId,
-        manifestDigest: admitted.snapshot.manifestDigest,
-        nextManifestIndex: manifestIndex,
-        currentFile: fileState,
-        omissionReasons: Object.freeze([...omissions]),
-        expiresAt: Date.now() + admitted.snapshot.admissionLimits.maxElapsedMs,
-      });
     }
   }
-  if (stopped?.status === 'exhausted' && stopped.reasonCode === 'scan-limit') addOmission(omissions, 'scan-limit');
-  context.returnedBytes.value += outputBytes;
-  const after = await context.snapshotReader.checkBinding(control);
-  if (after) return after;
   const complete = !hasMore && omissions.length === 0;
   const result = {
     status: 'ok',
@@ -180,7 +167,23 @@ export async function searchLiteralGuarded(
     ...(nextCursor === undefined ? {} : { nextCursor }),
   } as const;
   const validated = validateSearchPage(result, context.limits);
-  return validated.ok ? validated.value : failure('unavailable', 'unsupported-adapter');
+  if (!validated.ok) return failure('unavailable', 'unsupported-adapter');
+  if (!commitOutputBytes(outputBytes, context.returnedBytes, context.limits, control)) return failure('exhausted', 'output-limit');
+  if (nextCursor !== undefined) {
+    context.cursors.set(nextCursor, {
+      kind: 'search',
+      query: request.query,
+      pathPrefix: prefix,
+      bindingDigest: admitted.bindingDigest,
+      snapshotId: admitted.snapshot.snapshotId,
+      manifestDigest: admitted.snapshot.manifestDigest,
+      nextManifestIndex: manifestIndex,
+      currentFile: fileState,
+      omissionReasons: Object.freeze([...omissions]),
+      expiresAt: Date.now() + admitted.snapshot.admissionLimits.maxElapsedMs,
+    });
+  }
+  return validated.value;
 }
 
 function firstManifestIndex(admitted: AdmittedSnapshot, prefix: string | undefined): number {
@@ -215,13 +218,11 @@ function searchContextSpan(context: SearchOperationContext, admitted: AdmittedSn
     identity: context.identity,
     limits,
     admitted,
-    counter: context.returnedBytes,
     path: file.path,
     lines: file.lines,
     startLine,
     endLine,
     originalByteDigest: file.digest,
     truncated: false,
-    countOutput: false,
   });
 }

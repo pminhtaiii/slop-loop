@@ -74,7 +74,7 @@ export class QuestionRepositorySnapshotReader {
     this.admissionPromise = this.acquireSnapshot(control);
     const result = await this.admissionPromise;
     this.admissionPromise = undefined;
-    if (result) this.admissionFailure = result;
+    if (result && !(control.work && result.status === 'exhausted')) this.admissionFailure = result;
     return result ?? this.admittedSnapshot ?? failure('unavailable', 'unsupported-adapter');
   }
 
@@ -84,16 +84,20 @@ export class QuestionRepositorySnapshotReader {
     if (!expected || !port || typeof port.checkBinding !== 'function') return failure('unavailable', 'unsupported-adapter');
     const active = activeControl(control);
     if (active) return active;
+    const work = control.work;
+    if (work && typeof port.checkBindingBounded !== 'function') return failure('unavailable', 'unsupported-adapter');
+    if (work && (work.remaining('scannedFiles') <= 0 || work.remaining('scannedBytes') <= 0)) return failure('exhausted', 'scan-limit');
     this.checkReadHold();
     let result: unknown;
     try {
-      result = await port.checkBinding(expected, control);
+      result = work ? await port.checkBindingBounded?.(expected, { ...control, work }) : await port.checkBinding(expected, control);
     } catch (error: unknown) {
       return safeExceptionFailure(error);
     }
     const after = activeControl(control);
     if (after) return after;
     if (!isRecord(result) || typeof result['status'] !== 'string') return failure('unavailable', 'unsupported-adapter');
+    if (result['status'] === 'exhausted' && result['reasonCode'] === 'scan-limit') return failure('exhausted', 'scan-limit');
     if (result['status'] === 'stale') return failure('stale', 'binding-mismatch');
     if (result['status'] === 'denied') return failure('denied', 'read-not-authorized');
     if (result['status'] === 'unavailable') return failure('unavailable', 'unsupported-adapter');
@@ -112,6 +116,7 @@ export class QuestionRepositorySnapshotReader {
 
   async checkDirectoryPath(path: string, control: QuestionRepositoryOperationControl): Promise<ToolFailure | undefined> {
     if (path === '.') return undefined;
+    if (control.work && !control.work.charge({ scannedBytes: Buffer.byteLength(path, 'utf8') })) return failure('exhausted', 'scan-limit');
     const active = activeControl(control);
     if (active) return active;
     try {
@@ -129,12 +134,16 @@ export class QuestionRepositorySnapshotReader {
     if (!expected) return failure('denied', 'outside-scope');
     const before = activeControl(control);
     if (before) return before;
-    if (this.scannedFiles >= limits.maxScannedFiles || this.scannedBytes >= limits.maxScannedBytes) {
+    const work = control.work;
+    const remainingFiles = () => Math.min(limits.maxScannedFiles - this.scannedFiles, work?.remaining('scannedFiles') ?? Infinity);
+    const availableBytes = () => Math.min(limits.maxScannedBytes - this.scannedBytes - this.reservedScanBytes, work?.remaining('scannedBytes') ?? Infinity);
+    if (remainingFiles() < 1 || availableBytes() < 2) {
       return failure('exhausted', 'scan-limit');
     }
     this.checkReadHold();
     const bindingBefore = await this.checkBinding(control);
     if (bindingBefore) return bindingBefore;
+    if (work && !work.charge({ scannedBytes: 2 * Buffer.byteLength(path, 'utf8') })) return failure('exhausted', 'scan-limit');
     let prePath: { readonly resolvedPath: string };
     try {
       prePath = await this.checkPathContainment(path, control);
@@ -146,19 +155,24 @@ export class QuestionRepositorySnapshotReader {
     const bindingAfterContainment = await this.checkBinding(control);
     if (bindingAfterContainment) return bindingAfterContainment;
     this.checkReadHold();
-    const remainingBytes = limits.maxScannedBytes - this.scannedBytes - this.reservedScanBytes;
-    if (this.scannedFiles >= limits.maxScannedFiles || remainingBytes < 2) return failure('exhausted', 'scan-limit');
+    const remainingBytes = availableBytes();
+    if (remainingFiles() < 1 || remainingBytes < 2) return failure('exhausted', 'scan-limit');
     // A bounded read can consume one extra byte to detect overflow.
     const maxReadBytes = Math.min(limits.maxFileBytes, remainingBytes - 1);
     const reservation = maxReadBytes + 1;
     const oversized = maxReadBytes < limits.maxFileBytes ? failure('exhausted', 'scan-limit') : failure('unavailable', 'oversized');
+    if (work && !work.charge({ scannedFiles: 1 })) return failure('exhausted', 'scan-limit');
     this.scannedFiles += 1;
     this.reservedScanBytes += reservation;
+    const settleBytes = (bytes: number) => {
+      this.scannedBytes += bytes;
+      return !work || work.charge({ scannedBytes: bytes });
+    };
     let input: unknown;
     try {
       input = await admitted.readFile(path, maxReadBytes, control);
     } catch (error: unknown) {
-      this.scannedBytes += reservation;
+      if (!settleBytes(reservation)) return failure('exhausted', 'scan-limit');
       const mapped = safeExceptionFailure(error);
       if (mapped.status === 'exhausted' || mapped.status === 'cancelled') return mapped;
       if (mapped.status === 'unavailable' && mapped.reasonCode === 'oversized') return oversized;
@@ -168,13 +182,14 @@ export class QuestionRepositorySnapshotReader {
     }
     const afterRead = activeControl(control);
     if (!validReadFileResult(input) || input.scannedBytes > reservation || (input.status === 'oversized' && input.scannedBytes !== reservation)) {
-      this.scannedBytes += reservation;
+      if (!settleBytes(reservation)) return failure('exhausted', 'scan-limit');
       return afterRead ?? failure('unavailable', 'unsupported-adapter');
     }
-    this.scannedBytes += input.scannedBytes;
+    if (!settleBytes(input.scannedBytes)) return failure('exhausted', 'scan-limit');
     if (afterRead) return afterRead;
     if (input.status !== 'ok') return input.status === 'oversized' ? oversized : failure('unavailable', 'unreadable');
     if (input.scannedBytes > maxReadBytes) return oversized;
+    if (work && !work.charge({ scannedBytes: input.scannedBytes })) return failure('exhausted', 'scan-limit');
     const ownedBytes = Buffer.from(input.bytes);
     if (computeFileDigest(ownedBytes) !== expected.originalByteDigest) return failure('stale', 'source-mismatch');
     const bindingAfterRead = await this.checkBinding(control);
@@ -198,27 +213,34 @@ export class QuestionRepositorySnapshotReader {
     if (!binding || !limits || !port || typeof port.acquireSnapshot !== 'function') return failure('unavailable', 'unsupported-adapter');
     const before = activeControl(control);
     if (before) return before;
+    const work = control.work;
+    if (work && typeof port.acquireSnapshotBounded !== 'function') return failure('unavailable', 'unsupported-adapter');
+    if (work && (work.remaining('scannedFiles') <= 0 || work.remaining('scannedBytes') <= 0)) return failure('exhausted', 'scan-limit');
     const bindingFailure = await this.checkBinding(control);
     if (bindingFailure) return bindingFailure;
     const startedAt = Date.now();
     const requestedMaxElapsedMs = Math.max(1, control.deadlineEpochMs - startedAt);
+    const admissionLimits = Object.freeze({
+      maxFiles: Math.min(limits.maxScannedFiles - this.scannedFiles, work?.remaining('scannedFiles') ?? Infinity),
+      maxBytes: Math.min(limits.maxScannedBytes - this.scannedBytes, work?.remaining('scannedBytes') ?? Infinity),
+      maxElapsedMs: requestedMaxElapsedMs,
+    });
+    if (admissionLimits.maxFiles <= 0 || admissionLimits.maxBytes <= 0) return failure('exhausted', 'scan-limit');
     let leaseValue: unknown;
     try {
-      leaseValue = await port.acquireSnapshot({
-        binding,
-        admissionLimits: { maxFiles: limits.maxScannedFiles, maxBytes: limits.maxScannedBytes, maxElapsedMs: requestedMaxElapsedMs },
-        control,
-      });
+      leaseValue = work ? await port.acquireSnapshotBounded?.({ binding, admissionLimits, control: { ...control, work } }) : await port.acquireSnapshot({ binding, admissionLimits, control });
     } catch (error: unknown) {
       return safeExceptionFailure(error);
     }
     const afterAcquire = activeControl(control);
     if (afterAcquire) return afterAcquire;
     if (Date.now() - startedAt > Math.max(1, control.deadlineEpochMs - startedAt)) return failure('exhausted', 'deadline');
+    if (isRecord(leaseValue) && leaseValue['status'] === 'exhausted' && leaseValue['reasonCode'] === 'scan-limit') return failure('exhausted', 'scan-limit');
     if (!isRecord(leaseValue) || !isRecord(leaseValue['snapshot']) || typeof leaseValue['readFile'] !== 'function') return failure('unavailable', 'unsupported-adapter');
     const lease = leaseValue as unknown as TrustedQuestionRepositorySnapshotLease;
     if (!isRecord(lease.snapshot) || !Array.isArray(lease.snapshot['manifest'])) return failure('unavailable', 'unsupported-adapter');
     const rawManifest = lease.snapshot['manifest'];
+    if (work && rawManifest.length > work.remaining('scannedFiles')) return failure('exhausted', 'scan-limit');
     if (rawManifest.length > limits.maxScannedFiles - this.scannedFiles) {
       this.scannedFiles = limits.maxScannedFiles;
       return failure('exhausted', 'scan-limit');
@@ -236,6 +258,7 @@ export class QuestionRepositorySnapshotReader {
         return failure('unavailable', 'unsupported-adapter');
       }
       const metadataBytes = Buffer.byteLength(rawEntry['path'], 'utf8') + Buffer.byteLength(rawEntry['originalByteDigest'], 'utf8');
+      if (work && !work.charge({ scannedFiles: 1, scannedBytes: metadataBytes })) return failure('exhausted', 'scan-limit');
       this.scannedFiles += 1;
       if (this.scannedBytes + metadataBytes > limits.maxScannedBytes) {
         this.scannedBytes = limits.maxScannedBytes;
@@ -247,7 +270,7 @@ export class QuestionRepositorySnapshotReader {
     if (!validatedSnapshot.ok) return failure('unavailable', 'unsupported-adapter');
     const snapshot = validatedSnapshot.value;
     if (!sameBinding(snapshot.binding, binding)) return failure('stale', 'binding-mismatch');
-    if (snapshot.admissionLimits.maxFiles > limits.maxScannedFiles || snapshot.admissionLimits.maxBytes > limits.maxScannedBytes || snapshot.admissionLimits.maxElapsedMs > requestedMaxElapsedMs)
+    if (snapshot.admissionLimits.maxFiles > admissionLimits.maxFiles || snapshot.admissionLimits.maxBytes > admissionLimits.maxBytes || snapshot.admissionLimits.maxElapsedMs > requestedMaxElapsedMs)
       return failure('unavailable', 'unsupported-adapter');
     if (Date.now() - startedAt > snapshot.admissionLimits.maxElapsedMs) return failure('exhausted', 'deadline');
     let previousPath = '';

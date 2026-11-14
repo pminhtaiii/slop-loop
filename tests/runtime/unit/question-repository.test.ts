@@ -162,6 +162,22 @@ test('readSpan returns normalized whole lines from the trusted snapshot and clam
   assert.ok(typeof spanResult.span['evidenceId'] === 'string');
 });
 
+test('readSpan admits blank lines and counts the separator before the next line', async () => {
+  const { tools } = makeTools({ files: new Map([['blank.py', Buffer.from('\r\nabc\r\n')]]), limits: { maxSpanBytes: 3 } });
+  const reader = questionTools(tools);
+  for (const [endLine, truncation] of [
+    [1, { kind: 'none' }],
+    [2, { kind: 'truncated', nextLine: 2 }],
+  ] as const) {
+    const result = await reader.readSpan({ path: 'blank.py', startLine: 1, endLine }, control());
+    assert.equal(result.status, 'ok');
+    assert.equal(result.span.excerpt, '');
+    assert.equal(result.span.excerptDigest, computeFileDigest(Buffer.alloc(0)));
+    assert.deepEqual(result.span.range, { startLine: 1, endLine: 1 });
+    assert.deepEqual(result.span.truncation, truncation);
+  }
+});
+
 test('repository tool inputs and deadlines are detached before the guarded await', async () => {
   const fixture = makeTools();
   const request = { path: 'src/example.py', startLine: 2, endLine: 2 };
@@ -233,6 +249,101 @@ test('searchLiteral pages cached file lines without reopening the immutable sour
     [3],
   );
   assert.deepEqual(reads, ['src/many.py']);
+});
+
+test('literal search visits adjacent files both within a page and when resuming', async () => {
+  const files = new Map([
+    ['a.py', Buffer.from('irrelevant\n')],
+    ['b.py', Buffer.from('target\n')],
+    ['c.py', Buffer.from('target\n')],
+  ]);
+  const whole = await questionTools(makeTools({ files }).tools).searchLiteral({ query: 'target' }, control());
+  assert.equal(whole.status, 'ok');
+  assert.deepEqual(
+    whole.hits.map(hit => hit.span.path),
+    ['b.py', 'c.py'],
+  );
+  assert.equal(whole.coverage, 'complete');
+
+  const reader = questionTools(makeTools({ files, limits: { maxSearchHits: 1 } }).tools);
+  const first = await reader.searchLiteral({ query: 'target' }, control());
+  assert.equal(first.status, 'ok');
+  assert.deepEqual(
+    first.hits.map(hit => hit.span.path),
+    ['b.py'],
+  );
+  assert.ok(first.nextCursor);
+  const second = await reader.searchLiteral({ query: 'target', cursor: first.nextCursor }, control());
+  assert.equal(second.status, 'ok');
+  assert.deepEqual(
+    second.hits.map(hit => hit.span.path),
+    ['c.py'],
+  );
+  assert.equal(second.coverage, 'complete');
+});
+
+test('a final binding refusal preserves the output quota and cursor slot for each repository operation', async () => {
+  const files = new Map([
+    ['a.py', Buffer.from('target\n')],
+    ['b.py', Buffer.from('second\n')],
+  ]);
+  const operations: readonly {
+    readonly run: (reader: QuestionRepositoryReadPort) => Promise<{ readonly status: string }>;
+    readonly maxReturnedBytes: number;
+    readonly cachedBindingChecks: number;
+    readonly cursorExpected?: boolean;
+  }[] = [
+    { run: reader => reader.listDirectory({ path: '.' }, control()), maxReturnedBytes: 28, cachedBindingChecks: 2, cursorExpected: true },
+    { run: reader => reader.searchLiteral({ query: 'target' }, control()), maxReturnedBytes: 138, cachedBindingChecks: 6, cursorExpected: true },
+    { run: reader => reader.readSpan({ path: 'a.py', startLine: 1, endLine: 1 }, control()), maxReturnedBytes: 138, cachedBindingChecks: 6 },
+  ];
+  for (const operation of operations) {
+    let checksUntilDenial = Number.POSITIVE_INFINITY;
+    const bindingPort = {
+      checkBinding: async () => (--checksUntilDenial === 0 ? { status: 'denied' } : { status: 'ok', binding }),
+    };
+    const { tools } = makeTools({
+      files,
+      bindingPort,
+      limits: { maxPageEntries: 1, maxSearchHits: 1, maxCursors: 1, maxReturnedBytes: operation.maxReturnedBytes },
+    });
+    const reader = questionTools(tools);
+    // Admit the snapshot without spending output bytes.
+    assert.deepEqual(await reader.readSpan({ path: 'missing.py', startLine: 1, endLine: 1 }, control()), { status: 'denied', reasonCode: 'outside-scope' });
+    checksUntilDenial = operation.cachedBindingChecks;
+    assert.deepEqual(await operation.run(reader), { status: 'denied', reasonCode: 'read-not-authorized' });
+    assert.equal(checksUntilDenial, 0);
+    const retry = await operation.run(reader);
+    assert.equal(retry.status, 'ok');
+    if (operation.cursorExpected) assert.ok('nextCursor' in retry);
+  }
+});
+
+test('concurrent directory pages cannot overspend the last shared output bytes', async () => {
+  const files = new Map([['a.py', Buffer.from('target\n')]]);
+  const firstControl = control();
+  let heldChecks = 0;
+  const atFinalBinding = Promise.withResolvers<undefined>();
+  const proceed = Promise.withResolvers<undefined>();
+  const bindingPort = {
+    async checkBinding(_expected: RepositoryBindingV1, operationControl: { readonly signal: AbortSignal }) {
+      if (operationControl.signal === firstControl.signal && ++heldChecks === 2) {
+        atFinalBinding.resolve(undefined);
+        await proceed.promise;
+      }
+      return { status: 'ok', binding };
+    },
+  };
+  const reader = questionTools(makeTools({ files, bindingPort, limits: { maxReturnedBytes: 28 } }).tools);
+  assert.deepEqual(await reader.readSpan({ path: 'missing.py', startLine: 1, endLine: 1 }, control()), { status: 'denied', reasonCode: 'outside-scope' });
+  const first = reader.listDirectory({ path: '.' }, firstControl);
+  await atFinalBinding.promise;
+  try {
+    assert.equal((await reader.listDirectory({ path: '.' }, control())).status, 'ok');
+  } finally {
+    proceed.resolve(undefined);
+  }
+  assert.deepEqual(await first, { status: 'exhausted', reasonCode: 'output-limit' });
 });
 
 test('listDirectory returns lexically sorted bounded pages and consumes opaque cursors once', async () => {

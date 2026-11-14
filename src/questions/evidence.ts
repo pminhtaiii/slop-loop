@@ -19,10 +19,10 @@ import { validateQuestionDecision, validateQuestionIdentity, validateSourceSnaps
 import { containsProtectedContent, computeFileDigest } from '../foundation/docker-workspace-policy.ts';
 import { computeSourceManifestDigest } from '../foundation/question-repository-primitives.ts';
 import { isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
-import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
+import type { QuestionRepositoryOperationControl, QuestionRepositoryWork, QuestionRepositoryWorkMeter } from '../foundation/repository-types.ts';
 import type { QuestionRepositoryPort } from './repository.ts';
 import { renderValidatedQuestionPresentation, type QuestionPresentationResultV1, type ValidatedQuestionPresentationV1 } from './presentation.ts';
-import type { QuestionBudgetLedger, QuestionBudgetRefusalCodeV1 } from './budget.ts';
+import type { QuestionBudgetAccountingReceiptV1, QuestionBudgetLedger, QuestionBudgetRefusalCodeV1, QuestionBudgetWorkV1 } from './budget.ts';
 
 export type QuestionEvidenceOperationResultV1 =
   { readonly status: 'ok'; readonly span: AdmittedSpanV1 } | RepositoryToolFailureV1 | { readonly status: 'budget-exhausted'; readonly reasonCode: QuestionBudgetRefusalCodeV1 };
@@ -75,14 +75,15 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
     if (!admission.ok) return budgetRefusal(admission.reasonCode);
 
     const operation = admission.value;
+    const work = trackWork(operation.maximumWork);
     const execution = await operation.execute(
       async context => {
-        const safeControl = combineControl(control, context.signal, context.remainingMs);
+        const safeControl = combineControl(control, context.signal, context.remainingMs, work.meter);
         const binding = await repository.checkBinding(safeControl);
         if (binding.status !== 'ok') return binding;
         return await repository.readSpan(decision, safeControl);
       },
-      () => ({ kind: 'work', work: operation.maximumWork }),
+      result => repositoryReceipt(result, work.consumed),
     );
     if (!execution.ok) return budgetRefusal(execution.reasonCode);
 
@@ -119,6 +120,7 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
     const admission = budget.reserveFinalValidation();
     if (!admission.ok) return Object.freeze({ kind: 'budget-exhausted', reasonCode: admission.reasonCode });
     const operation = admission.value;
+    const work = trackWork(operation.maximumWork);
     const finalByteLimit = operation.maximumWork.finalBytes;
     if (finalByteLimit === undefined || Buffer.byteLength(preview, 'utf8') > finalByteLimit) {
       operation.releaseBeforeDispatch();
@@ -127,15 +129,17 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
 
     const execution = await operation.execute(
       async context => {
-        const safeControl = combineControl(control, context.signal, context.remainingMs);
+        const safeControl = combineControl(control, context.signal, context.remainingMs, work.meter);
         if (containsProtectedAnswer(safe.value)) return { status: 'protected' as const };
         const binding = await repository.checkBinding(safeControl);
-        return binding.status === 'ok' ? { status: 'ok' as const } : { status: 'binding-failure' as const, binding };
+        if (binding.status !== 'ok') return { status: 'binding-failure' as const, binding };
+        return sameBinding(binding.binding, identity.binding) ? { status: 'ok' as const } : { status: 'stale' as const };
       },
-      () => ({ kind: 'work', work: { finalBytes: Buffer.byteLength(preview, 'utf8') } }),
+      result => repositoryReceipt(result.status === 'binding-failure' ? result.binding : result, { ...work.consumed, finalBytes: Buffer.byteLength(preview, 'utf8') }),
     );
     if (!execution.ok) return budgetPresentationRefusal(execution.reasonCode);
     if (execution.value.status === 'protected') return Object.freeze({ kind: 'failed', reasonCode: 'protected-content' });
+    if (execution.value.status === 'stale') return Object.freeze({ kind: 'stale-repository', reasonCode: 'binding-mismatch' });
     if (execution.value.status === 'binding-failure') return bindingPresentationFailure(execution.value.binding);
     return Object.freeze({
       kind: 'delivered',
@@ -270,6 +274,14 @@ function containsProtectedAnswer(input: ValidatedQuestionPresentationV1): boolea
   );
 }
 
+function repositoryReceipt(result: { readonly status: string; readonly reasonCode?: string }, work: QuestionBudgetWorkV1): QuestionBudgetAccountingReceiptV1 {
+  if (result.status === 'exhausted') {
+    if (result.reasonCode === 'scan-limit' || result.reasonCode === 'output-limit') return { kind: 'work-exhausted', work, reasonCode: result.reasonCode };
+    if (result.reasonCode === 'deadline') return { kind: 'work-exhausted', work, reasonCode: 'elapsed-deadline' };
+  }
+  return { kind: 'work', work };
+}
+
 function budgetRefusal(reasonCode: QuestionBudgetRefusalCodeV1): QuestionEvidenceOperationResultV1 {
   return Object.freeze({ status: 'budget-exhausted', reasonCode });
 }
@@ -282,16 +294,38 @@ function budgetPresentationRefusal(reasonCode: QuestionBudgetRefusalCodeV1): Que
 function bindingPresentationFailure(binding: Awaited<ReturnType<QuestionRepositoryPort['checkBinding']>>): QuestionPresentationResultV1 {
   if (binding.status === 'stale') return Object.freeze({ kind: 'stale-repository', reasonCode: binding.reasonCode });
   if (binding.status === 'cancelled') return Object.freeze({ kind: 'cancelled', reasonCode: 'cancelled' });
-  if (binding.status === 'exhausted') return Object.freeze({ kind: 'budget-exhausted', reasonCode: 'elapsed-deadline' });
+  if (binding.status === 'exhausted') return Object.freeze({ kind: 'budget-exhausted', reasonCode: binding.reasonCode === 'deadline' ? 'elapsed-deadline' : binding.reasonCode });
   if (binding.status === 'denied') return Object.freeze({ kind: 'blocked', reasonCode: 'owner-denied' });
   return Object.freeze({ kind: 'blocked', reasonCode: 'owner-unavailable' });
 }
 
-function combineControl(control: QuestionRepositoryOperationControl, reservationSignal: AbortSignal, remainingMs: number): QuestionRepositoryOperationControl {
+function combineControl(control: QuestionRepositoryOperationControl, reservationSignal: AbortSignal, remainingMs: number, work: QuestionRepositoryWorkMeter): QuestionRepositoryOperationControl {
   return Object.freeze({
+    work,
     signal: AbortSignal.any([control.signal, reservationSignal]),
     deadlineEpochMs: Math.min(control.deadlineEpochMs, Date.now() + remainingMs),
   });
+}
+
+function trackWork(maximum: QuestionRepositoryWork) {
+  const keys = ['scannedFiles', 'scannedBytes', 'returnedBytes'] as const;
+  const consumed = { scannedFiles: 0, scannedBytes: 0, returnedBytes: 0 };
+  const remaining: QuestionRepositoryWorkMeter['remaining'] = key => (maximum[key] ?? 0) - consumed[key];
+  const meter: QuestionRepositoryWorkMeter = Object.freeze({
+    remaining,
+    charge(work: QuestionRepositoryWork) {
+      if (
+        keys.some(key => {
+          const amount = work[key] ?? 0;
+          return !Number.isSafeInteger(amount) || amount < 0 || amount > remaining(key);
+        })
+      )
+        return false;
+      for (const key of keys) consumed[key] += work[key] ?? 0;
+      return true;
+    },
+  });
+  return { meter, consumed };
 }
 
 function validControl(input: unknown): input is QuestionRepositoryOperationControl {

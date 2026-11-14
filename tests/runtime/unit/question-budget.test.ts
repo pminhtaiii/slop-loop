@@ -102,7 +102,7 @@ test('a known pre-dispatch refusal releases its reservation without charging a c
   assert.ok(created.ok);
   const read = created.value.reserveRepositoryOperation('read');
   assert.ok(read.ok);
-  assert.equal(created.value.snapshot().reserved.scannedBytes, validRepository.maxFileBytes);
+  assert.equal(created.value.snapshot().reserved.scannedBytes, validRuntime.maxScannedBytes);
 
   assert.deepEqual(read.value.releaseBeforeDispatch(), { ok: true, value: undefined });
   assert.equal(created.value.snapshot().reserved.scannedBytes, 0);
@@ -216,7 +216,7 @@ test('cancellation aborts the adapter signal and ignores a late result while ret
   assert.deepEqual(result, { ok: false, reasonCode: 'cancelled' });
   assert.equal(accountCalls, 0);
   assert.equal(created.value.snapshot().status, 'cancelled');
-  assert.equal(created.value.snapshot().reserved.scannedBytes, validRepository.maxFileBytes);
+  assert.equal(created.value.snapshot().reserved.scannedBytes, validRuntime.maxScannedBytes);
 });
 
 test('model reservations settle trusted usage once at exact integer micro-cost', async () => {

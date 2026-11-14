@@ -78,6 +78,17 @@ export interface ReturnedByteCounter {
   value: number;
 }
 
+export function remainingOutputBytes(counter: ReturnedByteCounter, limits: QuestionRepositoryReadLimits, control: QuestionRepositoryOperationControl): number {
+  return Math.min(limits.maxReturnedBytes - counter.value, control.work?.remaining('returnedBytes') ?? Number.POSITIVE_INFINITY);
+}
+
+export function commitOutputBytes(bytes: number, counter: ReturnedByteCounter, limits: QuestionRepositoryReadLimits, control: QuestionRepositoryOperationControl): boolean {
+  if (bytes > remainingOutputBytes(counter, limits, control)) return false;
+  if (bytes > 0 && control.work && !control.work.charge({ returnedBytes: bytes })) return false;
+  counter.value += bytes;
+  return true;
+}
+
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -201,18 +212,14 @@ export function createAdmittedSpan(input: {
   readonly identity: QuestionIdentityV1;
   readonly limits: QuestionRepositoryReadLimits;
   readonly admitted: AdmittedSnapshot;
-  readonly counter: ReturnedByteCounter;
   readonly path: string;
   readonly lines: readonly string[];
   readonly startLine: number;
   readonly endLine: number;
   readonly originalByteDigest: string;
   readonly truncated: boolean;
-  readonly countOutput?: boolean;
 }): AdmittedSpanV1 | ToolFailure {
   const excerpt = input.lines.slice(input.startLine - 1, input.endLine).join('\n');
-  const outputCost = Buffer.byteLength(excerpt, 'utf8') + Buffer.byteLength(input.path, 'utf8') + 128;
-  if (input.counter.value + outputCost > input.limits.maxReturnedBytes) return failure('exhausted', 'output-limit');
   const raw = {
     identity: input.identity,
     evidenceId: `evidence-${randomUUID()}`,
@@ -227,6 +234,5 @@ export function createAdmittedSpan(input: {
   };
   const validated = validateAdmittedSpan(raw, input.limits);
   if (!validated.ok) return failure('unavailable', 'unsupported-adapter');
-  if (input.countOutput !== false) input.counter.value += outputCost;
   return validated.value;
 }
