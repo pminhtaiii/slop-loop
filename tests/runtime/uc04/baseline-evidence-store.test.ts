@@ -7,7 +7,7 @@
  * rename that committed before its acknowledgement was lost) use the store's documented write seam.
  */
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -241,6 +241,50 @@ test('a stored record whose bytes no longer match its digest resolves unknown', 
   await writeFile(path, JSON.stringify(record));
 
   assert.deepEqual(await storeAt(dir).lookupWrite(ref), { outcome: 'unknown' });
+});
+
+test('an unreadable stored record resolves unknown rather than rejecting', async t => {
+  const dir = await stateDir(t);
+  await storeAt(dir).persist(writeRequest(candidate()));
+  const path = await soleRecordPath(dir);
+  const ref = await storedOperationRef(dir);
+  await rm(path);
+  await mkdir(path);
+
+  assert.deepEqual(await storeAt(dir).lookupWrite(ref), { outcome: 'unknown' });
+});
+
+test('an unreadable evidence root resolves unknown rather than rejecting', async t => {
+  const dir = await stateDir(t);
+  await storeAt(dir).persist(writeRequest(candidate()));
+  const ref = await storedOperationRef(dir);
+  await rm(join(dir, ROOT), { recursive: true });
+  await writeFile(join(dir, ROOT), 'not a directory');
+
+  assert.deepEqual(await storeAt(dir).lookupWrite(ref), { outcome: 'unknown' });
+});
+
+test('load of an unreadable record is uncertain, not missing', async t => {
+  const dir = await stateDir(t);
+  const content = candidate();
+  const persisted = await createBaselineEvidenceAdapter(storeAt(dir)).persistBaselineEvidence(writeRequest(content));
+  const path = await soleRecordPath(dir);
+  await rm(path);
+  await mkdir(path);
+
+  const adapter = createBaselineEvidenceAdapter(storeAt(dir));
+  await assert.rejects(adapter.loadBaselineEvidence(content.taskId, content.workspaceId, content.repositoryId, persisted.evidenceId), /BASELINE_EVIDENCE_LOOKUP_UNCERTAIN/);
+});
+
+test('persist onto an unreadable record is uncertain with the issued operationRef', async t => {
+  const dir = await stateDir(t);
+  const request = writeRequest(candidate());
+  await storeAt(dir).persist(request);
+  const path = await soleRecordPath(dir);
+  await rm(path);
+  await mkdir(path);
+
+  uncertainRef(await storeAt(dir).persist(request));
 });
 
 test('a foreign or malformed operationRef resolves unknown', async t => {

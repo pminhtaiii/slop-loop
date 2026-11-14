@@ -112,11 +112,17 @@ function pathsOf(baseDir: string, keyHash: string): BaselineRecordPaths {
   return { recordPath: join(dir, RECORD_FILE), pendingPath: join(dir, PENDING_FILE) };
 }
 
-async function readText(path: string): Promise<string | null> {
-  return readFile(path, 'utf8').catch((err: unknown) => {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
-  });
+/** A record read that separates "no such file" from "cannot be read"; only the former may mean absent. */
+type RecordRead = { readonly state: 'absent' } | { readonly state: 'unreadable' } | { readonly state: 'text'; readonly text: string };
+
+async function readText(path: string): Promise<RecordRead> {
+  try {
+    return { state: 'text', text: await readFile(path, 'utf8') };
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'absent' };
+    // Translated, not rethrown: the contract makes every non-absent read failure `unknown`/`uncertain`.
+    return { state: 'unreadable' };
+  }
 }
 
 /** Pending write plus atomic rename, retrying the Windows rename failures `atomicWrite` retries. */
@@ -194,8 +200,9 @@ export function createBaselineEvidenceStore(options: BaselineEvidenceStoreOption
 
       return store.withLock(`uc04-baseline-${keyHash}`, async (): Promise<BaselineWriteOutcome> => {
         const existing = await readText(paths.recordPath);
-        if (existing !== null) {
-          const stored = parseRecord(existing);
+        if (existing.state === 'unreadable') return { outcome: 'uncertain', operationRef };
+        if (existing.state === 'text') {
+          const stored = parseRecord(existing.text);
           if (stored === null) return { outcome: 'uncertain', operationRef };
           if (stored.contentDigest !== request.contentDigest) {
             return { outcome: 'denied', reason: `evidence identity '${stored.evidenceId}' is already bound to different content` };
@@ -217,11 +224,13 @@ export function createBaselineEvidenceStore(options: BaselineEvidenceStoreOption
     async load(request): Promise<BaselineLoadOutcome> {
       const paths = pathsOf(store.baseDir, identityKey(request));
       const text = await readText(paths.recordPath);
-      if (text === null) {
+      if (text.state === 'unreadable') return { outcome: 'uncertain', reason: 'the stored baseline evidence record is unreadable' };
+      if (text.state === 'absent') {
         const pending = await readText(paths.pendingPath);
-        return pending === null ? { outcome: 'missing' } : { outcome: 'uncertain', reason: 'an unsettled baseline evidence write is present' };
+        if (pending.state === 'text') return { outcome: 'uncertain', reason: 'an unsettled baseline evidence write is present' };
+        return pending.state === 'unreadable' ? { outcome: 'uncertain', reason: 'an unsettled baseline evidence write may be present' } : { outcome: 'missing' };
       }
-      const stored = parseRecord(text);
+      const stored = parseRecord(text.text);
       if (stored === null) return { outcome: 'uncertain', reason: 'the stored baseline evidence record is unreadable' };
       const bound = stored.content;
       if (stored.evidenceId !== request.evidenceId || bound.taskId !== request.taskId || bound.workspaceId !== request.workspaceId || bound.repositoryId !== request.repositoryId) {
@@ -237,20 +246,21 @@ export function createBaselineEvidenceStore(options: BaselineEvidenceStoreOption
 
       // shortcut: resolves by scanning records because the ref is a one-way hash; add a ref→key index only if baselines per store grow past a few hundred.
       const root = join(store.baseDir, ROOT);
-      const entries = await readdir(root).catch((err: unknown) => {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-        return [] as string[];
-      });
+      const entries = await readdir(root).catch((err: unknown) => ((err as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null));
+      // An unlistable root may hold a committed record, so it is unknown, not absent.
+      if (entries === null) return { outcome: 'unknown' };
 
       let unreadable = false;
       for (const entry of entries) {
         const paths = pathsOf(store.baseDir, entry);
         const [text, pending] = await Promise.all([readText(paths.recordPath), readText(paths.pendingPath)]);
+        // Anything we cannot read may be this write, so its state cannot be more precise than unknown.
+        if (text.state === 'unreadable' || pending.state === 'unreadable') return { outcome: 'unknown' };
         // A pending file names its ref, so only this write's own debris, or debris we cannot attribute, is unknown.
-        const pendingRef = pending === null ? undefined : parseRecord(pending)?.operationRef;
-        if (pending !== null && (pendingRef === undefined || pendingRef === operationRef)) return { outcome: 'unknown' };
-        if (text === null) continue;
-        const stored = parseRecord(text);
+        const pendingRef = pending.state === 'absent' ? undefined : parseRecord(pending.text)?.operationRef;
+        if (pending.state === 'text' && (pendingRef === undefined || pendingRef === operationRef)) return { outcome: 'unknown' };
+        if (text.state === 'absent') continue;
+        const stored = parseRecord(text.text);
         if (stored === null) {
           unreadable = true;
           continue;
