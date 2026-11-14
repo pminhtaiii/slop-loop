@@ -1,11 +1,11 @@
 /** T027: material replan routes through the UC-04 transaction, never legacy reserve/settle. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { computeCanonicalSha256, computeCheckSetDigest, type BudgetLedger, type FixPlan, type StatePort, type TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCheckSetDigest, type BudgetLedger, type BudgetReservation, type FixPlan, type StatePort, type TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { executeReplan } from '../../../src/uc03/repair.ts';
 import type { TrustedReplanDirection } from '../../../src/uc03/repair-types.ts';
 import type { MaterialReplanPortV02, MaterialReplanRequestV02, MaterialReplanResultV02 } from '../../../src/uc03/graph-types-v02.ts';
-import { MemoryStatePort } from '../support/uc03/memory-state.ts';
+import { MemoryStatePort, MemoryStatePortV02, type MemoryStatePortV02Options } from '../support/uc03/memory-state.ts';
 import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 
 class CountingPort extends MemoryStatePort {
@@ -14,6 +14,25 @@ class CountingPort extends MemoryStatePort {
   override async reserve(scope: 'task' | 'run', kind: string, amount: number, actionId: string): Promise<string> {
     this.reserveCalls += 1;
     return super.reserve(scope, kind, amount, actionId);
+  }
+  override async transition(state: TaskState, expectedVersion: number): Promise<TaskState> {
+    this.transitionCalls += 1;
+    return super.transition(state, expectedVersion);
+  }
+}
+
+/** The accepted/owner-bound path needs a v0.2 port; count local effects on it the same way. */
+class CountingPortV02 extends MemoryStatePortV02 {
+  reserveCalls = 0;
+  transitionCalls = 0;
+  constructor(options?: MemoryStatePortV02Options) {
+    super(options);
+    const owner = this.getUnderlying();
+    const reserve = owner.reserve.bind(owner);
+    owner.reserve = async (scope, kind, amount, actionId) => {
+      this.reserveCalls += 1;
+      return reserve(scope, kind, amount, actionId);
+    };
   }
   override async transition(state: TaskState, expectedVersion: number): Promise<TaskState> {
     this.transitionCalls += 1;
@@ -54,10 +73,30 @@ function fixture(): { state: TaskState; candidatePlan: FixPlan } {
     plan,
     activeDecisionId: plan.decisionRef,
     taskContext: task,
-    budgetLedgers: [ledger('replan', 3, 'count'), ledger('repair', 2, 'count'), ledger('tokens', 100000, 'count'), ledger('cost', 5, 'usd')],
+    budgetLedgers: [
+      ledger('replan', 3, 'count'),
+      ledger('repair', 2, 'count'),
+      { ...ledger('tokens', 100000, 'count'), consumed: 5 },
+      ledger('cost', 5, 'usd'),
+      { ...ledger('tokens', 5000, 'count'), scope: 'run' as const },
+    ],
   });
   const changed = 'Check divisor == 0 and raise CalculationError';
   return { state, candidatePlan: { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) } };
+}
+
+/** Owner-side commit: the v0.2 store must hold exactly the state the mock returns. */
+function ownerCommits(statePort: CountingPortV02, committed: TaskState): void {
+  const owner = statePort.getUnderlying();
+  for (const ledger of committed.budgetLedgers ?? []) owner.internalSetLedger(ledger);
+  owner.internalSetTask(committed);
+}
+
+/** The one durable replan slot the owner charges, keyed by the proposal identity. */
+function chargeReplan(state: TaskState): readonly BudgetLedger[] {
+  return (state.budgetLedgers ?? []).map(ledger =>
+    ledger.kind === 'replan' ? { ...ledger, reservations: [{ reservationId: 'res-1', keyedId: 'prop-1', amount: 1 }], version: ledger.version + 1 } : ledger,
+  );
 }
 
 test('replan: v0.2 material replan maps all four owner outcomes with no legacy accounting', async () => {
@@ -72,31 +111,37 @@ test('replan: v0.2 material replan maps all four owner outcomes with no legacy a
     rejectedDecisionId: state.plan?.decisionRef ?? '',
     strategyDigest: state.plan?.strategyDigest ?? '',
   };
+  // AwaitFeedback/Repair reach AwaitPlan only through Investigate, and each edge bumps stateVersion once.
   const committed: TaskState = {
     ...state,
-    stateVersion: 3,
+    stateVersion: state.stateVersion + 2,
+    planVersion: 2,
     node: 'AwaitPlan',
+    nextAction: 'approve-fix-plan',
+    plan: { ...candidatePlan, planVersion: 2, decisionRef: 'dec-plan-002' },
+    activeDecisionId: 'dec-plan-002',
+    latestReviewRef: undefined,
+    reviewRefs: [],
     replanCount: 1,
-    budgetLedgers: state.budgetLedgers?.map(ledger => (ledger.kind === 'replan' ? { ...ledger, consumed: 1 } : ledger)),
+    budgetLedgers: chargeReplan(state),
   };
   const cases = [
     ['accepted', 'REPLAN_PREPARED', []],
     ['already-accepted', 'REPLAN_PREPARED', []],
     ['denied', 'DENIED', ['owner-denied-cap']],
-    ['uncertain', 'INCOMPLETE', ['op-ref-1']],
+    ['uncertain', 'INCOMPLETE', ['replan-owner-outcome-uncertain', 'op-ref-1']],
   ] as const;
   for (const [outcome, expected, reasons] of cases) {
-    const statePort = new CountingPort({ initialTaskState: state });
+    const statePort = new CountingPortV02({ initialTaskState: state });
     const calls: MaterialReplanRequestV02[] = [];
     const replanPort: MaterialReplanPortV02 = {
       provenance: 'mock',
       accept: async (request): Promise<MaterialReplanResultV02> => {
         calls.push(request);
-        return outcome === 'denied'
-          ? { outcome, reason: 'owner-denied-cap' }
-          : outcome === 'uncertain'
-            ? { outcome, operationRef: 'op-ref-1' }
-            : { outcome, state: committed, reservationReceipt: 'res-1', transitionReceipt: 'tr-1' };
+        if (outcome === 'denied') return { outcome, reason: 'owner-denied-cap' };
+        if (outcome === 'uncertain') return { outcome, operationRef: 'op-ref-1' };
+        ownerCommits(statePort, committed);
+        return { outcome, state: committed, reservationReceipt: 'res-1', transitionReceipt: 'tr-1' };
       },
     };
     const result = await executeReplan({ taskId: state.taskId, candidatePlan, proposalId: 'prop-1' }, { statePort, replanPort, trustedDirection: direction });
@@ -107,7 +152,14 @@ test('replan: v0.2 material replan maps all four owner outcomes with no legacy a
     assert.equal(calls[0]?.candidatePlanDigest, computeCanonicalSha256(candidatePlan), outcome);
     assert.equal(statePort.reserveCalls, 0, `${outcome} must not reserve`);
     assert.equal(statePort.transitionCalls, 0, `${outcome} must not transition locally`);
-    if (expected === 'REPLAN_PREPARED') assert.equal(result.state.replanCount, 1, outcome);
+    if (expected === 'REPLAN_PREPARED') {
+      assert.equal(result.state.replanCount, 1, outcome);
+      assert.equal(result.state.planVersion, 2, outcome);
+      assert.deepEqual(result.state.plan, committed.plan, outcome);
+      assert.equal(result.state.activeDecisionId, committed.activeDecisionId, outcome);
+      assert.equal(result.state.latestReviewRef, undefined, outcome);
+      assert.deepEqual(result.state.reviewRefs, [], outcome);
+    }
   }
 });
 
@@ -123,20 +175,62 @@ test('replan: owner-committed state must bind to this task, run and one-step rep
     rejectedDecisionId: state.plan?.decisionRef ?? '',
     strategyDigest: state.plan?.strategyDigest ?? '',
   };
-  const charged = state.budgetLedgers?.map(ledger => (ledger.kind === 'replan' ? { ...ledger, consumed: 1 } : ledger));
-  const committed: TaskState = { ...state, stateVersion: 3, node: 'AwaitPlan', replanCount: 1, budgetLedgers: charged };
-  const cases = [
+  const committed: TaskState = {
+    ...state,
+    stateVersion: state.stateVersion + 2,
+    planVersion: 2,
+    node: 'AwaitPlan',
+    nextAction: 'approve-fix-plan',
+    plan: { ...candidatePlan, planVersion: 2, decisionRef: 'dec-plan-002' },
+    activeDecisionId: 'dec-plan-002',
+    latestReviewRef: undefined,
+    reviewRefs: [],
+    replanCount: 1,
+    budgetLedgers: chargeReplan(state),
+  };
+  const committedPlan = committed.plan;
+  const taskContext = state.taskContext;
+  assert.ok(committedPlan);
+  assert.ok(taskContext);
+  const withLimit = (kind: string, scope: 'task' | 'run', limit: number): readonly BudgetLedger[] =>
+    (committed.budgetLedgers ?? []).map(ledger => (ledger.kind === kind && ledger.scope === scope ? { ...ledger, limit } : ledger));
+  const cases: readonly (readonly [string, Partial<TaskState>, string])[] = [
     ['bound', {}, 'REPLAN_PREPARED'],
     ['replanCount does not advance', { replanCount: 0 }, 'INCOMPLETE'],
     ['replanCount advances by two', { replanCount: 2 }, 'INCOMPLETE'],
+    ['candidate plan was not committed', { plan: state.plan }, 'INCOMPLETE'],
+    ['renewed approval pointer is missing', { activeDecisionId: undefined }, 'INCOMPLETE'],
+    ['renewed approval pointer is mismatched', { activeDecisionId: 'dec-plan-other' }, 'INCOMPLETE'],
+    ['old approval pointer remains active', { activeDecisionId: state.activeDecisionId, plan: { ...committedPlan, decisionRef: 'dec-plan-001' } }, 'INCOMPLETE'],
+    ['stale review remains active', { latestReviewRef: 'review-stale', reviewRefs: ['review-stale'] }, 'INCOMPLETE'],
+    ['state version did not advance', { stateVersion: state.stateVersion }, 'INCOMPLETE'],
+    ['state version skips the investigate edge', { stateVersion: state.stateVersion + 3 }, 'INCOMPLETE'],
+    ['a token budget was lowered', { budgetLedgers: committed.budgetLedgers?.map(ledger => (ledger.kind === 'tokens' ? { ...ledger, consumed: 0 } : ledger)) }, 'INCOMPLETE'],
     ['different taskId', { taskId: 'task-other' }, 'INCOMPLETE'],
     ['different runId', { runId: 'run-other' }, 'INCOMPLETE'],
-  ] as const;
+    ['different workspace', { workspaceId: 'workspace-other' }, 'INCOMPLETE'],
+    ['different repository', { repositoryId: 'repository-other' }, 'INCOMPLETE'],
+    ['different repository revision', { repositoryRevisionDigest: 'revision-other' }, 'INCOMPLETE'],
+    ['different configuration id', { taskContext: { ...taskContext, configId: 'config-other' } }, 'INCOMPLETE'],
+    ['different configuration version', { taskContext: { ...taskContext, configVersion: 'config-version-other' } }, 'INCOMPLETE'],
+    [
+      'raised task budget limit under the same configuration',
+      { taskContext: { ...taskContext, budgetLimits: { ...taskContext.budgetLimits, maxTokens: 200000 } }, budgetLedgers: withLimit('tokens', 'task', 200000) },
+      'INCOMPLETE',
+    ],
+    ['raised run-scope ledger limit', { budgetLedgers: withLimit('tokens', 'run', 9000) }, 'INCOMPLETE'],
+    ['raised existing replan ledger limit', { budgetLedgers: withLimit('replan', 'task', 4) }, 'INCOMPLETE'],
+  ];
   for (const [label, override, expected] of cases) {
-    const statePort = new CountingPort({ initialTaskState: state });
+    const statePort = new CountingPortV02({ initialTaskState: state });
+    const returned = { ...committed, ...override };
     const replanPort: MaterialReplanPortV02 = {
       provenance: 'mock',
-      accept: async (): Promise<MaterialReplanResultV02> => ({ outcome: 'accepted', state: { ...committed, ...override }, reservationReceipt: 'res-1', transitionReceipt: 'tr-1' }),
+      accept: async (): Promise<MaterialReplanResultV02> => {
+        // The owner is what the binder re-reads: a rejected result must never be the persisted state.
+        ownerCommits(statePort, returned);
+        return { outcome: 'accepted', state: returned, reservationReceipt: 'res-1', transitionReceipt: 'tr-1' };
+      },
     };
     const result = await executeReplan({ taskId: state.taskId, candidatePlan, proposalId: 'prop-1' }, { statePort, replanPort, trustedDirection: direction });
     assert.equal(result.outcome, expected, label);
@@ -150,6 +244,117 @@ test('replan: owner-committed state must bind to this task, run and one-step rep
     }
     assert.equal(statePort.reserveCalls, 0, `${label} must not reserve`);
     assert.equal(statePort.transitionCalls, 0, `${label} must not transition locally`);
+  }
+});
+
+test('replan: an accepted replan cannot erase an outstanding repair reservation', async () => {
+  const { state: base, candidatePlan } = fixture();
+  const repairCharge: BudgetReservation = { reservationId: 'res-repair-1', keyedId: 'act-repair-1', amount: 1 };
+  const state: TaskState = {
+    ...base,
+    evidenceRefs: [...base.evidenceRefs, `repair-action:${repairCharge.keyedId}`],
+    budgetLedgers: base.budgetLedgers?.map(ledger => (ledger.kind === 'repair' ? { ...ledger, reservations: [repairCharge], version: ledger.version + 1 } : ledger)),
+  };
+  const direction: TrustedReplanDirection = {
+    directive: 'revise',
+    taskId: state.taskId,
+    workspaceId: state.workspaceId,
+    repositoryRevisionDigest: state.repositoryRevisionDigest,
+    stateVersion: state.stateVersion,
+    planVersion: state.planVersion,
+    rejectedDecisionId: state.plan?.decisionRef ?? '',
+    strategyDigest: state.plan?.strategyDigest ?? '',
+  };
+  const committed: TaskState = {
+    ...state,
+    stateVersion: state.stateVersion + 2,
+    planVersion: state.planVersion + 1,
+    node: 'AwaitPlan',
+    nextAction: 'approve-fix-plan',
+    plan: { ...candidatePlan, planVersion: state.planVersion + 1, decisionRef: 'dec-plan-002' },
+    activeDecisionId: 'dec-plan-002',
+    latestReviewRef: undefined,
+    reviewRefs: [],
+    replanCount: state.replanCount + 1,
+    budgetLedgers: chargeReplan(state),
+  };
+  const withRepair = (reservations: readonly BudgetReservation[], consumed: number): Partial<TaskState> => ({
+    budgetLedgers: committed.budgetLedgers?.map(ledger => (ledger.kind === 'repair' ? { ...ledger, reservations, consumed } : ledger)),
+  });
+  const cases: readonly (readonly [string, Partial<TaskState>, string])[] = [
+    ['repair reservation dropped, consumption unchanged', withRepair([], 0), 'INCOMPLETE'],
+    ['repair reservation amount changed', withRepair([{ ...repairCharge, amount: 2 }], 0), 'INCOMPLETE'],
+    ['repair reservation id changed', withRepair([{ ...repairCharge, reservationId: 'res-repair-2' }], 0), 'INCOMPLETE'],
+    ['repair reservation preserved', {}, 'REPLAN_PREPARED'],
+    ['repair reservation settled into consumption', withRepair([], 1), 'REPLAN_PREPARED'],
+  ];
+  for (const [label, override, expected] of cases) {
+    const statePort = new CountingPortV02({ initialTaskState: state });
+    const returned = { ...committed, ...override };
+    const replanPort: MaterialReplanPortV02 = {
+      provenance: 'mock',
+      accept: async (): Promise<MaterialReplanResultV02> => {
+        ownerCommits(statePort, returned);
+        return { outcome: 'accepted', state: returned, reservationReceipt: 'res-1', transitionReceipt: 'tr-1' };
+      },
+    };
+    const result = await executeReplan({ taskId: state.taskId, candidatePlan, proposalId: 'prop-1' }, { statePort, replanPort, trustedDirection: direction });
+    assert.equal(result.outcome, expected, label);
+    if (expected === 'REPLAN_PREPARED') assert.deepEqual(result.state.budgetLedgers, returned.budgetLedgers, label);
+    else assert.deepEqual(result.reasons, ['reserved-task-state-inconsistent'], label);
+  }
+});
+
+test('replan: missing owner receipts cannot report a prepared replan', async () => {
+  const { state, candidatePlan } = fixture();
+  const direction: TrustedReplanDirection = {
+    directive: 'revise',
+    taskId: state.taskId,
+    workspaceId: state.workspaceId,
+    repositoryRevisionDigest: state.repositoryRevisionDigest,
+    stateVersion: state.stateVersion,
+    planVersion: state.planVersion,
+    rejectedDecisionId: state.plan?.decisionRef ?? '',
+    strategyDigest: state.plan?.strategyDigest ?? '',
+  };
+  const committed: TaskState = {
+    ...state,
+    stateVersion: state.stateVersion + 2,
+    planVersion: state.planVersion + 1,
+    node: 'AwaitPlan',
+    nextAction: 'approve-fix-plan',
+    plan: { ...candidatePlan, planVersion: state.planVersion + 1, decisionRef: 'dec-plan-002' },
+    activeDecisionId: 'dec-plan-002',
+    latestReviewRef: undefined,
+    reviewRefs: [],
+    replanCount: state.replanCount + 1,
+    budgetLedgers: chargeReplan(state),
+  };
+  for (const [reservationReceipt, transitionReceipt] of [
+    [undefined, 'tr-1'],
+    ['res-1', undefined],
+    ['', 'tr-1'],
+    ['res-1', ''],
+  ] as const) {
+    const statePort = new CountingPortV02({ initialTaskState: state });
+    const replanPort: MaterialReplanPortV02 = {
+      provenance: 'mock',
+      accept: async () => {
+        ownerCommits(statePort, committed);
+        return {
+          outcome: 'accepted',
+          state: committed,
+          reservationReceipt: reservationReceipt as string,
+          transitionReceipt: transitionReceipt as string,
+        };
+      },
+    };
+    const result = await executeReplan({ taskId: state.taskId, candidatePlan, proposalId: 'prop-1' }, { statePort, replanPort, trustedDirection: direction });
+    assert.equal(result.outcome, 'INCOMPLETE', `receipts ${String(reservationReceipt)}/${String(transitionReceipt)}`);
+    assert.deepEqual(result.reasons, ['reserved-task-state-inconsistent']);
+    assert.deepEqual(result.state, state);
+    assert.equal(statePort.reserveCalls, 0);
+    assert.equal(statePort.transitionCalls, 0);
   }
 });
 

@@ -1,18 +1,9 @@
-/**
- * UC-03 Material Replan & Human Feedback Transitions (T018)
- * Feature: specs/001-verified-code-repair
- *
- * Requirements & Acceptance:
- * - C12: Initial plan zero, at most 3 material replans, fourth refused; rejection waits
- *   for user feedback; minor vs material based on bound fields NOT caller boolean.
- * - CAS transitions via StatePort without local durable ledger duck typing.
- * - Invalidate prior edit/approval/review authority upon material replan.
- * - Safe typed outcome without raw error exposure on unexpected port failures.
- */
+/** T018: canonical materiality and bounded owner-gated replanning. */
 
 import { computeCanonicalSha256, computeCheckSetDigest, validateFixPlan, validateTaskState, validateStateTransition, type FixPlan, type TaskState } from '../contracts/foundation/uc03.ts';
 import { isStatePortV02 } from './repair-types.ts';
 import { MAX_TASK_REPLANS, checkReplanAccounting } from './replan-accounting.ts';
+import { bindAcceptedMaterialReplan } from './replan-owner-result.ts';
 import type { PlanMaterialityResult, ReplanInput, ReplanPorts, ReplanResult, TrustedReplanDirection } from './repair-types.ts';
 import type { MaterialReplanResultV02 } from './graph-types-v02.ts';
 
@@ -65,7 +56,6 @@ function validReplanInput(input: unknown): input is ReplanInput {
 
 function validPlanForTask(plan: FixPlan, state: TaskState): boolean {
   const checks = state.taskContext?.requiredChecks;
-  // The plan binds the baseline evidence ID; the revision digest is a separate snapshot invariant.
   const baselineRef = state.plan?.baselineRef ?? state.taskContext?.initialRevisionDigest;
   return !!checks?.length && plan.checkSetDigest === computeCheckSetDigest(checks) && plan.baselineRef === baselineRef && plan.strategyDigest === computeCanonicalSha256(plan.strategy);
 }
@@ -93,8 +83,8 @@ function matchesTrustedDirection(direction: TrustedReplanDirection | undefined, 
   const plan = state.plan;
   return (
     state.node === 'AwaitFeedback' &&
-    !state.activeDecisionId &&
     !!plan?.decisionRef &&
+    state.activeDecisionId === plan.decisionRef &&
     !!direction &&
     (direction.directive === 'resume' || direction.directive === 'revise' || direction.directive === 'terminate') &&
     direction.taskId === state.taskId &&
@@ -277,12 +267,13 @@ export async function executeReplan(input: ReplanInput, ports: ReplanPorts): Pro
       return response('INCOMPLETE', state, ['replan-reservation-failed'], true);
     }
     if (accepted.outcome === 'denied') return response('DENIED', state, [accepted.reason], true);
-    if (accepted.outcome === 'uncertain') return response('INCOMPLETE', state, [accepted.operationRef], true);
+    // The fixed marker gives the opaque owner reference provenance, so it can never pass as a stop code.
+    if (accepted.outcome === 'uncertain') return response('INCOMPLETE', state, ['replan-owner-outcome-uncertain', accepted.operationRef], true);
     // 'accepted' and 'already-accepted' both carry the owner-committed state; replay adds no charge.
     // Bind it to this request: a valid state for another task/run, or one that skips the charge, is inconsistent.
-    const owned = accepted.state;
-    const bound = validateTaskState(owned).ok && owned.taskId === state.taskId && owned.runId === state.runId && owned.replanCount === state.replanCount + 1;
-    return bound ? response('REPLAN_PREPARED', owned, [], true) : response('INCOMPLETE', state, ['reserved-task-state-inconsistent'], true);
+    if (!isStatePortV02(ports.statePort)) return response('INCOMPLETE', state, ['replan-owner-state-port-unavailable'], true);
+    const owned = await bindAcceptedMaterialReplan(state, input, accepted, ports.statePort);
+    return owned ? response('REPLAN_PREPARED', owned, [], true) : response('INCOMPLETE', state, ['reserved-task-state-inconsistent'], true);
   }
 
   // Controlled caller: legacy reservation and state CAS flow.

@@ -381,6 +381,8 @@ test('an unusable assembly reference fails closed at exit 4 with no path and no 
     assemblyModule('  return undefined;'),
     // Throws after the resolver's guarded region, on the copy `prepareUC03Host` spreads.
     assemblyModule(`  Object.defineProperty(result.host, 'owner', { get() { throw new Error(${JSON.stringify(thrown)}); } });`),
+    // Nested producer delivery is read by bootstrap after the top-level assembly copy.
+    assemblyModule(`  Object.defineProperty(result.host.producers, 'guardedRead', { get() { throw new Error(${JSON.stringify(thrown)}); } });`),
   ];
   for (const assembly of cases) {
     const result = spawnCli('evaluate', ['preflight', '--host', hostFile({ assembly })]);
@@ -417,6 +419,12 @@ test('the legacy uc03 direct binary resolves the same reference and keeps the §
   assert.equal(guarded.status, 5, guarded.stdout + guarded.stderr);
   assert.equal(errorOf(guarded.stdout), 'HOST_ASSEMBLY_UNAVAILABLE: no host assembly is configured');
   assert.equal(guarded.stdout.includes(thrown), false);
+
+  const nestedGetter = assemblyModule(`  Object.defineProperty(result.host.producers, 'guardedRead', { get() { throw new Error(${JSON.stringify(thrown)}); } });`);
+  const nestedGuarded = spawnCli('uc03', ['--task', taskFile, '--config', hostFile(), '--host', hostFile({ assembly: nestedGetter })]);
+  assert.equal(nestedGuarded.status, 5, nestedGuarded.stdout + nestedGuarded.stderr);
+  assert.equal(errorOf(nestedGuarded.stdout), 'HOST_ASSEMBLY_UNAVAILABLE: no host assembly is configured');
+  assert.equal(nestedGuarded.stdout.includes(thrown), false);
 
   // A malformed file stays a loader refusal at exit 2, whichever CLI reads it.
   const malformed = spawnCli('uc03', ['--task', taskFile, '--config', hostFile(), '--host', hostFile({ assembly: 42 })]);

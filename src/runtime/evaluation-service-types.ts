@@ -1,6 +1,7 @@
 import type { BoundSource, CaseBinding, EvaluationProfile, IntakeQuestion } from './evaluation-profile.ts';
 import type { CatalogEntry } from './evaluation-profile.ts';
 import { sha256Text } from '../uc01/contracts.ts';
+import type { WorkflowEvaluationReport } from '../../eval/uc03/types.ts';
 
 export type ServiceStatus = 'waiting-approval' | 'waiting-info' | 'running' | 'completed' | 'incomplete' | 'implemented-unverified' | 'failed';
 export type ServiceFailure = 'invalid-input' | 'not-found' | 'conflict' | 'busy' | 'blocked';
@@ -27,12 +28,25 @@ export interface EvaluationGraphResult {
   readonly outcome: string;
   readonly state: Readonly<{ taskId: string; runId: string; workspaceId: string }> | null;
   readonly usage?: Readonly<{ tokensConsumed: number; costUsd: number }> | undefined;
+  readonly workflowClarification?: WorkflowClarificationView | null | undefined;
+  readonly workflowReport?: WorkflowEvaluationReport | null | undefined;
 }
+
+export type EvaluationTaskIdentity = NonNullable<EvaluationGraphResult['state']>;
 
 export interface EvaluationGraph {
   /** Resolved only after complete intake, so a preflight block never reaches owner ports. */
   portsFor(input: Readonly<{ experimentId: string; source: BoundSource }>): unknown;
-  run(input: Readonly<{ experimentId: string; source: BoundSource; ports: unknown }>): Promise<EvaluationGraphResult>;
+  run(
+    input: Readonly<{
+      experimentId: string;
+      source: BoundSource;
+      ports: unknown;
+      priorState: EvaluationTaskIdentity | null;
+      direction: ServiceControlReceipt | null;
+      answers: readonly AnswerRecord[];
+    }>,
+  ): Promise<EvaluationGraphResult>;
 }
 
 export interface EvaluationServiceDeps {
@@ -51,6 +65,13 @@ export interface QuestionView {
   readonly text: string;
   /** Bound digest the reporter must echo back with an answer; never the answer itself. */
   readonly questionDigest: string;
+}
+
+/** A graph-owned clarification group, separate from immutable public intake questions. */
+export interface WorkflowClarificationView {
+  readonly questionId: string;
+  readonly questionDigest: string;
+  readonly questions: readonly Readonly<{ questionId: string; text: string }>[];
 }
 
 export interface SubmissionView {
@@ -80,6 +101,8 @@ export interface ExperimentView {
   readonly runId: string | null;
   readonly workspaceId: string | null;
   readonly usage: Readonly<{ tokensConsumed: number; costUsd: number }> | null;
+  readonly workflowClarification: WorkflowClarificationView | null;
+  readonly workflowReport: WorkflowEvaluationReport | null;
   readonly answers: readonly AnswerRecord[];
   readonly directions: readonly string[];
 }
@@ -112,10 +135,12 @@ export interface ExperimentRecord {
   readonly bindings: readonly CaseBinding[];
   readonly submission: SubmissionView | null;
   task: EvaluationGraphResult['state'];
+  workflowReport: WorkflowEvaluationReport | null;
   readonly startedSource: BoundSource;
   status: ServiceStatus;
   version: number;
   usage: Readonly<{ tokensConsumed: number; costUsd: number }> | null;
+  workflowClarification: WorkflowClarificationView | null;
   answers: AnswerRecord[];
   directions: ServiceControlReceipt[];
 }
@@ -202,6 +227,8 @@ export function viewOf(record_: ExperimentRecord): ExperimentView {
     runId: record_.task?.runId ?? null,
     workspaceId: record_.task?.workspaceId ?? null,
     usage: record_.usage,
+    workflowClarification: record_.workflowClarification,
+    workflowReport: record_.workflowReport,
     answers: Object.freeze([...record_.answers]),
     directions: Object.freeze(record_.directions.map(receipt => receipt.receiptRef)),
   });

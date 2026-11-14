@@ -15,6 +15,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSnapshotGrader, isSnapshotGradeCurrent, SNAPSHOT_GRADE_LIMITATION, type SnapshotCriterion, type SnapshotCriteria, type SnapshotEvidence } from '../../../eval/uc03/workflow-grade.ts';
+import { budgetStopEvidence, deriveWorkflowEvidenceFacts, patchFreeFacts } from '../../../eval/uc03/workflow-evidence-facts.ts';
+import { resolveExpectedTestFiles } from '../../../src/uc03/graph-validation.ts';
+import { computeTestProtectionDigest } from '../../../src/uc03/investigation.ts';
+import { computeCanonicalSha256, computeCheckSetDigest, type BudgetLedger, type FixPlan } from '../../../src/contracts/foundation/uc03.ts';
+import { createCoderAgent } from '../../../src/uc03/agent.ts';
+import { executeReplan } from '../../../src/uc03/repair.ts';
+import { checkAccounting } from '../../../src/uc03/repair-types.ts';
+import { checkReplanAccounting } from '../../../src/uc03/replan-accounting.ts';
+import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
+import { createFixtureBugTask, createFixtureProviderRequest, createFixtureSourceEvidence, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import type {
   EvaluationGradingAdmissionRequest,
   EvaluationGraderExecutionRequest,
@@ -150,6 +160,75 @@ test('workflow COMPLETED alone does not grade as repair success', async () => {
   assert.equal(result.reason, 'criteria-violation');
 });
 
+test('repair success accepts only the pinned admitted hidden check with a completed pass', async () => {
+  let executions = 0;
+  const executor: EvaluationGraderExecutor = {
+    executorId: 'executor-1',
+    execute(request) {
+      executions += 1;
+      assert.equal(request.checkId, 'hidden-c01');
+      assert.equal(request.admission.checkId, 'hidden-c01');
+      return {
+        finalSnapshot: request.finalSnapshot,
+        profile: request.profile,
+        executorId: request.executorId,
+        checkId: request.checkId,
+        status: 'pass',
+        actualOutcome: 'COMPLETED',
+        durationMs: 10,
+        cpuMs: 5,
+        outputBytes: 32,
+      };
+    },
+  };
+  const result = await grader({ executor }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
+  assert.equal(result.grade, 'pass');
+  assert.equal(result.reason, 'criteria-satisfied');
+  assert.equal(result.criterionId, 'crit-c01');
+  assert.ok(result.evidenceIds.includes('check:hidden-c01'));
+  assert.ok(result.limitations.includes(SNAPSHOT_GRADE_LIMITATION));
+  assert.equal(executions, 1);
+  noPrivatePayload(result);
+
+  for (const checkId of [undefined, 'hidden-other']) {
+    const invalid = await grader({
+      executor: {
+        executorId: 'executor-1',
+        execute: request => ({
+          finalSnapshot: request.finalSnapshot,
+          profile: request.profile,
+          executorId: request.executorId,
+          ...(checkId === undefined ? {} : { checkId }),
+          status: 'pass',
+          actualOutcome: 'COMPLETED',
+          durationMs: 10,
+          cpuMs: 5,
+          outputBytes: 32,
+        }),
+      },
+    }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
+    assert.equal(invalid.grade, 'not-run');
+    assert.equal(invalid.reason, 'private-grading');
+  }
+  const incomplete = await grader({
+    executor: {
+      executorId: 'executor-1',
+      execute: request => ({
+        finalSnapshot: request.finalSnapshot,
+        profile: request.profile,
+        executorId: request.executorId,
+        checkId: request.checkId,
+        status: 'pass',
+        actualOutcome: 'FAILED',
+        durationMs: 10,
+        cpuMs: 5,
+        outputBytes: 32,
+      }),
+    },
+  }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
+  assert.equal(incomplete.grade, 'fail', 'a passing status cannot upgrade an unsuccessful hidden outcome');
+});
+
 test('a review of a different diff and missing test protection fail the repair predicate', async () => {
   const staleReview = await grader().grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence({ reviewedDiffDigest: OTHER_DIGEST }) });
   assert.equal(staleReview.grade, 'fail');
@@ -254,6 +333,7 @@ test('a forged admission receipt or a missing grader is not-run, never a silent 
     executor: {
       executorId: 'executor-1',
       execute: (request: EvaluationGraderExecutionRequest) => ({
+        checkId: request.checkId,
         finalSnapshot: request.finalSnapshot,
         profile: request.profile,
         executorId: request.executorId,
@@ -298,4 +378,337 @@ test('a blocked observation is not-run with its blocking reason instead of gradi
   const result = await grader().grade('C01', { observation: observation({ blocked: 'prerequisite-unavailable' }), snapshot: SNAPSHOT, evidence: evidence() });
   assert.equal(result.grade, 'not-run');
   assert.equal(result.reason, 'prerequisite-unavailable');
+});
+
+/* ------------------------------------------------------------------
+ * CR2-01: only exact producer-emitted budget-exhaustion codes authorise a patch-free stop.
+ * ------------------------------------------------------------------ */
+
+function routeLedgers(overrides: Readonly<Record<string, number>> = {}): BudgetLedger[] {
+  const ledger = (kind: string, limit: number, unit: string): BudgetLedger => ({
+    scope: 'task',
+    kind,
+    limit,
+    consumed: overrides[kind] ?? 0,
+    reservations: [],
+    unit,
+    configurationId: 'config-v1',
+    version: 1,
+  });
+  return [ledger('replan', 3, 'count'), ledger('repair', 2, 'count'), ledger('tokens', 100_000, 'count'), ledger('cost', 5, 'usd')];
+}
+
+test('an uncertain replan operation reference is not budget-exhaustion evidence', async () => {
+  const task = createFixtureBugTask();
+  const strategy = 'Check divisor == 0 before division';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Calculator.divide does not check the divisor',
+    suspectedCauseLocations: ['src/calculator.py:3'],
+    evidenceRefs: ['evi-repro-001'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-001',
+  };
+  const state = createFixtureTaskState({ stateVersion: 2, node: 'Repair', plan, activeDecisionId: plan.decisionRef, taskContext: task, budgetLedgers: routeLedgers() });
+  const changed = 'Check divisor == 0 and raise CalculationError';
+  const candidatePlan: FixPlan = { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) };
+  // The owner reports an unknown outcome; its opaque reference is carried behind a fixed uncertainty marker.
+  for (const operationRef of ['op-not-budget-exhausted-001', 'not-budget-exhausted', 'repair-budget-exhausted', 'REAL_PROFILE_GENERATION_INVALID: REPAIR_BUDGET_EXHAUSTED']) {
+    const statePort = new MemoryStatePortV02({ initialTaskState: state });
+    const result = await executeReplan(
+      { taskId: state.taskId, candidatePlan, proposalId: 'prop-1' },
+      {
+        statePort,
+        trustedDirection: {
+          directive: 'revise',
+          taskId: state.taskId,
+          workspaceId: state.workspaceId,
+          repositoryRevisionDigest: state.repositoryRevisionDigest,
+          stateVersion: state.stateVersion,
+          planVersion: state.planVersion,
+          rejectedDecisionId: plan.decisionRef ?? '',
+          strategyDigest: plan.strategyDigest,
+        },
+        replanPort: { provenance: 'mock', accept: async () => ({ outcome: 'uncertain' as const, operationRef }) },
+      },
+    );
+    assert.equal(result.outcome, 'INCOMPLETE');
+    assert.deepEqual(result.reasons, ['replan-owner-outcome-uncertain', operationRef]);
+    assert.equal(budgetStopEvidence(result.reasons), false, `${operationRef} is an opaque reference, not exhaustion`);
+    assert.equal(patchFreeFacts(state, budgetStopEvidence(result.reasons)), undefined, 'an uncertain outcome must stay indeterminate');
+  }
+});
+
+test('an uncertain replan whose reference collides with a stop code cannot certify exhaustion', async () => {
+  const task = createFixtureBugTask();
+  const strategy = 'Check divisor == 0 before division';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Calculator.divide does not check the divisor',
+    suspectedCauseLocations: ['src/calculator.py:3'],
+    evidenceRefs: ['evi-repro-001'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-001',
+  };
+  const state = createFixtureTaskState({ stateVersion: 2, node: 'Repair', plan, activeDecisionId: plan.decisionRef, taskContext: task, budgetLedgers: routeLedgers() });
+  const changed = 'Check divisor == 0 and raise CalculationError';
+  const result = await executeReplan(
+    { taskId: state.taskId, candidatePlan: { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) }, proposalId: 'prop-collide' },
+    {
+      statePort: new MemoryStatePortV02({ initialTaskState: state }),
+      trustedDirection: {
+        directive: 'revise',
+        taskId: state.taskId,
+        workspaceId: state.workspaceId,
+        repositoryRevisionDigest: state.repositoryRevisionDigest,
+        stateVersion: state.stateVersion,
+        planVersion: state.planVersion,
+        rejectedDecisionId: plan.decisionRef ?? '',
+        strategyDigest: plan.strategyDigest,
+      },
+      replanPort: { provenance: 'mock', accept: async () => ({ outcome: 'uncertain' as const, operationRef: 'repair-budget-exhausted' }) },
+    },
+  );
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(budgetStopEvidence(result.reasons), false);
+
+  const testFiles = [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }];
+  const expectedTestFiles = resolveExpectedTestFiles(task);
+  const firstCheck = task.requiredChecks[0];
+  assert.ok(firstCheck);
+  const retainedBaseline = {
+    taskId: task.taskId,
+    workspaceId: state.workspaceId,
+    repositoryId: task.repositoryId,
+    repositorySnapshotDigest: task.initialRevisionDigest,
+    acceptanceCriteria: task.acceptanceCriteria,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    requiredChecks: task.requiredChecks,
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    reproductionCheckId: firstCheck.checkId,
+    expectedPassingCheckIds: [],
+    expectedTestFiles,
+    testProtectionDigest: computeTestProtectionDigest(testFiles),
+    reproductionFailureSignature: 'reproduced failure',
+    checkResults: task.requiredChecks.map(check => ({ checkId: check.checkId, outcome: 'fail' as const })),
+  };
+  const uncertain = observation({
+    repositoryId: task.repositoryId,
+    taskId: task.taskId,
+    runId: state.runId,
+    initialRepositoryDigest: task.initialRevisionDigest,
+    workflowOutcome: 'INCOMPLETE',
+    effects: 'uncertain',
+  });
+  const freeze = async (binding: object) => ({ ...binding, snapshotId: 'final-collide', complete: true, files: testFiles });
+  const derive = (reasons: readonly string[]) =>
+    deriveWorkflowEvidenceFacts({
+      caseId: 'C04',
+      task,
+      result: { outcome: 'INCOMPLETE', state, milestones: [], reasons, executionEvidence: { finalState: state } },
+      observation: uncertain,
+      repository: { inspectDiff: async () => ({ diff: '', diffDigest: computeCanonicalSha256(''), changedFiles: [] }) },
+      finalTree: { freezeFinalTree: freeze, recheckCurrentFinalTree: freeze },
+      retainedBaseline,
+    });
+  assert.equal((await derive(['repair-budget-exhausted']))?.evidence.stoppedBeforeEffect, true, 'control: the same snapshot with a real ledger stop derives');
+  assert.equal(await derive(result.reasons), undefined, 'uncertain replan facts stay underivable');
+  // Defence in depth: even certified stop evidence cannot pass exhaustion when effects are uncertain.
+  const grade = await grader({ criteria: criteria([criterion('C04', 'exhaustion')]) }).grade('C04', { observation: uncertain, snapshot: SNAPSHOT, evidence: evidence() });
+  assert.notEqual(grade.grade, 'pass');
+});
+
+test('the saved fourth-replan cap stop is exhaustion evidence; a failed cap transition is not', async () => {
+  const task = createFixtureBugTask();
+  const strategy = 'Check divisor == 0 before division';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Calculator.divide does not check the divisor',
+    suspectedCauseLocations: ['src/calculator.py:3'],
+    evidenceRefs: ['evi-repro-001'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-001',
+  };
+  const state = createFixtureTaskState({ stateVersion: 2, node: 'Repair', plan, activeDecisionId: plan.decisionRef, taskContext: task, replanCount: 3, budgetLedgers: routeLedgers({ replan: 3 }) });
+  const changed = 'Check divisor == 0 and raise CalculationError';
+  const candidatePlan: FixPlan = { ...plan, strategy: changed, strategyDigest: computeCanonicalSha256(changed) };
+  const run = (statePort: MemoryStatePortV02) =>
+    executeReplan(
+      { taskId: state.taskId, candidatePlan, proposalId: 'prop-cap' },
+      {
+        statePort,
+        trustedDirection: {
+          directive: 'revise',
+          taskId: state.taskId,
+          workspaceId: state.workspaceId,
+          repositoryRevisionDigest: state.repositoryRevisionDigest,
+          stateVersion: state.stateVersion,
+          planVersion: state.planVersion,
+          rejectedDecisionId: plan.decisionRef ?? '',
+          strategyDigest: plan.strategyDigest,
+        },
+      },
+    );
+
+  const stopped = await run(new MemoryStatePortV02({ initialTaskState: state }));
+  assert.equal(stopped.outcome, 'INCOMPLETE');
+  assert.deepEqual(stopped.reasons, ['replan-cap-exceeded-fourth-replan-refused']);
+  assert.equal(stopped.state?.node, 'Incomplete');
+  assert.equal(budgetStopEvidence(stopped.reasons), true);
+  assert.equal(patchFreeFacts(stopped.state ?? state, budgetStopEvidence(stopped.reasons)), false);
+
+  const failingPort = new MemoryStatePortV02({ initialTaskState: state });
+  failingPort.transition = async () => {
+    throw new Error('owner unavailable');
+  };
+  const failed = await run(failingPort);
+  assert.equal(failed.reasons[0], 'replan-cap-exceeded-fourth-replan-refused');
+  assert.ok(failed.reasons.length > 1, 'the failed transition appends its error');
+  assert.equal(budgetStopEvidence(failed.reasons), false, 'an unsaved cap stop is not exhaustion evidence');
+  assert.equal(budgetStopEvidence(['replan-cap-exceeded-fourth-replan-refused-later']), false, 'never a substring');
+});
+
+test('the repair ledgers accept only their exact exhaustion codes as stop evidence', () => {
+  const state = createFixtureTaskState({ budgetLedgers: routeLedgers() });
+  const repairExhausted = checkAccounting({ ...state, budgetLedgers: routeLedgers({ repair: 2 }) });
+  assert.ok(!repairExhausted.ok);
+  assert.equal(repairExhausted.reason, 'repair-budget-exhausted');
+  assert.equal(budgetStopEvidence([repairExhausted.reason]), true);
+
+  const tokensExhausted = checkAccounting({ ...state, budgetLedgers: routeLedgers({ tokens: 100_000 }) });
+  assert.ok(!tokensExhausted.ok);
+  assert.equal(tokensExhausted.reason, 'token-or-cost-budget-exhausted');
+  assert.equal(budgetStopEvidence([tokensExhausted.reason]), true);
+
+  const replanState = createFixtureTaskState({ budgetLedgers: routeLedgers({ repair: 2 }) });
+  const replanExhausted = checkReplanAccounting(replanState);
+  assert.ok(!replanExhausted.ok);
+  assert.equal(replanExhausted.reason, 'task-budget-exhausted');
+  assert.equal(budgetStopEvidence([replanExhausted.reason]), true);
+});
+
+test('the coder agent exhaustion codes count only in the whole-code envelope the route emits', async () => {
+  const task = createFixtureBugTask();
+  const strategy = 'Check divisor == 0 before division';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Calculator.divide does not check the divisor',
+    suspectedCauseLocations: ['src/calculator.py:3'],
+    evidenceRefs: ['evi-repro-001'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-001',
+  };
+  const patch = {
+    kind: 'propose-patch',
+    proposalId: 'patch-budget-001',
+    diff: ['--- a/src/calculator.py', '+++ b/src/calculator.py', '@@ -1,2 +1,3 @@', ' def divide(a, b):', '+    if b == 0: raise CalculationError', '     return a / b', ''].join('\n'),
+    targetPaths: ['src/calculator.py'],
+    approvedPlanRef: plan.strategyDigest,
+  };
+  const turn = (budget: { maxModelCalls: number; maxActiveMs: number; maxRepairs: number; maxReplans: number }) =>
+    createCoderAgent({
+      propose: async () => ({
+        outcome: 'observed',
+        result: { proposal: { proposalId: patch.proposalId, content: JSON.stringify(patch) }, observedUsage: { inputTokens: 1, outputTokens: 1, costUsd: 0, billableTokens: 2 } },
+      }),
+      repository: {
+        provenance: 'mock',
+        listDir: async () => [],
+        readFile: async path => createFixtureSourceEvidence({ path }),
+        searchCode: async () => [],
+        applyPatch: async () => ({ applied: false, newRevisionDigest: '' }),
+        runCommand: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+        runTests: async check => ({ checkId: check.checkId, outcome: 'pass' }),
+        inspectDiff: async () => ({ diff: '', diffDigest: '', changedFiles: [] }),
+      },
+      budget,
+    }).turn(task, createFixtureTaskState({ taskContext: task, node: 'Repair', plan, activeDecisionId: plan.decisionRef }), [], createFixtureProviderRequest());
+
+  const modelCalls = await turn({ maxModelCalls: 0, maxActiveMs: 60_000, maxRepairs: 1, maxReplans: 1 });
+  assert.equal(modelCalls.outcome === 'invalid' ? modelCalls.reason : '', 'MODEL_CALL_BUDGET_EXHAUSTED');
+  const repairs = await turn({ maxModelCalls: 4, maxActiveMs: 60_000, maxRepairs: 0, maxReplans: 1 });
+  assert.equal(repairs.outcome === 'invalid' ? repairs.reason : '', 'REPAIR_BUDGET_EXHAUSTED');
+
+  for (const outcome of [modelCalls, repairs]) {
+    const code = outcome.outcome === 'invalid' ? outcome.reason : '';
+    // `graph-generation.ts:85` wraps a coder refusal in exactly this envelope before it reaches reasons.
+    assert.equal(budgetStopEvidence([`REAL_PROFILE_GENERATION_INVALID: ${code}`]), true, code);
+    assert.equal(budgetStopEvidence([`${code}: preceding text`]), false, `${code} must not match as a substring`);
+  }
+});
+
+test('a plan-generation budget stop at Investigate is withheld completion, and without the stop it derives nothing', async () => {
+  // CR4-05: plan generation exhausting at Investigate leaves the owner there with no patch; the
+  // stop evidence is what makes that a certifiable patch-free halt rather than an unknown state.
+  const task = createFixtureBugTask();
+  const state = createFixtureTaskState({ node: 'Investigate', nextAction: 'propose-fix-plan', taskContext: task });
+  const testFiles = [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }];
+  const firstCheck = task.requiredChecks[0];
+  assert.ok(firstCheck);
+  const retainedBaseline = {
+    taskId: task.taskId,
+    workspaceId: state.workspaceId,
+    repositoryId: task.repositoryId,
+    repositorySnapshotDigest: task.initialRevisionDigest,
+    acceptanceCriteria: task.acceptanceCriteria,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    requiredChecks: task.requiredChecks,
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    reproductionCheckId: firstCheck.checkId,
+    expectedPassingCheckIds: [],
+    expectedTestFiles: resolveExpectedTestFiles(task),
+    testProtectionDigest: computeTestProtectionDigest(testFiles),
+    reproductionFailureSignature: 'reproduced failure',
+    checkResults: task.requiredChecks.map(check => ({ checkId: check.checkId, outcome: 'fail' as const })),
+  };
+  const stopped = observation({
+    repositoryId: task.repositoryId,
+    taskId: task.taskId,
+    runId: state.runId,
+    initialRepositoryDigest: task.initialRevisionDigest,
+    workflowOutcome: 'INCOMPLETE',
+    effects: 'observed',
+  });
+  const freeze = async (binding: object) => ({ ...binding, snapshotId: 'final-investigate', complete: true, files: testFiles });
+  const derive = (reasons: readonly string[]) =>
+    deriveWorkflowEvidenceFacts({
+      caseId: 'C04',
+      task,
+      result: { outcome: 'INCOMPLETE', state, milestones: [], reasons, executionEvidence: { finalState: state } },
+      observation: stopped,
+      repository: { inspectDiff: async () => ({ diff: '', diffDigest: computeCanonicalSha256(''), changedFiles: [] }) },
+      finalTree: { freezeFinalTree: freeze, recheckCurrentFinalTree: freeze },
+      retainedBaseline,
+    });
+
+  const facts = await derive(['REAL_PROFILE_GENERATION_INVALID: MODEL_CALL_BUDGET_EXHAUSTED']);
+  assert.ok(facts, 'a plan-generation budget stop at Investigate must still derive its snapshot facts');
+  assert.equal(facts.evidence.speculativePatchApplied, false, 'Investigate holds no patch');
+  assert.equal(facts.evidence.stoppedBeforeEffect, true);
+  assert.equal(facts.evidence.completionWithheld, true);
+  assert.equal((await derive(['REAL_PROFILE_GENERATION_INVALID: ACTIVE_TIME_BUDGET_EXHAUSTED']))?.evidence.completionWithheld, true);
+
+  // An Investigate state with no budget evidence is an unexplained halt: no facts, so no evidence
+  // digest exists and the run can never reach an exhaustion grade.
+  assert.equal(await derive([]), undefined);
+  assert.equal(await derive(['No plan was produced']), undefined, 'a non-budget refusal is not exhaustion');
+  // With the derived evidence the same observation earns the exhaustion pass.
+  const graded = await grader({ criteria: criteria([criterion('C04', 'exhaustion')]) }).grade('C04', { observation: stopped, snapshot: facts.snapshot, evidence: facts.evidence });
+  assert.equal(graded.grade, 'pass');
 });

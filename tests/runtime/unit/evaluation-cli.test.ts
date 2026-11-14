@@ -61,6 +61,23 @@ test('invalid arguments exit 2 and never throw', async () => {
   }
 });
 
+test('serve accepts only a host-file reference before loading its configuration', async () => {
+  const missingHost = join(tmpdir(), 'uc03-console-host-does-not-exist.json');
+  const result = await runEvaluateCli(['serve', '--host', missingHost], HOST_OPTIONS);
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(JSON.parse(result.output).error, 'HOST_CONFIG_ERROR');
+  assert.equal(result.output.includes(missingHost), false);
+});
+
+test('serve rejects every extra argument before it can read the supplied host file', async () => {
+  const result = await runEvaluateCli(['serve', '--host', 'missing-host.json', '--token', 'secret-token'], HOST_OPTIONS);
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(JSON.parse(result.output).error, 'INVALID_ARGUMENTS');
+  assert.equal(result.output.includes('secret-token'), false);
+});
+
 test('argv cannot carry trusted binding', async () => {
   const result = await runEvaluateCli(['--mode', 'mock', '--profileDigest', digest('attacker')], HOST_OPTIONS);
   assert.equal(result.exitCode, 2);

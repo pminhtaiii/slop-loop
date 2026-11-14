@@ -118,3 +118,7 @@ The host bootstrap consumes pinned owner deliveries and constructs only Tai-owne
 No new dependency or persistence engine. Exact owned paths and serialization are in tasks.md. Pre/post-design governance check: placeholder constitution stays unratified; owner, production profile and real-execution prerequisites remain gates. Planning quality may pass while runtime readiness remains denied.
 
 T033 binds a retained immutable initial repository tree and its admitted-file manifest, distinct from durable verification evidence. It supplies original source bytes across continuation. T032 uses that source to implement the concrete read-only `inspectDiff` producer currently stubbed in ControlledRepositoryTools. Both join bootstrap T028 through T032; T034 reviewer ingress precedes shared route migration T027. Task numbering preserves the appended ledger history rather than implying execution order. Diff measurement must be current, complete, bounded and protected-content-safe before review/grading can work.
+
+## Source/controlled completion — 2026-11-12
+
+Follow [completion](contracts/completion.md) for targeted coder/replan/loop/host/evidence/control corrections and their acceptance seams. Execute T026, then T027, T028, T029, the integrated T030/T014 controlled matrix, and T031. Preserve original real acceptance tasks and gates. Existing approved artifacts govern all unaffected behavior.
