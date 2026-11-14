@@ -376,6 +376,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   private start(internal: InternalReservation): QuestionBudgetExecutionResultV1<undefined> {
     if (internal.status !== 'reserved') return { ok: false, reasonCode: 'duplicate-settlement' };
     if (this.status !== 'open') return { ok: false, reasonCode: this.terminalReason ?? 'accounting-unknown' };
+    if (this.activeReservationId !== undefined) return { ok: false, reasonCode: 'busy' };
     const startedAt = this.now();
     if (!Number.isFinite(startedAt) || startedAt < 0 || startedAt >= internal.deadlineAt) {
       subtractCounters(this.reserved, internal.reservedCounters);

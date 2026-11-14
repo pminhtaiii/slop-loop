@@ -149,6 +149,34 @@ test('an exact tool-call boundary denies final validation before its IO callback
   assert.equal(created.value.snapshot().status, 'exhausted');
 });
 
+test('exact scan limits deny final validation without invoking its adapter', async () => {
+  const cases = [
+    { profile: validProfile({ maxScannedBytes: 20_000 }), sourceRead: true, work: { scannedFiles: 1, scannedBytes: 20_000 } },
+    { profile: validProfile({ maxScannedFiles: 1 }), sourceRead: false, work: { scannedFiles: 1, scannedBytes: 100 } },
+  ];
+
+  for (const { profile, sourceRead, work } of cases) {
+    const created = createQuestionBudgetLedger(profile, { pricing, now: () => 10 });
+    assert.ok(created.ok);
+    const ledger = created.value;
+    const scan = sourceRead ? ledger.reserveRepositoryOperation('read') : ledger.reserveSnapshotAdmission();
+    assert.ok(scan.ok);
+    assert.ok((await scan.value.execute(async () => work, actual => ({ kind: 'work', work: actual }))).ok);
+
+    let finalIoCount = 0;
+    const final = ledger.reserveFinalValidation();
+    if (final.ok) {
+      await final.value.execute(async () => {
+        finalIoCount += 1;
+        return { finalBytes: 2 };
+      }, actual => ({ kind: 'work', work: actual }));
+    }
+    assert.equal(finalIoCount, 0);
+    assert.deepEqual(final, { ok: false, reasonCode: 'scan-limit' });
+    assert.equal(ledger.snapshot().status, 'exhausted');
+  }
+});
+
 test('cancellation aborts the adapter signal and ignores a late result while retaining its hold', async () => {
   const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => 10 });
   assert.ok(created.ok);
@@ -210,6 +238,43 @@ test('model reservations settle trusted usage once at exact integer micro-cost',
     return response;
   }, value => ({ kind: 'model-usage', usage: value.usage })), { ok: false, reasonCode: 'duplicate-settlement' });
   assert.equal(dispatches, 1);
+});
+
+test('a pre-reserved model call stays reserved when another call is running', async () => {
+  let now = 10;
+  const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => now });
+  assert.ok(created.ok);
+  const ledger = created.value;
+  const first = ledger.reserveModelCall(100);
+  const second = ledger.reserveModelCall(100);
+  assert.ok(first.ok);
+  assert.ok(second.ok);
+
+  const usage = { status: 'complete', inputTokens: 80, outputTokens: 12 } as const;
+  const response = Promise.withResolvers<typeof usage>();
+  const running = first.value.execute(() => response.promise, value => ({ kind: 'model-usage', usage: value }));
+  now = 20;
+  let secondIoCount = 0;
+  try {
+    const attempted = await second.value.execute(async () => {
+      secondIoCount += 1;
+      return usage;
+    }, value => ({ kind: 'model-usage', usage: value }));
+
+    assert.equal(secondIoCount, 0);
+    assert.deepEqual(attempted, { ok: false, reasonCode: 'busy' });
+    assert.equal(ledger.snapshot().consumed.modelCalls, 0);
+    assert.equal(ledger.snapshot().consumed.elapsedMs, 10);
+    assert.equal(ledger.snapshot().reserved.modelCalls, 2);
+    assert.deepEqual(second.value.releaseBeforeDispatch(), { ok: true, value: undefined });
+    assert.equal(ledger.snapshot().reserved.modelCalls, 1);
+  } finally {
+    response.resolve(usage);
+    assert.ok((await running).ok);
+  }
+  assert.equal(ledger.snapshot().consumed.modelCalls, 1);
+  assert.equal(ledger.snapshot().consumed.billableTokens, 92);
+  assert.equal(ledger.snapshot().reserved.modelCalls, 0);
 });
 
 test('unknown model usage holds the full reservation and blocks the next dispatch', async () => {

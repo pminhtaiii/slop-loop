@@ -339,6 +339,7 @@ export function planRepositoryOperation(
 }
 
 export function planFinalValidation(profile: QuestionBudgetProfileV1, available: BudgetCounters): BudgetReservationPlanResultV1 {
+  if (available['scannedFiles'] <= 0 || available['scannedBytes'] <= 0) return denied('scan-limit');
   const counters = emptyCounters();
   counters['toolCalls'] = 1;
   counters['finalBytes'] = profile.runtime.maxFinalBytes;
