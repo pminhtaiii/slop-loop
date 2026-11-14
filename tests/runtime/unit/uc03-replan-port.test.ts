@@ -1,7 +1,7 @@
 /** T027: material replan routes through the UC-04 transaction, never legacy reserve/settle. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { computeCanonicalSha256, computeCheckSetDigest, type BudgetLedger, type FixPlan, type StatePort, type TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCheckSetDigest, type BudgetLedger, type BudgetReservation, type FixPlan, type StatePort, type TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { executeReplan } from '../../../src/uc03/repair.ts';
 import type { TrustedReplanDirection } from '../../../src/uc03/repair-types.ts';
 import type { MaterialReplanPortV02, MaterialReplanRequestV02, MaterialReplanResultV02 } from '../../../src/uc03/graph-types-v02.ts';
@@ -229,6 +229,64 @@ test('replan: owner-committed state must bind to this task, run and one-step rep
     }
     assert.equal(statePort.reserveCalls, 0, `${label} must not reserve`);
     assert.equal(statePort.transitionCalls, 0, `${label} must not transition locally`);
+  }
+});
+
+test('replan: an accepted replan cannot erase an outstanding repair reservation', async () => {
+  const { state: base, candidatePlan } = fixture();
+  const repairCharge: BudgetReservation = { reservationId: 'res-repair-1', keyedId: 'act-repair-1', amount: 1 };
+  const state: TaskState = {
+    ...base,
+    evidenceRefs: [...base.evidenceRefs, `repair-action:${repairCharge.keyedId}`],
+    budgetLedgers: base.budgetLedgers?.map(ledger => (ledger.kind === 'repair' ? { ...ledger, reservations: [repairCharge], version: ledger.version + 1 } : ledger)),
+  };
+  const direction: TrustedReplanDirection = {
+    directive: 'revise',
+    taskId: state.taskId,
+    workspaceId: state.workspaceId,
+    repositoryRevisionDigest: state.repositoryRevisionDigest,
+    stateVersion: state.stateVersion,
+    planVersion: state.planVersion,
+    rejectedDecisionId: state.plan?.decisionRef ?? '',
+    strategyDigest: state.plan?.strategyDigest ?? '',
+  };
+  const committed: TaskState = {
+    ...state,
+    stateVersion: state.stateVersion + 2,
+    planVersion: state.planVersion + 1,
+    node: 'AwaitPlan',
+    nextAction: 'approve-fix-plan',
+    plan: { ...candidatePlan, planVersion: state.planVersion + 1, decisionRef: 'dec-plan-002' },
+    activeDecisionId: 'dec-plan-002',
+    latestReviewRef: undefined,
+    reviewRefs: [],
+    replanCount: state.replanCount + 1,
+    budgetLedgers: chargeReplan(state),
+  };
+  const withRepair = (reservations: readonly BudgetReservation[], consumed: number): Partial<TaskState> => ({
+    budgetLedgers: committed.budgetLedgers?.map(ledger => (ledger.kind === 'repair' ? { ...ledger, reservations, consumed } : ledger)),
+  });
+  const cases: readonly (readonly [string, Partial<TaskState>, string])[] = [
+    ['repair reservation dropped, consumption unchanged', withRepair([], 0), 'INCOMPLETE'],
+    ['repair reservation amount changed', withRepair([{ ...repairCharge, amount: 2 }], 0), 'INCOMPLETE'],
+    ['repair reservation id changed', withRepair([{ ...repairCharge, reservationId: 'res-repair-2' }], 0), 'INCOMPLETE'],
+    ['repair reservation preserved', {}, 'REPLAN_PREPARED'],
+    ['repair reservation settled into consumption', withRepair([], 1), 'REPLAN_PREPARED'],
+  ];
+  for (const [label, override, expected] of cases) {
+    const statePort = new CountingPortV02({ initialTaskState: state });
+    const returned = { ...committed, ...override };
+    const replanPort: MaterialReplanPortV02 = {
+      provenance: 'mock',
+      accept: async (): Promise<MaterialReplanResultV02> => {
+        ownerCommits(statePort, returned);
+        return { outcome: 'accepted', state: returned, reservationReceipt: 'res-1', transitionReceipt: 'tr-1' };
+      },
+    };
+    const result = await executeReplan({ taskId: state.taskId, candidatePlan, proposalId: 'prop-1' }, { statePort, replanPort, trustedDirection: direction });
+    assert.equal(result.outcome, expected, label);
+    if (expected === 'REPLAN_PREPARED') assert.deepEqual(result.state.budgetLedgers, returned.budgetLedgers, label);
+    else assert.deepEqual(result.reasons, ['reserved-task-state-inconsistent'], label);
   }
 });
 

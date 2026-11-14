@@ -39,10 +39,15 @@ export async function bindAcceptedMaterialReplan(prior: TaskState, input: Replan
   // ALLOWED_NODE_TRANSITIONS reaches AwaitPlan from AwaitFeedback/Repair only through Investigate and
   // every edge bumps stateVersion once, so the single owner transaction still lands two versions later.
   const expectedStateVersion = prior.stateVersion + (prior.node === 'Investigate' ? 1 : 2);
-  // context/runtime_policy.md: a replan resets no other task budget, so consumption may only grow.
-  const budgetsMonotone = (prior.budgetLedgers ?? []).every(
-    before => before.kind === 'replan' || (owned.budgetLedgers?.some(after => after.scope === before.scope && after.kind === before.kind && after.consumed >= before.consumed) ?? false),
-  );
+  // context/runtime_policy.md: a replan resets no other task budget. Consumption may only grow, and an
+  // outstanding reservation may only disappear when its amount is settled into consumption.
+  const budgetsMonotone = (prior.budgetLedgers ?? []).every(before => {
+    if (before.kind === 'replan') return true;
+    const after = owned.budgetLedgers?.find(next => next.scope === before.scope && next.kind === before.kind);
+    if (!after || after.consumed < before.consumed) return false;
+    const removed = before.reservations.filter(item => !after.reservations.some(next => next.reservationId === item.reservationId && next.keyedId === item.keyedId && next.amount === item.amount));
+    return after.consumed >= before.consumed + removed.reduce((sum, item) => sum + item.amount, 0);
+  });
   const bound =
     validateTaskState(owned).ok &&
     exactCurrentState &&
