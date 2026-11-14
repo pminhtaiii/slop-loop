@@ -13,6 +13,7 @@ import {
   type SourceHost,
 } from '../../../src/runtime/evaluation-profile.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { Denied, endpointOf } from '../../../src/runtime/evaluation-profile-primitives.ts';
 
 const digest = (seed: string): string => sha256Text(seed);
 const limits: EvaluationLimits = {
@@ -148,11 +149,35 @@ describe('evaluation profile admission', () => {
     assert.equal(JSON.stringify(first.value).includes('host-key-one'), true);
   });
 
-  it('pins the trusted HTTPS endpoint only', () => {
-    for (const endpoint of ['http://api.deepseek.com/v1/messages', 'https://evil.example/v1/messages', 'https://api.deepseek.com/v1/messages?x=1']) {
+  it('accepts an operator-pinned messages endpoint under the shared rule', () => {
+    for (const endpoint of ['https://model.invalid/v1/messages', 'https://192.0.2.10:8443/deepseek/v1/messages']) {
       const result = admitEvaluationProfile(rawProfile(baseProfile, { endpoint }));
-      assert.equal(result.ok ? '' : result.reasonCode, 'INVALID_ENDPOINT');
+      assert.ok(result.ok, endpoint);
+      assert.equal(result.value.endpoint.path.endsWith('/messages'), true);
     }
+    // The default public endpoint stays valid, and the origin/path are split, never echoed whole.
+    const defaults = admitEvaluationProfile(rawProfile(baseProfile, { endpoint: 'https://api.deepseek.com/anthropic/v1/messages' }));
+    assert.ok(defaults.ok);
+    assert.deepEqual(defaults.value.endpoint, { origin: 'https://api.deepseek.com', path: '/anthropic/v1/messages' });
+  });
+
+  it('refuses an endpoint outside the shared rule, and plain http without acknowledgement', () => {
+    for (const endpoint of [
+      'https://model.invalid/v1/chat',
+      'https://model.invalid/v1/messages/',
+      'https://user:pass@model.invalid/v1/messages',
+      'https://model.invalid/v1/messages?x=1',
+      'https://model.invalid/v1/messages#frag',
+      'relative/v1/messages',
+      'http://model.invalid/v1/messages',
+    ]) {
+      const result = admitEvaluationProfile(rawProfile(baseProfile, { endpoint }));
+      assert.equal(result.ok ? '' : result.reasonCode, 'INVALID_ENDPOINT', endpoint);
+    }
+    // The acknowledgement is an explicit argument of the shared rule, never a URL feature.
+    assert.throws(() => endpointOf('http://192.0.2.10:8080/v1/messages', '$.endpoint'), Denied);
+    assert.deepEqual(endpointOf('http://192.0.2.10:8080/v1/messages', '$.endpoint', true), { origin: 'http://192.0.2.10:8080', path: '/v1/messages' });
+    assert.throws(() => endpointOf('http://192.0.2.10:8080/v1/chat', '$.endpoint', true), Denied);
   });
 
   it('derives a stable catalog digest across caller order and rejects a swapped catalog', () => {
