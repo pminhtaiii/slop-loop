@@ -37,8 +37,16 @@ export async function bindAcceptedMaterialReplan(
   const committedPlan = owned.plan && { ...owned.plan, decisionRef: undefined };
   const expectedPlan = { ...input.candidatePlan, planVersion: prior.planVersion + 1, decisionRef: undefined };
   const priorAccounting = checkReplanAccounting({ ...owned, replanCount: prior.replanCount }, input.proposalId, accepted.reservationReceipt);
+  // ALLOWED_NODE_TRANSITIONS reaches AwaitPlan from AwaitFeedback/Repair only through Investigate and
+  // every edge bumps stateVersion once, so the single owner transaction still lands two versions later.
   const expectedStateVersion = prior.stateVersion + (prior.node === 'Investigate' ? 1 : 2);
-  const bound = validateTaskState(owned).ok && exactCurrentState && priorAccounting.ok &&
+  // context/runtime_policy.md: a replan resets no other task budget, so consumption may only grow.
+  const budgetsMonotone = (prior.budgetLedgers ?? []).every(
+    before =>
+      before.kind === 'replan' ||
+      (owned.budgetLedgers?.some(after => after.scope === before.scope && after.kind === before.kind && after.consumed >= before.consumed) ?? false),
+  );
+  const bound = validateTaskState(owned).ok && exactCurrentState && priorAccounting.ok && budgetsMonotone &&
     owned.taskId === prior.taskId && owned.runId === prior.runId && owned.workspaceId === prior.workspaceId &&
     owned.repositoryId === prior.repositoryId && owned.repositoryRevisionDigest === prior.repositoryRevisionDigest &&
     owned.taskContext?.configId === prior.taskContext?.configId && owned.taskContext?.configVersion === prior.taskContext?.configVersion &&

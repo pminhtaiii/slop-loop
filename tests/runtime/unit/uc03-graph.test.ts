@@ -1105,6 +1105,8 @@ test('Generated AwaitFeedback revisions call the owner once and require renewed 
     let ownerCalls = 0;
     const ports: UC03GraphPorts = {
       ...setup.ports,
+      // The accepted owner path must run through the v0.2 port: the legacy port cannot own the transaction.
+      statePort,
       replanPort: {
         provenance: 'mock',
         accept: async request => {
@@ -1116,10 +1118,16 @@ test('Generated AwaitFeedback revisions call the owner once and require renewed 
           assert.ok(current);
           const replanLedger = owner.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'replan');
           assert.ok(replanLedger);
-          owner.internalSetLedger({ ...replanLedger, consumed: replanLedger.consumed + 1, version: replanLedger.version + 1 });
+          // The owner's one durable transaction records the allowance as a reservation bound to the proposal.
+          owner.internalSetLedger({
+            ...replanLedger,
+            reservations: [...replanLedger.reservations, { reservationId: `reservation-${requestId}`, keyedId: request.proposalId, amount: 1 }],
+            version: replanLedger.version + 1,
+          });
           const next: TaskState = {
             ...current,
-            stateVersion: request.priorStateVersion + 1,
+            // AwaitFeedback reaches AwaitPlan only through Investigate, so the state advances by two.
+            stateVersion: request.priorStateVersion + 2,
             node: 'AwaitPlan',
             nextAction: 'approve-fix-plan',
             planVersion: request.priorPlanVersion + 1,
