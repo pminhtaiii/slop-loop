@@ -91,3 +91,14 @@ The same implementation request covers the remaining internal US3 source gaps id
 ## Convergence diagnostic release — 2026-11-13
 
 After the post-T037 convergence appended T038, the user selected **release and build T038** in this same implementation request. This releases only T038's source/controlled scope as written in [tasks](../tasks.md): observed coder-boundary diagnostic categories and the controlled tool-denial and malformed-output rows, within its three owned paths. It reuses the existing T012–T018 diagnostic vocabulary and integration contract §5 unchanged; no new contract, schema or dependency is released. No paid/provider/container operation, production owner delivery, actual-browser/real/restart acceptance or merge is released, and T011, T014's real half, T017, T018 and T019 keep their existing gates.
+
+## Real-tier prerequisite release — 2026-11-14
+
+On 2026-11-14 (Asia/Saigon) the user granted **permission to finish off everything before running T011**, and then selected three options:
+- **owner lanes:** the coordinator's workers build the missing UC-04 (task/control/journal store, baseline evidence, material replan) and UC-05 (policy, decision, presentation, continuation, current admission) production implementations;
+- **paid calls:** the user runs DeepSeek through its Anthropic-compatible key (`ANTHROPIC_API_KEY`), which the transport's pinned endpoint already expects;
+- **delivery:** plan first, then implement on a new `feat/` branch with a paired draft PR.
+
+This releases **planning** of the real-tier prerequisites now, and their implementation only after automated validation and both independent planning lanes pass. In scope: the production owner implementations, the G-PROFILE operator profile (credentials supplied locally by the user, never committed or printed; billable bounds; a pinned Python/pytest image; limits; protected artifacts), and the evidence runs that UC-03 T024 (containment), T025 (approval gating), T026/T066 (route and admission matrix) and T028 (real success route) require. Local Docker execution is released for those runs. Paid provider calls are released only inside a recorded hard budget that the plan must state and the user can change; the plan proposes a default.
+
+**Provenance, recorded exactly:** this is one user's direction. The UC-04 and UC-05 implementations are built by the coordinator's workers under that delegated authority; they are **not** Thanh Tan's or Trong Tan's deliveries or signatures, and G-OWNERS stays single-attested. The original UC-03 ledgers keep owning T024–T028/T066 acceptance. **T011 itself, the first real repair claim (G-REAL/SC-001), T017's browser acceptance, restart acceptance (G-RESTART) and merge are not released.** T039 remains unreleased.
