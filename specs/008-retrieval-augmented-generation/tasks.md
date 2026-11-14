@@ -6,10 +6,10 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Freeze question contracts/validators and schema versions in src/contracts/questions/contracts.ts and src/contracts/questions/validation.ts with contract vectors in tests/runtime/contract/questions.test.ts.
+- [X] T001 Freeze question contracts/validators and schema versions in src/contracts/questions/contracts.ts and src/contracts/questions/validation.ts with contract vectors in tests/runtime/contract/questions.test.ts.
   - **Dependencies**: None; external G-IMPLEMENT required.
   - **Acceptance**: All contract shapes including retrieval represented; malformed IDs/ranges/limits/decisions/usage rejected; no repair schema change.
-- [ ] T002 Build deterministic disposable Python repository trees and scripted model support in tests/runtime/support/questions/fixtures.ts and tests/runtime/support/questions/scripted-model.ts.
+- [X] T002 Build deterministic disposable Python repository trees and scripted model support in tests/runtime/support/questions/fixtures.ts and tests/runtime/support/questions/scripted-model.ts.
   - **Dependencies**: T001.
   - **Acceptance**: ~1k/~10k/~30k size bands, late definition, three-file flow, docs/config/tests, canaries and isolated target roots; Python never executed; judging data not copied into target.
 
