@@ -539,7 +539,7 @@ test('production generation refuses a supplied revised plan before any replan re
     strategyDigest: computeCanonicalSha256(strategy),
     decisionRef: 'decision-agent-route-001',
   };
-  const feedback = await seed(task, statePort, { node: 'AwaitFeedback', plan, evidenceRefs: [baselineRef], nextAction: 'await-human-feedback-and-direction' });
+  const feedback = await seed(task, statePort, { node: 'AwaitFeedback', plan, activeDecisionId: plan.decisionRef, evidenceRefs: [baselineRef], nextAction: 'await-human-feedback-and-direction' });
   const direction = {
     directive: 'revise' as const,
     taskId: feedback.taskId,
@@ -579,7 +579,7 @@ test('a revise direction at AwaitFeedback persists a replan that keeps the basel
     strategyDigest: computeCanonicalSha256(strategy),
     decisionRef: 'decision-agent-route-002',
   };
-  const feedback = await seed(task, statePort, { node: 'AwaitFeedback', plan, evidenceRefs: [baselineRef], nextAction: 'await-human-feedback-and-direction' });
+  const feedback = await seed(task, statePort, { node: 'AwaitFeedback', plan, activeDecisionId: plan.decisionRef, evidenceRefs: [baselineRef], nextAction: 'await-human-feedback-and-direction' });
   const direction = {
     directive: 'revise' as const,
     taskId: feedback.taskId,
@@ -601,7 +601,13 @@ test('a revise direction at AwaitFeedback persists a replan that keeps the basel
 
   // A candidate that swaps the evidence ID for the revision digest is refused, not silently persisted.
   const rejecting = setup();
-  const stale = await seed(rejecting.task, rejecting.statePort, { node: 'AwaitFeedback', plan, evidenceRefs: [baselineRef], nextAction: 'await-human-feedback-and-direction' });
+  const stale = await seed(rejecting.task, rejecting.statePort, {
+    node: 'AwaitFeedback',
+    plan,
+    activeDecisionId: plan.decisionRef,
+    evidenceRefs: [baselineRef],
+    nextAction: 'await-human-feedback-and-direction',
+  });
   const refused = await createAwaitFeedbackNode(rejecting.ports, {
     mode: 'development',
     trustedDirection: { ...direction, taskId: stale.taskId, stateVersion: stale.stateVersion },
@@ -622,7 +628,27 @@ test('production generation still lets a human wait and a human stop through', a
   assert.equal(wait.reasons, undefined);
 
   const stopping = setup();
-  const pausedForStop = await seed(stopping.task, stopping.statePort, { node: 'AwaitFeedback' });
+  // A terminate direction binds the plan the human rejected, and rejection always leaves the plan's
+  // decision as the active pointer (handlePlanRejection), so the seeded owner state must carry both.
+  const stopStrategy = 'retain the current bounded strategy';
+  const stopPlan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'zero denominator is unguarded',
+    suspectedCauseLocations: ['src/calculator.py'],
+    evidenceRefs: [stopping.task.initialRevisionDigest],
+    strategy: stopStrategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(stopping.task.requiredChecks),
+    baselineRef: stopping.task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(stopStrategy),
+    decisionRef: 'decision-agent-route-stop',
+  };
+  const pausedForStop = await seed(stopping.task, stopping.statePort, {
+    node: 'AwaitFeedback',
+    plan: stopPlan,
+    activeDecisionId: stopPlan.decisionRef,
+    nextAction: 'await-human-feedback-and-direction',
+  });
   const stop = await createAwaitFeedbackNode(stopping.ports, {
     ...production(unusedAgent()),
     trustedDirection: {
@@ -632,8 +658,8 @@ test('production generation still lets a human wait and a human stop through', a
       repositoryRevisionDigest: pausedForStop.repositoryRevisionDigest,
       stateVersion: pausedForStop.stateVersion,
       planVersion: pausedForStop.planVersion,
-      rejectedDecisionId: pausedForStop.plan?.decisionRef as string,
-      strategyDigest: pausedForStop.plan?.strategyDigest as string,
+      rejectedDecisionId: stopPlan.decisionRef as string,
+      strategyDigest: stopPlan.strategyDigest,
     },
   })(graphState(stopping.task, pausedForStop));
   assert.equal(stop.terminalOutcome, 'INCOMPLETE');

@@ -195,6 +195,27 @@ test('coder and reviewer turns share the task but keep distinct journal chains',
   assert.deepEqual(journal.outcomes.map(outcome => [outcome.claimId, outcome.attemptId]).sort(), journal.attempts.map(attempt => [attempt.claimId, attempt.attemptId]).sort());
   assert.ok(journal.claims.every(claim => claim.status === 'settled'));
   assert.equal(journal.activeClaimId, null);
+
+  assert.deepEqual(dispatches, [`coder:${coderRequestId}`, `reviewer:${reviewerAdmission.providerRequestId}`]);
+  for (const providerRequestId of [coderRequestId, reviewerAdmission.providerRequestId]) {
+    const claimId = `claim-${providerRequestId}`;
+    const claims = journal.claims.filter(claim => claim.claimId === claimId);
+    assert.equal(claims.length, 1, `request ${providerRequestId} must have exactly one claim`);
+    const claim = claims[0];
+    assert.ok(claim, `request ${providerRequestId} claim is present`);
+
+    const attempts = journal.attempts.filter(attempt => attempt.claimId === claimId);
+    assert.equal(attempts.length, 1, `claim ${claimId} must have exactly one attempt`);
+    const attempt = attempts[0];
+    assert.ok(attempt, `claim ${claimId} attempt is present`);
+    assert.equal(claim.attemptId, attempt.attemptId);
+    assert.equal(attempt.status, 'settled');
+
+    const outcomes = journal.outcomes.filter(outcome => outcome.claimId === claimId);
+    assert.equal(outcomes.length, 1, `claim ${claimId} must have exactly one outcome`);
+    assert.equal(outcomes[0]?.attemptId, attempt.attemptId);
+    assert.equal(outcomes[0]?.outcome, 'observed');
+  }
 });
 
 test('wrong-role, stale, fenced and mismatched admissions dispatch nothing and leave the ledger unchanged', async () => {

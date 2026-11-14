@@ -298,8 +298,46 @@ test('grading: returns bounded metadata tied to the exact admitted snapshot and 
   assert.equal(result.status, 'pass');
   assert.equal(result.durationMs, 12);
   assert.equal(result.outputBytes, 128);
+  assert.equal(Object.hasOwn(result, 'checkId'), false, 'legacy unpinned results retain their original shape');
+  assert.deepEqual(Object.keys(mockGrading.admittedRequest ?? {}).sort(), ['executorId', 'finalSnapshot', 'profile']);
   assert.equal(Object.hasOwn(result, 'cpuMs'), false);
   assert.ok(!JSON.stringify(result).includes(mockGrading.graderPayload.marker));
+});
+
+test('grading: a pinned check identity is admitted and executed with the exact snapshot and profile', async () => {
+  let execution: Record<string, unknown> | undefined;
+  const mockGrading = createMockPrivateGrading({
+    admission: request => ({ kind: 'injected-mock-isolation-admission', admissionId: 'bound-admission', ...request }),
+    result: request => {
+      execution = request;
+      return {
+        finalSnapshot: request['finalSnapshot'],
+        profile: request['profile'],
+        executorId: request['executorId'],
+        checkId: request['checkId'],
+        status: 'pass',
+        actualOutcome: 'COMPLETED',
+        durationMs: 12,
+        cpuMs: 8,
+        outputBytes: 128,
+      };
+    },
+  });
+  const result = await executeMockPrivateGrading({ ...mockGrading.boundary, checkId: 'hidden-c01' });
+  assert.ok(result);
+  assert.equal(result.checkId, 'hidden-c01');
+  assert.equal(result.status, 'pass');
+  assert.equal(mockGrading.admissionCalls, 1);
+  assert.equal(mockGrading.executorCalls, 1);
+  assert.equal(mockGrading.admittedRequest?.['checkId'], 'hidden-c01');
+  assert.equal('graderPayload' in (mockGrading.admittedRequest ?? {}), false);
+  assert.ok(execution);
+  assert.equal(execution['checkId'], 'hidden-c01');
+  assert.ok(execution['admission'] && typeof execution['admission'] === 'object');
+  assert.equal(Reflect.get(execution['admission'], 'checkId'), 'hidden-c01');
+  assert.equal(Object.isFrozen(execution['admission']), true);
+  assert.equal(Object.isFrozen(execution), true);
+  assert.equal(JSON.stringify(result).includes(mockGrading.graderPayload.marker), false);
 });
 
 test('grading: refuses missing or mismatched admission before executor invocation', async () => {
@@ -343,6 +381,55 @@ test('grading: refuses missing or mismatched admission before executor invocatio
   assert.equal(wrongExecutor.admissionCalls, 1);
   assert.equal(selfAssertedBoolean.admissionCalls, 1);
   assert.equal(missingAuthority.admissionCalls, 0);
+});
+
+test('grading: a bound check refuses missing or substituted identity without a successful result', async () => {
+  for (const checkId of [undefined, 'hidden-other']) {
+    const wrongAdmission = createMockPrivateGrading({
+      admission: request => ({
+        kind: 'injected-mock-isolation-admission',
+        admissionId: 'wrong-check',
+        finalSnapshot: request['finalSnapshot'],
+        profile: request['profile'],
+        executorId: request['executorId'],
+        ...(checkId === undefined ? {} : { checkId }),
+      }),
+    });
+    assert.equal(await executeMockPrivateGrading({ ...wrongAdmission.boundary, checkId: 'hidden-c01' }), undefined);
+    assert.equal(wrongAdmission.admissionCalls, 1);
+    assert.equal(wrongAdmission.executorCalls, 0);
+  }
+  const resultOverrides = [
+    {},
+    { checkId: 'hidden-other' },
+    { checkId: 'hidden-c01', finalSnapshot: { snapshotId: 'wrong-final', digest: computeSha256('wrong-final') } },
+    { checkId: 'hidden-c01', profile: { profileId: 'wrong-profile', digest: computeSha256('wrong-profile'), bounds: {} } },
+    { checkId: 'hidden-c01', executorId: 'wrong-executor' },
+  ];
+  for (const override of resultOverrides) {
+    const wrongResult = createMockPrivateGrading({
+      admission: request => ({ kind: 'injected-mock-isolation-admission', admissionId: 'bound-check', ...request }),
+      result: request => ({
+        finalSnapshot: request['finalSnapshot'],
+        profile: request['profile'],
+        executorId: request['executorId'],
+        status: 'pass',
+        actualOutcome: 'COMPLETED',
+        durationMs: 12,
+        cpuMs: 8,
+        outputBytes: 128,
+        ...override,
+      }),
+    });
+    assert.equal(await executeMockPrivateGrading({ ...wrongResult.boundary, checkId: 'hidden-c01' }), undefined);
+    assert.equal(wrongResult.executorCalls, 1);
+  }
+  for (const checkId of ['', '../private-check', undefined]) {
+    const invalidBoundary = createMockPrivateGrading();
+    assert.equal(await executeMockPrivateGrading({ ...invalidBoundary.boundary, checkId }), undefined);
+    assert.equal(invalidBoundary.admissionCalls, 0);
+    assert.equal(invalidBoundary.executorCalls, 0);
+  }
 });
 
 test('grading: invalid bounds and unsafe or mismatched results stay not-run and expose no payload', async () => {

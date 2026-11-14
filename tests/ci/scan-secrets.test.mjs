@@ -410,6 +410,20 @@ test('shipped exemptions validate and clear exactly the reviewed synthetic findi
     ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 83, '12515fc40bc3579b3a5e75109b3a5ec545a1e29a'],
     ['private-key', 'tests/runtime/unit/telemetry.test.ts', 569, '12515fc40bc3579b3a5e75109b3a5ec545a1e29a'],
     ['generic-api-key', 'specs/007-runtime-evaluation-integration/data-model.md', 28, '7015a46c47af462186db31830262a8de33f5ba4d'],
+    ['generic-api-key', 'tests/runtime/integration/evaluation-console-journey.test.ts', 344, ''],
+    ['generic-api-key', 'tests/runtime/integration/evaluation-console-journey.test.ts', 429, ''],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1161, ''],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1169, ''],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1549, ''],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1636, ''],
+    ['generic-api-key', 'tests/runtime/integration/evaluation-console-journey.test.ts', 286, 'ce57f472c50e04b1b9722d6bd26f40e7d36c63c9'],
+    ['generic-api-key', 'tests/runtime/integration/evaluation-console-journey.test.ts', 368, 'ce57f472c50e04b1b9722d6bd26f40e7d36c63c9'],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 892, 'c11a10ac02558451ccf277596e15b2f4d4ee8e87'],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 900, 'c11a10ac02558451ccf277596e15b2f4d4ee8e87'],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1011, 'c11a10ac02558451ccf277596e15b2f4d4ee8e87'],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1086, 'c11a10ac02558451ccf277596e15b2f4d4ee8e87'],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1549, '2f5c9760cbc5ad56a4d7040bfc0be08301310f79'],
+    ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1636, '2f5c9760cbc5ad56a4d7040bfc0be08301310f79'],
   ];
   const findings = reviewed.map(([ruleId, path, line, commit]) => ({ ruleId, path, line, commit }));
   // applyExemptions validates every entry (exact path, reason, commit) and rejects duplicates.

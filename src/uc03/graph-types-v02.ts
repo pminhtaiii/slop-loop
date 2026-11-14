@@ -38,7 +38,7 @@ import { safeSnapshot, deepFreeze } from '../contracts/foundation/uc03/v02/admis
 import { validateReviewContextAdmission } from '../uc06/validation.ts';
 import type { ExecutionGuardReadCapability } from '../foundation/repository-types.ts';
 import type { InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort, BaselineEvidenceWriter } from './investigation.ts';
-import type { CoderAgentV02 } from './agent-types.ts';
+import type { CoderAgentV02, CoderTurnInputV02 } from './agent-types.ts';
 import type { TrustedReplanDirection } from './repair-types.ts';
 import type { UC03CoderAdmissionResolver, UC03GraphConfig, UC03ReviewerAdmissionResolver, UC03ReviewerPort } from './graph-types.ts';
 
@@ -124,7 +124,10 @@ export interface UC03GraphPortsV02 {
 
 /** Host wiring for the v0.2 route. Each turn resolves a fresh owner admission; the agent does not claim. */
 export interface UC03GraphGenerationV02 {
-  readonly agent: CoderAgentV02;
+  /** Explicit controlled callers may supply a single prewired agent. */
+  readonly agent?: CoderAgentV02 | undefined;
+  /** Production host construction selects the same run-scoped agent before each counter snapshot. */
+  readonly agentFor?: ((input: CoderTurnInputV02) => CoderAgentV02) | undefined;
 }
 
 /** The T034 reviewer uses a bound request/context bundle; ModelPortV02 owns its claim. */
@@ -178,6 +181,7 @@ export function portDeclarationsV02(component: UC03ProductionComponentV02): Read
 /** Host wiring for the v0.2 production route. No `mode`: this entry is production by construction. */
 export interface UC03GraphConfigV02 {
   readonly generation?: UC03GraphGenerationV02 | undefined;
+  readonly recursionLimit?: number | undefined;
   readonly coderAdmission?: UC03CoderAdmissionResolver | undefined;
   readonly reviewerAdmission?: UC03ReviewerAdmissionResolverV02 | undefined;
   readonly reviewContext?: UC03GraphConfig['reviewContext'];
@@ -186,6 +190,7 @@ export interface UC03GraphConfigV02 {
   readonly trustedExpectedContext: TrustedHostExpectedContext;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+  readonly completionContextFor?: UC03GraphConfig['completionContextFor'];
   readonly admissionContext?: UC03GraphConfig['admissionContext'];
 }
 

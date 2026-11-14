@@ -8,7 +8,12 @@
  */
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { compareEvaluations, compareWorkflowEvaluations } from '../../../eval/uc03/compare.ts';
 import { runEvaluation, type EvaluationCaseSpec, type WorkflowCaseContext, type WorkflowEvaluationOptions, type WorkflowObservation } from '../../../eval/uc03/runner.ts';
 import { WORKFLOW_EVALUATION_VERSION } from '../../../eval/uc03/types.ts';
@@ -56,6 +61,127 @@ function driver(overrides: Partial<WorkflowObservation> = {}): { executeCase: (s
 }
 
 const run = (overrides: Partial<WorkflowEvaluationOptions> = {}) => runEvaluation(options(overrides));
+const comparisonCliExtension = import.meta.url.endsWith('.ts') ? 'ts' : 'js';
+const comparisonCli = fileURLToPath(new URL(`../../../eval/uc03/compare.${comparisonCliExtension}`, import.meta.url));
+const runComparisonCli = (args: readonly string[]) => spawnSync(process.execPath, ['--experimental-strip-types', comparisonCli, ...args], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
+
+test('the comparison CLI dispatches tagged workflow reports and writes workflow comparison JSON', async () => {
+  const baseline = await run({ driver: driver() });
+  const candidate = await run({ configDigest: OTHER, driver: driver() });
+  const directory = mkdtempSync(join(tmpdir(), 'uc03-workflow-compare-cli-'));
+  const baselinePath = join(directory, 'baseline.json');
+  const candidatePath = join(directory, 'candidate.json');
+  const outputPath = join(directory, 'comparison.json');
+  writeFileSync(baselinePath, JSON.stringify(baseline));
+  writeFileSync(candidatePath, JSON.stringify(candidate));
+
+  try {
+    const result = runComparisonCli(['--baseline', baselinePath, '--candidate', candidatePath, '--output', outputPath]);
+
+    assert.equal(result.status, 1, result.stderr);
+    const comparison = JSON.parse(readFileSync(outputPath, 'utf8')) as Record<string, unknown>;
+    assert.equal(comparison.contractVersion, WORKFLOW_EVALUATION_VERSION);
+    assert.equal(comparison.compatible, true);
+    assert.deepEqual(comparison.failedGuards, []);
+    assert.deepEqual(comparison.changedFactors, ['configDigest']);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('the comparison CLI strict option rejects a guarded config change', async () => {
+  const baseline = await run({ driver: driver() });
+  const candidate = await run({ configDigest: OTHER, driver: driver() });
+  const directory = mkdtempSync(join(tmpdir(), 'uc03-workflow-compare-strict-'));
+  const baselinePath = join(directory, 'baseline.json');
+  const candidatePath = join(directory, 'candidate.json');
+  const outputPath = join(directory, 'comparison.json');
+  writeFileSync(baselinePath, JSON.stringify(baseline));
+  writeFileSync(candidatePath, JSON.stringify(candidate));
+
+  try {
+    const result = runComparisonCli(['--baseline', baselinePath, '--candidate', candidatePath, '--output', outputPath, '--strict-same-config']);
+    const comparison = JSON.parse(readFileSync(outputPath, 'utf8')) as Record<string, unknown>;
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(comparison.failedGuards, ['strictSameConfig']);
+    assert.equal(comparison.compatible, false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('the comparison CLI reports incompatible tagged reports with their failed guard', async () => {
+  const baseline = await run({ driver: driver() });
+  const candidate = await run({ driver: driver({ repositoryId: 'repo-2', initialRepositoryDigest: OTHER }) });
+  const directory = mkdtempSync(join(tmpdir(), 'uc03-workflow-compare-incompatible-'));
+  const baselinePath = join(directory, 'baseline.json');
+  const candidatePath = join(directory, 'candidate.json');
+  const outputPath = join(directory, 'comparison.json');
+  writeFileSync(baselinePath, JSON.stringify(baseline));
+  writeFileSync(candidatePath, JSON.stringify(candidate));
+
+  try {
+    const result = runComparisonCli(['--baseline', baselinePath, '--candidate', candidatePath, '--output', outputPath]);
+    const comparison = JSON.parse(readFileSync(outputPath, 'utf8')) as Record<string, unknown>;
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(comparison.failedGuards, ['initialRepositoryDigest', 'repositoryId']);
+    assert.equal(comparison.compatible, false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('the comparison CLI safely refuses mixed and malformed workflow inputs', async () => {
+  const workflow = await run({ driver: driver() });
+  const legacy = await runEvaluation({ mode: 'mock' });
+  const directory = mkdtempSync(join(tmpdir(), 'uc03-workflow-compare-invalid-'));
+  const workflowPath = join(directory, 'workflow.json');
+  const legacyPath = join(directory, 'legacy.json');
+  const malformedPath = join(directory, 'malformed.json');
+  const outputPath = join(directory, 'comparison.json');
+  writeFileSync(workflowPath, JSON.stringify(workflow));
+  writeFileSync(legacyPath, JSON.stringify(legacy));
+  writeFileSync(malformedPath, JSON.stringify({ suite: 'uc03', contractVersion: WORKFLOW_EVALUATION_VERSION }));
+
+  try {
+    const mixed = runComparisonCli(['--baseline', workflowPath, '--candidate', legacyPath, '--output', outputPath]);
+    assert.equal(mixed.status, 1);
+    assert.match(mixed.stderr, /comparison refused: invalid or incomparable report inputs/u);
+    assert.equal(existsSync(outputPath), false);
+
+    const malformed = runComparisonCli(['--baseline', malformedPath, '--candidate', malformedPath, '--output', outputPath]);
+    assert.equal(malformed.status, 1);
+    assert.match(malformed.stderr, /comparison refused: invalid or incomparable report inputs/u);
+    assert.equal(existsSync(outputPath), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('the comparison CLI preserves legacy report output and summary', async () => {
+  const baseline = await runEvaluation({ mode: 'mock' });
+  const candidate = await runEvaluation({ mode: 'mock' });
+  const directory = mkdtempSync(join(tmpdir(), 'uc03-legacy-compare-cli-'));
+  const baselinePath = join(directory, 'baseline.json');
+  const candidatePath = join(directory, 'candidate.json');
+  const outputPath = join(directory, 'comparison.json');
+  writeFileSync(baselinePath, JSON.stringify(baseline));
+  writeFileSync(candidatePath, JSON.stringify(candidate));
+
+  try {
+    const result = runComparisonCli(['--baseline', baselinePath, '--candidate', candidatePath, '--output', outputPath]);
+    const comparison = JSON.parse(readFileSync(outputPath, 'utf8')) as Record<string, unknown>;
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stdout, /^UC-03 Comparison: Verdict = /u);
+    assert.equal('baselineDigest' in comparison, true);
+    assert.equal('baselineConfigDigest' in comparison, false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('identical reports certify a compatible pair with no changed factors', async () => {
   const baseline = await run({ driver: driver() });

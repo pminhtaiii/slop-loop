@@ -95,6 +95,8 @@ export class StateConflictError extends Error {
 
 export interface MemoryStatePortOptions {
   readonly transitionContexts?: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> | undefined;
+  /** Controlled owner lookup for trusted transition context; this callback must be a synchronous map read. */
+  readonly transitionContextFor?: ((next: Readonly<TaskState>) => NonNullable<StateTransitionOptions['trusted']> | undefined) | undefined;
   readonly initialBundles?: Readonly<Record<string, ReservationBundle>> | undefined;
   readonly reconciliationUsage?: Readonly<Record<string, ProviderUsage>> | undefined;
   readonly initialTaskState?: TaskState | undefined;
@@ -117,6 +119,7 @@ export class MemoryStatePort implements StatePort {
   protected readonly storedRequests = new Map<string, ProviderRequest>();
 
   protected readonly transitionContexts: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>>;
+  private readonly transitionContextFor?: MemoryStatePortOptions['transitionContextFor'];
   protected readonly reconciliationUsage: Readonly<Record<string, ProviderUsage>>;
   protected readonly uncertain = new Set<string>();
   protected readonly terminal = new Map<string, ProviderUsage>();
@@ -129,6 +132,7 @@ export class MemoryStatePort implements StatePort {
       if (!Number.isSafeInteger(Number(key)) || Number(key) < 1 || String(Number(key)) !== key) throw new Error('Transition script requires exact positive safe-integer versions');
     }
     this.transitionContexts = structuredClone(options?.transitionContexts ?? {});
+    this.transitionContextFor = options?.transitionContextFor;
     this.reconciliationUsage = structuredClone(options?.reconciliationUsage ?? {});
     if (options?.initialTaskState) {
       const val = validateTaskState(options.initialTaskState);
@@ -314,7 +318,17 @@ export class MemoryStatePort implements StatePort {
         return { ...ledger, consumed, reservations };
       }),
     };
-    const transitionRes = validateStateTransition(currentPrior, state, { allowSameNode: false, trusted: this.transitionContexts[state.stateVersion] });
+    const isCompletionTransition = state.node === 'Deliver' && state.outcome === 'COMPLETED';
+    const dynamicTransitionContext = this.transitionContextFor?.(structuredClone(state));
+    const trusted =
+      isCompletionTransition && this.transitionContextFor !== undefined
+        ? dynamicTransitionContext === undefined
+          ? undefined
+          : structuredClone(dynamicTransitionContext)
+        : dynamicTransitionContext === undefined
+          ? this.transitionContexts[state.stateVersion]
+          : structuredClone(dynamicTransitionContext);
+    const transitionRes = validateStateTransition(currentPrior, state, { allowSameNode: false, trusted });
     if (!transitionRes.ok) {
       const isCas = transitionRes.errors.some(e => e.code === 'CAS_CONFLICT');
       if (isCas) {

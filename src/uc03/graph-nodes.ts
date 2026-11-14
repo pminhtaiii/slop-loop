@@ -1,11 +1,12 @@
 import { validateRepositoryAdmissionV02, type Baseline } from '../contracts/foundation/uc03.ts';
 import { failureRefs } from './repair-types.ts';
-import { investigateBaseline, prepareFixPlanAndApproval } from './investigation.ts';
+import { investigateBaseline, prepareFixPlanAndApproval, type BaselineEvidenceCandidate } from './investigation.ts';
 import { createRepairActionId, createTrustedRepairContext, executeRepair } from './repair.ts';
 import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
 import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
 import { generate, generationRefusal, generates } from './graph-generation.ts';
 import { askClarification, clarificationRoundRefusal } from './clarification.ts';
+import { retainClarificationBaseline, reuseClarificationBaseline } from './graph-investigation-baseline.ts';
 
 import { addMilestone, currentPlanBindingDigest, resolveExecutionGuard, samePaths, trustedExpectedContext, trustedOwnerStateMatches, validSettledPatchEvidence } from './graph-validation.ts';
 import { reloadAuthoritativeState, transitionState } from './graph-transitions.ts';
@@ -24,24 +25,71 @@ export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphC
     if (refusal) return { terminalOutcome: 'INCOMPLETE' as const, reasons: [refusal] };
     const trustedContext = trustedExpectedContext(config, state.task, state.state);
     const guard = resolveExecutionGuard(ports, config);
-    if ((!planDetails && !generates(config)) || !trustedContext || !guard || !ports.hostAuthority) {
+    if ((!planDetails && !generates(config)) || !trustedContext || !trustedContext.statePort || !guard || !ports.hostAuthority) {
       return { terminalOutcome: 'INCOMPLETE' as const, reasons: ['Investigation requires explicit plan, host snapshot, and v0.2 admission configuration'] };
     }
     if (!(await trustedOwnerStateMatches(trustedContext, state.state))) {
       return { state: state.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Trusted host configuration does not share the current owner task state'] };
     }
 
-    const baselineResult = await investigateBaseline(state.task, ports.repositoryPort, ports.hostAuthority, {
-      ...trustedContext,
-      executionGuard: guard,
-      statePort: trustedContext.statePort,
-    });
-    if (baselineResult.status !== 'reproduced' || !baselineResult.baseline) {
-      return {
+    let baselineCandidate: BaselineEvidenceCandidate;
+    let retainedForClarification = false;
+    // Production composition supplies generationV02. The direct controlled graph keeps its
+    // injected agent under generation; that exact agent object is stable across its ask/resume
+    // calls and remains an in-process-only retention key.
+    const retentionKey = config?.generationV02 ?? config?.generation?.agent;
+    if (state.state.clarification?.answer) {
+      const retained = await reuseClarificationBaseline({
+        generation: retentionKey,
+        task: state.task,
         state: state.state,
-        terminalOutcome: 'INCOMPLETE' as const,
-        reasons: [`Baseline investigation failed: ${baselineResult.status}${baselineResult.reason ? ` (${baselineResult.reason})` : ''}`],
-      };
+        statePort: trustedContext.statePort,
+        hostAuthority: ports.hostAuthority,
+        expectedContext: trustedContext,
+      });
+      if (retained.ok) {
+        baselineCandidate = retained.baseline;
+        retainedForClarification = true;
+      } else if (!config?.generationV02?.agentFor) {
+        // Every non-service route (the legacy injected agent, the controlled fixture) permits a
+        // caller-seeded answer with no prior graph invocation. Reproduce and revalidate the baseline
+        // there. Only the service adapter's run-scoped selector is retained-only, so its resume never
+        // reruns checks — and that refusal must not preempt the ask-path refusals below, which are
+        // observable contract: the round cap and the answered-record replay.
+        const baselineResult = await investigateBaseline(state.task, ports.repositoryPort, ports.hostAuthority, {
+          ...trustedContext,
+          executionGuard: guard,
+          statePort: trustedContext.statePort,
+        });
+        if (baselineResult.status !== 'reproduced' || !baselineResult.baseline) {
+          return {
+            state: state.state,
+            terminalOutcome: 'INCOMPLETE' as const,
+            reasons: [`Baseline investigation failed: ${baselineResult.status}${baselineResult.reason ? ` (${baselineResult.reason})` : ''}`],
+          };
+        }
+        baselineCandidate = baselineResult.baseline;
+        // Mirror the fresh branch: this route reproduced under the same generation key, so a later
+        // ask in the same round cap must find retained evidence rather than refuse the pause.
+        retainedForClarification = retainClarificationBaseline(retentionKey, state.task, state.state, baselineCandidate);
+      } else {
+        return { state: state.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [retained.reason] };
+      }
+    } else {
+      const baselineResult = await investigateBaseline(state.task, ports.repositoryPort, ports.hostAuthority, {
+        ...trustedContext,
+        executionGuard: guard,
+        statePort: trustedContext.statePort,
+      });
+      if (baselineResult.status !== 'reproduced' || !baselineResult.baseline) {
+        return {
+          state: state.state,
+          terminalOutcome: 'INCOMPLETE' as const,
+          reasons: [`Baseline investigation failed: ${baselineResult.status}${baselineResult.reason ? ` (${baselineResult.reason})` : ''}`],
+        };
+      }
+      baselineCandidate = baselineResult.baseline;
+      retainedForClarification = retainClarificationBaseline(retentionKey, state.task, state.state, baselineCandidate);
     }
     const postBaseline = await reloadAuthoritativeState(state.state, ports.statePort, { allowAccountingChange: true });
     if (!postBaseline.ok) return { state: state.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [postBaseline.reason] };
@@ -55,6 +103,8 @@ export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphC
       if (!generated.ok)
         return { state: postBaseline.state, terminalOutcome: generated.reason.startsWith('HUMAN_WAIT') ? ('needs-info' as const) : ('INCOMPLETE' as const), reasons: [generated.reason] };
       if (generated.proposal.kind === 'request-info') {
+        if (!retainedForClarification)
+          return { state: postBaseline.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Clarification cannot pause without an active run-scoped baseline candidate'] };
         // The claim committed the coder reservations without bumping stateVersion, as for the plan write.
         const postClaim = await reloadAuthoritativeState(postBaseline.state, ports.statePort, { allowAccountingChange: true });
         if (!postClaim.ok) return { state: postBaseline.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [postClaim.reason] };
@@ -100,7 +150,7 @@ export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphC
     );
     const planResult = await prepareFixPlanAndApproval(
       ownerState,
-      baselineResult.baseline,
+      baselineCandidate,
       {
         repository: ports.repositoryPort,
         state: ports.statePort,
@@ -130,11 +180,11 @@ export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphC
     if (!baselineRef) return { state: persisted.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Persisted baseline reference is missing'], milestones };
     const baseline: Baseline = {
       evidenceId: baselineRef,
-      repositorySnapshotDigest: baselineResult.baseline.repositorySnapshotDigest,
-      checkSetDigest: baselineResult.baseline.checkSetDigest,
-      reproductionFailureSignature: baselineResult.baseline.reproductionFailureSignature,
-      checkResults: baselineResult.baseline.checkResults,
-      testProtectionDigest: baselineResult.baseline.testProtectionDigest,
+      repositorySnapshotDigest: baselineCandidate.repositorySnapshotDigest,
+      checkSetDigest: baselineCandidate.checkSetDigest,
+      reproductionFailureSignature: baselineCandidate.reproductionFailureSignature,
+      checkResults: baselineCandidate.checkResults,
+      testProtectionDigest: baselineCandidate.testProtectionDigest,
     };
     return { state: persisted.state, baseline, milestones };
   };
