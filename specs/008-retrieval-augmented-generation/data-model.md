@@ -1,6 +1,6 @@
 # Data model and state ownership
 
-All boundary inputs validated from unknown, copied/frozen; safe bounded IDs and canonical digest forms. No persistence backend selected. Ownership below is process-local; serialized clones cannot mint authority.
+All boundary inputs validated from unknown, copied/frozen; safe bounded IDs and canonical digest forms. Question/session state is process-local. The host owns the durable retrieval index described below. Serialized clones cannot mint authority.
 
 | Entity | Fields / invariants | Owner / story |
 |---|---|---|
@@ -29,3 +29,10 @@ Session summary contains source references labeled with original repository/revi
 Directory/search cursor is host-issued bounded state tied to immutable binding/query/options, expires with session or changed revision. It cannot grant broader scope or fresh budget. Evidence IDs are never accepted merely because strings match a digest; registry issuance/current run checks are mandatory.
 
 EvaluationCase public projection is the only case content sent to runtime. Private facts/grades/held-out inventory are never repository files. Observation and grade immutable; changed source/config/rubric yields a new observation/grade rather than relabeling old results.
+
+## Persistent retrieval entities
+
+- **Index generation** binds repository/workspace, snapshot/manifest/revision, policy digest, schema/config/embedding digests and coverage. Only a committed matching generation can serve.
+- **Indexed file** records canonical relative path, original byte digest, file type and parse/coverage status. A manifest diff determines added, changed, deleted and unchanged entries.
+- **Indexed chunk** records stable ID, file identity, file type, simple and qualified symbol names (null for non-symbol regions), kind, inclusive line range, normalized excerpt digest and vector reference. Split definition chunks also carry stable original-definition ID, qualified symbol, original definition line range and part order. Stored vector identity pins dimensions and preprocessing. Source bodies are re-read through the guard.
+- **Ranked result** binds generation, chunk identity, rank and lane; it confers no citation authority before current-run source admission. Evaluator gold spans bind revision, path, file digest and lines.

@@ -18,3 +18,9 @@ Production numeric budgets and accuracy/latency promises are deferred pending ex
 ## 2026-11-12 — Scoped planning publication
 
 The user explicitly requested a PR and emphasized concurrent work by another agent. Released: an isolated branch from fetched development, containing only Feature 008 planning/review records, ADR-0008, the product-session glossary entry and AGENTS navigation, plus publication validation metadata. Publish a draft through the existing paired PR workflow. Do not include the other agent's runtime/Feature 007 changes or modify its checkout/index/branch. This publication release does not authorize any runtime task, production default, live-provider operation or merge.
+
+## 2026-11-13 — UC-02 planning alignment
+
+Authority: user-provided UC-02 requirements and confirmed Q1–Q14, including logical splitting with original-definition linkage and budgeted expansion, exact token admission, compatibility, persistence and benchmark conditions. Replace the literal-only retrieval choice. Keep the read-only Python target and controlled source tools, durable index with incremental refresh, and in-memory question sessions. Feature 008 moves to specs/008-retrieval-augmented-generation; new UC-02 branches use feat/rag-*. Historical planning snapshots and reports refer to their original candidate and cannot certify this revision.
+
+G-PLAN requires fresh automated and independent review of this revision. G-IMPLEMENT remains a separate task/path/tier release. G-LIVE and G-QUALITY still govern real owner/provider and answer-quality acceptance. Durable store compatibility and real local embedding benchmark runs require explicit implementation/test release. Planning and review are authorized; issue publication follows approval of the proposed ticket breakdown and configured paired tracker access.

@@ -107,3 +107,11 @@ A person's request to stop progress on one selected product-runtime task until t
 ## Handoff
 
 A concise account of current work, evidence, blockers, and the next action for a person or another agent. A handoff communicates state; it does not replace authoritative state or approve further actions.
+
+## Repository index generation
+
+The searchable view of a repository bound to one source snapshot and one set of indexing rules. A question can retrieve from a generation only when it matches the admitted source and policy.
+
+## Retrieved chunk
+
+A bounded contiguous passage selected by retrieval, with source coordinates and identity. It becomes evidence for an answer after admission for that question.
