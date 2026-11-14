@@ -1,5 +1,7 @@
 # Phase 3 source/controlled evidence
 
+Current checkpoint: T006 reopened after semantic review of `8f11d7c`. UC06-SPEC-001 reproduces duplicate charged review through exported full graph continuation when retained verification cache bypasses missing-observation recovery. Prior merger PASS below records its evaluated controls, not coverage of this newly exposed path. First corrective T006 repair and affected merger/review checks are pending; Phase 3 completion is withheld. Standards found one low stale-comment issue. Workspace-remint hypothesis was withdrawn because canonical provider admission has no workspace field and the actual graph checks host-selected workspace; no canonical extension is justified.
+
 Release: decisions.md Phase3 entry, T003–T006 only, plus explicitly approved/user-relayed Tai T004 model.ts/model.test.ts extension. Source branch feat/uc06-bound-review from fetched development 2b07eb7615544e076e3c30455be82bc41e3818ca. No real provider/container/storage/quality/restart or T007 successor release.
 
 T002 prerequisite is accepted separately in t002-verification.md after full independent verification and arithmetic repairs.
