@@ -3,10 +3,7 @@
  * instance belongs to one task and must be retained across follow-up runs.
  */
 import type { QuestionBudgetProfileV1 } from '../contracts/questions/contracts.ts';
-import type {
-  QuestionBudgetLedger as QuestionBudgetLedgerPortV1,
-  QuestionBudgetReservationResultV1,
-} from './budget.ts';
+import type { QuestionBudgetLedger as QuestionBudgetLedgerPortV1, QuestionBudgetReservationResultV1 } from './budget.ts';
 import { settleBudgetReceipt } from './budget-ledger-settlement.ts';
 import {
   addCounters,
@@ -31,11 +28,7 @@ import {
   type BudgetReservationPlanResultV1,
   type BudgetCounters,
 } from './budget-ledger-counters.ts';
-import {
-  BudgetReservationEngine,
-  type InternalReservation,
-  type ReservationLedgerPortV1,
-} from './budget-ledger-reservations.ts';
+import { BudgetReservationEngine, type InternalReservation, type ReservationLedgerPortV1 } from './budget-ledger-reservations.ts';
 
 /** Integer micro-USD rates per million billable tokens; each call rounds its weighted total up once. */
 export interface QuestionBudgetPricingV1 {
@@ -105,29 +98,16 @@ export type QuestionBudgetRefusalCodeV1 =
   | 'duplicate-settlement';
 
 export type QuestionBudgetOperationKindV1 =
-  | 'snapshot-admission'
-  | 'repository-list'
-  | 'repository-search'
-  | 'repository-read'
-  | 'retrieval-index'
-  | 'retrieval-query'
-  | 'model-call'
-  | 'final-validation'
-  | 'summary'
-  | 'clarification';
+  'snapshot-admission' | 'repository-list' | 'repository-search' | 'repository-read' | 'retrieval-index' | 'retrieval-query' | 'model-call' | 'final-validation' | 'summary' | 'clarification';
 
-export type QuestionBudgetAccountingReceiptV1 =
-  | { readonly kind: 'work'; readonly work: unknown }
-  | { readonly kind: 'model-usage'; readonly usage: unknown };
+export type QuestionBudgetAccountingReceiptV1 = { readonly kind: 'work'; readonly work: unknown } | { readonly kind: 'model-usage'; readonly usage: unknown };
 
 export interface QuestionBudgetExecutionContextV1 {
   readonly signal: AbortSignal;
   readonly deadlineAt: number;
 }
 
-export type QuestionBudgetExecutionResultV1<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1 };
+export type QuestionBudgetExecutionResultV1<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1 };
 
 /** A task-scoped ledger. Create it once and reuse it for every run in that task. */
 class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedgerPortV1 {
@@ -154,10 +134,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     const now = this.now();
     const currentElapsed =
       active?.startedAt !== undefined && Number.isFinite(now) && now >= active.startedAt
-        ? Math.min(
-            Math.ceil(now - active.startedAt),
-            Math.max(0, this.profile.runtime.maxElapsedMsTask - this.consumed['elapsedMs']),
-          )
+        ? Math.min(Math.ceil(now - active.startedAt), Math.max(0, this.profile.runtime.maxElapsedMsTask - this.consumed['elapsedMs']))
         : 0;
     const visibleConsumed = { ...this.consumed, elapsedMs: this.consumed['elapsedMs'] + currentElapsed };
     const remainingElapsedMs = Math.max(0, this.profile.runtime.maxElapsedMsTask - visibleConsumed['elapsedMs']);
@@ -173,14 +150,8 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     return this.admit(planSnapshotAdmission(this.profile));
   }
 
-  public reserveRepositoryOperation(
-    kind: 'list' | 'search' | 'read',
-  ): QuestionBudgetReservationResultV1 {
-    return this.admit(planRepositoryOperation(
-      this.profile,
-      this.available(),
-      kind,
-    ));
+  public reserveRepositoryOperation(kind: 'list' | 'search' | 'read'): QuestionBudgetReservationResultV1 {
+    return this.admit(planRepositoryOperation(this.profile, this.available(), kind));
   }
 
   public reserveFinalValidation(): QuestionBudgetReservationResultV1 {
@@ -267,9 +238,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   private admit(result: BudgetReservationPlanResultV1): QuestionBudgetReservationResultV1 {
     if (!result.ok) return result.terminal ? this.exhaust(result.reasonCode) : { ok: false, reasonCode: result.reasonCode };
     const plan: BudgetReservationPlanV1 = result.plan;
-    const modelBounds = plan.maximumInputTokens === undefined || plan.maximumOutputTokens === undefined
-      ? undefined
-      : { inputTokens: plan.maximumInputTokens, outputTokens: plan.maximumOutputTokens };
+    const modelBounds = plan.maximumInputTokens === undefined || plan.maximumOutputTokens === undefined ? undefined : { inputTokens: plan.maximumInputTokens, outputTokens: plan.maximumOutputTokens };
     return this.reserve(plan.kind, plan.counters, plan.maxOperationMs, plan.maximumWork, modelBounds);
   }
 
@@ -280,25 +249,13 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     return { ok: false, reasonCode };
   }
 
-  private complete(
-    internal: InternalReservation,
-    receipt: unknown,
-    reconciled = false,
-  ): QuestionBudgetExecutionResultV1<undefined> {
+  private complete(internal: InternalReservation, receipt: unknown, reconciled = false): QuestionBudgetExecutionResultV1<undefined> {
     if (internal.status !== 'running') return { ok: false, reasonCode: 'duplicate-settlement' };
     if (internal.controller.signal.aborted || this.status !== 'open') {
       this.ignoreLate(internal);
       return { ok: false, reasonCode: this.terminalReason ?? 'cancelled' };
     }
-    const settlement = settleBudgetReceipt(
-      receipt,
-      internal.kind,
-      internal.maximumWork,
-      internal.reservedCounters,
-      internal.maximumInputTokens,
-      internal.maximumOutputTokens,
-      this.pricing,
-    );
+    const settlement = settleBudgetReceipt(receipt, internal.kind, internal.maximumWork, internal.reservedCounters, internal.maximumInputTokens, internal.maximumOutputTokens, this.pricing);
     if (!settlement.ok) {
       this.hold(internal, 'accounting-unknown');
       return { ok: false, reasonCode: settlement.reasonCode };
@@ -460,17 +417,11 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     return undefined;
   }
 
-  public _reconcile(
-    internal: InternalReservation,
-    receipt: unknown,
-  ): QuestionBudgetExecutionResultV1<void> {
+  public _reconcile(internal: InternalReservation, receipt: unknown): QuestionBudgetExecutionResultV1<void> {
     if (internal.status !== 'held' || internal.holdReason !== 'accounting-unknown' || this.status !== 'blocked') {
       return { ok: false, reasonCode: 'duplicate-settlement' };
     }
-    if (
-      this.activeReservationId !== undefined ||
-      [...this.reservations.values()].some(reservation => reservation !== internal && reservation.status === 'held')
-    ) {
+    if (this.activeReservationId !== undefined || [...this.reservations.values()].some(reservation => reservation !== internal && reservation.status === 'held')) {
       return { ok: false, reasonCode: 'accounting-unknown' };
     }
     this.status = 'open';
@@ -483,10 +434,6 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
 
 /** Validates the full profile, including repository and retrieval limits, before a ledger exists. */
 /** @internal Instantiates the ledger after the public entry point validates configuration. */
-export function createQuestionBudgetLedgerEngine(
-  profile: QuestionBudgetProfileV1,
-  pricing: QuestionBudgetPricingV1,
-  now: () => number,
-): QuestionBudgetLedgerPortV1 {
+export function createQuestionBudgetLedgerEngine(profile: QuestionBudgetProfileV1, pricing: QuestionBudgetPricingV1, now: () => number): QuestionBudgetLedgerPortV1 {
   return new BudgetLedgerEngine(profile, pricing, now);
 }

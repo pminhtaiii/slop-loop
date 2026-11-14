@@ -43,10 +43,7 @@ const validRetrieval = {
   maxRetrievalDeadlineMs: 500,
 } as const;
 
-function validProfile(
-  runtimeOverrides: Partial<Record<keyof typeof validRuntime, number>> = {},
-  retrievalOverrides: Partial<Record<keyof typeof validRetrieval, number>> = {},
-) {
+function validProfile(runtimeOverrides: Partial<Record<keyof typeof validRuntime, number>> = {}, retrievalOverrides: Partial<Record<keyof typeof validRetrieval, number>> = {}) {
   return {
     schemaVersion: 'question-budget/1',
     runtime: { ...validRuntime, ...runtimeOverrides },
@@ -61,15 +58,15 @@ const pricing = {
 } as const;
 
 test('budget admission rejects missing retrieval limits before any operation can be reserved', () => {
-  const result = createQuestionBudgetLedger(
-    { schemaVersion: 'question-budget/1', runtime: validRuntime, repository: validRepository },
-    { pricing, now: () => 0 },
-  );
+  const result = createQuestionBudgetLedger({ schemaVersion: 'question-budget/1', runtime: validRuntime, repository: validRepository }, { pricing, now: () => 0 });
 
   assert.equal(result.ok, false);
   if (result.ok) throw new Error('invalid budget profile was admitted');
   assert.equal(result.reasonCode, 'invalid-config');
-  assert.deepEqual(result.errors.map(error => error.path), ['budgetProfile']);
+  assert.deepEqual(
+    result.errors.map(error => error.path),
+    ['budgetProfile'],
+  );
 });
 
 test('snapshot admission reserves its finite file, byte, and deadline bounds before the adapter runs', async () => {
@@ -111,13 +108,16 @@ test('a known pre-dispatch refusal releases its reservation without charging a c
   assert.equal(created.value.snapshot().reserved.scannedBytes, 0);
   assert.equal(created.value.snapshot().consumed.toolCalls, 0);
   let ioCount = 0;
-  assert.deepEqual(await read.value.execute(
-    async () => {
-      ioCount += 1;
-      return {};
-    },
-    work => ({ kind: 'work', work }),
-  ), { ok: false, reasonCode: 'duplicate-settlement' });
+  assert.deepEqual(
+    await read.value.execute(
+      async () => {
+        ioCount += 1;
+        return {};
+      },
+      work => ({ kind: 'work', work }),
+    ),
+    { ok: false, reasonCode: 'duplicate-settlement' },
+  );
   assert.equal(ioCount, 0);
 });
 
@@ -161,15 +161,25 @@ test('exact scan limits deny final validation without invoking its adapter', asy
     const ledger = created.value;
     const scan = sourceRead ? ledger.reserveRepositoryOperation('read') : ledger.reserveSnapshotAdmission();
     assert.ok(scan.ok);
-    assert.ok((await scan.value.execute(async () => work, actual => ({ kind: 'work', work: actual }))).ok);
+    assert.ok(
+      (
+        await scan.value.execute(
+          async () => work,
+          actual => ({ kind: 'work', work: actual }),
+        )
+      ).ok,
+    );
 
     let finalIoCount = 0;
     const final = ledger.reserveFinalValidation();
     if (final.ok) {
-      await final.value.execute(async () => {
-        finalIoCount += 1;
-        return { finalBytes: 2 };
-      }, actual => ({ kind: 'work', work: actual }));
+      await final.value.execute(
+        async () => {
+          finalIoCount += 1;
+          return { finalBytes: 2 };
+        },
+        actual => ({ kind: 'work', work: actual }),
+      );
     }
     assert.equal(finalIoCount, 0);
     assert.deepEqual(final, { ok: false, reasonCode: 'scan-limit' });
@@ -187,7 +197,9 @@ test('cancellation aborts the adapter signal and ignores a late result while ret
   const pending = read.value.execute(
     ({ signal }) => {
       assert.equal(signal.aborted, false);
-      return new Promise(resolve => { resolveLate = resolve; });
+      return new Promise(resolve => {
+        resolveLate = resolve;
+      });
     },
     work => {
       accountCalls += 1;
@@ -233,10 +245,16 @@ test('model reservations settle trusted usage once at exact integer micro-cost',
   assert.equal(created.value.snapshot().consumed.billableTokens, 92);
   assert.equal(created.value.snapshot().consumed.costMicros, 11);
   assert.equal(created.value.snapshot().reserved.costMicros, 0);
-  assert.deepEqual(await call.value.execute(async () => {
-    dispatches += 1;
-    return response;
-  }, value => ({ kind: 'model-usage', usage: value.usage })), { ok: false, reasonCode: 'duplicate-settlement' });
+  assert.deepEqual(
+    await call.value.execute(
+      async () => {
+        dispatches += 1;
+        return response;
+      },
+      value => ({ kind: 'model-usage', usage: value.usage }),
+    ),
+    { ok: false, reasonCode: 'duplicate-settlement' },
+  );
   assert.equal(dispatches, 1);
 });
 
@@ -252,14 +270,20 @@ test('a pre-reserved model call stays reserved when another call is running', as
 
   const usage = { status: 'complete', inputTokens: 80, outputTokens: 12 } as const;
   const response = Promise.withResolvers<typeof usage>();
-  const running = first.value.execute(() => response.promise, value => ({ kind: 'model-usage', usage: value }));
+  const running = first.value.execute(
+    () => response.promise,
+    value => ({ kind: 'model-usage', usage: value }),
+  );
   now = 20;
   let secondIoCount = 0;
   try {
-    const attempted = await second.value.execute(async () => {
-      secondIoCount += 1;
-      return usage;
-    }, value => ({ kind: 'model-usage', usage: value }));
+    const attempted = await second.value.execute(
+      async () => {
+        secondIoCount += 1;
+        return usage;
+      },
+      value => ({ kind: 'model-usage', usage: value }),
+    );
 
     assert.equal(secondIoCount, 0);
     assert.deepEqual(attempted, { ok: false, reasonCode: 'busy' });
@@ -302,10 +326,13 @@ test('unknown model usage holds the full reservation and blocks the next dispatc
   assert.equal(created.value.snapshot().status, 'open');
   assert.equal(created.value.snapshot().reserved.billableTokens, 0);
   assert.equal(created.value.snapshot().consumed.billableTokens, 92);
-  assert.deepEqual(call.value.reconcile({
-    kind: 'model-usage',
-    usage: { status: 'complete', inputTokens: 80, outputTokens: 12 },
-  }), { ok: false, reasonCode: 'duplicate-settlement' });
+  assert.deepEqual(
+    call.value.reconcile({
+      kind: 'model-usage',
+      usage: { status: 'complete', inputTokens: 80, outputTokens: 12 },
+    }),
+    { ok: false, reasonCode: 'duplicate-settlement' },
+  );
 });
 
 test('usage beyond the reserved input bound is rejected and held without admitting a response', async () => {
@@ -374,17 +401,25 @@ test('the same ledger carries tool charges across follow-up operations without a
 
   const firstRunRead = created.value.reserveRepositoryOperation('read');
   assert.ok(firstRunRead.ok);
-  assert.ok((await firstRunRead.value.execute(
-    async () => ({ scannedFiles: 1, scannedBytes: 300, returnedBytes: 20 }),
-    work => ({ kind: 'work', work }),
-  )).ok);
+  assert.ok(
+    (
+      await firstRunRead.value.execute(
+        async () => ({ scannedFiles: 1, scannedBytes: 300, returnedBytes: 20 }),
+        work => ({ kind: 'work', work }),
+      )
+    ).ok,
+  );
 
   const followUpList = created.value.reserveRepositoryOperation('list');
   assert.ok(followUpList.ok);
-  assert.ok((await followUpList.value.execute(
-    async () => ({ returnedBytes: 100 }),
-    work => ({ kind: 'work', work }),
-  )).ok);
+  assert.ok(
+    (
+      await followUpList.value.execute(
+        async () => ({ returnedBytes: 100 }),
+        work => ({ kind: 'work', work }),
+      )
+    ).ok,
+  );
 
   assert.equal(created.value.snapshot().consumed.toolCalls, 2);
   assert.deepEqual(created.value.reserveRepositoryOperation('read'), { ok: false, reasonCode: 'tool-limit' });
@@ -418,10 +453,13 @@ test('the exact elapsed deadline consumes time and rejects the response before a
   let finalIoCount = 0;
   const final = created.value.reserveFinalValidation();
   if (final.ok) {
-    await final.value.execute(async () => {
-      finalIoCount += 1;
-      return {};
-    }, work => ({ kind: 'work', work }));
+    await final.value.execute(
+      async () => {
+        finalIoCount += 1;
+        return {};
+      },
+      work => ({ kind: 'work', work }),
+    );
   } else assert.equal(final.reasonCode, 'elapsed-deadline');
   assert.equal(finalIoCount, 0);
 });
@@ -433,18 +471,26 @@ test('summary projection and clarification rounds consume their task-wide byte a
   const summary = created.value.reserveSummary(1_000);
   assert.ok(summary.ok);
   assert.deepEqual(summary.value.maximumWork, { conversationBytes: 1_000 });
-  assert.ok((await summary.value.execute(
-    async () => ({ conversationBytes: 800 }),
-    work => ({ kind: 'work', work }),
-  )).ok);
+  assert.ok(
+    (
+      await summary.value.execute(
+        async () => ({ conversationBytes: 800 }),
+        work => ({ kind: 'work', work }),
+      )
+    ).ok,
+  );
   assert.equal(created.value.snapshot().consumed.conversationBytes, 800);
   assert.equal(created.value.snapshot().consumed.summaryOperations, 1);
 
   const clarification = created.value.reserveClarification();
   assert.ok(clarification.ok);
-  assert.ok((await clarification.value.execute(
-    async () => ({ clarificationRounds: 1 }),
-    work => ({ kind: 'work', work }),
-  )).ok);
+  assert.ok(
+    (
+      await clarification.value.execute(
+        async () => ({ clarificationRounds: 1 }),
+        work => ({ kind: 'work', work }),
+      )
+    ).ok,
+  );
   assert.equal(created.value.snapshot().consumed.clarificationRounds, 1);
 });

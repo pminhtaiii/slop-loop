@@ -40,8 +40,15 @@ export async function readProbe(probe: Buffer, read: ProbeRead): Promise<number>
 }
 
 function checkControl(control: QuestionRepositoryOperationControl): void {
-  if (!control || typeof control !== 'object' || !control.signal || typeof control.signal.aborted !== 'boolean' ||
-    typeof control.deadlineEpochMs !== 'number' || !Number.isFinite(control.deadlineEpochMs) || control.deadlineEpochMs <= 0) {
+  if (
+    !control ||
+    typeof control !== 'object' ||
+    !control.signal ||
+    typeof control.signal.aborted !== 'boolean' ||
+    typeof control.deadlineEpochMs !== 'number' ||
+    !Number.isFinite(control.deadlineEpochMs) ||
+    control.deadlineEpochMs <= 0
+  ) {
     throw new Error('INVALID_CONTROL: Filesystem operation control is malformed');
   }
   if (control.signal.aborted) throw new Error('CANCELLED: Filesystem operation was cancelled');
@@ -130,11 +137,7 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     }));
   }
 
-  async readDirBounded(
-    canonicalPath: string,
-    maxEntries: number,
-    control: QuestionRepositoryOperationControl,
-  ): Promise<readonly TrustedFilesystemEntry[]> {
+  async readDirBounded(canonicalPath: string, maxEntries: number, control: QuestionRepositoryOperationControl): Promise<readonly TrustedFilesystemEntry[]> {
     if (!positiveLimit(maxEntries)) throw new Error('INVALID_LIMITS: maxEntries must be a positive safe integer');
     checkControl(control);
     const directory = await opendir(this.absolute(canonicalPath));
@@ -150,7 +153,7 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
       });
     }
     checkControl(control);
-    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
     return Object.freeze(entries.map(entry => Object.freeze(entry)));
   }
 
@@ -193,10 +196,7 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     return computeCanonicalSha256(lines.join(''));
   }
 
-  async getCurrentRevisionDigestBounded(
-    limits: Readonly<{ maxEntries: number; maxFiles: number; maxBytes: number }>,
-    control: QuestionRepositoryOperationControl,
-  ): Promise<string> {
+  async getCurrentRevisionDigestBounded(limits: Readonly<{ maxEntries: number; maxFiles: number; maxBytes: number }>, control: QuestionRepositoryOperationControl): Promise<string> {
     if (!limits || !positiveLimit(limits.maxEntries) || !positiveLimit(limits.maxFiles) || !positiveLimit(limits.maxBytes)) {
       throw new Error('INVALID_LIMITS: bounded digest limits must be positive safe integers');
     }

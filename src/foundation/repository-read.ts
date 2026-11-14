@@ -81,10 +81,7 @@ export class ControlledRepositoryReader {
     return currentRev;
   }
 
-  private checkPathContainment(
-    targetPath: string,
-    control?: { readonly signal: AbortSignal; readonly deadlineEpochMs: number },
-  ): Promise<{ readonly resolvedPath: string }> {
+  private checkPathContainment(targetPath: string, control?: { readonly signal: AbortSignal; readonly deadlineEpochMs: number }): Promise<{ readonly resolvedPath: string }> {
     return this.pathGuard.checkPathContainment(targetPath, control);
   }
 

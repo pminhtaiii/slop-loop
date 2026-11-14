@@ -45,13 +45,27 @@ export class BudgetReservationEngine implements QuestionBudgetReservationPortV1 
     this.internal = internal;
   }
 
-  public get id(): string { return this.internal.id; }
-  public get kind(): QuestionBudgetOperationKindV1 { return this.internal.kind; }
-  public get maximumWork(): Readonly<QuestionBudgetWorkV1> { return this.internal.maximumWork; }
-  public get maximumBillableTokens(): number { return this.internal.reservedCounters['billableTokens']; }
-  public get maximumCostMicros(): number { return this.internal.reservedCounters['costMicros']; }
-  public get deadlineAt(): number { return this.internal.deadlineAt; }
-  public get signal(): AbortSignal { return this.internal.controller.signal; }
+  public get id(): string {
+    return this.internal.id;
+  }
+  public get kind(): QuestionBudgetOperationKindV1 {
+    return this.internal.kind;
+  }
+  public get maximumWork(): Readonly<QuestionBudgetWorkV1> {
+    return this.internal.maximumWork;
+  }
+  public get maximumBillableTokens(): number {
+    return this.internal.reservedCounters['billableTokens'];
+  }
+  public get maximumCostMicros(): number {
+    return this.internal.reservedCounters['costMicros'];
+  }
+  public get deadlineAt(): number {
+    return this.internal.deadlineAt;
+  }
+  public get signal(): AbortSignal {
+    return this.internal.controller.signal;
+  }
 
   public releaseBeforeDispatch(): QuestionBudgetExecutionResultV1<void> {
     return this.owner._releaseBeforeDispatch(this.internal);
@@ -61,10 +75,7 @@ export class BudgetReservationEngine implements QuestionBudgetReservationPortV1 
     return this.owner._reconcile(this.internal, accounting);
   }
 
-  public async execute<T>(
-    operation: (context: QuestionBudgetExecutionContextV1) => Promise<T>,
-    account: (value: T) => QuestionBudgetAccountingReceiptV1,
-  ): Promise<QuestionBudgetExecutionResultV1<T>> {
+  public async execute<T>(operation: (context: QuestionBudgetExecutionContextV1) => Promise<T>, account: (value: T) => QuestionBudgetAccountingReceiptV1): Promise<QuestionBudgetExecutionResultV1<T>> {
     const started = this.owner._start(this.internal);
     if (!started.ok) return started;
     let value: T;

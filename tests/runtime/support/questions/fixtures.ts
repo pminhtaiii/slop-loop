@@ -155,26 +155,9 @@ function coreFiles(seedDigest: string): { files: Map<string, string>; canaries: 
         'The tests exercise this public flow without defining a runtime command.',
       ]),
     ],
-    [
-      'pyproject.toml',
-      source([
-        '[project]',
-        'name = "synthetic-question-target"',
-        'version = "0.0.0"',
-        'requires-python = ">=3.11"',
-        '',
-        '[tool.pytest.ini_options]',
-        'testpaths = ["tests"]',
-      ]),
-    ],
+    ['pyproject.toml', source(['[project]', 'name = "synthetic-question-target"', 'version = "0.0.0"', 'requires-python = ">=3.11"', '', '[tool.pytest.ini_options]', 'testpaths = ["tests"]'])],
     [canaryPath, source(['"""Public source canary for controlled leak checks."""', `PUBLIC_CANARY = "${canaryValue}"`])],
-    [
-      'tests/fixtures/execution_probe.py',
-      source([
-        'from pathlib import Path',
-        'Path(__file__).with_name("python-executed").touch()',
-      ]),
-    ],
+    ['tests/fixtures/execution_probe.py', source(['from pathlib import Path', 'Path(__file__).with_name("python-executed").touch()'])],
   ]);
 
   return {

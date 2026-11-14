@@ -109,19 +109,13 @@ export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuard
   listDir(dirPath: string): Promise<readonly string[]> {
     return this.reader.listDir(dirPath);
   }
-  listDirectory(
-    request: { readonly path: string; readonly cursor?: string },
-    control: QuestionRepositoryOperationControl,
-  ): ReturnType<ControlledRepositoryReader['listDirectory']> {
+  listDirectory(request: { readonly path: string; readonly cursor?: string }, control: QuestionRepositoryOperationControl): ReturnType<ControlledRepositoryReader['listDirectory']> {
     return this.reader.listDirectory(request, control);
   }
   readFile(filePath: string): Promise<SourceEvidence> {
     return this.reader.readFile(filePath);
   }
-  readSpan(
-    request: { readonly path: string; readonly startLine: number; readonly endLine: number },
-    control: QuestionRepositoryOperationControl,
-  ): ReturnType<ControlledRepositoryReader['readSpan']> {
+  readSpan(request: { readonly path: string; readonly startLine: number; readonly endLine: number }, control: QuestionRepositoryOperationControl): ReturnType<ControlledRepositoryReader['readSpan']> {
     return this.reader.readSpan(request, control);
   }
   searchCode(query: string): Promise<readonly SourceEvidence[]> {

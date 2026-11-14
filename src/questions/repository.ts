@@ -2,53 +2,24 @@
  * Read-only adapter for question workflows. It exposes the guarded foundation
  * reader and the host's current-binding check without carrying repair tools.
  */
-import type {
-  DirectoryPageV1,
-  RepositoryBindingV1,
-  RepositoryToolFailureV1,
-  SearchPageV1,
-  SpanResultV1,
-} from '../contracts/questions/contracts.ts';
+import type { DirectoryPageV1, RepositoryBindingV1, RepositoryToolFailureV1, SearchPageV1, SpanResultV1 } from '../contracts/questions/contracts.ts';
 import { validateRepositoryBinding } from '../contracts/questions/validation.ts';
-import type {
-  QuestionRepositoryBindingPort,
-  QuestionRepositoryOperationControl,
-} from '../foundation/repository-types.ts';
+import type { QuestionRepositoryBindingPort, QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 
 export interface QuestionRepositoryReadPort {
-  listDirectory(
-    request: { readonly path: string; readonly cursor?: string },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<DirectoryPageV1>;
-  readSpan(
-    request: { readonly path: string; readonly startLine: number; readonly endLine: number },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<SpanResultV1>;
-  searchLiteral(
-    request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<SearchPageV1>;
+  listDirectory(request: { readonly path: string; readonly cursor?: string }, control: QuestionRepositoryOperationControl): Promise<DirectoryPageV1>;
+  readSpan(request: { readonly path: string; readonly startLine: number; readonly endLine: number }, control: QuestionRepositoryOperationControl): Promise<SpanResultV1>;
+  searchLiteral(request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string }, control: QuestionRepositoryOperationControl): Promise<SearchPageV1>;
 }
 
-export type QuestionRepositoryBindingResultV1 =
-  | RepositoryToolFailureV1
-  | { readonly status: 'ok'; readonly binding: RepositoryBindingV1 };
+export type QuestionRepositoryBindingResultV1 = RepositoryToolFailureV1 | { readonly status: 'ok'; readonly binding: RepositoryBindingV1 };
 
 /** The only repository operations available to a question workflow. */
 export interface QuestionRepositoryPort {
   checkBinding(control: QuestionRepositoryOperationControl): Promise<QuestionRepositoryBindingResultV1>;
-  listDirectory(
-    request: { readonly path: string; readonly cursor?: string },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<DirectoryPageV1>;
-  readSpan(
-    request: { readonly path: string; readonly startLine: number; readonly endLine: number },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<SpanResultV1>;
-  searchLiteral(
-    request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string },
-    control: QuestionRepositoryOperationControl,
-  ): Promise<SearchPageV1>;
+  listDirectory(request: { readonly path: string; readonly cursor?: string }, control: QuestionRepositoryOperationControl): Promise<DirectoryPageV1>;
+  readSpan(request: { readonly path: string; readonly startLine: number; readonly endLine: number }, control: QuestionRepositoryOperationControl): Promise<SpanResultV1>;
+  searchLiteral(request: { readonly query: string; readonly pathPrefix?: string; readonly cursor?: string }, control: QuestionRepositoryOperationControl): Promise<SearchPageV1>;
 }
 
 export interface CreateQuestionRepositoryPortOptions {
@@ -109,9 +80,7 @@ export function createQuestionRepositoryPort(options: CreateQuestionRepositoryPo
 }
 
 function activeFailure(control: unknown): RepositoryToolFailureV1 | undefined {
-  if (!isRecord(control) || !isAbortSignal(control['signal']) ||
-    typeof control['deadlineEpochMs'] !== 'number' || !Number.isFinite(control['deadlineEpochMs']) ||
-    control['deadlineEpochMs'] <= 0) {
+  if (!isRecord(control) || !isAbortSignal(control['signal']) || typeof control['deadlineEpochMs'] !== 'number' || !Number.isFinite(control['deadlineEpochMs']) || control['deadlineEpochMs'] <= 0) {
     return Object.freeze({ status: 'invalid', reasonCode: 'invalid-request' });
   }
   if (control['signal'].aborted) return Object.freeze({ status: 'cancelled', reasonCode: 'cancelled' });
@@ -120,8 +89,7 @@ function activeFailure(control: unknown): RepositoryToolFailureV1 | undefined {
 }
 
 function isAbortSignal(value: unknown): value is AbortSignal {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    'aborted' in value && typeof value.aborted === 'boolean';
+  return value !== null && typeof value === 'object' && !Array.isArray(value) && 'aborted' in value && typeof value.aborted === 'boolean';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -129,8 +97,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function sameBinding(left: RepositoryBindingV1, right: RepositoryBindingV1): boolean {
-  return left.repositoryId === right.repositoryId && left.workspaceId === right.workspaceId &&
-    left.revisionDigest === right.revisionDigest && left.policyDigest === right.policyDigest;
+  return left.repositoryId === right.repositoryId && left.workspaceId === right.workspaceId && left.revisionDigest === right.revisionDigest && left.policyDigest === right.policyDigest;
 }
 
 function deniedRead(): RepositoryToolFailureV1 {

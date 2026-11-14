@@ -14,11 +14,7 @@ import type { DockerWorkspaceManager, StructuredCommandExecutor } from './docker
 import type { RepositoryCommandResourcePolicy } from './repository-admission.ts';
 import type { RepositoryDiffSourceOptions } from './repository-diff-types.ts';
 export type { RepositoryDiffSourceOptions };
-import type {
-  QuestionIdentityV1,
-  RepositoryBindingV1,
-  RepositoryOperationLimitsV1,
-} from '../contracts/questions/contracts.ts';
+import type { QuestionIdentityV1, RepositoryBindingV1, RepositoryOperationLimitsV1 } from '../contracts/questions/contracts.ts';
 
 /** Caller-owned cancellation and wall-clock deadline for one question repository operation. */
 export interface QuestionRepositoryOperationControl {
@@ -49,11 +45,7 @@ export type QuestionSnapshotFileReadResult =
 /** A stable, host-owned view; it never forwards reads to a mutable workspace path. */
 export interface TrustedQuestionRepositorySnapshotLease {
   readonly snapshot: unknown;
-  readFile(
-    canonicalPath: string,
-    maxBytes: number,
-    control: QuestionRepositoryOperationControl,
-  ): Promise<unknown>;
+  readFile(canonicalPath: string, maxBytes: number, control: QuestionRepositoryOperationControl): Promise<unknown>;
 }
 
 /** Acquires a stable immutable source lease under the supplied finite admission limits. */
@@ -85,11 +77,7 @@ export interface TrustedFilesystemPort extends PortIdentity {
   realpath(canonicalPath: string, control?: QuestionRepositoryOperationControl): Promise<string>;
   readDir(canonicalPath: string, control?: QuestionRepositoryOperationControl): Promise<readonly TrustedFilesystemEntry[]>;
   /** Bounded streaming enumeration; rejects when the directory exceeds maxEntries. */
-  readDirBounded?(
-    canonicalPath: string,
-    maxEntries: number,
-    control: QuestionRepositoryOperationControl,
-  ): Promise<readonly TrustedFilesystemEntry[]>;
+  readDirBounded?(canonicalPath: string, maxEntries: number, control: QuestionRepositoryOperationControl): Promise<readonly TrustedFilesystemEntry[]>;
   /**
    * If maxBytes is supplied, enforce it on raw bytes from the opened file handle
    * throughout the read, even if the file grows or is replaced after stat.
@@ -105,10 +93,7 @@ export interface TrustedFilesystemPort extends PortIdentity {
    */
   getCurrentRevisionDigest(maxBytes?: number, control?: QuestionRepositoryOperationControl): Promise<string>;
   /** A digest traversal with explicit finite metadata, file and byte budgets. */
-  getCurrentRevisionDigestBounded?(
-    limits: Readonly<{ maxEntries: number; maxFiles: number; maxBytes: number }>,
-    control: QuestionRepositoryOperationControl,
-  ): Promise<string>;
+  getCurrentRevisionDigestBounded?(limits: Readonly<{ maxEntries: number; maxFiles: number; maxBytes: number }>, control: QuestionRepositoryOperationControl): Promise<string>;
 }
 
 export interface GuardedReadOperation<T = unknown> {

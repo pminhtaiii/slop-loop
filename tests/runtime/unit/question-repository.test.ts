@@ -37,19 +37,45 @@ class ReadGuard implements ExecutionGuardReadCapability {
 class NoLiveFilesystem implements TrustedFilesystemPort {
   readonly provenance = 'mock' as const;
   private readonly filePaths: readonly string[];
-  constructor(filePaths: readonly string[]) { this.filePaths = filePaths; }
-  async stat(path: string) { return path === '' || path === '.' ? { isFile: false, isDirectory: true, isSymbolicLink: false, size: 0 } : { isFile: true, isDirectory: false, isSymbolicLink: false, size: fileBytes.byteLength }; }
-  async lstat(path: string) { return path === '' || path === '.' || this.filePaths.some(file => file.startsWith(`${path}/`)) ? { isFile: false, isDirectory: true, isSymbolicLink: false, size: 0 } : { isFile: true, isDirectory: false, isSymbolicLink: false, size: fileBytes.byteLength }; }
-  async realpath(path: string) { return path; }
-  async readDir(): Promise<never> { throw new Error('live filesystem must not be used'); }
-  async readTextFile(): Promise<never> { throw new Error('live filesystem must not be used'); }
-  async getCurrentRevisionDigest(): Promise<never> { throw new Error('live filesystem must not be used'); }
+  constructor(filePaths: readonly string[]) {
+    this.filePaths = filePaths;
+  }
+  async stat(path: string) {
+    return path === '' || path === '.' ? { isFile: false, isDirectory: true, isSymbolicLink: false, size: 0 } : { isFile: true, isDirectory: false, isSymbolicLink: false, size: fileBytes.byteLength };
+  }
+  async lstat(path: string) {
+    return path === '' || path === '.' || this.filePaths.some(file => file.startsWith(`${path}/`))
+      ? { isFile: false, isDirectory: true, isSymbolicLink: false, size: 0 }
+      : { isFile: true, isDirectory: false, isSymbolicLink: false, size: fileBytes.byteLength };
+  }
+  async realpath(path: string) {
+    return path;
+  }
+  async readDir(): Promise<never> {
+    throw new Error('live filesystem must not be used');
+  }
+  async readTextFile(): Promise<never> {
+    throw new Error('live filesystem must not be used');
+  }
+  async getCurrentRevisionDigest(): Promise<never> {
+    throw new Error('live filesystem must not be used');
+  }
 }
 
 const questionLimits = Object.freeze({
-  maxFileBytes: 128, maxSpanBytes: 64, maxSpanLines: 3, maxPageEntries: 2, maxSearchHits: 2,
-  maxQueryBytes: 32, maxPathBytes: 128, maxScannedFiles: 20, maxScannedBytes: 2_048,
-  maxReturnedBytes: 1_024, maxCursors: 4, contextLinesBefore: 1, contextLinesAfter: 1,
+  maxFileBytes: 128,
+  maxSpanBytes: 64,
+  maxSpanLines: 3,
+  maxPageEntries: 2,
+  maxSearchHits: 2,
+  maxQueryBytes: 32,
+  maxPathBytes: 128,
+  maxScannedFiles: 20,
+  maxScannedBytes: 2_048,
+  maxReturnedBytes: 1_024,
+  maxCursors: 4,
+  contextLinesBefore: 1,
+  contextLinesAfter: 1,
 });
 
 function questionTools(tools: ControlledRepositoryTools): QuestionRepositoryReadPort {
@@ -70,29 +96,43 @@ interface ToolFixtureOptions {
   readonly acquireSnapshot?: () => Promise<unknown>;
 }
 
-function makeTools(options: ToolFixtureOptions = {}): { readonly tools: ControlledRepositoryTools; readonly guard: ReadGuard; readonly reads: string[]; readonly readCaps: number[]; readonly files: ReadonlyMap<string, Uint8Array> } {
+function makeTools(options: ToolFixtureOptions = {}): {
+  readonly tools: ControlledRepositoryTools;
+  readonly guard: ReadGuard;
+  readonly reads: string[];
+  readonly readCaps: number[];
+  readonly files: ReadonlyMap<string, Uint8Array>;
+} {
   const guard = new ReadGuard();
   const files = options.files ?? new Map([['src/example.py', fileBytes]]);
   const manifest = options.manifest ?? [...files].map(([path, bytes]) => ({ path, originalByteDigest: computeFileDigest(bytes) }));
   const readLimits = { ...questionLimits, ...options.limits };
-  const snapshot: SourceSnapshotV1 = options.snapshot as SourceSnapshotV1 ?? {
-    snapshotId: 'snapshot-1', binding, manifestDigest: computeSourceManifestDigest(manifest), acquisitionId: 'acquisition-1',
-    admissionLimits: { maxFiles: readLimits.maxScannedFiles, maxBytes: Math.min(1_024, readLimits.maxScannedBytes), maxElapsedMs: 1_000 }, manifest,
+  const snapshot: SourceSnapshotV1 = (options.snapshot as SourceSnapshotV1) ?? {
+    snapshotId: 'snapshot-1',
+    binding,
+    manifestDigest: computeSourceManifestDigest(manifest),
+    acquisitionId: 'acquisition-1',
+    admissionLimits: { maxFiles: readLimits.maxScannedFiles, maxBytes: Math.min(1_024, readLimits.maxScannedBytes), maxElapsedMs: 1_000 },
+    manifest,
   };
   const reads: string[] = [];
   const readCaps: number[] = [];
-  const snapshotPort = options.omitSnapshotPort ? undefined : {
-    acquireSnapshot: options.acquireSnapshot ?? (async () => ({
-      snapshot,
-      readFile: async (path: string, maxBytes: number) => {
-        reads.push(path);
-        readCaps.push(maxBytes);
-        const bytes = files.get(path);
-        if (bytes !== undefined && bytes.byteLength > maxBytes) return { status: 'oversized', scannedBytes: maxBytes + 1 };
-        return bytes === undefined ? { status: 'unreadable', scannedBytes: 0 } : { status: 'ok', bytes: Buffer.from(bytes), scannedBytes: bytes.byteLength };
-      },
-    })),
-  };
+  const snapshotPort = options.omitSnapshotPort
+    ? undefined
+    : {
+        acquireSnapshot:
+          options.acquireSnapshot ??
+          (async () => ({
+            snapshot,
+            readFile: async (path: string, maxBytes: number) => {
+              reads.push(path);
+              readCaps.push(maxBytes);
+              const bytes = files.get(path);
+              if (bytes !== undefined && bytes.byteLength > maxBytes) return { status: 'oversized', scannedBytes: maxBytes + 1 };
+              return bytes === undefined ? { status: 'unreadable', scannedBytes: 0 } : { status: 'ok', bytes: Buffer.from(bytes), scannedBytes: bytes.byteLength };
+            },
+          })),
+      };
   const toolOptions = {
     guardCapability: guard,
     fsPort: new NoLiveFilesystem([...files.keys()]),
@@ -107,10 +147,7 @@ function makeTools(options: ToolFixtureOptions = {}): { readonly tools: Controll
 
 test('readSpan returns normalized whole lines from the trusted snapshot and clamps end-of-file', async () => {
   const { tools } = makeTools();
-  const result = await questionTools(tools).readSpan(
-    { path: 'src/example.py', startLine: 2, endLine: 8 },
-    control(),
-  );
+  const result = await questionTools(tools).readSpan({ path: 'src/example.py', startLine: 2, endLine: 8 }, control());
 
   assert.equal(typeof result, 'object');
   const spanResult = result as { readonly status: string; readonly span?: Record<string, unknown> };
@@ -133,8 +170,9 @@ test('repository tool inputs and deadlines are detached before the guarded await
     request.path = '../outside.py';
     operationControl.deadlineEpochMs = Date.now() - 1;
   };
-  const result = await questionTools(fixture.tools).readSpan(request, operationControl) as {
-    readonly status: string; readonly span?: { readonly path: string; readonly excerpt: string };
+  const result = (await questionTools(fixture.tools).readSpan(request, operationControl)) as {
+    readonly status: string;
+    readonly span?: { readonly path: string; readonly excerpt: string };
   };
   assert.equal(result.status, 'ok');
   assert.equal(result.span?.path, 'src/example.py');
@@ -145,9 +183,14 @@ test('repository tool inputs and deadlines are detached before the guarded await
 test('searchLiteral is case-sensitive, returns one first-match hit per line, and centers context on the match', async () => {
   const content = Buffer.from('header\r\nalpha = target + target\r\nfooter\r\n', 'utf8');
   const { tools, reads } = makeTools({ files: new Map([['src/search.py', content]]) });
-  const result = await questionTools(tools).searchLiteral({ query: 'target', pathPrefix: 'src' }, control()) as {
+  const result = (await questionTools(tools).searchLiteral({ query: 'target', pathPrefix: 'src' }, control())) as {
     readonly status: string;
-    readonly hits?: readonly { readonly line: number; readonly column: number; readonly matchLength: number; readonly span: { readonly excerpt: string; readonly range: { readonly startLine: number; readonly endLine: number } } }[];
+    readonly hits?: readonly {
+      readonly line: number;
+      readonly column: number;
+      readonly matchLength: number;
+      readonly span: { readonly excerpt: string; readonly range: { readonly startLine: number; readonly endLine: number } };
+    }[];
     readonly coverage?: string;
   };
 
@@ -161,7 +204,7 @@ test('searchLiteral is case-sensitive, returns one first-match hit per line, and
   assert.equal(result.coverage, 'complete');
   assert.deepEqual(reads, ['src/search.py']);
 
-  const mismatch = await questionTools(tools).searchLiteral({ query: 'Target' }, control()) as { readonly status: string; readonly hits?: readonly unknown[] };
+  const mismatch = (await questionTools(tools).searchLiteral({ query: 'Target' }, control())) as { readonly status: string; readonly hits?: readonly unknown[] };
   assert.equal(mismatch.status, 'ok');
   assert.deepEqual(mismatch.hits, []);
 });
@@ -169,17 +212,26 @@ test('searchLiteral is case-sensitive, returns one first-match hit per line, and
 test('searchLiteral pages cached file lines without reopening the immutable source', async () => {
   const content = Buffer.from('target one\ntarget two\ntarget three\n', 'utf8');
   const { tools, reads } = makeTools({ files: new Map([['src/many.py', content]]) });
-  const first = await questionTools(tools).searchLiteral({ query: 'target' }, control()) as {
-    readonly status: string; readonly hits?: readonly { readonly line: number }[]; readonly nextCursor?: string;
+  const first = (await questionTools(tools).searchLiteral({ query: 'target' }, control())) as {
+    readonly status: string;
+    readonly hits?: readonly { readonly line: number }[];
+    readonly nextCursor?: string;
   };
   assert.equal(first.status, 'ok');
-  assert.deepEqual(first.hits?.map(hit => hit.line), [1, 2]);
+  assert.deepEqual(
+    first.hits?.map(hit => hit.line),
+    [1, 2],
+  );
   assert.ok(first.nextCursor);
-  const second = await questionTools(tools).searchLiteral({ query: 'target', cursor: first.nextCursor }, control()) as {
-    readonly status: string; readonly hits?: readonly { readonly line: number }[];
+  const second = (await questionTools(tools).searchLiteral({ query: 'target', cursor: first.nextCursor }, control())) as {
+    readonly status: string;
+    readonly hits?: readonly { readonly line: number }[];
   };
   assert.equal(second.status, 'ok');
-  assert.deepEqual(second.hits?.map(hit => hit.line), [3]);
+  assert.deepEqual(
+    second.hits?.map(hit => hit.line),
+    [3],
+  );
   assert.deepEqual(reads, ['src/many.py']);
 });
 
@@ -190,45 +242,62 @@ test('listDirectory returns lexically sorted bounded pages and consumes opaque c
     ['dir/c.py', Buffer.from('c')],
   ]);
   const { tools } = makeTools({ files });
-  const first = await questionTools(tools).listDirectory({ path: '.' }, control()) as {
-    readonly status: string; readonly entries?: readonly unknown[]; readonly coverage?: string; readonly nextCursor?: string;
+  const first = (await questionTools(tools).listDirectory({ path: '.' }, control())) as {
+    readonly status: string;
+    readonly entries?: readonly unknown[];
+    readonly coverage?: string;
+    readonly nextCursor?: string;
   };
 
   assert.equal(first.status, 'ok');
-  assert.deepEqual(first.entries, [{ path: 'a.py', kind: 'file' }, { path: 'b.py', kind: 'file' }]);
+  assert.deepEqual(first.entries, [
+    { path: 'a.py', kind: 'file' },
+    { path: 'b.py', kind: 'file' },
+  ]);
   assert.equal(first.coverage, 'partial');
   assert.ok(first.nextCursor);
 
-  const second = await questionTools(tools).listDirectory({ path: '.', cursor: first.nextCursor }, control()) as {
-    readonly status: string; readonly entries?: readonly unknown[]; readonly coverage?: string;
+  const second = (await questionTools(tools).listDirectory({ path: '.', cursor: first.nextCursor }, control())) as {
+    readonly status: string;
+    readonly entries?: readonly unknown[];
+    readonly coverage?: string;
   };
   assert.equal(second.status, 'ok');
   assert.deepEqual(second.entries, [{ path: 'dir', kind: 'directory' }]);
   assert.equal(second.coverage, 'complete');
 
-  const replay = await questionTools(tools).listDirectory({ path: '.', cursor: first.nextCursor }, control()) as { readonly status: string; readonly reasonCode?: string };
+  const replay = (await questionTools(tools).listDirectory({ path: '.', cursor: first.nextCursor }, control())) as { readonly status: string; readonly reasonCode?: string };
   assert.deepEqual(replay, { status: 'invalid', reasonCode: 'invalid-cursor' });
 });
 
 test('corrupt manifests and unknown capabilities are refused before opening snapshot bytes', async () => {
   const files = new Map([['src/example.py', fileBytes]]);
   const badSnapshot = {
-    snapshotId: 'snapshot-1', binding, manifestDigest: DIGEST, acquisitionId: 'acquisition-1',
+    snapshotId: 'snapshot-1',
+    binding,
+    manifestDigest: DIGEST,
+    acquisitionId: 'acquisition-1',
     admissionLimits: { maxFiles: 20, maxBytes: 1_024, maxElapsedMs: 1_000 },
     manifest: [{ path: 'src/example.py', originalByteDigest: computeFileDigest(fileBytes) }],
   };
   const corrupt = makeTools({ files, snapshot: badSnapshot });
-  const corruptResult = await questionTools(corrupt.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control()) as { readonly status: string; readonly reasonCode?: string };
+  const corruptResult = (await questionTools(corrupt.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as { readonly status: string; readonly reasonCode?: string };
   assert.deepEqual(corruptResult, { status: 'unavailable', reasonCode: 'unsupported-adapter' });
   assert.deepEqual(corrupt.reads, []);
 
   const unsupported = makeTools({ omitSnapshotPort: true });
-  const unsupportedResult = await questionTools(unsupported.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control()) as { readonly status: string; readonly reasonCode?: string };
+  const unsupportedResult = (await questionTools(unsupported.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
   assert.deepEqual(unsupportedResult, { status: 'unavailable', reasonCode: 'unsupported-adapter' });
   assert.deepEqual(unsupported.guard.calls, []);
 
   const missingReadCapability = makeTools({ acquireSnapshot: async () => ({ snapshot: badSnapshot, readFile: undefined }) });
-  const missingRead = await questionTools(missingReadCapability.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control()) as { readonly status: string; readonly reasonCode?: string };
+  const missingRead = (await questionTools(missingReadCapability.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
   assert.deepEqual(missingRead, { status: 'unavailable', reasonCode: 'unsupported-adapter' });
   assert.deepEqual(missingReadCapability.reads, []);
 });
@@ -245,8 +314,11 @@ test('snapshot bytes must match the trusted manifest even when a mutable source 
       const pinned = Buffer.from(original);
       return {
         snapshot: {
-          snapshotId: 'snapshot-1', binding, manifestDigest: computeSourceManifestDigest([{ path: 'src/example.py', originalByteDigest: computeFileDigest(original) }]),
-          acquisitionId: 'acquisition-1', admissionLimits: { maxFiles: 20, maxBytes: 1_024, maxElapsedMs: 1_000 },
+          snapshotId: 'snapshot-1',
+          binding,
+          manifestDigest: computeSourceManifestDigest([{ path: 'src/example.py', originalByteDigest: computeFileDigest(original) }]),
+          acquisitionId: 'acquisition-1',
+          admissionLimits: { maxFiles: 20, maxBytes: 1_024, maxElapsedMs: 1_000 },
           manifest: [{ path: 'src/example.py', originalByteDigest: computeFileDigest(original) }],
         },
         readFile: async () => {
@@ -259,8 +331,9 @@ test('snapshot bytes must match the trusted manifest even when a mutable source 
       };
     },
   });
-  const result = await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control()) as {
-    readonly status: string; readonly span?: { readonly excerpt: string };
+  const result = (await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly span?: { readonly excerpt: string };
   };
   assert.equal(result.status, 'ok');
   assert.equal(result.span?.excerpt, 'source A');
@@ -280,11 +353,12 @@ test('snapshot acquisition that cannot prove stable source bytes is denied witho
       return undefined;
     },
   });
-  const result = await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control()) as {
-    readonly status: string; readonly reasonCode?: string;
+  const result = (await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
   };
   assert.deepEqual(result, { status: 'unavailable', reasonCode: 'unsupported-adapter' });
-  const repeated = await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control()) as { readonly status: string; readonly reasonCode?: string };
+  const repeated = (await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as { readonly status: string; readonly reasonCode?: string };
   assert.deepEqual(repeated, result);
   assert.equal(acquisitions, 1, 'a failed acquisition is not retried later in the run');
   assert.equal(mutableSource.toString('utf8'), 'source A\n');
@@ -298,16 +372,20 @@ test('byte mutation after admission is stale and never issues an excerpt', async
     files: new Map([['src/example.py', original]]),
     acquireSnapshot: async () => ({
       snapshot: {
-        snapshotId: 'snapshot-1', binding,
+        snapshotId: 'snapshot-1',
+        binding,
         manifestDigest: computeSourceManifestDigest([{ path: 'src/example.py', originalByteDigest: computeFileDigest(original) }]),
-        acquisitionId: 'acquisition-1', admissionLimits: { maxFiles: 20, maxBytes: 1_024, maxElapsedMs: 1_000 },
+        acquisitionId: 'acquisition-1',
+        admissionLimits: { maxFiles: 20, maxBytes: 1_024, maxElapsedMs: 1_000 },
         manifest: [{ path: 'src/example.py', originalByteDigest: computeFileDigest(original) }],
       },
       readFile: async () => ({ status: 'ok', bytes: changed, scannedBytes: changed.byteLength }),
     }),
   });
-  const result = await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control()) as {
-    readonly status: string; readonly reasonCode?: string; readonly span?: unknown;
+  const result = (await questionTools(fixture.tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+    readonly span?: unknown;
   };
   assert.deepEqual(result, { status: 'stale', reasonCode: 'source-mismatch' });
   assert.deepEqual(fixture.reads, []);
@@ -316,8 +394,9 @@ test('byte mutation after admission is stale and never issues an excerpt', async
 test('protected content outside the requested span excludes the whole file', async () => {
   const secret = Buffer.from('ordinary source\npassword="abcdefghijk"\n', 'utf8');
   const { tools } = makeTools({ files: new Map([['src/example.py', secret]]) });
-  const result = await questionTools(tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control()) as {
-    readonly status: string; readonly reasonCode?: string;
+  const result = (await questionTools(tools).readSpan({ path: 'src/example.py', startLine: 1, endLine: 1 }, control())) as {
+    readonly status: string;
+    readonly reasonCode?: string;
   };
   assert.deepEqual(result, { status: 'denied', reasonCode: 'protected' });
 });
@@ -342,12 +421,23 @@ test('span reads budget the overflow probe', async () => {
 
 test('cancellation and expired deadlines stop before snapshot admission', async () => {
   let acquisitions = 0;
-  const fixture = makeTools({ acquireSnapshot: async () => { acquisitions += 1; return undefined; } });
+  const fixture = makeTools({
+    acquireSnapshot: async () => {
+      acquisitions += 1;
+      return undefined;
+    },
+  });
   const controller = new AbortController();
   controller.abort();
-  const cancelled = await questionTools(fixture.tools).listDirectory({ path: '.' }, { signal: controller.signal, deadlineEpochMs: Date.now() + 5_000 }) as { readonly status: string; readonly reasonCode?: string };
+  const cancelled = (await questionTools(fixture.tools).listDirectory({ path: '.' }, { signal: controller.signal, deadlineEpochMs: Date.now() + 5_000 })) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
   assert.deepEqual(cancelled, { status: 'cancelled', reasonCode: 'cancelled' });
-  const expired = await questionTools(fixture.tools).listDirectory({ path: '.' }, { signal: new AbortController().signal, deadlineEpochMs: Date.now() - 1 }) as { readonly status: string; readonly reasonCode?: string };
+  const expired = (await questionTools(fixture.tools).listDirectory({ path: '.' }, { signal: new AbortController().signal, deadlineEpochMs: Date.now() - 1 })) as {
+    readonly status: string;
+    readonly reasonCode?: string;
+  };
   assert.deepEqual(expired, { status: 'exhausted', reasonCode: 'deadline' });
   assert.equal(acquisitions, 0);
 });
@@ -383,21 +473,23 @@ test('question repository exposes only four read and binding operations with an 
 test('question repository rejects unknown cursors before guard, binding, or snapshot work', async () => {
   let bindingChecks = 0;
   let acquisitions = 0;
-  const bindingPort = { checkBinding: async () => {
-    bindingChecks += 1;
-    return { status: 'ok', binding };
-  } };
-  const fixture = makeTools({ bindingPort, acquireSnapshot: async () => {
-    acquisitions += 1;
-    return undefined;
-  } });
+  const bindingPort = {
+    checkBinding: async () => {
+      bindingChecks += 1;
+      return { status: 'ok', binding };
+    },
+  };
+  const fixture = makeTools({
+    bindingPort,
+    acquireSnapshot: async () => {
+      acquisitions += 1;
+      return undefined;
+    },
+  });
   const port = createQuestionRepositoryPort({ binding, reader: questionTools(fixture.tools), bindingPort });
   const cursor = 'forged-cursor-123456';
 
-  assert.deepEqual(await Promise.all([
-    port.listDirectory({ path: '.', cursor }, control()),
-    port.searchLiteral({ query: 'target', pathPrefix: 'src', cursor }, control()),
-  ]), [
+  assert.deepEqual(await Promise.all([port.listDirectory({ path: '.', cursor }, control()), port.searchLiteral({ query: 'target', pathPrefix: 'src', cursor }, control())]), [
     { status: 'invalid', reasonCode: 'invalid-cursor' },
     { status: 'invalid', reasonCode: 'invalid-cursor' },
   ]);
@@ -407,15 +499,21 @@ test('question repository rejects unknown cursors before guard, binding, or snap
   assert.deepEqual(fixture.reads, []);
 });
 
-test('question repository rejects wrong-scope and expired cursors before effects and claims valid cursors once', async (t) => {
+test('question repository rejects wrong-scope and expired cursors before effects and claims valid cursors once', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   let bindingChecks = 0;
-  const bindingPort = { checkBinding: async () => {
-    bindingChecks += 1;
-    return { status: 'ok', binding };
-  } };
+  const bindingPort = {
+    checkBinding: async () => {
+      bindingChecks += 1;
+      return { status: 'ok', binding };
+    },
+  };
   const fixture = makeTools({
-    files: new Map([['src/a.py', Buffer.from('target\ntarget\ntarget')], ['src/b.py', fileBytes], ['src/c.py', fileBytes]]),
+    files: new Map([
+      ['src/a.py', Buffer.from('target\ntarget\ntarget')],
+      ['src/b.py', fileBytes],
+      ['src/c.py', fileBytes],
+    ]),
     limits: { maxPageEntries: 1, maxSearchHits: 1 },
     bindingPort,
   });
@@ -425,7 +523,7 @@ test('question repository rejects wrong-scope and expired cursors before effects
   if (directory.status !== 'ok' || !directory.nextCursor || search.status !== 'ok' || !search.nextCursor) {
     assert.fail('expected resumable directory and search results');
   }
-  const effects = () => [fixture.guard.calls.length, bindingChecks, fixture.reads.length];
+  const effects = () => [fixture.guard.calls.length, bindingChecks, fixture.reads.length] as const;
   const beforeWrongScope = effects();
   const invalidCursor = { status: 'invalid', reasonCode: 'invalid-cursor' };
   assert.deepEqual(await port.listDirectory({ path: 'elsewhere', cursor: directory.nextCursor }, control()), invalidCursor);
@@ -438,12 +536,14 @@ test('question repository rejects wrong-scope and expired cursors before effects
   const listNext = { path: 'src', cursor: directory.nextCursor };
   const searchNext = { query: 'target', pathPrefix: 'src', cursor: search.nextCursor };
   const [dirPage, dirReplay, searchPage, searchReplay] = await Promise.all([
-    port.listDirectory(listNext, control()), port.listDirectory(listNext, control()),
-    port.searchLiteral(searchNext, control()), port.searchLiteral(searchNext, control()),
+    port.listDirectory(listNext, control()),
+    port.listDirectory(listNext, control()),
+    port.searchLiteral(searchNext, control()),
+    port.searchLiteral(searchNext, control()),
   ]);
   assert.deepEqual(dirReplay, invalidCursor);
   assert.deepEqual(searchReplay, invalidCursor);
-  assert.equal(fixture.guard.calls.length, beforeWrongScope[0]! + 2);
+  assert.equal(fixture.guard.calls.length, beforeWrongScope[0] + 2);
   if (dirPage.status !== 'ok' || !dirPage.nextCursor || searchPage.status !== 'ok' || !searchPage.nextCursor) {
     assert.fail('expected both valid continuations to yield another cursor');
   }
@@ -487,10 +587,12 @@ test('question repository keeps root selection host-owned and exposes no mutatio
   assert.equal('applyPatch' in port, false);
   assert.equal('executeCommand' in port, false);
   assert.deepEqual(await port.readSpan({ path: '../../outside.py', startLine: 1, endLine: 1 }, control()), {
-    status: 'invalid', reasonCode: 'invalid-request',
+    status: 'invalid',
+    reasonCode: 'invalid-request',
   });
   assert.deepEqual(await port.readSpan({ path: '.git/config', startLine: 1, endLine: 1 }, control()), {
-    status: 'denied', reasonCode: 'protected',
+    status: 'denied',
+    reasonCode: 'protected',
   });
   assert.deepEqual(reads, []);
 });

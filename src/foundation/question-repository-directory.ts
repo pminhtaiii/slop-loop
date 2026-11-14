@@ -3,7 +3,7 @@ import type { DirectoryEntryV1, DirectoryPageV1 } from '../contracts/questions/c
 import type { QuestionRepositoryOperationControl, QuestionRepositoryReadLimits } from './repository-types.ts';
 import { validateDirectoryPage } from '../contracts/questions/validation.ts';
 import { activeControl, createCursorId, failure, isFailure, type AdmittedSnapshot, type CursorState, type DirectoryCursor, type ReturnedByteCounter } from './question-repository-primitives.ts';
-import { QuestionRepositorySnapshotReader } from './question-repository-snapshot.ts';
+import type { QuestionRepositorySnapshotReader } from './question-repository-snapshot.ts';
 
 export interface DirectoryOperationContext {
   readonly limits: QuestionRepositoryReadLimits;
@@ -51,9 +51,14 @@ export async function listDirectoryGuarded(
     if (context.cursors.size >= context.limits.maxCursors) return failure('exhausted', 'output-limit');
     const id = createCursorId();
     context.cursors.set(id, {
-      kind: 'directory', path: request.path, bindingDigest: admitted.bindingDigest,
-      snapshotId: admitted.snapshot.snapshotId, manifestDigest: admitted.snapshot.manifestDigest,
-      entries, offset, expiresAt: Date.now() + admitted.snapshot.admissionLimits.maxElapsedMs,
+      kind: 'directory',
+      path: request.path,
+      bindingDigest: admitted.bindingDigest,
+      snapshotId: admitted.snapshot.snapshotId,
+      manifestDigest: admitted.snapshot.manifestDigest,
+      entries,
+      offset,
+      expiresAt: Date.now() + admitted.snapshot.admissionLimits.maxElapsedMs,
     });
     nextCursor = id;
   }
@@ -61,8 +66,11 @@ export async function listDirectoryGuarded(
   const after = await context.snapshotReader.checkBinding(control);
   if (after) return after;
   const result = {
-    status: 'ok', path: request.path, entries: page,
-    coverage: more ? 'partial' : 'complete', omissionReasons: [],
+    status: 'ok',
+    path: request.path,
+    entries: page,
+    coverage: more ? 'partial' : 'complete',
+    omissionReasons: [],
     ...(nextCursor === undefined ? {} : { nextCursor }),
   } as const;
   const validated = validateDirectoryPage(result, context.limits);
@@ -70,6 +78,5 @@ export async function listDirectoryGuarded(
 }
 
 function matchesSnapshot(state: DirectoryCursor, admitted: AdmittedSnapshot): boolean {
-  return state.bindingDigest === admitted.bindingDigest && state.snapshotId === admitted.snapshot.snapshotId &&
-    state.manifestDigest === admitted.snapshot.manifestDigest;
+  return state.bindingDigest === admitted.bindingDigest && state.snapshotId === admitted.snapshot.snapshotId && state.manifestDigest === admitted.snapshot.manifestDigest;
 }

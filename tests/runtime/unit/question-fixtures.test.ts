@@ -119,17 +119,12 @@ test('scripted model returns the injected decision and usage sequence in order',
 test('scripted model refuses exhausted sequences instead of inventing a fallback decision', async () => {
   const model = new ScriptedQuestionModelPort([]);
 
-  await assert.rejects(
-    model.decide({}, {}, new AbortController().signal),
-    /scripted question model sequence exhausted/i,
-  );
+  await assert.rejects(model.decide({}, {}, new AbortController().signal), /scripted question model sequence exhausted/i);
   assert.equal(model.consumedSteps, 0);
 });
 
 test('scripted model does not consume a decision after cancellation', async () => {
-  const model = new ScriptedQuestionModelPort([
-    { decision: { kind: 'insufficient', explanation: 'No evidence was supplied.' }, usage: { status: 'missing' } },
-  ]);
+  const model = new ScriptedQuestionModelPort([{ decision: { kind: 'insufficient', explanation: 'No evidence was supplied.' }, usage: { status: 'missing' } }]);
   const controller = new AbortController();
   controller.abort();
 

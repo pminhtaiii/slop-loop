@@ -3491,7 +3491,6 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
   });
 });
 
-
 it('UC-02 T003 filesystem work operations stay bounded and observe cancellation', async () => {
   const root = mkdtempSync(join(tmpdir(), 'rag-t003-bounded-fs-'));
   try {
@@ -3501,7 +3500,10 @@ it('UC-02 T003 filesystem work operations stay bounded and observe cancellation'
     const fs = new WorkspaceFilesystemPort({ root });
     const control = { signal: new AbortController().signal, deadlineEpochMs: Date.now() + 5_000 };
     const onePage = await fs.readDirBounded('src', 2, control);
-    assert.deepEqual(onePage.map(entry => entry.name), ['a.py', 'b.py']);
+    assert.deepEqual(
+      onePage.map(entry => entry.name),
+      ['a.py', 'b.py'],
+    );
     await assert.rejects(() => fs.readDirBounded('src', 1, control), /DIRECTORY_TOO_LARGE/u);
     assert.match(await fs.getCurrentRevisionDigestBounded({ maxEntries: 3, maxFiles: 2, maxBytes: 1_024 }, control), /^sha256:[a-f0-9]{64}$/u);
     await assert.rejects(() => fs.getCurrentRevisionDigestBounded({ maxEntries: 2, maxFiles: 2, maxBytes: 1_024 }, control), /DIRECTORY_TOO_LARGE|SCAN_LIMIT/u);

@@ -5,10 +5,22 @@ import { validateSearchPage } from '../contracts/questions/validation.ts';
 import { isProtectedPath } from '../contracts/foundation/uc03.ts';
 import { containsProtectedContent } from './docker-workspace-policy.ts';
 import {
-  activeControl, addOmission, createAdmittedSpan, createCursorId, decodeFile, failure, isFailure, lineArray,
-  pathWithinPrefix, type AdmittedSnapshot, type CursorState, type ReturnedByteCounter, type SearchCursor, type SearchFileCursor,
+  activeControl,
+  addOmission,
+  createAdmittedSpan,
+  createCursorId,
+  decodeFile,
+  failure,
+  isFailure,
+  lineArray,
+  pathWithinPrefix,
+  type AdmittedSnapshot,
+  type CursorState,
+  type ReturnedByteCounter,
+  type SearchCursor,
+  type SearchFileCursor,
 } from './question-repository-primitives.ts';
-import { QuestionRepositorySnapshotReader } from './question-repository-snapshot.ts';
+import type { QuestionRepositorySnapshotReader } from './question-repository-snapshot.ts';
 
 export interface SearchOperationContext {
   readonly identity: QuestionIdentityV1;
@@ -42,20 +54,32 @@ export async function searchLiteralGuarded(
 
   while (hits.length < context.limits.maxSearchHits) {
     const active = activeControl(control);
-    if (active) { stopped = active; break; }
+    if (active) {
+      stopped = active;
+      break;
+    }
     if (fileState) {
       let lineIndex = fileState.nextLineIndex;
       while (lineIndex < fileState.lines.length && hits.length < context.limits.maxSearchHits) {
         const lineControl = activeControl(control);
-        if (lineControl) { stopped = lineControl; break; }
+        if (lineControl) {
+          stopped = lineControl;
+          break;
+        }
         const line = fileState.lines[lineIndex];
-        if (line === undefined) { lineIndex += 1; continue; }
+        if (line === undefined) {
+          lineIndex += 1;
+          continue;
+        }
         const columnIndex = line.indexOf(request.query);
         if (columnIndex >= 0) {
           const span = searchContextSpan(context, admitted, fileState, lineIndex);
           if (isFailure(span)) {
             if (span.status === 'invalid' && span.reasonCode === 'line-too-large') addOmission(omissions, 'line-too-large');
-            else { stopped = span; break; }
+            else {
+              stopped = span;
+              break;
+            }
           } else {
             const hit: SearchHitV1 = Object.freeze({ span, line: lineIndex + 1, column: columnIndex + 1, matchLength: request.query.length });
             const byteCost = Buffer.byteLength(span.excerpt, 'utf8') + Buffer.byteLength(span.path, 'utf8') + 64;
@@ -85,28 +109,43 @@ export async function searchLiteralGuarded(
     const path = admitted.pathIndex[manifestIndex];
     if (path === undefined || (prefix !== undefined && !pathWithinPrefix(path, prefix))) break;
     manifestIndex += 1;
-    if (isProtectedPath(path)) { addOmission(omissions, 'protected'); continue; }
+    if (isProtectedPath(path)) {
+      addOmission(omissions, 'protected');
+      continue;
+    }
     const loaded = await context.snapshotReader.readSnapshotFile(path, admitted, control);
     if (isFailure(loaded)) {
-      if (loaded.status === 'exhausted' || loaded.status === 'cancelled' || loaded.status === 'stale' || loaded.status === 'denied' ||
-        loaded.status === 'unavailable' && loaded.reasonCode === 'unsupported-adapter') { stopped = loaded; break; }
+      if (
+        loaded.status === 'exhausted' ||
+        loaded.status === 'cancelled' ||
+        loaded.status === 'stale' ||
+        loaded.status === 'denied' ||
+        (loaded.status === 'unavailable' && loaded.reasonCode === 'unsupported-adapter')
+      ) {
+        stopped = loaded;
+        break;
+      }
       if (loaded.reasonCode === 'oversized') addOmission(omissions, 'oversized');
       else addOmission(omissions, 'unreadable');
       continue;
     }
     const decoded = decodeFile(loaded.bytes);
-    if (decoded === undefined) { addOmission(omissions, 'binary'); continue; }
-    if (containsProtectedContent(decoded)) { addOmission(omissions, 'protected'); continue; }
+    if (decoded === undefined) {
+      addOmission(omissions, 'binary');
+      continue;
+    }
+    if (containsProtectedContent(decoded)) {
+      addOmission(omissions, 'protected');
+      continue;
+    }
     fileState = { path, digest: loaded.digest, lines: lineArray(decoded.replace(/\r\n/gu, '\n')), nextLineIndex: 0 };
   }
 
-  if (stopped?.status === 'cancelled' || stopped?.status === 'stale' || stopped?.status === 'denied' ||
-    stopped?.status === 'unavailable' || stopped?.reasonCode === 'deadline') return stopped;
+  if (stopped?.status === 'cancelled' || stopped?.status === 'stale' || stopped?.status === 'denied' || stopped?.status === 'unavailable' || stopped?.reasonCode === 'deadline') return stopped;
   if (stopped?.status === 'exhausted' && hits.length === 0) return stopped;
   if (stopped?.status === 'exhausted') addOmission(omissions, stopped.reasonCode === 'output-limit' ? 'output-limit' : 'scan-limit');
 
-  const hasMore = fileState !== undefined || admitted.pathIndex[manifestIndex] !== undefined &&
-    (prefix === undefined || pathWithinPrefix(admitted.pathIndex[manifestIndex] ?? '', prefix));
+  const hasMore = fileState !== undefined || (admitted.pathIndex[manifestIndex] !== undefined && (prefix === undefined || pathWithinPrefix(admitted.pathIndex[manifestIndex] ?? '', prefix)));
   let nextCursor: string | undefined;
   if (hasMore && !stopped && !omissions.includes('scan-limit') && !omissions.includes('output-limit')) {
     if (context.cursors.size >= context.limits.maxCursors) {
@@ -115,10 +154,15 @@ export async function searchLiteralGuarded(
     } else {
       nextCursor = createCursorId();
       context.cursors.set(nextCursor, {
-        kind: 'search', query: request.query, pathPrefix: prefix,
-        bindingDigest: admitted.bindingDigest, snapshotId: admitted.snapshot.snapshotId,
-        manifestDigest: admitted.snapshot.manifestDigest, nextManifestIndex: manifestIndex,
-        currentFile: fileState, omissionReasons: Object.freeze([...omissions]),
+        kind: 'search',
+        query: request.query,
+        pathPrefix: prefix,
+        bindingDigest: admitted.bindingDigest,
+        snapshotId: admitted.snapshot.snapshotId,
+        manifestDigest: admitted.snapshot.manifestDigest,
+        nextManifestIndex: manifestIndex,
+        currentFile: fileState,
+        omissionReasons: Object.freeze([...omissions]),
         expiresAt: Date.now() + admitted.snapshot.admissionLimits.maxElapsedMs,
       });
     }
@@ -129,7 +173,10 @@ export async function searchLiteralGuarded(
   if (after) return after;
   const complete = !hasMore && omissions.length === 0;
   const result = {
-    status: 'ok', hits, coverage: complete ? 'complete' : 'partial', omissionReasons: omissions,
+    status: 'ok',
+    hits,
+    coverage: complete ? 'complete' : 'partial',
+    omissionReasons: omissions,
     ...(nextCursor === undefined ? {} : { nextCursor }),
   } as const;
   const validated = validateSearchPage(result, context.limits);
@@ -150,16 +197,10 @@ function firstManifestIndex(admitted: AdmittedSnapshot, prefix: string | undefin
 }
 
 function matchesSnapshot(state: SearchCursor, admitted: AdmittedSnapshot): boolean {
-  return state.bindingDigest === admitted.bindingDigest && state.snapshotId === admitted.snapshot.snapshotId &&
-    state.manifestDigest === admitted.snapshot.manifestDigest;
+  return state.bindingDigest === admitted.bindingDigest && state.snapshotId === admitted.snapshot.snapshotId && state.manifestDigest === admitted.snapshot.manifestDigest;
 }
 
-function searchContextSpan(
-  context: SearchOperationContext,
-  admitted: AdmittedSnapshot,
-  file: SearchFileCursor,
-  lineIndex: number,
-): AdmittedSpanV1 | ReturnType<typeof failure> {
+function searchContextSpan(context: SearchOperationContext, admitted: AdmittedSnapshot, file: SearchFileCursor, lineIndex: number): AdmittedSpanV1 | ReturnType<typeof failure> {
   const limits = context.limits;
   const targetLine = lineIndex + 1;
   const before = Math.min(limits.contextLinesBefore, targetLine - 1, Math.floor((limits.maxSpanLines - 1) / 2));
@@ -170,7 +211,17 @@ function searchContextSpan(
   while (startLine < targetLine && bytesFor(startLine, endLine) > limits.maxSpanBytes) startLine += 1;
   while (endLine > targetLine && bytesFor(startLine, endLine) > limits.maxSpanBytes) endLine -= 1;
   if (bytesFor(startLine, endLine) > limits.maxSpanBytes) return failure('invalid', 'line-too-large');
-  return createAdmittedSpan({ identity: context.identity, limits, admitted, counter: context.returnedBytes,
-    path: file.path, lines: file.lines, startLine, endLine, originalByteDigest: file.digest,
-    truncated: false, countOutput: false });
+  return createAdmittedSpan({
+    identity: context.identity,
+    limits,
+    admitted,
+    counter: context.returnedBytes,
+    path: file.path,
+    lines: file.lines,
+    startLine,
+    endLine,
+    originalByteDigest: file.digest,
+    truncated: false,
+    countOutput: false,
+  });
 }
