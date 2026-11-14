@@ -8,14 +8,15 @@ import { validateHostSnapshotFacts, type BaselineEvidenceCandidate, type Trusted
 import { resolveExpectedTestFiles, samePersistedTransition, taskStateMatchesTask } from './graph-validation.ts';
 
 interface RetainedBaseline {
-  readonly bindingDigest: string;
   readonly candidateDigest: string;
   readonly candidate: BaselineEvidenceCandidate;
 }
 
 export type RetainedBaselineResult = Readonly<{ ok: true; baseline: BaselineEvidenceCandidate }> | Readonly<{ ok: false; reason: string }>;
 
-const retained = new WeakMap<object, RetainedBaseline>();
+// One generation can serve several task/run bindings, so candidates are keyed by binding within it.
+// shortcut: entries are never evicted for the generation's lifetime, upgrade if a process generation outlives many runs.
+const retained = new WeakMap<object, Map<string, RetainedBaseline>>();
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 
 function sameList(left: readonly string[], right: readonly string[]): boolean {
@@ -101,9 +102,14 @@ export function retainClarificationBaseline(generation: object | undefined, task
   const candidateCopy = detachedCandidate(candidate);
   const bindingDigest = computeCanonicalSha256(binding);
   const candidateDigest = computeCanonicalSha256(candidateCopy);
-  const prior = retained.get(generation);
-  if (prior) return prior.bindingDigest === bindingDigest && prior.candidateDigest === candidateDigest;
-  retained.set(generation, Object.freeze({ bindingDigest, candidateDigest, candidate: candidateCopy }));
+  const prior = retained.get(generation)?.get(bindingDigest);
+  if (prior) return prior.candidateDigest === candidateDigest;
+  let byBinding = retained.get(generation);
+  if (!byBinding) {
+    byBinding = new Map();
+    retained.set(generation, byBinding);
+  }
+  byBinding.set(bindingDigest, Object.freeze({ candidateDigest, candidate: candidateCopy }));
   return true;
 }
 
@@ -117,8 +123,8 @@ export async function reuseClarificationBaseline(input: {
   readonly expectedContext: TrustedHostExpectedContext;
 }): Promise<RetainedBaselineResult> {
   const binding = expectedBinding(input.task, input.state);
-  const baseline = input.generation ? retained.get(input.generation) : undefined;
-  if (!binding || !baseline || baseline.bindingDigest !== computeCanonicalSha256(binding) || !candidateMatches(baseline.candidate, input.task, binding)) {
+  const baseline = binding && input.generation ? retained.get(input.generation)?.get(computeCanonicalSha256(binding)) : undefined;
+  if (!binding || !baseline || !candidateMatches(baseline.candidate, input.task, binding)) {
     return { ok: false, reason: 'CLARIFICATION_BASELINE_UNAVAILABLE: matching in-process baseline evidence was not retained' };
   }
   const expectedContext = input.expectedContext;
