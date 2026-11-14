@@ -181,24 +181,24 @@ For the focused repaired source/emitted/type checks, use the exact commands in `
 
 ## Real-tier prerequisites (T040–T055) — operator steps
 
-Planned steps from the [real-tier contract](contracts/real-tier.md). Nothing below runs until T040–T050 are implemented and released after both planning review lanes pass. Every step is labelled with its tier. **T011 is a later, separately released step**: none of these commands runs `evaluate run`, and none claims G-REAL/SC-001, T017, a restart or G-OWNERS (still single-attested).
+Planned steps from the [real-tier contract](contracts/real-tier.md). Nothing below runs until T040–T050 are implemented and released after both planning review lanes pass. Each step is labelled with its tier. **T011 is a later, separately released step**: none of these commands runs `evaluate run`, and none claims G-REAL/SC-001, T017, a restart or G-OWNERS (still single-attested). **Privacy:** never paste the real endpoint host, port or URL into a tracked file, a commit message or a PR. This guide writes it as `http://<host>:<port>/v1`.
 
-### 1. Controlled tier: owner lanes, profile, budget and assembly (T040–T050)
+### 1. Controlled tier: owner lanes, profile, endpoint, runaway stop and assembly (T040–T050)
 
 ```powershell
 node --test tests/runtime/uc04/state-port-v02-read-fence.test.ts tests/runtime/uc04/state-port-v02-operation-lookup.test.ts tests/runtime/uc04/baseline-evidence-store.test.ts tests/runtime/uc04/approval-store-adapter.test.ts tests/runtime/uc04/state-port-v02-authority.test.ts tests/runtime/uc04/material-replan-port.test.ts
 node --test tests/runtime/approvals/journal-acceptance-v02.test.ts tests/runtime/unit/console-approval-port.test.ts
-node --test tests/runtime/unit/real-tier-profile.test.ts tests/runtime/unit/docker-controller.test.ts tests/runtime/unit/docker-spawn.test.ts tests/runtime/unit/paid-call-budget.test.ts tests/runtime/unit/deepseek-transport.test.ts
+node --test tests/runtime/unit/real-tier-profile.test.ts tests/runtime/unit/docker-controller.test.ts tests/runtime/unit/docker-spawn.test.ts tests/runtime/unit/deepseek-transport.test.ts tests/runtime/unit/evaluation-profile.test.ts tests/runtime/unit/run-usage-limit.test.ts
 node --test tests/runtime/contract/real-tier-assembly.test.ts
 pnpm run typecheck; pnpm run build
 ```
 
-Then run the emitted counterparts under `dist/`. These checks use temp directories and fetch/spawn doubles: no Docker, no network, no paid call.
+Then run the emitted counterparts under `dist/`. These checks use temp directories, fetch/spawn doubles and reserved test addresses: no Docker, no network.
 
-### 2. Operator setup (local, no paid call)
+### 2. Operator setup (local, no model call)
 
-1. Start Docker Desktop and confirm the daemon: `docker version`. If it fails, the real-tier runs below report not-run.
-2. Build the image. Network is used here at build time only:
+1. Start Docker Desktop and confirm the daemon with `docker version`. If it fails, the real-tier runs below report not-run.
+2. Build the image (network at build time only):
 
    ```powershell
    $base = docker buildx imagetools inspect python:3.12-alpine --format '{{json .Manifest.Digest}}'
@@ -207,28 +207,28 @@ Then run the emitted counterparts under `dist/`. These checks use temp directori
    ```
 
    Record the base digest and the image ID in the profile.
-3. Create `$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json` from the shape in the contract §(d), and a `host.json` beside it whose `assembly` points to `dist/src/runtime/real-tier-assembly.js`. Replace each pricing rate with DeepSeek's official published rate, and only when that rate is not lower than the placeholder. Record `source` and `retrievedOn`.
+3. Create `$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json` from the shape in contract §(d). Put a `host.json` beside it whose `assembly` points to `dist/src/runtime/real-tier-assembly.js` and whose `requestedModel` is `po/deepseek-ai/deepseek-v4.1-flash-1017`. For a plain-`http` endpoint, set `"allowInsecureHttp": true` only after accepting the cleartext risk in contract §(d). Prefer TLS, or an SSH tunnel to `http://127.0.0.1:<local-port>/v1`.
 4. Set the variables for this shell session only. The key is never typed on a command line or stored in a file:
 
    ```powershell
    $env:UC03_REAL_TIER_PROFILE = "$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json"
-   $secure = Read-Host -AsSecureString 'DeepSeek key'
+   $env:ANTHROPIC_BASE_URL = 'http://<host>:<port>/v1'   # or leave unset and keep provider.endpoint in the profile
+   $env:ANTHROPIC_MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017'
+   $secure = Read-Host -AsSecureString 'Model API key'
    $env:ANTHROPIC_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
    ```
 
-5. Initialize the budget ledger once, then check it: `node dist/src/cli/real-tier-budget.js init` and `node dist/src/cli/real-tier-budget.js status`. If the account is prepaid, keeping its balance at or below the campaign cap gives an outer bound.
-6. Readiness only, no run: `node dist/src/cli/evaluate.js preflight --host "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"`. It must report ready. Any `credential-missing`, `docker-unavailable` or `mock-delivery` reason stops here.
+5. Readiness only, no run: `node dist/src/cli/evaluate.js preflight --host "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"`. It must report ready, with `endpointDigest`, the scheme and (for `http`) `insecure-http-acknowledged`. Any `credential-missing`, `endpoint-ambiguous`, `model-ambiguous`, `insecure-endpoint-unacknowledged`, `docker-unavailable` or `mock-delivery` reason stops here.
 
-### 3. Real tier, zero paid calls: T024 containment (T051) and T025 approval gating (T052)
+### 3. Real tier, zero model calls: T024 containment (T051) and T025 approval gating (T052)
 
 ```powershell
 node dist/tests/runtime/security/uc03-real-containment-probe.js
 node --test tests/runtime/integration/uc03-approvals.test.ts
 node dist/tests/runtime/integration/uc03-approvals-real-probe.js
-node dist/src/cli/real-tier-budget.js status
 ```
 
-Expected: every C06–C11 and C13 row passes, or the probe exits nonzero with fail/not-run; the ledger total is unchanged. Retain the outputs under `.agent-work/<date>/uc03-real-tier/evidence/T051/` and `T052/`, and write the reports to the ignored `docs/verification/uc03-isolation.md` and `uc03-approvals.md`.
+Expected: every C06–C11 and C13 row passes, or the probe exits nonzero with fail/not-run; the transport makes zero fetches. Retain outputs under `.agent-work/<date>/uc03-real-tier/evidence/T051/` and `T052/`, with reports in the ignored `docs/verification/uc03-isolation.md` and `uc03-approvals.md`.
 
 ### 4. Controlled tier: T026/T066 gaps (T053)
 
@@ -238,9 +238,7 @@ node --test tests/runtime/unit/uc03-graph.test.ts tests/runtime/contract/atomic-
 
 Run the emitted counterparts after the build. Record each recorded gap as closed (with its asserting row) or still open.
 
-### 5. Real tier, paid within the recorded budget: T028 success route (T054)
-
-Precondition: the coordinator has recorded the budget in the decision record.
+### 5. Real tier, live calls to the self-hosted endpoint: T028 success route (T054)
 
 ```powershell
 node dist/tests/runtime/integration/uc03-success-real-run.js --conformance
@@ -248,11 +246,10 @@ node dist/tests/runtime/integration/uc03-success-real-run.js --case C01
 node dist/tests/runtime/integration/uc03-success-real-run.js --case C02
 node dist/tests/runtime/integration/uc03-success-real-run.js --case C10
 node dist/tests/runtime/integration/uc03-success-real-evidence.js --evidence .agent-work/<date>/uc03-real-tier/evidence/T054
-node dist/src/cli/real-tier-budget.js status
 ```
 
-C01 pauses for the plan decision. The operator inspects the presentation and decides explicitly through the runner's decision prompt, which uses the T046 port; nothing approves automatically. Stop at once if the conformance call refuses the model id, the budget is exhausted, or the checker finds credential bytes. Failed attempts are retained, not retried automatically (at most two C01 attempts). The UC-03 ledger then judges T028. This run does not check T011 or claim SC-001.
+The conformance call stops the campaign unless the returned model identity equals `po/deepseek-ai/deepseek-v4.1-flash-1017`. C01 pauses for the plan decision: the operator inspects the presentation and decides explicitly through the runner's decision prompt (T046 port); nothing approves automatically. There is no economic cap. A run stops only at its per-run call/token runaway limits, and reported cost is `estimate-unverified` or `unknown`. Stop at once if the checker finds credential bytes or the endpoint host or URL in any artifact. Failed attempts are retained, not retried automatically (at most two C01 attempts). The UC-03 ledger then judges T028, recording the delegated-attestation statement. This run does not check T011 or claim SC-001.
 
 ### 6. Afterwards
 
-T055 refreshes context and this guide with the observed results. T011, T014's real half, T017 and restart acceptance each need their own release.
+Before any commit or PR from the session, confirm no staged change contains the endpoint: `git grep -nF -e $env:ANTHROPIC_BASE_URL --cached` must print nothing. T055 then refreshes context and this guide with the observed results. T011, T014's real half, T017 and restart acceptance each need their own release.

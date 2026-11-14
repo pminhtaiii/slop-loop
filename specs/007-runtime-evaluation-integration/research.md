@@ -77,37 +77,55 @@ Fresh planning base `d2f953239b658b2b282d9e41523e819d9785fd49`; source/spec comp
 
 ## Real-tier prerequisite research — 2026-11-14
 
-Inspection at `c1eba127`; the evidence-backed gap inventory is in [real-tier contract](contracts/real-tier.md) §(a). No test, container or provider call was run for this research, and no web source was fetched. The pricing and model statements below are therefore planning defaults for the operator to confirm, not observations.
+Inspection at `c1eba127`, revised for the operator decisions at `e7aef219` (`contracts/decisions.md:106-109`). The evidence-backed gap inventory is in the [real-tier contract](contracts/real-tier.md) §(a). No test, container or provider call was run, and no web source was fetched.
 
 ### Image base
 
-**Decision**: Keep `python:3.12-alpine`, pinned by digest through a required `ARG PYTHON_BASE`, and install pinned `pytest==8.3.4` and its dependencies at build time. The run-time identity is the built image ID, referenced with `--pull=never`.
-**Rationale**: The existing Dockerfile and probe already target this base and the `1000:1000` user, and pure-Python pytest has no musl concern. The built image digest pins every installed byte, so per-package hashes add little. Docker's `name@digest` form needs a registry RepoDigest, which a locally built image does not have; the content-addressed image ID needs no registry.
-**Alternatives considered**: `python:3.12-slim` (glibc, larger; adopt only if a case needs compiled wheels). Hash-pinned `--require-hashes` requirements (rejected: the final image ID is the identity that runs). Pushing to a loopback `registry:2` to obtain a RepoDigest so the current `${image}@${digest}` form works unchanged (adds a second unpinned image and a running service; kept as the fallback if referencing by image ID is rejected).
+**Decision**: Keep `python:3.12-alpine`, pinned by digest through a required `ARG PYTHON_BASE`. Install pinned `pytest==8.3.4` and its dependencies at build time. The run-time identity is the built image ID, referenced with `--pull=never`.
+**Rationale**: The existing Dockerfile and probe already target this base and the `1000:1000` user, and pure-Python pytest has no musl concern. The built image digest pins every installed byte. Docker's `name@digest` form needs a registry RepoDigest, which a locally built image does not have; the content-addressed image ID needs no registry.
+**Alternatives considered**:
+- `python:3.12-slim` (glibc, larger; adopt only if a case needs compiled wheels).
+- Hash-pinned requirements (rejected: the final image ID is the identity that runs).
+- A loopback `registry:2` push to obtain a RepoDigest so the current `${image}@${digest}` form works unchanged. Kept as the fallback if referencing by image ID is rejected.
 
-### Pricing source and table
+### Hosted endpoint
 
-**Decision**: The profile carries integer micro-USD rates per 1,000,000 tokens with a mandatory `source` (DeepSeek's official pricing page) and `retrievedOn`. The default is a conservative placeholder: 2 USD/1M input, 2 USD/1M cache-hit (no discount assumed), 8 USD/1M output, zero overhead.
-**Rationale**: The 2026-11-01 research forbade copying a permanent price (`research.md:32`), and nothing can be fetched in this planning session. A placeholder believed to be above the published rates keeps the guard conservative. The operator may replace a rate only with an official figure that is not lower than the published one.
-**Alternatives considered**: Hard-coding current published prices (stale by design); a multiplier over official prices (adds a knob without improving safety).
+**Decision**: The endpoint is operator-pinned. Take the profile's `provider.endpoint` (an exact `<base>/messages` URL), or `ANTHROPIC_BASE_URL` + `/messages`; the model is `provider.model` or `ANTHROPIC_MODEL`. Both are resolved once at assembly, validated (absolute URL, no credentials, query or fragment, path ending in `/messages`), frozen, and compared exactly on every call. Conflicting values refuse. The current `https://api.deepseek.com/anthropic/v1/messages` stays the default. Both existing pinning sites change under one shared rule: the transport's `assertPinnedEndpoint` (`src/foundation/deepseek-transport.ts:89-93`) and the profile's `endpointOf` (`src/runtime/evaluation-profile-primitives.ts:102-106`).
+**Rationale**: The user's model is served from their own Anthropic-compatible deployment (`decisions.md:107`), so the hard-coded endpoint makes the real tier unreachable. Freezing one operator-resolved URL keeps the property the pin was protecting: no model, request or browser input can redirect the credential.
+**Alternatives considered**: An allowlist of hosts (no simpler, and it would put a host in tracked code); per-request URLs (violates the trusted-endpoint rule in `contracts/integration.md` §1).
 
-### Budget default
+### Cleartext HTTP risk
 
-**Decision**: Campaign total 10.00 USD; per run 2.50 USD and 400,000 input / 80,000 output tokens; per call 32,768/8,192 tokens; 24 calls per run.
-**Rationale**: T024, T025 and T026/T066 need no paid calls. T028 needs one conformance call, at most two C01 attempts and one C02 attempt. At placeholder rates, one full-bound call reserves 0.197 USD, so the 2.50 USD per-run cap always leaves room for the next call while observed spend stays small. The 10.00 USD total covers the planned runs, with headroom for one failed C01 attempt. The user can change any value; the coordinator records the final numbers in the decision record before T054.
-**Alternatives considered**: No cap (contradicts the 2026-11-14 release); per-run caps only (cannot bound repeated runs); a much lower total such as 2.00 USD (risks stopping C01 mid-run at placeholder rates).
+**Decision**: A non-`https` endpoint loads only when the profile sets `"allowInsecureHttp": true`. Readiness and evidence then record `insecure-http-acknowledged`.
+**Rationale**: The supplied base is plain `http` to a public address. The `x-api-key` header, prompts (including repository excerpts) and responses cross the network unencrypted, and can be read or altered on the path. A captured key gives full use of the deployment. The harness cannot fix this; it can only refuse silent use.
+**Recommendation**: Put TLS in front of the deployment. Alternatively, run an SSH tunnel (`ssh -N -L 127.0.0.1:<local-port>:127.0.0.1:<port> <user>@<host>`) and point the profile at `http://127.0.0.1:<local-port>/v1/messages`, so only a loopback hop is cleartext. The acknowledgement flag is still required for the loopback `http` URL, which is harmless.
+**Alternatives considered**: Refusing `http` outright (blocks the user's only endpoint); silently allowing it (hides the risk).
 
-### How paid calls are counted
+### Privacy of the endpoint
 
-**Decision**: One paid call is one `fetch` to the pinned endpoint. A durable `reserve` record precedes it and a `settle` record follows: `observed` only for a validated 2xx response with usage, otherwise `uncertain` at the full bound. A reservation that is never settled stays charged. A missing or unreadable ledger refuses dispatch.
-**Rationale**: This follows the existing reservation/uncertainty accounting (`specs/001-verified-code-repair/contracts/decisions.md:135`), and unknown cost is never zero. Error responses may be free in practice, but nothing in our evidence proves it.
-**Alternatives considered**: Settling from provider-side billing (unavailable to the harness); releasing reservations after a timeout (could undercount real spend).
+**Decision**: The real host, port and URL live only in the operator profile outside the checkout or in the user's environment. Docs use `http://<host>:<port>/v1`; tests use RFC 5737 (`192.0.2.x`) or `.invalid` addresses; evidence records `endpointDigest` and the scheme only. Before publication, `git grep -F` with the environment value (never echoed) must find nothing.
+**Rationale**: The repository is public, so an IP in a test, doc, snapshot or commit message would expose the deployment.
+
+### Model id
+
+**Decision**: `po/deepseek-ai/deepseek-v4.1-flash-1017`, supplied by the user as `decisions.md:108` anticipated. It supersedes the earlier `deepseek-flash` alias (`decisions.md:7,50`). It already passes the host-file identifier rule (`src/cli/evaluate.ts:69`) and the profile's text check. Readiness pins it as `requestedModel`. The T054 conformance call requires the returned identity to equal it exactly and stops on mismatch.
+**Rationale**: The transport already records requested and returned identities (`deepseek-transport.ts:317`). Exact equality is the simplest check that the deployment serves what the user named.
+
+### Usage limits instead of a cap
+
+**Decision**: No economic cap, spend ledger or budget command. FR-006 stands. Keep a runaway stop: per-run calls (24) and tokens (400,000 input, 80,000 output), plus the existing per-call 32,768/8,192, enforced before dispatch, failing closed. A call is counted before `fetch` at its admitted maxima. Only a validated 2xx with usage replaces that with observed tokens, so unknown usage never counts as zero.
+**Rationale**: The user pays for their own deployment and asked not to limit usage (`decisions.md:107`). `context/runtime_policy.md:23` still requires finite token limits, and a stuck loop should stop. In-memory per-run counters suffice because a run never spans processes in this scope (restart is excluded); UC-04 task accounting stays the durable authority.
+**Alternatives considered**: The earlier durable USD ledger (withdrawn by the user's decision); no runaway stop at all (violates the finite-limit policy).
+
+### Pricing
+
+**Decision**: Keep a placeholder pricing table (`pricingId: placeholder-unverified`). It exists only because the transport and profile require numerators. Every reported cost is labelled `estimate-unverified`, or `unknown` when usage is missing. The user may replace the table with their own prices at any time (`decisions.md:108`); no verification process is required, and cost never gates a call.
 
 ### Other decisions
 
-- **Profile location**: outside the repository (`%USERPROFILE%\.slop-loop\uc03-real-tier\`), named by `UC03_REAL_TIER_PROFILE`; in-repo paths are refused. An ignored directory such as `.agent-work/` was rejected because agent-dump cleanup could delete the budget ledger and silently reset spend.
-- **T028 runner, not the evaluation CLI**: running `evaluate run` for C01 is the T011 path, which is not released. The runner drives `runUC03GraphV02` and the independent snapshot grader directly; T011 can later consume or rerun this evidence under its own release.
-- **Real-tier runners outside CI**: `scripts/ci/run-runtime-tests.mjs:20-21` globs `*.test.*`, so Docker and paid runs use `*-probe.ts`/`*-run.ts`/`*-evidence.ts` names. T025's `.test.ts` file stays CI-safe, with no Docker or provider.
-- **UC-05 profile id literal**: `PolicyProfile.profileId` is typed `'uc05-local-v1'`. The real-tier policy keeps that literal and differs by `profileVersion`, which avoids a UC-05 contract amendment.
-- **Model id**: `deepseek-flash`, as recorded (`contracts/decisions.md:7,50`). The T054 conformance call verifies it; if the endpoint refuses it, the campaign stops for user direction.
-- **Docker CLI environment**: `structuredSpawn` currently inherits the full host environment (`src/foundation/docker-spawn.ts:37`). T048 adds an allowlist, so the credential never reaches the Docker CLI process.
+- **Profile location**: outside the repository (`%USERPROFILE%\.slop-loop\uc03-real-tier\`), named by `UC03_REAL_TIER_PROFILE`; in-repo paths are refused. This keeps both the credential-adjacent configuration and the private endpoint out of every checkout.
+- **T028 runner, not the evaluation CLI**: `evaluate run` for C01 is the T011 path, which is not released. The runner drives `runUC03GraphV02` and the independent snapshot grader directly; T011 can later consume or rerun this evidence under its own release.
+- **Real-tier runners outside CI**: `scripts/ci/run-runtime-tests.mjs:20-21` globs `*.test.*`, so Docker and live runs use `*-probe.ts`/`*-run.ts`/`*-evidence.ts` names. T025's `.test.ts` file stays CI-safe.
+- **UC-05 profile id literal**: `PolicyProfile.profileId` is typed `'uc05-local-v1'`. The real-tier policy keeps it and differs by `profileVersion`, which avoids a UC-05 contract amendment.
+- **Docker CLI environment**: `structuredSpawn` inherits the full host environment (`src/foundation/docker-spawn.ts:37`), including `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL`. T048 adds an allowlist.
+- **Owner gates**: worker-built UC-04/UC-05 code counts toward X04-STATE/X05-GATE for these runs (`decisions.md:109`); each UC-03 acceptance entry states the single delegated attestation.
