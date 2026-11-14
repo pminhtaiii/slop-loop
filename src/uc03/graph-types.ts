@@ -32,6 +32,10 @@ import type { BaselineEvidenceWriter, InvestigationConfigPort, TrustedHostExpect
 import type { RepairPatchProposal, TrustedReplanDirection } from './repair.ts';
 import type { FinalReport, Milestone } from './report.ts';
 import type { EvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts';
+import type { PreparedReviewContext } from '../uc06/context.ts';
+import type { ReviewContextV1, ReviewEvidencePortV1 } from '../contracts/review.ts';
+import type { DeepSeekReviewPrompt } from '../foundation/deepseek-transport.ts';
+import type { RuntimeReviewerOptions } from '../foundation/reviewer.ts';
 
 export interface UC03GraphPorts {
   readonly statePort: StatePort | StatePortV02;
@@ -66,7 +70,14 @@ export interface UC03ReviewerAdmissionRequest {
   readonly task: BugTask;
   readonly state: TaskState;
   readonly diff: { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] };
+  readonly reviewContext?: ReviewContextV1 | undefined;
+  readonly evidence?: readonly SourceEvidence[] | undefined;
+  /** Completion refresh selects current material without reminting the dispatched request. */
+  readonly phase?: 'prepare' | 'completion' | undefined;
 }
+
+/** Host-selected current facts; presence opts into bound review without a legacy fallback. */
+export type UC03ReviewContextResolver = (request: UC03ReviewerAdmissionRequest) => PreparedReviewContext | undefined | Promise<PreparedReviewContext | undefined>;
 
 export interface UC03PatchAdmissionRequest {
   readonly task: BugTask;
@@ -113,6 +124,11 @@ export interface UC03GraphConfig {
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
   readonly admissionContext?: UC03RepositoryAdmission | UC03PatchAdmissionResolver | undefined;
   readonly reviewerAdmission?: UC03ReviewerAdmission | UC03ReviewerAdmissionResolver | undefined;
+  readonly reviewContext?: UC03ReviewContextResolver | undefined;
+  readonly reviewEvidence?: ReviewEvidencePortV1 | undefined;
+  readonly reviewPrompt?: DeepSeekReviewPrompt | undefined;
+  /** Same request-local closure captured by the configured reviewer factory. */
+  readonly reviewerContextResolver?: RuntimeReviewerOptions['resolveReviewContext'];
   readonly coderAdmission?: UC03CoderAdmission | UC03CoderAdmissionResolver | undefined;
   readonly patchContent?: string | undefined;
   readonly targetPaths?: readonly string[] | undefined;

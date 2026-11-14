@@ -146,7 +146,7 @@ export function containsProtectedContent(text: string): boolean {
     /MARKER_SECRET/i.test(text) ||
     /UNAPPROVED_CONTEXT/i.test(text) ||
     /BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY/i.test(text) ||
-    /(?:sk-|api[_-]?key\s*[:=]|token\s*[:=]|password\s*[:=]|bearer\s+)[a-zA-Z0-9_\-.]+/i.test(text) ||
+    /(?:(?<![A-Za-z0-9_])sk-|api[_-]?key\s*[:=]|token\s*[:=]|password\s*[:=]|bearer\s+)[a-zA-Z0-9_\-.]+/i.test(text) ||
     /SECRET_KEY/i.test(text)
   );
 }

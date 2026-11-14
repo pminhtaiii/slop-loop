@@ -1,10 +1,4 @@
-/**
- * Read-only runtime reviewer (runtime-evaluation/1, T005).
- *
- * One admitted transport dispatch per review; the reviewer holds no repository,
- * state or tool authority. Findings must land on real changed diff lines.
- * Owned path: src/foundation/reviewer.ts
- */
+/** Read-only reviewer; canonical model ingress owns dispatch and accounting. */
 
 import {
   computeCanonicalSha256,
@@ -27,20 +21,22 @@ import {
 import type { UC03ReviewerPort } from '../uc03/graph-types.ts';
 import { computeContextDigest, deepClone, deepFreeze } from './model.ts';
 import { HostModelPortV02 } from './model-v02.ts';
+import type { ReviewContextV1 } from '../contracts/review.ts';
+import type { PreparedReviewContext } from '../uc06/context.ts';
+import { validateReviewContextAdmission, validateReviewDiff, validateReviewOutput } from '../uc06/validation.ts';
 
 /** The review node issues exactly this purpose; a coder-purpose request is a bypass. */
 const REVIEWER_PURPOSE = 'final-review';
 const DIFF_PATH = 'review/diff.patch';
+const CONTEXT_PATH = 'review/context.json';
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
 
 export interface RuntimeReviewerOptions {
   /** Canonical v0.2 model boundary; it owns the durable claim, attempt and outcome accounting. */
   readonly model: ModelPortV02;
-  /**
-   * Current post-patch repository revision digest. The port receives no owner state, and
-   * revision digests are not derivable from diff text, so the host must resolve it.
-   */
+  /** Host-measured current post-patch revision; never derived from diff text. */
   readonly resolveRepoDigest: (task: BugTask, diff: string) => string | undefined | Promise<string | undefined>;
+  readonly resolveReviewContext?: (task: BugTask, diff: string, request: ProviderRequest) => PreparedReviewContext | undefined | Promise<PreparedReviewContext | undefined>;
 }
 
 export interface RuntimeReviewer extends UC03ReviewerPort {
@@ -51,7 +47,13 @@ export interface RuntimeReviewer extends UC03ReviewerPort {
 }
 
 // Bind the check to the factory's actual dispatch closure, not caller-declared provenance.
-const reviewerIngresses = new WeakMap<UC03ReviewerPort, { model: ModelPortV02; review: UC03ReviewerPort['review'] }>();
+const reviewerIngresses = new WeakMap<UC03ReviewerPort, { model: ModelPortV02; review: UC03ReviewerPort['review']; resolveReviewContext: RuntimeReviewerOptions['resolveReviewContext'] }>();
+
+/** Host composition identity check; a match grants no admission or dispatch authority. */
+export function usesReviewContextResolver(reviewer: UC03ReviewerPort, resolver: NonNullable<RuntimeReviewerOptions['resolveReviewContext']>): boolean {
+  const ingress = reviewerIngresses.get(reviewer);
+  return !!ingress && reviewer.review === ingress.review && ingress.resolveReviewContext === resolver;
+}
 
 export function usesCanonicalReviewerIngress(reviewer: UC03ReviewerPort): boolean {
   const ingress = reviewerIngresses.get(reviewer);
@@ -145,21 +147,53 @@ function parseVerdict(content: string): { readonly status: 'accepted' | 'finding
   return { status, findings: record['findings'] as readonly ReviewFinding[] };
 }
 
-/**
- * Minting API for the reviewer projection. A host that must issue a matching reviewer
- * request builds the snapshot here and sets `contextDigest` to
- * `computeContextDigest(snapshot.state, snapshot.evidence)` — the value the model ingress
- * recomputes. Byte-identical to what the review closure dispatches.
- */
+function boundContextFor(
+  task: BugTask,
+  diff: string,
+  evidence: readonly SourceEvidence[],
+  repoDigest: string,
+  binding: { readonly runId: string; readonly expectedTaskStateVersion: number },
+  context: ReviewContextV1,
+) {
+  const checked = validateReviewContextAdmission(context, {
+    binding: context?.binding,
+    authority: context?.authority,
+    sourceEvidence: evidence,
+    requiredCheckIds: task.requiredChecks.map(c => c.checkId),
+  });
+  if (!checked.ok) return undefined;
+  const c = checked.value,
+    b = c.binding;
+  return b.taskId === task.taskId &&
+    b.runId === binding.runId &&
+    b.repositoryId === task.repositoryId &&
+    b.baseRevisionDigest === task.initialRevisionDigest &&
+    b.headRevisionDigest === repoDigest &&
+    b.diffDigest === computeCanonicalSha256(diff) &&
+    b.checkSetDigest === computeCheckSetDigest(task.requiredChecks) &&
+    b.criteriaDigest === computeCanonicalSha256({ acceptanceCriteria: task.acceptanceCriteria, constraints: task.constraints }) &&
+    c.authority.taskStateVersion === binding.expectedTaskStateVersion &&
+    !evidence.some(e => e.path === DIFF_PATH || e.path === CONTEXT_PATH) &&
+    validateReviewDiff(diff, c.profile.maxDiffBytes).ok
+    ? c
+    : undefined;
+}
+
+/** The host mints contextDigest from this same projection used at dispatch. */
 export function buildReviewerSnapshot(
   task: BugTask,
   diff: string,
   evidence: readonly SourceEvidence[],
   repoDigest: string,
   binding: { readonly runId: string; readonly expectedTaskStateVersion: number },
+  boundContext?: ReviewContextV1,
 ): { readonly state: TaskState; readonly evidence: readonly SourceEvidence[] } {
+  if (boundContext !== undefined) {
+    const checked = boundContextFor(task, diff, evidence, repoDigest, binding, boundContext);
+    if (!checked) throw new Error('REVIEW_CONTEXT_INVALID');
+    boundContext = checked;
+  }
   const trustedDiffLines = parseUnifiedDiff(diff);
-  // Callers mint only after the review path's own DIFF_NOT_UNIFIED guard; a non-unified diff here is a host bug.
   if (trustedDiffLines === null) throw new Error('DIFF_NOT_UNIFIED: buildReviewerSnapshot requires a unified diff');
 
   const state = deepClone<TaskState>({
@@ -187,39 +221,41 @@ export function buildReviewerSnapshot(
     risks: [],
     nextAction: 'final-review',
   });
-  return {
+  const snapshot = {
     state,
     evidence: [
       ...evidence.map(item => ({ ...item })),
       // The synthetic diff entry is read at the projected revision, not at the diff's own digest.
       { path: DIFF_PATH, revisionDigest: repoDigest, boundedExcerpt: diff, resultCount: 1, truncated: false },
+      ...(boundContext === undefined ? [] : [{ path: CONTEXT_PATH, revisionDigest: repoDigest, boundedExcerpt: JSON.stringify(boundContext), resultCount: 1, truncated: false }]),
     ],
   };
+  return boundContext === undefined ? snapshot : deepFreeze(snapshot);
 }
 
-/**
- * The reviewer snapshot context digest, or null when `diff` is not unified.
- * One minting point: graph admission checks and `createRuntimeReviewer` must agree here.
- */
+/** Shared minting point; null for a non-unified diff. */
 export function reviewerContextDigest(
   task: BugTask,
   diff: string,
   evidence: readonly SourceEvidence[],
   repoDigest: string,
   binding: { readonly runId: string; readonly expectedTaskStateVersion: number },
+  boundContext?: ReviewContextV1,
 ): string | null {
   if (parseUnifiedDiff(diff) === null) return null;
-  const snapshot = buildReviewerSnapshot(task, diff, evidence, repoDigest, binding);
+  const snapshot = buildReviewerSnapshot(task, diff, evidence, repoDigest, binding, boundContext);
   return computeContextDigest(snapshot.state, snapshot.evidence);
 }
 
 export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeReviewer {
   if (!options?.model || typeof options.model.propose !== 'function') throw new Error('INVALID_MODEL: a ModelPortV02 reviewer ingress is required');
   if (typeof options.resolveRepoDigest !== 'function') throw new Error('INVALID_REPO_DIGEST_RESOLVER: the host must resolve the current revision digest');
+  if (options.resolveReviewContext !== undefined && typeof options.resolveReviewContext !== 'function') throw new Error('INVALID_REVIEW_CONTEXT_RESOLVER');
   let lastObservedUsage: ProviderUsage | undefined;
   let lastFailureReason: string | undefined;
 
   const model = options.model;
+  const resolveReviewContext = options.resolveReviewContext;
   const reviewer: RuntimeReviewer = {
     provenance: model.provenance,
     get lastObservedUsage() {
@@ -231,6 +267,13 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
     async review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, admission: ProviderAdmissionContextV02): Promise<ReviewResult> {
       lastObservedUsage = undefined;
       lastFailureReason = undefined;
+      const resolverRequest = request;
+      if (resolveReviewContext) {
+        task = deepFreeze(deepClone(task));
+        evidence = deepFreeze(deepClone(evidence));
+        request = deepFreeze(deepClone(request));
+        admission = deepFreeze(deepClone(admission));
+      }
 
       const diffDigest = computeCanonicalSha256(diff);
       const repoDigest = await options.resolveRepoDigest(task, diff);
@@ -244,8 +287,6 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
         return deepFreeze<ReviewResult>({ ...base, status: 'invalid', findings: [] });
       };
 
-      // Separate reviewer role and accounting are checked before any dispatch can happen.
-      // The model boundary owns the claim, attempt and outcome accounting.
       if (request?.role !== 'reviewer') return invalid('ROLE_NOT_REVIEWER');
       if (admission?.schemaVersion !== '0.2.0' || admission.subjectKind !== 'provider-request' || admission.role !== 'reviewer') return invalid('ADMISSION_NOT_REVIEWER');
       if (admission.taskId !== task.taskId || admission.runId !== request.runId || request.taskId !== task.taskId) return invalid('TASK_BINDING_MISMATCH');
@@ -255,12 +296,38 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
       const trustedDiffLines = parseUnifiedDiff(diff);
       if (trustedDiffLines === null) return invalid('DIFF_NOT_UNIFIED');
 
-      // One projection serves both the request check and the dispatch, so the minted and the
-      // recomputed context digests cannot drift.
-      const snapshot = buildReviewerSnapshot(task, diff, evidence, repoDigest, {
-        runId: admission.runId,
-        expectedTaskStateVersion: admission.expectedTaskStateVersion,
-      });
+      let boundContext: ReviewContextV1 | undefined;
+      if (resolveReviewContext) {
+        let prepared: PreparedReviewContext | undefined;
+        try {
+          prepared = await resolveReviewContext(task, diff, resolverRequest);
+        } catch {
+          return invalid('REVIEW_CONTEXT_UNAVAILABLE');
+        }
+        if (!prepared || JSON.stringify(prepared.evidence) !== JSON.stringify(evidence)) return invalid('REVIEW_CONTEXT_INVALID');
+        boundContext = boundContextFor(task, diff, evidence, repoDigest, { runId: admission.runId, expectedTaskStateVersion: admission.expectedTaskStateVersion }, prepared.context);
+        if (
+          !boundContext ||
+          boundContext.authority.controlVersion !== admission.expectedControlVersion ||
+          boundContext.authority.epoch !== admission.expectedEpoch ||
+          boundContext.authority.decisionAuthorityGeneration !== identity.decisionAuthorityGeneration ||
+          (admission.planApplicability === 'approved-plan' &&
+            (boundContext.authority.planDecisionRef !== admission.planDecisionRef || boundContext.authority.planBindingDigest !== admission.planBindingDigest))
+        )
+          return invalid('REVIEW_CONTEXT_INVALID');
+      }
+
+      const snapshot = buildReviewerSnapshot(
+        task,
+        diff,
+        evidence,
+        repoDigest,
+        {
+          runId: admission.runId,
+          expectedTaskStateVersion: admission.expectedTaskStateVersion,
+        },
+        boundContext,
+      );
       const requestCheck = validateProviderRequest(request, {
         expectedTaskId: task.taskId,
         expectedRunId: admission.runId,
@@ -297,9 +364,18 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
       if (executed.outcome === 'invalid') return invalid(`PROVIDER_INVALID:${executed.errors?.[0]?.code ?? 'UNKNOWN'}`);
 
       const proposal = typeof executed.result === 'object' && executed.result !== null && 'proposal' in executed.result ? executed.result.proposal : null;
+      if (
+        boundContext &&
+        typeof proposal === 'object' &&
+        proposal !== null &&
+        (Object.keys(proposal).some(k => !['proposalId', 'content', 'actions'].includes(k)) || ('actions' in proposal && (!Array.isArray(proposal.actions) || proposal.actions.length !== 0)))
+      )
+        return invalid('REVIEW_CONTENT_INVALID');
       const content = typeof proposal === 'object' && proposal !== null && 'content' in proposal && typeof proposal.content === 'string' ? proposal.content : null;
+      if (boundContext && content !== null && Buffer.byteLength(content, 'utf8') > boundContext.profile.maxOutputBytes) return invalid('REVIEW_CONTENT_INVALID');
       const verdict = content === null ? null : parseVerdict(content);
       if (!verdict) return invalid('REVIEW_CONTENT_INVALID');
+      if (boundContext && !validateReviewOutput(verdict, boundContext, diff).ok) return invalid('REVIEW_CONTENT_INVALID');
 
       const admissionCheck = validateReviewAdmission(
         { ...base, status: verdict.status, findings: verdict.findings },
@@ -317,6 +393,6 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
       return deepFreeze<ReviewResult>(admissionCheck.value);
     },
   };
-  reviewerIngresses.set(reviewer, { model, review: reviewer.review });
+  reviewerIngresses.set(reviewer, { model, review: reviewer.review, resolveReviewContext });
   return reviewer;
 }
