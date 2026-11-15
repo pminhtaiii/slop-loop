@@ -2,9 +2,10 @@
  * T040 exact-operation lookup for the UC-04 journal (`uc04-journal:` refs only).
  *
  * An uncertain effect carries `uc04-journal:<claimId|operationId>`; continuation resolves it here
- * and nowhere else. `committed` carries the exact persisted task state and receipts, `absent`
- * covers a claim closed unattempted or a ref with no journal record, and everything else —
- * a begun attempt with no outcome, a corrupt entry, another prefix — is `unknown`. Every receipt is
+ * and nowhere else. `committed` carries the exact persisted task state and receipts and `absent`
+ * covers only a claim closed unattempted; everything else — a ref with no journal record, a begun
+ * attempt with no outcome, a settlement whose receipt is missing or invalid, a closed claim still
+ * carrying an attempt, a corrupt entry, another prefix — is `unknown`. Every receipt is
  * re-validated with the canonical v0.2 validators before it is reported as a commit. Read-only:
  * no lookup writes or re-executes anything.
  */
@@ -187,6 +188,8 @@ async function readReconciliation(
     if (!(await reconciliationValid(state, taskId, claim, attempt, outcome, receipt, task))) throw new Error('Corrupted UC-03 reconciliation receipt');
     return receipt;
   }
+  // A settlement binding naming no receipt this claim matched is a partial settlement write.
+  if (claim.settlement !== undefined) throw new Error('Missing UC-03 settlement reconciliation receipt');
   return null;
 }
 
@@ -195,8 +198,8 @@ async function lookupClaim(state: StatePortStore, claimId: string): Promise<Jour
   const located = await state.findClaimTask(claimId);
   if (!located) return null;
   const { taskId, claim } = located;
-  // A claim closed before dispatch released its reservations, so nothing was committed.
-  if (claim.status === 'closed') return ABSENT;
+  // Valid closure refuses an attempted claim, so a closed claim carrying one is corrupt.
+  if (claim.status === 'closed') return claim.attemptId === undefined ? ABSENT : UNKNOWN;
   if (claim.attemptId === undefined) return UNKNOWN;
   const attempt = await state.readAttempt(taskId, claim.attemptId);
   if (!attempt || attempt.outcomeReceiptId === undefined) return UNKNOWN;
@@ -246,7 +249,7 @@ export function createJournalOperationLookup(port: DurableStatePortV02): Journal
       const operationId = operationRef.slice(JOURNAL_OPERATION_PREFIX.length);
       if (!isSafeStorageId(operationId)) return UNKNOWN;
       try {
-        return (await lookupClaim(state, operationId)) ?? (await lookupRecord(state, operationId)) ?? ABSENT;
+        return (await lookupClaim(state, operationId)) ?? (await lookupRecord(state, operationId)) ?? UNKNOWN;
       } catch {
         // Translation only: a corrupt or unreadable journal entry is an unknown outcome, never a write.
         return UNKNOWN;

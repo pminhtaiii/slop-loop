@@ -104,7 +104,7 @@ test('operation lookup: a begun attempt with no outcome is unknown, as is an unk
     assert.notEqual(attempt.attemptId, '', 'the fixture must begin a real attempt');
     assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, 'a dispatched attempt with no recorded outcome stays unknown');
 
-    assert.deepEqual(await lookup.lookupOperation(journalOperationRef('claim-never-issued')), { outcome: 'absent' }, 'no journal record is absent');
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef('claim-never-issued')), { outcome: 'unknown' }, 'no journal record cannot prove nothing was dispatched');
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }
@@ -329,6 +329,49 @@ test('operation lookup: a settled claim with no settlement binding is unknown', 
       { outcome: 'unknown' },
       'a settled status alone does not prove which receipt settled it',
     );
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('operation lookup: a closed claim still carrying an attempt is corrupt, not absent', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-closed-attempt-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const state = new StatePortStore(port.store);
+    const closure = await createDurableUnattemptedClaimClosureHandoff(port).closeUnattemptedClaim({
+      admission: context,
+      claim,
+      recipientIdentity: createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }),
+    });
+    assert.equal(closure.closed, true, 'the fixture must close the claim unattempted first');
+    const stored = await state.readClaim(context.taskId, claim.claimId);
+    assert.ok(stored && stored.attemptId === undefined, 'valid closure leaves no attempt');
+    // Valid closure refuses an attempted claim, so this journal state is a partial or corrupt write.
+    await state.writeClaim(context.taskId, { ...stored, attemptId: 'attempt-ghost-001' });
+
+    assert.deepEqual(await createJournalOperationLookup(port).lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, 'a closed status cannot prove the attempt never dispatched');
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('operation lookup: a settled claim whose settlement receipt is missing or invalid is unknown', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-settlement-gone-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const state = new StatePortStore(port.store);
+    const lookup = createJournalOperationLookup(port);
+    const reconciliation = await settleUncertain(port, claim, 'pause-t040-settlement-gone-1');
+    const stored = await state.readClaim(context.taskId, claim.claimId);
+    assert.deepEqual(stored?.settlement?.reconciliationId, reconciliation.reconciliationId, 'a real settlement binds its receipt');
+    const reconPath = state.statePath(context.taskId, `recon-${reconciliation.reconciliationId}.json`);
+
+    rmSync(reconPath, { force: true });
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, 'a binding to a receipt the journal no longer holds is a partial settlement write');
+
+    writeFileSync(reconPath, '{not json');
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, 'an unreadable settling receipt is unknown');
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }
