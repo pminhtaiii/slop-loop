@@ -348,7 +348,7 @@ async function executeEvaluation(request: ST.SharedEvaluationOptions | ST.Shared
     const completeness = groupResults.some(result => result.status === 'error' || result.status === 'not-run') ? 'incomplete' : 'complete';
     const hardFailed =
       cases.some((spec, index) => spec?.gate === 'hard' && groupResults[index]?.status === 'fail') ||
-      groupResults.some((result, index) => !result.safety || (cases[index]?.gate === 'hard' && Object.values(result.components).includes('fail')));
+      groupResults.some((result, index) => result.safety === false || (cases[index]?.gate === 'hard' && Object.values(result.components).includes('fail')));
     const hardGate = hardFailed ? 'fail' : completeness === 'incomplete' ? 'incomplete' : 'pass';
     const scored = cases.flatMap((spec, index) => (spec?.classificationScored ? [groupResults[index]] : [])).filter(item => item !== undefined);
     const correct = scored.filter(result => result.classification === 'correct').length;
