@@ -688,4 +688,180 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  await t.test('a resolution retry after a failed control write acknowledges the committed event, not the retried id', () => {
+    withFreshStore('uc05-approval-replay-receipt-', (dir, store) => {
+      const task = 'task-replay-receipt';
+      const pending = 'decision-replay-receipt';
+      store.createPendingAndPause({ request: requestFor(task, pending), event: eventOf({ eventId: 'event-replay-request', taskId: task, decisionId: pending }) });
+
+      const committed = resolutionOf('response-replay-receipt', 'event-replay-committed');
+      const committedEvent = eventOf({ eventId: committed.eventId, taskId: task, decisionId: pending, type: 'human-resolution-recorded', outcome: 'ok' });
+      // History and the audit event landed; only the control write was lost, so the task is still waiting.
+      const approvalsDir = join(dir, 'tasks', task, 'approvals');
+      writeFileSync(join(approvalsDir, 'history.json'), JSON.stringify({ resolutions: [{ ...committed, decisionId: pending }], directions: [], assessments: [], claims: [] }), 'utf8');
+      writeFileSync(join(approvalsDir, 'events.json'), JSON.stringify([eventOf({ eventId: 'event-replay-request', taskId: task, decisionId: pending }), committedEvent]), 'utf8');
+
+      const retry = store.resolvePending({
+        expectedControlVersion: 2,
+        expectedRequestVersion: 1,
+        trustedOperator,
+        trustedResponse: { ...committed, decisionId: pending, eventId: 'event-replay-retried' },
+        event: eventOf({ eventId: 'event-replay-retried', taskId: task, decisionId: pending, type: 'human-resolution-recorded', outcome: 'ok' }),
+      });
+
+      assert.equal(retry.safe.outcome, 'ok');
+      assert.equal(retry.safe.safeReasonCode, 'already-resolved');
+      assert.equal(retry.safe.eventRef, committed.eventId);
+      assert.deepEqual(
+        store.readEvents(task).value?.map(ev => ev.eventId),
+        ['event-replay-request', committed.eventId],
+      );
+    });
+  });
+
+  await t.test('a replay with the same key but a different decision is refused and writes nothing', () => {
+    withFreshStore('uc05-approval-replay-decision-', (dir, store) => {
+      const task = 'task-replay-decision';
+      const pending = 'decision-replay-decision';
+      store.createPendingAndPause({ request: requestFor(task, pending), event: eventOf({ eventId: 'event-replay-decision-request', taskId: task, decisionId: pending }) });
+
+      const committed = resolutionOf('response-replay-decision', 'event-replay-decision-committed');
+      const approvalsDir = join(dir, 'tasks', task, 'approvals');
+      writeFileSync(join(approvalsDir, 'history.json'), JSON.stringify({ resolutions: [{ ...committed, decisionId: pending }], directions: [], assessments: [], claims: [] }), 'utf8');
+      writeFileSync(
+        join(approvalsDir, 'events.json'),
+        JSON.stringify([
+          eventOf({ eventId: 'event-replay-decision-request', taskId: task, decisionId: pending }),
+          eventOf({ eventId: committed.eventId, taskId: task, decisionId: pending, type: 'human-resolution-recorded', outcome: 'ok' }),
+        ]),
+        'utf8',
+      );
+
+      const retry = store.resolvePending({
+        trustedOperator,
+        trustedResponse: { ...committed, decisionId: pending, decision: 'rejected', safeReasonCode: 'developer-rejected', eventId: 'event-replay-decision-retried' },
+        event: eventOf({ eventId: 'event-replay-decision-retried', taskId: task, decisionId: pending, type: 'human-resolution-recorded', outcome: 'paused' }),
+      });
+
+      assert.equal(retry.safe.outcome, 'conflict');
+      assert.equal(retry.safe.safeReasonCode, 'decision-not-pending');
+      const control = store.loadTaskControl(task).value;
+      assert.deepEqual([control?.mode, control?.version, control?.pendingDecisionId], ['waiting', 2, pending]);
+      assert.deepEqual(
+        store.readHistory(task).value?.resolutions.map(r => r.decision),
+        ['approved'],
+      );
+      assert.deepEqual(
+        store.readEvents(task).value?.map(ev => ev.eventId),
+        ['event-replay-decision-request', committed.eventId],
+      );
+    });
+  });
+
+  await t.test('a direction retry after a failed control write acknowledges the committed event, not the retried id', () => {
+    withFreshStore('uc05-approval-direction-replay-', (dir, store) => {
+      const task = 'task-direction-replay';
+      store.loadTaskControl(task);
+      const direction = {
+        schemaVersion: 'uc05-approval/0.1-draft' as const,
+        directionId: 'dir-replay',
+        taskId: task,
+        expectedVersion: 1,
+        expectedEpoch: 1,
+        direction: 'resume' as const,
+        safeScopeRef: 'scope-replay',
+        responseKey: 'response-key-replay',
+        createdAt: '2026-10-26T07:11:00.000Z',
+      };
+      const committedEvent = eventOf({ eventId: 'event-direction-committed', taskId: task, decisionId: null, directionId: direction.directionId, type: 'developer-direction-recorded', outcome: 'ok' });
+      // History and the audit event landed; only the control write was lost.
+      const approvalsDir = join(dir, 'tasks', task, 'approvals');
+      writeFileSync(join(approvalsDir, 'history.json'), JSON.stringify({ resolutions: [], directions: [direction], assessments: [], claims: [] }), 'utf8');
+      writeFileSync(join(approvalsDir, 'events.json'), JSON.stringify([committedEvent]), 'utf8');
+
+      const retry = store.recordDirection({
+        direction,
+        trustedOperator,
+        event: eventOf({ eventId: 'event-direction-retried', taskId: task, decisionId: null, directionId: direction.directionId, type: 'developer-direction-recorded', outcome: 'ok' }),
+      });
+
+      assert.equal(retry.safe.outcome, 'ok');
+      assert.equal(retry.safe.eventRef, committedEvent.eventId);
+      assert.deepEqual(
+        store.readEvents(task).value?.map(ev => ev.eventId),
+        [committedEvent.eventId],
+      );
+    });
+  });
+
+  await t.test('refuses an unreadable existing task record and writes no control', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uc05-approval-unreadable-task-'));
+    try {
+      const durable = new DurableStore(dir);
+      const taskPath = durable.getTaskPath('task-unreadable');
+      mkdirSync(join(dir, 'tasks'), { recursive: true });
+      writeFileSync(taskPath, '{ not json', 'utf8');
+      const approvals = new DurableApprovalStore({ storageDir: dir, durableStore: durable });
+
+      const loaded = approvals.loadTaskControl('task-unreadable');
+      assert.equal(loaded.safe.outcome, 'denied');
+      assert.equal(loaded.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(existsSync(join(dir, 'tasks', 'task-unreadable', 'approvals', 'control.json')), false);
+
+      const directed = approvals.recordDirection({ direction: { taskId: 'task-unreadable' }, trustedOperator });
+      assert.equal(directed.safe.outcome, 'denied');
+      assert.equal(directed.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(existsSync(join(dir, 'tasks', 'task-unreadable', 'approvals')), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('refuses a task record whose read is denied and writes no control', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uc05-approval-denied-task-'));
+    try {
+      const durable = new DurableStore(dir);
+      // A NUL byte fails the read with a non-absence error on every platform; the path itself is never written.
+      const deniedPath = join(dir, 'tasks', 'task-read-denied\u0000.json');
+      durable.getTaskPath = () => deniedPath;
+      const approvals = new DurableApprovalStore({ storageDir: dir, durableStore: durable });
+
+      const loaded = approvals.loadTaskControl('task-read-denied');
+      assert.equal(loaded.safe.outcome, 'denied');
+      assert.equal(loaded.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(loaded.value, null);
+
+      const directed = approvals.recordDirection({ direction: { taskId: 'task-read-denied' }, trustedOperator });
+      assert.equal(directed.safe.outcome, 'denied');
+      assert.equal(directed.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(existsSync(join(dir, 'tasks', 'task-read-denied')), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('refuses a task record whose identity names another task and writes no control', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uc05-approval-foreign-task-'));
+    try {
+      const durable = new DurableStore(dir);
+      const foreign = durable.getTaskPath('task-foreign-record');
+      mkdirSync(join(dir, 'tasks'), { recursive: true });
+      // A valid record for another task sits at this task's path.
+      writeFileSync(foreign, JSON.stringify({ ...taskStateOf('repo-1', 'workspace-1'), taskId: 'task-other' }), 'utf8');
+      const approvals = new DurableApprovalStore({ storageDir: dir, durableStore: durable });
+
+      const loaded = approvals.loadTaskControl('task-foreign-record');
+      assert.equal(loaded.safe.outcome, 'denied');
+      assert.equal(loaded.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(existsSync(join(dir, 'tasks', 'task-foreign-record', 'approvals')), false);
+
+      const directed = approvals.recordDirection({ direction: { taskId: 'task-foreign-record' }, trustedOperator });
+      assert.equal(directed.safe.outcome, 'denied');
+      assert.equal(directed.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(existsSync(join(dir, 'tasks', 'task-foreign-record', 'approvals')), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

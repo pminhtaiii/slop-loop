@@ -189,12 +189,15 @@ export function createBaselineEvidenceStore(options: BaselineEvidenceStoreOption
     provenance: 'real',
 
     async persist(request): Promise<BaselineWriteOutcome> {
-      const { content } = request;
-      if (request.contentDigest !== computeCanonicalSha256(content)) {
+      // Snapshot before the first await: the caller keeps its nested arrays and could mutate them
+      // while a filesystem step is pending, which would store content under the old digest.
+      const content = structuredClone(request.content);
+      const contentDigest = computeCanonicalSha256(content);
+      if (request.contentDigest !== contentDigest) {
         return { outcome: 'denied', reason: 'the content digest does not match the canonical candidate' };
       }
       const keyHash = identityKey(content);
-      const operationRef = operationRefOf(keyHash, request.contentDigest);
+      const operationRef = operationRefOf(keyHash, contentDigest);
       const paths = pathsOf(store.baseDir, keyHash);
       await mkdir(dirname(paths.recordPath), { recursive: true });
 
@@ -204,14 +207,14 @@ export function createBaselineEvidenceStore(options: BaselineEvidenceStoreOption
         if (existing.state === 'text') {
           const stored = parseRecord(existing.text);
           if (stored === null) return { outcome: 'uncertain', operationRef };
-          if (stored.contentDigest !== request.contentDigest) {
+          if (stored.contentDigest !== contentDigest) {
             return { outcome: 'denied', reason: `evidence identity '${stored.evidenceId}' is already bound to different content` };
           }
           if (computeCanonicalSha256(stored.content) !== stored.contentDigest) return { outcome: 'uncertain', operationRef: stored.operationRef };
           return { outcome: 'durable', acknowledgement: acknowledgementOf(stored.content, stored.evidenceId) };
         }
 
-        const text = JSON.stringify({ schemaVersion: SCHEMA_VERSION, evidenceId: evidenceIdOf(keyHash), operationRef, content, contentDigest: request.contentDigest }, null, 2);
+        const text = JSON.stringify({ schemaVersion: SCHEMA_VERSION, evidenceId: evidenceIdOf(keyHash), operationRef, content, contentDigest }, null, 2);
         try {
           await write(paths, text);
         } catch {

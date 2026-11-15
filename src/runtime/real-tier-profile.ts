@@ -9,9 +9,14 @@
  * Privacy: the profile lives outside every checkout, and the returned value serializes to `endpointDigest`
  * and the scheme only. The normalized `href` and the credential are non-enumerable, so JSON, a digest input
  * or an error never carries the URL, the host or the key bytes.
+ *
+ * `endpointDigest` is HMAC-SHA256 under the operator's `provider.endpointDigestKey`, because a private
+ * host:port would be brute-forceable from an unsalted digest. Only the public default endpoint skips the
+ * key and keeps the plain SHA-256.
  */
+import { createHmac } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { sha256Text, type Validation } from '../uc01/contracts.ts';
 import { collect, deny, IMAGE_DIGEST, keysOf, limitsOf, positiveInteger, pricingOf, text } from './evaluation-profile-primitives.ts';
 import type { EvaluationLimits, EvaluationPricing } from './evaluation-profile-types.ts';
@@ -22,11 +27,15 @@ export const PROFILE_SCHEMA = 'uc03-real-tier-profile/1';
 
 const MODEL_ID = /^[A-Za-z0-9._:/@-]{1,256}$/u;
 const PINNED_BASE = /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/u;
-const PROFILE_KEYS = ['schema', 'campaignId', 'stateRoot', 'provider', 'pricing', 'runLimits', 'limits', 'image', 'catalog', 'artifacts', 'approvalPolicy'] as const;
-const PROVIDER_KEYS = ['endpoint', 'allowInsecureHttp', 'model', 'mode', 'timeoutMs'] as const;
+const DIGEST_KEY = /^[a-f0-9]{64}$/u;
+const DEFAULT_HREF = new URL(DEFAULT_REAL_TIER_ENDPOINT).href;
+const PROFILE_KEYS = ['schema', 'campaignId', 'stateRoot', 'provider', 'pricing', 'runLimits', 'limits', 'image', 'privacy', 'catalog', 'artifacts', 'approvalPolicy'] as const;
+const PROVIDER_KEYS = ['endpoint', 'allowInsecureHttp', 'model', 'mode', 'timeoutMs', 'endpointDigestKey'] as const;
 const RUN_LIMIT_KEYS = ['perRunInputTokens', 'perRunOutputTokens'] as const;
 const IMAGE_KEYS = ['label', 'imageId', 'base', 'platform', 'user'] as const;
 const ARTIFACT_KEYS = ['retainRoot', 'retainRawStreams'] as const;
+const PRIVACY_KEYS = ['additionalPrivateEndpoints'] as const;
+const MAX_PRIVATE_ENDPOINTS = 8;
 
 /** In-memory endpoint identity: the `href` is never enumerable, so it cannot be serialized or digested. */
 export type ResolvedEndpoint = Readonly<{
@@ -59,6 +68,13 @@ export type RealTierProfile = Readonly<{
   profileDigest: string;
   /** Non-enumerable credential handle; the only place the key bytes live. */
   readonly credential: string;
+  /** Non-enumerable HMAC key for `endpointDigest`; empty when the public default endpoint needs none. */
+  readonly endpointDigestKey: string;
+  /**
+   * Non-enumerable remote private endpoints hidden behind a loopback tunnel, for the leak scanner (T057).
+   * Empty when the profile lists none; never serialized, digested or logged.
+   */
+  readonly privacy: Readonly<{ additionalPrivateEndpoints: readonly string[] }>;
 }>;
 
 /** A profile or environment value: absent or blank values are absent. */
@@ -86,7 +102,8 @@ function realPath(path: string): string {
 /** Resolves both sides to real paths and reports whether the target lands inside the checkout. */
 function insideRepository(root: string, target: string): boolean {
   const from = relative(realPath(resolve(root)).toLowerCase(), realPath(target).toLowerCase());
-  return from === '' || (!from.startsWith('..') && !isAbsolute(from));
+  // Only the parent segment `..` leaves the root; `..private` is an ordinary name inside it.
+  return from === '' || (from !== '..' && !from.startsWith(`..${sep}`) && !isAbsolute(from));
 }
 
 function refuseInside(root: string, target: string, reasonCode: string): string {
@@ -101,25 +118,39 @@ function endpointFromBase(base: string): string {
   return `${base.replace(/\/+$/u, '')}/messages`;
 }
 
-function endpointOf(raw: string, allowInsecureHttp: boolean | undefined, model: string): ResolvedEndpoint {
-  if (!URL.canParse(raw)) deny('endpoint-invalid', '$');
+/** An absolute `http:`/`https:` URL with a host and no credentials, query or fragment. */
+function absoluteHttpUrl(raw: string): URL | undefined {
+  if (!URL.canParse(raw)) return undefined;
   const url = new URL(raw);
-  const shape =
-    (url.protocol === 'https:' || url.protocol === 'http:') &&
-    url.username === '' &&
-    url.password === '' &&
-    url.search === '' &&
-    url.hash === '' &&
-    url.pathname.endsWith('/messages') &&
-    url.hostname !== '';
-  if (!shape) deny('endpoint-invalid', '$');
+  const shape = (url.protocol === 'https:' || url.protocol === 'http:') && url.username === '' && url.password === '' && url.search === '' && url.hash === '' && url.hostname !== '';
+  return shape ? url : undefined;
+}
+
+function endpointOf(raw: string, allowInsecureHttp: boolean | undefined, model: string, digestKey: string | undefined): ResolvedEndpoint {
+  const url = absoluteHttpUrl(raw);
+  if (url === undefined || !url.pathname.endsWith('/messages')) deny('endpoint-invalid', '$');
   const scheme = url.protocol === 'https:' ? 'https' : 'http';
   const acknowledged = scheme === 'http' && allowInsecureHttp === true;
   if (scheme === 'http' && !acknowledged) deny('insecure-endpoint-unacknowledged', '$');
   const href = url.href;
-  const endpoint = { endpointDigest: sha256Text(href), scheme, insecureHttpAcknowledged: acknowledged, model };
+  // A private host:port is brute-forceable from a published digest, so only the public default may go unkeyed.
+  if (digestKey === undefined && href !== DEFAULT_HREF) deny('endpoint-digest-key-missing', '$.provider.endpointDigestKey');
+  const endpointDigest = digestKey === undefined ? sha256Text(href) : createHmac('sha256', digestKey).update(href, 'utf8').digest('hex');
+  const endpoint = { endpointDigest, scheme, insecureHttpAcknowledged: acknowledged, model };
   // The URL is a host-only memory value: non-enumerable, so it never reaches JSON, a digest or a log.
   return Object.freeze(Object.defineProperty(endpoint, 'href', { value: href, enumerable: false })) as ResolvedEndpoint;
+}
+
+/** The operator's HMAC key: a 64-character lowercase hex string, absent only where the public default allows it. */
+function digestKeyOf(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !DIGEST_KEY.test(value)) deny('endpoint-digest-key-missing', '$.provider.endpointDigestKey');
+  // Obviously weak keys stay guessable, so a retained digest would confirm endpoint guesses. A period ≤ 8
+  // string holds at most 8 distinct characters, so the first rule also refuses every repeating pattern.
+  const counts = new Map<string, number>();
+  for (const char of value) counts.set(char, (counts.get(char) ?? 0) + 1);
+  if (counts.size < 10 || Math.max(...counts.values()) > 16) deny('endpoint-digest-key-weak', '$.provider.endpointDigestKey');
+  return value;
 }
 
 function imageOf(value: unknown): RealTierImage {
@@ -143,6 +174,25 @@ function runLimitsOf(value: unknown): RealTierRunLimits {
     perRunInputTokens: positiveInteger(record.perRunInputTokens, '$.runLimits.perRunInputTokens', 'run-limits-invalid'),
     perRunOutputTokens: positiveInteger(record.perRunOutputTokens, '$.runLimits.perRunOutputTokens', 'run-limits-invalid'),
   });
+}
+
+/**
+ * The remote private endpoints behind a loopback tunnel, for the leak scanner's needles (T057).
+ * The path is free-form (a base URL is as useful as a `/messages` one), and `http:` is allowed
+ * without the endpoint acknowledgement: the remote hop stays inside the operator's tunnel.
+ */
+function privateEndpointsOf(value: unknown): readonly string[] {
+  if (value === undefined) return Object.freeze([]);
+  const listed = keysOf(value, PRIVACY_KEYS, '$.privacy').additionalPrivateEndpoints;
+  if (!Array.isArray(listed) || listed.length > MAX_PRIVATE_ENDPOINTS) deny('private-endpoints-invalid', '$.privacy.additionalPrivateEndpoints');
+  return Object.freeze(
+    listed.map((entry, index) => {
+      const path = `$.privacy.additionalPrivateEndpoints[${index}]`;
+      if (typeof entry !== 'string' || !entry.trim() || Buffer.byteLength(entry) > 2048) deny('private-endpoints-invalid', path);
+      const url = absoluteHttpUrl(entry);
+      return url === undefined ? deny('private-endpoints-invalid', path) : url.href;
+    }),
+  );
 }
 
 function checkProfile(raw: unknown, root: string, env: RealTierEnvironment): RealTierProfile {
@@ -171,7 +221,8 @@ function checkProfile(raw: unknown, root: string, env: RealTierEnvironment): Rea
   if (model === undefined) deny('model-missing', '$.provider.model');
   if (!MODEL_ID.test(model)) deny('model-invalid', '$.provider.model');
 
-  const endpoint = endpointOf(profileEndpoint ?? environmentEndpoint ?? DEFAULT_REAL_TIER_ENDPOINT, allowInsecureHttp, model);
+  const digestKey = digestKeyOf(provider.endpointDigestKey);
+  const endpoint = endpointOf(profileEndpoint ?? environmentEndpoint ?? DEFAULT_REAL_TIER_ENDPOINT, allowInsecureHttp, model, digestKey);
 
   const stateRoot = refuseInside(root, absolutePath(record.stateRoot, '$.stateRoot'), 'state-root-inside-repository');
   const artifactsRecord = keysOf(record.artifacts, ARTIFACT_KEYS, '$.artifacts');
@@ -196,7 +247,10 @@ function checkProfile(raw: unknown, root: string, env: RealTierEnvironment): Rea
     approvalPolicy,
   };
   const profile = Object.defineProperty({ profileDigest: sha256Text(JSON.stringify(fields)), ...fields }, 'credential', { value: env.ANTHROPIC_API_KEY ?? '', enumerable: false });
-  return Object.freeze(profile) as RealTierProfile;
+  const keyed = Object.defineProperty(profile, 'endpointDigestKey', { value: digestKey ?? '', enumerable: false });
+  // The private endpoints are host-bearing like `href`: non-enumerable, so they stay out of JSON and the digest.
+  const privacy = Object.freeze({ additionalPrivateEndpoints: privateEndpointsOf(record.privacy) });
+  return Object.freeze(Object.defineProperty(keyed, 'privacy', { value: privacy, enumerable: false })) as RealTierProfile;
 }
 
 /**

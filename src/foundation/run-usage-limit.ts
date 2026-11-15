@@ -92,6 +92,8 @@ export function createRunUsageLimiter(limits: RunUsageLimits): RunUsageLimiter {
     admit(call) {
       if (typeof call.taskId !== 'string' || !call.taskId || typeof call.runId !== 'string' || !call.runId) return false;
       if (!isTokenCount(call.maxInputTokens) || !isTokenCount(call.maxOutputTokens)) return false;
+      // DUPLICATE_CALL_IDENTITY: a still-pending identity would be charged twice and keep only the second charge.
+      if (charges.has(chargeKeyOf(call))) return false;
       const key = keyOf(call.taskId, call.runId);
       const counters = runs.get(key) ?? { calls: 0, inputTokens: 0, outputTokens: 0 };
       if (counters.calls >= totalModelCalls) return false;

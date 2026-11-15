@@ -171,6 +171,34 @@ test('reports each overlapping run its own observed figures for a shared call id
   assert.deepEqual(limiter.reportFor(runB), { callId: 'shared', inputTokens: 100, outputTokens: 200, costUsd: 20, costLabel: 'estimate-unverified' });
 });
 
+test('refuses a duplicate pending call identity before changing any counter', () => {
+  const limiter = createRunUsageLimiter({ totalModelCalls: 4, perRunInputTokens: 1000, perRunOutputTokens: 1000 });
+  const first = call({ callId: 'dup', maxInputTokens: 100, maxOutputTokens: 0 });
+  const second = call({ callId: 'dup', maxInputTokens: 900, maxOutputTokens: 0 });
+  assert.equal(limiter.admit(first), true);
+  assert.equal(limiter.admit(second), false);
+  assert.deepEqual(limiter.countersFor('task-1', 'run-1'), { taskId: 'task-1', runId: 'run-1', calls: 1, inputTokensCharged: 100, outputTokensCharged: 0 });
+  // The first call's settlement subtracts its own 100, not the refused 900.
+  limiter.settle(first, { inputTokens: 50, outputTokens: 0, costUsd: 0, billableTokens: 50 });
+  assert.equal(limiter.countersFor('task-1', 'run-1')?.inputTokensCharged, 50);
+  assert.deepEqual(limiter.reportFor(first), { callId: 'dup', inputTokens: 50, outputTokens: 0, costUsd: 0, costLabel: 'estimate-unverified' });
+  // 950 of headroom is genuinely left, so the ceiling still holds.
+  assert.equal(limiter.admit(call({ callId: 'third', maxInputTokens: 950, maxOutputTokens: 0 })), true);
+  assert.equal(limiter.admit(call({ callId: 'fourth', maxInputTokens: 1, maxOutputTokens: 0 })), false);
+});
+
+test('re-admits a call identity once its earlier admission has settled', () => {
+  const limiter = createRunUsageLimiter({ ...LIMITS, totalModelCalls: 2 });
+  const entry = call();
+  assert.equal(limiter.admit(entry), true);
+  limiter.settle(entry, { inputTokens: 120, outputTokens: 40, costUsd: 0, billableTokens: 160 });
+  assert.equal(limiter.admit(entry), true);
+  assert.equal(limiter.countersFor('task-1', 'run-1')?.calls, 2);
+  assert.equal(limiter.reportFor(entry)?.inputTokens, 'unknown');
+  limiter.settle(entry, { inputTokens: 1, outputTokens: 2, costUsd: 0, billableTokens: 3 });
+  assert.equal(limiter.reportFor(entry)?.inputTokens, 1);
+});
+
 test('stops the transport at the call ceiling with zero fetches for the refused call', async () => {
   const { fetchImpl, calls } = fakeFetch();
   const subject = fixedTransport(fetchImpl, createRunUsageLimiter({ ...LIMITS, totalModelCalls: 24 }));
