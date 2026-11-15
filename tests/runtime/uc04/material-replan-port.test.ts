@@ -14,10 +14,11 @@ import type { BudgetLedger, BudgetReservation, BugTask, FixPlan, TaskState } fro
 import { createMaterialReplanPort } from '../../../src/persistence/adapters/material-replan-port.ts';
 import { createJournalOperationLookup } from '../../../src/persistence/adapters/state-port-v02-operation-lookup.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
+import { StatePortStore } from '../../../src/persistence/adapters/state-port-v02-storage.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { executeReplan } from '../../../src/uc03/repair.ts';
 import type { TrustedReplanDirection } from '../../../src/uc03/repair-types.ts';
-import type { MaterialReplanPortV02, MaterialReplanRequestV02 } from '../../../src/uc03/graph-types-v02.ts';
+import type { MaterialReplanPortV02, MaterialReplanRequestV02, MaterialReplanResultV02 } from '../../../src/uc03/graph-types-v02.ts';
 import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 
 const PROPOSAL = 'replan-prop-001';
@@ -356,6 +357,38 @@ test('material replan: an unknown write outcome with nothing written stays unkno
     assert.deepEqual(await c.port.loadTask(c.state.taskId), c.state, 'nothing was written');
     assert.deepEqual(await createJournalOperationLookup(c.port).lookupOperation(result.operationRef), { outcome: 'unknown' });
   } finally {
+    c.close();
+  }
+});
+
+test('material replan: a record whose task write failed stays unknown and is never replayed as accepted', async () => {
+  const c = await openCase();
+  const original = StatePortStore.prototype.writeTask;
+  try {
+    const a = requestOf(c.state, candidateOf(c.state.plan as FixPlan));
+    let first: MaterialReplanResultV02;
+    try {
+      StatePortStore.prototype.writeTask = async () => {
+        throw new Error('synthetic task write failure');
+      };
+      first = await c.replan.accept(a);
+    } finally {
+      StatePortStore.prototype.writeTask = original;
+    }
+    assert.equal(first.outcome, 'uncertain');
+    if (first.outcome !== 'uncertain') return;
+    // The record landed; its transition did not. Only the exact state proves the commit.
+    assert.deepEqual(await createJournalOperationLookup(c.port).lookupOperation(first.operationRef), { outcome: 'unknown' });
+
+    // A different proposal may then commit at the same resulting version.
+    const second = await c.replan.accept(requestOf(c.state, candidateOf(c.state.plan as FixPlan, OTHER_STRATEGY), { proposalId: 'replan-prop-other' }));
+    assert.equal(second.outcome, 'accepted');
+    assert.deepEqual(await createJournalOperationLookup(c.port).lookupOperation(first.operationRef), { outcome: 'unknown' }, "another proposal's state is not this operation's commit");
+
+    const replay = await c.replan.accept(a);
+    assert.notEqual(replay.outcome, 'already-accepted', 'a replay must not claim the transition A never wrote');
+  } finally {
+    StatePortStore.prototype.writeTask = original;
     c.close();
   }
 });

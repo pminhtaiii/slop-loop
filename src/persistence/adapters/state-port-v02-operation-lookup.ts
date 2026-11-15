@@ -33,6 +33,8 @@ export const JOURNAL_OPERATION_PREFIX = 'uc04-journal:';
 /** The record the material-replan transaction writes atomically with its task transition. */
 export interface JournalOperationRecordV02 {
   readonly taskId: string;
+  /** Canonical digest of the exact state the operation's own transition produced: the commit proof. */
+  readonly stateDigest?: string;
   readonly stateVersion: number;
   readonly receipts: readonly string[];
 }
@@ -225,7 +227,7 @@ async function lookupClaim(state: StatePortStore, claimId: string): Promise<Jour
   };
 }
 
-/** Resolves a committed operation record; a record whose task or version drifted is not a commit. */
+/** Resolves a committed operation record; a record whose exact state is not persisted is not a commit. */
 async function lookupRecord(state: StatePortStore, operationId: string): Promise<JournalOperationLookupResultV02 | null> {
   const taskIds = await readdir(state.store.claimDir).catch((err: unknown) => {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [] as string[];
@@ -237,7 +239,9 @@ async function lookupRecord(state: StatePortStore, operationId: string): Promise
     if (!record) continue;
     if (record.taskId !== taskId || !Array.isArray(record.receipts) || !record.receipts.every(item => typeof item === 'string')) return UNKNOWN;
     const task = await state.readTask(taskId);
-    if (!task || task.stateVersion !== record.stateVersion) return UNKNOWN;
+    // The written task and the record are separate files, so the version alone cannot prove whose
+    // transition landed: only the exact resulting state is this operation's commit.
+    if (!task || task.stateVersion !== record.stateVersion || typeof record.stateDigest !== 'string' || computeCanonicalSha256(task) !== record.stateDigest) return UNKNOWN;
     return { outcome: 'committed', state: structuredClone(task), commit: { kind: 'operation', receipts: [...record.receipts] } };
   }
   return null;

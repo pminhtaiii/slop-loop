@@ -191,7 +191,9 @@ export function createMaterialReplanPort(options: MaterialReplanPortOptions): Ma
           if (record) {
             const same = Array.isArray(record.receipts) && record.receipts[0] === reservationReceipt && record.receipts[1] === transitionReceipt;
             if (!same) return denied('proposal-bound-to-different-content');
-            if (record.taskId !== prior.taskId || record.stateVersion !== prior.stateVersion) return denied('replay-state-superseded');
+            // The record is written before the task, so a replay proves its own transition by the exact
+            // persisted state: another proposal's commit at the same version is not this one.
+            if (record.taskId !== prior.taskId || record.stateVersion !== prior.stateVersion || record.stateDigest !== computeCanonicalSha256(prior)) return denied('replay-state-superseded');
             return { outcome: 'already-accepted', state: structuredClone(prior), reservationReceipt, transitionReceipt };
           }
 
@@ -216,8 +218,15 @@ export function createMaterialReplanPort(options: MaterialReplanPortOptions): Ma
           if (!next) return denied('replan-transition-invalid');
 
           // Record first: a half-applied write then reads back `unknown`, never a false `absent`.
+          // The record carries the digest of the exact state it commits, so only A's own transition
+          // resolves A, never another proposal's later write at the same version.
           const write = async (): Promise<void> => {
-            await store.writeJson(recordPath, { taskId: next.taskId, stateVersion: next.stateVersion, receipts: [reservationReceipt, transitionReceipt] } satisfies JournalOperationRecordV02);
+            await store.writeJson(recordPath, {
+              taskId: next.taskId,
+              stateVersion: next.stateVersion,
+              stateDigest: computeCanonicalSha256(next),
+              receipts: [reservationReceipt, transitionReceipt],
+            } satisfies JournalOperationRecordV02);
             await store.writeTask(next.taskId, next);
           };
           try {

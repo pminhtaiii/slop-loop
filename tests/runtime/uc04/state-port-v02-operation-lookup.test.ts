@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { computeAdmissionDigest, computeAttemptOutcomeDigest, computeReconciliationDigest } from '../../../src/contracts/foundation/uc03.ts';
+import { computeAdmissionDigest, computeAttemptOutcomeDigest, computeCanonicalSha256, computeReconciliationDigest } from '../../../src/contracts/foundation/uc03.ts';
 import type { AttemptReconciliationReceiptV02, ClaimReceiptV02, RepositoryAdmissionContextV02, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
@@ -467,9 +467,11 @@ test('operation lookup: a committed replan operation record resolves with its re
     const { port, claim } = await openClaim(baseDir);
     const state = new StatePortStore(port.store);
     const task = (await port.loadTask(context.taskId)) as TaskState;
-    await state.writeJson(journalOperationPath(state, context.taskId, 'replan-op-001'), {
+    const recordPath = journalOperationPath(state, context.taskId, 'replan-op-001');
+    await state.writeJson(recordPath, {
       taskId: context.taskId,
       stateVersion: task.stateVersion,
+      stateDigest: computeCanonicalSha256(task),
       receipts: ['replan-reservation-001', 'replan-transition-001'],
     });
     // The claim ref prefix is shared, so prove the claim branch still wins for its own id.
@@ -482,8 +484,21 @@ test('operation lookup: a committed replan operation record resolves with its re
     }
     assert.equal((await lookup.lookupOperation(journalOperationRef(claim.claimId))).outcome, 'unknown', 'an open claim is not superseded by an operation record');
 
+    // The version alone never proves the commit: another state at the same version is not this record's.
+    await state.writeJson(recordPath, {
+      taskId: context.taskId,
+      stateVersion: task.stateVersion,
+      stateDigest: computeCanonicalSha256({ ...task, nextAction: 'some-other-action' }),
+      receipts: ['replan-reservation-001', 'replan-transition-001'],
+    });
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef('replan-op-001')), { outcome: 'unknown' });
+
+    // A record with no state digest at all is a partial write, not a commit.
+    await state.writeJson(recordPath, { taskId: context.taskId, stateVersion: task.stateVersion, receipts: [] });
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef('replan-op-001')), { outcome: 'unknown' });
+
     // A record whose task version moved on is no longer that commit.
-    await state.writeJson(journalOperationPath(state, context.taskId, 'replan-op-001'), { taskId: context.taskId, stateVersion: task.stateVersion + 1, receipts: [] });
+    await state.writeJson(recordPath, { taskId: context.taskId, stateVersion: task.stateVersion + 1, stateDigest: computeCanonicalSha256(task), receipts: [] });
     assert.deepEqual(await lookup.lookupOperation(journalOperationRef('replan-op-001')), { outcome: 'unknown' });
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
