@@ -74,3 +74,72 @@ Fresh planning base `d2f953239b658b2b282d9e41523e819d9785fd49`; source/spec comp
 **Decision**: Treat evidence writer/replan/fenced read authority as exact public owner deliveries; build only host observations/adapters. **Rationale**: Missing owner seams are contract/delivery gates, not permission to add a second journal or approval control. **Alternatives considered**: Direct DurableStore/internal journal manipulation, fabricated acknowledgements and opening mock-only approval control would cross ownership or weaken safeguards.
 
 **Decision**: Add no dependencies or production default profile values. **Rationale**: Existing toolchain/contracts suffice for design and controlled tests; pricing/engine/profile/operator setup remains pinned runtime input. This amendment does not revisit provider selection or make current API/pricing claims.
+
+## Real-tier prerequisite research — 2026-11-14
+
+Inspection at `c1eba127`, revised for the operator decisions at `e7aef219` (`contracts/decisions.md:106-109`). The evidence-backed gap inventory is in the [real-tier contract](contracts/real-tier.md) §(a). No test, container or provider call was run, and no web source was fetched.
+
+### Image base
+
+**Decision**: Keep `python:3.12-alpine`, pinned by digest through a required `ARG PYTHON_BASE`. Install pinned `pytest==8.3.4` and its dependencies at build time. The run-time identity is the built image ID, referenced with `--pull=never`.
+**Rationale**: The existing Dockerfile and probe already target this base and the `1000:1000` user, and pure-Python pytest has no musl concern. The built image digest pins every installed byte. Docker's `name@digest` form needs a registry RepoDigest, which a locally built image does not have; the content-addressed image ID needs no registry.
+**Alternatives considered**:
+- `python:3.12-slim` (glibc, larger; adopt only if a case needs compiled wheels).
+- Hash-pinned requirements (rejected: the final image ID is the identity that runs).
+- A loopback `registry:2` push to obtain a RepoDigest so the current `${image}@${digest}` form works unchanged. Kept as the fallback if referencing by image ID is rejected.
+
+### Hosted endpoint
+
+**Decision**: The endpoint is operator-pinned. Take the profile's `provider.endpoint` (an exact `<base>/messages` URL), or `ANTHROPIC_BASE_URL` + `/messages`; the model is `provider.model` or `ANTHROPIC_MODEL`. Both are resolved once at assembly, validated (absolute URL, no credentials, query or fragment, path ending in `/messages`), frozen, and compared exactly on every call. Conflicting values refuse. The current `https://api.deepseek.com/anthropic/v1/messages` stays the default. Both existing pinning sites change under one shared rule: the transport's `assertPinnedEndpoint` (`src/foundation/deepseek-transport.ts:89-93`) and the profile's `endpointOf` (`src/runtime/evaluation-profile-primitives.ts:102-106`).
+**Rationale**: The user's model is served from their own Anthropic-compatible deployment (`decisions.md:107`), so the hard-coded endpoint makes the real tier unreachable. Freezing one operator-resolved URL keeps the property the pin was protecting: no model, request or browser input can redirect the credential.
+**Alternatives considered**: An allowlist of hosts (no simpler, and it would put a host in tracked code); per-request URLs (violates the trusted-endpoint rule in `contracts/integration.md` §1).
+
+### Cleartext HTTP risk
+
+**Decision**: A non-`https` endpoint loads only when the profile sets `"allowInsecureHttp": true`. Readiness and evidence then record `insecure-http-acknowledged`.
+**Rationale**: The supplied base is plain `http` to a public address. The `x-api-key` header, prompts (including repository excerpts) and responses cross the network unencrypted, and can be read or altered on the path. A captured key gives full use of the deployment. The harness cannot fix this; it can only refuse silent use.
+**Recommendation**: Put TLS in front of the deployment. Alternatively, run an SSH tunnel (`ssh -N -L 127.0.0.1:<local-port>:127.0.0.1:<port> <user>@<host>`) and point the profile at `http://127.0.0.1:<local-port>/v1/messages`, so only a loopback hop is cleartext. The acknowledgement flag is still required for the loopback `http` URL, which is harmless.
+**Alternatives considered**: Refusing `http` outright (blocks the user's only endpoint); silently allowing it (hides the risk).
+
+### Privacy of the endpoint
+
+**Decision**: The real host, port and URL live only in the operator profile outside the checkout or in the user's environment. Docs use `http://<host>:<port>/v1`; tests use RFC 5737 (`192.0.2.x`) or `.invalid` addresses; evidence records `endpointDigest` and the scheme only. Before publication, the T057 scanner (`real-tier-scan.js --staged`) must exit 0; see "Endpoint leak scanner" below.
+**Rationale**: The repository is public, so an IP in a test, doc, snapshot or commit message would expose the deployment.
+
+### Model id
+
+**Decision**: `po/deepseek-ai/deepseek-v4.1-flash-1017`, supplied by the user as `decisions.md:108` anticipated. It supersedes the earlier `deepseek-flash` alias (`decisions.md:7,50`). It already passes the host-file identifier rule (`src/cli/evaluate.ts:69`) and the profile's text check. Readiness pins it as `requestedModel`. The T054 conformance call requires the returned identity to equal it exactly and stops on mismatch.
+**Rationale**: The transport already records requested and returned identities (`deepseek-transport.ts:317`). Exact equality is the simplest check that the deployment serves what the user named.
+
+### Usage limits instead of a cap
+
+**Decision**: No economic cap, spend ledger or budget command. FR-006 stands. Keep a runaway stop: per-run calls (24) and tokens (400,000 input, 80,000 output), plus the existing per-call 32,768/8,192, enforced before dispatch, failing closed. A call is counted before `fetch` at its admitted maxima. Only a validated 2xx with usage replaces that with observed tokens, so unknown usage never counts as zero.
+**Rationale**: The user pays for their own deployment and asked not to limit usage (`decisions.md:107`). `context/runtime_policy.md:23` still requires finite token limits, and a stuck loop should stop. In-memory per-run counters suffice because a run never spans processes in this scope (restart is excluded); UC-04 task accounting stays the durable authority.
+**Alternatives considered**: The earlier durable USD ledger (withdrawn by the user's decision); no runaway stop at all (violates the finite-limit policy).
+
+### Pricing
+
+**Decision**: Keep a placeholder pricing table (`pricingId: placeholder-unverified`). It exists only because the transport and profile require numerators. Every reported cost is labelled `estimate-unverified`, or `unknown` when usage is missing. The user may replace the table with their own prices at any time (`decisions.md:108`); no verification process is required, and cost never gates a call.
+
+### Other decisions
+
+- **Profile location**: outside the repository (`%USERPROFILE%\.slop-loop\uc03-real-tier\`), named by `UC03_REAL_TIER_PROFILE`; in-repo paths are refused. This keeps both the credential-adjacent configuration and the private endpoint out of every checkout.
+- **T028 runner, not the evaluation CLI**: `evaluate run` for C01 is the T011 path, which is not released. The runner drives `runUC03GraphV02` and the independent snapshot grader directly; T011 can later consume or rerun this evidence under its own release.
+- **Real-tier runners outside CI**: `scripts/ci/run-runtime-tests.mjs:20-21` globs `*.test.*`, so Docker and live runs use `*-probe.ts`/`*-run.ts`/`*-evidence.ts` names. T025's `.test.ts` file stays CI-safe.
+- **UC-05 profile id literal**: `PolicyProfile.profileId` is typed `'uc05-local-v1'`. The real-tier policy keeps it and differs by `profileVersion`, which avoids a UC-05 contract amendment.
+- **Docker CLI environment**: `structuredSpawn` inherits the full host environment (`src/foundation/docker-spawn.ts:37`), including `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL`. T048 adds an allowlist.
+- **Owner gates**: worker-built UC-04/UC-05 code counts toward X04-STATE/X05-GATE for these runs (`decisions.md:109`); each UC-03 acceptance entry states the single delegated attestation.
+
+### Planning-review repairs (2026-11-14)
+
+The two independent planning lanes reported TEST-01–04 and STD-REAL-001–005 on `04701f91`. All were verified against the source and repaired; the decisions follow.
+
+- **Oversized legacy tests (TEST-01)**. `tests/runtime/unit/uc03-graph.test.ts` is 112,846 bytes and `tests/runtime/contract/atomic-admission-matrix.test.ts` is 198,939 bytes, against the 20,000-byte limit (`context/code_standard.md`). **Decision**: Gap rows go in new focused files (`uc03-graph-gaps.test.ts`, `atomic-admission-matrix-gaps.test.ts`). The legacy files are read-only, and T026 and T066 are separate tasks (T053, T056), each with a changed-line estimate recorded before dispatch. `src/uc03/repair.ts` (19,998 bytes) changes only through a sibling module. **Alternative**: splitting the legacy files first (rejected: a large refactor with no gap closed).
+- **Endpoint leak scanner (TEST-02, STD-REAL-005)**. `git grep -nF` echoes the matching line, so it would print the endpoint, and it misses host-only, scheme-less and encoded forms. **Decision**: A small scanner (T057) derives needles from the resolved endpoint (profile or environment), using host boundaries. It prints only `<path>:<line> ENDPOINT_LEAK` and a fixed verdict, has explicit `--staged` and `--dir` modes, and is tested with RFC 5737/`.invalid` sentinels. **Alternative**: `git grep -c` (still misses forms, and cannot read the profile-only endpoint).
+- **Per-effect uncertainty routing (TEST-03, STD-REAL-004)**. **Decision**: Each uncertain effect carries a prefixed operationRef owned by the store that wrote it: `uc04-journal:` for provider attempts, patch attempts and replan, resolved by T040 `lookupOperation`; `uc04-baseline:` for baseline writes, resolved by T041 `lookupWrite`. A T058 gate routes and blocks, and a controlled integration matrix (4 effects × committed/absent/unknown, plus a baseline lost-acknowledgement row) witnesses zero replays. **Alternative**: one generic lookup (rejected: the baseline store is not a journal).
+- **Campaign gate (TEST-04)**. **Decision**: T028 runs as one `--campaign` invocation. A conformance receipt bound to candidate SHA, `profileDigest`, `endpointDigest` and model is required by any later `--case`. Runner-level negative rows (timeout, 5xx, 429, unreachable, mismatch, missing or stale receipt) use doubles in a CI-safe `.test.ts` file (T059).
+- **CLI metadata seam (STD-REAL-001)**. `src/cli/evaluate.ts` projects only `HOST_KEYS` and the four identity digests (`:116,221,275`), so endpoint digest, scheme and model never reach the output. **Decision**: The resolution gains an allowlisted `metadata` object, validated by the CLI (T060). `evaluate.ts` (20,018 bytes) is first split into `evaluate-host.ts`.
+- **Journal predicate cycle (STD-REAL-002)**. `state-port-v02-storage.ts:7` imports `approvals/control-v02.ts`, so an approvals predicate that imports the state port would form a cycle. **Decision**: A dependency-neutral registry in `src/foundation/production-journal-registry.ts` (a module-private `WeakSet`). The state port registers itself; approvals read the registry only. Import checks guard both directions.
+- **Docker preflight seam (STD-REAL-003)**. **Decision**: `observeDockerReadiness` runs two fixed argv commands through the existing `structuredSpawn`, with a bounded timeout and output. This fits `context/tools_permissions.md:3,22` (structured argv, no shell) and `context/runtime_policy.md:15`. Assembly readiness stays spawn-free; operational readiness is a separate `preflight` step (T060).
+- **Scanner second repair (STD-REAL-006, TEST-02 reopened, TEST-05)**. The re-reviews of `fc0f90f5` found that printed paths could carry a needle, that port-only leaks were uncovered, and that staged deletions failed the blob read. **Decisions**: (1) Paths are scanned as data in both modes. Any location that matches a needle, or is non-printable, is printed as `path-sha256:<12 hex>`, and the credential is only an in-memory presence marker. (2) The port matches only after a host-like token (`:<port>`, `%3A<port>`) or as the value of a key containing `port`, with digit boundaries, and only when it is explicit and not 80/443. **Trade-off**: a port written alone in prose or a table is missed. Matching every occurrence of the number would block on sizes, counts, line numbers and IDs, and a port with no host beside it reveals little. (3) `--staged` enumerates with `--diff-filter=ACMR`, so deletions are skipped and renames are scanned under their new path. **Alternatives**: always hashing every path (rejected: clean paths are useful to the operator); matching the bare port everywhere (rejected as too noisy); enumerating with `git ls-files -s` (it works but rescans the whole index rather than the change).
+- **Full-index audit amendment (2026-11-15, PR #192 review)**. A staged-only scan misses a needle added after a file was committed: an unchanged tracked file is never in the staged diff. **Decision**: per-commit stays `--staged`, for its cost. A separate `--all` mode enumerates `git ls-files -z` and applies the same needles, path rules and output; it is required whenever the needle set changes (endpoint, digest key or `additionalPrivateEndpoints` entry) and before every publication of real-tier evidence. **Trade-off**: between triggers the invariant holds only for changed files; the triggered full audit restores it for the whole index. The digest key joins the needles (`DIGEST_KEY_LEAK`), and weak keys refuse (`endpoint-digest-key-weak`).

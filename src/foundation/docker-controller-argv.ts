@@ -84,8 +84,13 @@ export function assertPlan(plan: DockerContainerPlan, trustedProfile: DockerProf
   return limits;
 }
 
-/** Docker argv array; each element is one argument, so no shell ever parses it. */
-export function runArguments(spec: RunArgumentSpec, platform: string, image: string, imageDigest: string): string[] {
+/**
+ * Docker argv array for `docker run`; each element is one argument, so no shell ever parses it.
+ * The image is referenced by its content-addressed ID (`sha256:…`) with `--pull=never`, so a run
+ * never contacts a registry and `_image` (the profile's tag, validated alongside the digest) never
+ * becomes the reference.
+ */
+export function runArguments(spec: RunArgumentSpec, platform: string, _image: string, imageDigest: string): string[] {
   const args = [
     'run',
     '--rm',
@@ -98,6 +103,7 @@ export function runArguments(spec: RunArgumentSpec, platform: string, image: str
     `--memory=${spec.memoryBytes}`,
     `--cpus=${spec.cpus}`,
     `--pids-limit=${spec.pids}`,
+    '--pull=never',
     `--name=${spec.name}`,
   ];
   if (spec.workingDirectory !== undefined) args.push('-w', spec.workingDirectory);
@@ -106,6 +112,6 @@ export function runArguments(spec: RunArgumentSpec, platform: string, image: str
   for (const mount of spec.mounts) {
     args.push(`--mount=type=volume,source=${mount.source},target=${mount.target}${mount.readOnly ? ',readonly' : ''}`);
   }
-  args.push(`${image}@${imageDigest}`, ...spec.tail);
+  args.push(imageDigest, ...spec.tail);
   return args;
 }

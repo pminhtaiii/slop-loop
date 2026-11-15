@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { ProviderRequest } from '../../../src/contracts/foundation/uc03.ts';
 import { buildTransportPayload, executeTransport, type HostModelTransportPayload } from '../../../src/foundation/model.ts';
 import { createDeepSeekTransport, type DeepSeekPricing } from '../../../src/foundation/deepseek-transport.ts';
+import { createRunUsageLimiter } from '../../../src/foundation/run-usage-limit.ts';
 import { createFixtureProviderRequest, createFixtureSourceEvidence, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 
 const ENDPOINT = 'https://api.deepseek.com/anthropic/v1/messages';
@@ -58,15 +59,14 @@ function requestBody(init: RequestInit): Record<string, unknown> {
   return JSON.parse(String(init.body)) as Record<string, unknown>;
 }
 
-test('refuses every endpoint but the pinned DeepSeek Anthropic messages URL', () => {
+test('refuses every endpoint but a pinned absolute messages URL', () => {
   const attempts = [
     'http://api.deepseek.com/anthropic/v1/messages',
-    'https://api.deepseek.com/v1/messages',
-    'https://evil.example/anthropic/v1/messages',
+    'https://api.deepseek.com/v1/chat',
     'https://user:pass@api.deepseek.com/anthropic/v1/messages',
-    'https://api.deepseek.com:8443/anthropic/v1/messages',
-    'https://api.deepseek.com/anthropic//v1/messages',
     'https://api.deepseek.com/anthropic/v1/messages?x=1',
+    'https://api.deepseek.com/anthropic/v1/messages#frag',
+    'file:///etc/passwd/messages',
     'relative/path',
   ];
   for (const endpoint of attempts) {
@@ -75,6 +75,35 @@ test('refuses every endpoint but the pinned DeepSeek Anthropic messages URL', ()
   assert.throws(() => createDeepSeekTransport({ endpoint: ENDPOINT, apiKey: 'short', pricing: PRICING }), /INVALID_CREDENTIAL/);
   assert.throws(() => createDeepSeekTransport({ endpoint: ENDPOINT, apiKey: KEY, pricing: { ...PRICING, denominator: 0 } }), /INVALID_PRICING/);
   assert.doesNotThrow(() => createDeepSeekTransport({ endpoint: ENDPOINT, apiKey: KEY, pricing: PRICING }));
+  // Omitting the endpoint keeps the current pinned default.
+  assert.doesNotThrow(() => createDeepSeekTransport({ apiKey: KEY, pricing: PRICING }));
+});
+
+test('accepts an operator-pinned endpoint and calls exactly its normalized href', async () => {
+  // Three spellings of one endpoint: the frozen href is the only target any call uses.
+  for (const [endpoint, expected] of [
+    ['https://model.invalid:8443/v1/messages', 'https://model.invalid:8443/v1/messages'],
+    ['https://MODEL.invalid:443/v1/messages', 'https://model.invalid/v1/messages'],
+    ['https://model.invalid/v1/messages', 'https://model.invalid/v1/messages'],
+  ] as const) {
+    const { fetchImpl, calls } = fakeFetch(() => messageResponse());
+    const result = await createDeepSeekTransport({ endpoint, apiKey: KEY, pricing: PRICING, fetch: fetchImpl }).execute(payloadFor());
+    assert.equal('proposal' in result, true);
+    assert.deepEqual(
+      calls.map(entry => entry.url),
+      [expected],
+    );
+    assert.equal(JSON.stringify(result).includes('model.invalid'), false);
+  }
+});
+
+test('accepts a plain http endpoint only with the explicit acknowledgement', async () => {
+  const pinned = 'http://192.0.2.10:8080/v1/messages';
+  assert.throws(() => createDeepSeekTransport({ endpoint: pinned, apiKey: KEY, pricing: PRICING, fetch: fakeFetch(() => messageResponse()).fetchImpl }), /INVALID_ENDPOINT/);
+  assert.throws(() => createDeepSeekTransport({ endpoint: pinned, allowInsecureHttp: false, apiKey: KEY, pricing: PRICING, fetch: fakeFetch(() => messageResponse()).fetchImpl }), /INVALID_ENDPOINT/);
+  const { fetchImpl, calls } = fakeFetch(() => messageResponse());
+  await createDeepSeekTransport({ endpoint: pinned, allowInsecureHttp: true, apiKey: KEY, pricing: PRICING, fetch: fetchImpl }).execute(payloadFor());
+  assert.equal(calls[0]?.url, pinned);
 });
 
 test('dispatches one nonstreaming, thinking-disabled JSON request with host-only credentials', async () => {
@@ -179,7 +208,7 @@ test('counts the system prompt inside the pre-dispatch input bound', async () =>
 });
 
 test('refuses redirects without following or re-sending them', async () => {
-  const { fetchImpl, calls } = fakeFetch(() => new Response(null, { status: 307, headers: { location: 'https://evil.example/collect' } }));
+  const { fetchImpl, calls } = fakeFetch(() => new Response(null, { status: 307, headers: { location: 'https://collect.invalid/collect' } }));
   const result = await transport(fetchImpl).execute(payloadFor());
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.init.redirect, 'manual');
@@ -250,4 +279,59 @@ test('keeps validated usage on a refused content response', async () => {
   const result = (await transport(fetchImpl).execute(payloadFor())) as { observedUsage?: { inputTokens: number; outputTokens: number } };
   assert.equal(result.observedUsage?.inputTokens, 120);
   assert.equal(result.observedUsage?.outputTokens, 40);
+});
+
+const runLimits = (overrides: Partial<{ totalModelCalls: number; perRunInputTokens: number; perRunOutputTokens: number }> = {}) => ({
+  totalModelCalls: 24,
+  perRunInputTokens: 400000,
+  perRunOutputTokens: 80000,
+  ...overrides,
+});
+
+test('replaces the provisional charge with observed 2xx usage and reports an unverified estimate', async () => {
+  const limiter = createRunUsageLimiter(runLimits());
+  const { fetchImpl } = fakeFetch(() => messageResponse());
+  const subject = createDeepSeekTransport({ endpoint: ENDPOINT, apiKey: KEY, pricing: PRICING, fetch: fetchImpl, runLimiter: limiter });
+  await subject.execute(payloadFor({ providerRequestId: 'req-a' }));
+  assert.deepEqual(limiter.countersFor('task-calc-001', 'run-001'), {
+    taskId: 'task-calc-001',
+    runId: 'run-001',
+    calls: 1,
+    inputTokensCharged: 120,
+    outputTokensCharged: 40,
+  });
+  assert.deepEqual(limiter.reportFor({ taskId: 'task-calc-001', runId: 'run-001', callId: 'req-a' }), {
+    callId: 'req-a',
+    inputTokens: 120,
+    outputTokens: 40,
+    costUsd: 0.00016,
+    costLabel: 'estimate-unverified',
+  });
+});
+
+test('keeps the full admitted maxima for every uncertain or usage-less outcome', async () => {
+  // The mutation this row kills: charging zero when usage is uncertain.
+  const cases: readonly { response: () => Promise<Response>; label: string }[] = [
+    { response: () => Promise.reject(new DOMException('aborted', 'TimeoutError')), label: 'timeout' },
+    { response: () => Promise.reject(new TypeError('fetch failed')), label: 'network' },
+    { response: () => Promise.reject(new DOMException('aborted', 'AbortError')), label: 'abort' },
+    { response: async () => new Response('{"error":"rate"}', { status: 429 }), label: '429' },
+    { response: async () => new Response('{"error":"boom"}', { status: 503 }), label: '5xx' },
+    { response: async () => new Response('not json', { status: 200 }), label: 'malformed body' },
+    { response: async () => messageResponse({ usage: undefined }), label: 'usage-less body' },
+  ];
+  for (const { response, label } of cases) {
+    const limiter = createRunUsageLimiter(runLimits());
+    const { fetchImpl, calls } = fakeFetch(response);
+    const subject = createDeepSeekTransport({ endpoint: ENDPOINT, apiKey: KEY, pricing: PRICING, fetch: fetchImpl, runLimiter: limiter });
+    await subject.execute(payloadFor({ providerRequestId: 'req-a', timeoutMs: 5 }));
+    assert.equal(calls.length, 1, label);
+    assert.deepEqual(limiter.countersFor('task-calc-001', 'run-001'), { taskId: 'task-calc-001', runId: 'run-001', calls: 1, inputTokensCharged: 2000, outputTokensCharged: 1000 }, label);
+    // Unknown usage is never zero and never labelled as an observed cost.
+    assert.deepEqual(
+      limiter.reportFor({ taskId: 'task-calc-001', runId: 'run-001', callId: 'req-a' }),
+      { callId: 'req-a', inputTokens: 'unknown', outputTokens: 'unknown', costUsd: 'unknown', costLabel: 'unknown' },
+      label,
+    );
+  }
 });
