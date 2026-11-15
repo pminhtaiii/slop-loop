@@ -14,7 +14,6 @@ import {
   fitsCounters,
   freezeCounters,
   isRecord,
-  maxWork,
   planClarification,
   planFinalValidation,
   planIndexBatch,
@@ -25,7 +24,6 @@ import {
   planSummary,
   remainingCounters,
   subtractCounters,
-  type BudgetReservationPlanV1,
   type BudgetReservationPlanResultV1,
   type BudgetCounters,
 } from './budget-ledger-counters.ts';
@@ -152,39 +150,39 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   }
 
   public reserveSnapshotAdmission(): QuestionBudgetReservationResultV1 {
-    return this.admit(planSnapshotAdmission(this.profile));
+    return this.admit(() => planSnapshotAdmission(this.profile));
   }
 
   public reserveRepositoryOperation(kind: 'list' | 'search' | 'read'): QuestionBudgetReservationResultV1 {
-    return this.admit(planRepositoryOperation(this.profile, this.available(), kind));
+    return this.admit(() => planRepositoryOperation(this.profile, this.available(), kind));
   }
 
   public reserveFinalValidation(): QuestionBudgetReservationResultV1 {
-    return this.admit(planFinalValidation(this.profile, this.available()));
+    return this.admit(() => planFinalValidation(this.profile, this.available()));
   }
 
   public reserveSummary(projectedBytes: number): QuestionBudgetReservationResultV1 {
-    return this.admit(planSummary(this.available(), projectedBytes));
+    return this.admit(() => planSummary(this.available(), projectedBytes));
   }
 
   public reserveClarification(): QuestionBudgetReservationResultV1 {
-    return this.admit(planClarification(this.available()));
+    return this.admit(() => planClarification(this.available()));
   }
 
   public reserveModelCall(compiledInputTokens: number): QuestionBudgetReservationResultV1 {
-    return this.admit(planModelCall(this.profile, this.pricing, this.available(), compiledInputTokens));
+    return this.admit(() => planModelCall(this.profile, this.pricing, this.available(), compiledInputTokens));
   }
 
   public reserveRetrievalQuery(): QuestionBudgetReservationResultV1 {
-    return this.admit(planRetrievalQuery(this.profile, this.available()));
+    return this.admit(() => planRetrievalQuery(this.profile, this.available()));
   }
 
   public reserveIndexBatch(input: unknown): QuestionBudgetReservationResultV1 {
-    return this.admit(planIndexBatch(this.profile, input));
+    return this.admit(() => planIndexBatch(this.profile, input));
   }
 
   public cancel(): void {
-    if (this.status !== 'open') return;
+    if (this.status !== 'open' && this.status !== 'blocked') return;
     this.status = 'cancelled';
     this.terminalReason = 'cancelled';
     for (const reservation of this.reservations.values()) {
@@ -195,15 +193,12 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     }
   }
 
-  private reserve(
-    kind: QuestionBudgetOperationKindV1,
-    counters: BudgetCounters,
-    maxOperationMs: number,
-    work = maxWork(counters),
-    modelBounds?: { readonly inputTokens: number; readonly outputTokens: number },
-  ): QuestionBudgetReservationResultV1 {
+  private admit(planReservation: () => BudgetReservationPlanResultV1): QuestionBudgetReservationResultV1 {
     if (this.status !== 'open') return { ok: false, reasonCode: this.terminalReason ?? 'accounting-unknown' };
     if (this.activeReservationId !== undefined) return { ok: false, reasonCode: 'busy' };
+    const result = planReservation();
+    if (!result.ok) return result.terminal ? this.exhaust(result.reasonCode) : { ok: false, reasonCode: result.reasonCode };
+    const { kind, counters, maxOperationMs, maximumWork, maximumInputTokens, maximumOutputTokens } = result.plan;
 
     const now = this.now();
     if (!Number.isFinite(now) || now < 0) return this.exhaust('elapsed-deadline');
@@ -220,12 +215,12 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     const internal: InternalReservation = {
       id: 'qb-' + this.nextReservation,
       kind,
-      maximumWork: Object.freeze({ ...work }),
+      maximumWork,
       reservedCounters: counters,
       deadlineAt,
       controller: new AbortController(),
-      maximumInputTokens: modelBounds?.inputTokens,
-      maximumOutputTokens: modelBounds?.outputTokens,
+      maximumInputTokens,
+      maximumOutputTokens,
       status: 'reserved',
       holdReason: undefined,
       startedAt: undefined,
@@ -238,13 +233,6 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
 
   private available(): BudgetCounters {
     return availableCounters(this.consumed, this.reserved, counterLimits(this.profile));
-  }
-
-  private admit(result: BudgetReservationPlanResultV1): QuestionBudgetReservationResultV1 {
-    if (!result.ok) return result.terminal ? this.exhaust(result.reasonCode) : { ok: false, reasonCode: result.reasonCode };
-    const plan: BudgetReservationPlanV1 = result.plan;
-    const modelBounds = plan.maximumInputTokens === undefined || plan.maximumOutputTokens === undefined ? undefined : { inputTokens: plan.maximumInputTokens, outputTokens: plan.maximumOutputTokens };
-    return this.reserve(plan.kind, plan.counters, plan.maxOperationMs, plan.maximumWork, modelBounds);
   }
 
   private exhaust(reasonCode: QuestionBudgetRefusalCodeV1): QuestionBudgetReservationResultV1 {

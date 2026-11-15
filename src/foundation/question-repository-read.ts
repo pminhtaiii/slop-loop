@@ -94,6 +94,7 @@ export class QuestionRepositoryReader {
             limits,
             snapshotReader: this.snapshotReader,
             cursors: this.cursors,
+            hasCursorCapacity: () => this.hasCursorCapacity(limits.maxCursors),
             returnedBytes: this.returnedBytes,
           },
           { path, cursor: cursor?.kind === 'directory' ? cursor : undefined },
@@ -164,6 +165,7 @@ export class QuestionRepositoryReader {
             limits,
             snapshotReader: this.snapshotReader,
             cursors: this.cursors,
+            hasCursorCapacity: () => this.hasCursorCapacity(limits.maxCursors),
             returnedBytes: this.returnedBytes,
           },
           { query, pathPrefix, cursor: cursor?.kind === 'search' ? cursor : undefined },
@@ -259,6 +261,14 @@ export class QuestionRepositoryReader {
 
   private cursorIsValid(value: unknown): value is string {
     return typeof value === 'string' && value.length >= 8 && value.length <= 512 && /^[A-Za-z0-9._~-]+$/u.test(value);
+  }
+
+  private hasCursorCapacity(maxCursors: number): boolean {
+    const now = Date.now();
+    for (const [id, cursor] of this.cursors) {
+      if (cursor.expiresAt <= now) this.cursors.delete(id);
+    }
+    return this.cursors.size < maxCursors;
   }
 
   private getActiveCursor(cursorId: string | undefined): CursorState | undefined {

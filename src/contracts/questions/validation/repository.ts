@@ -163,7 +163,7 @@ function validateCoverage(input: Record<string, unknown>, payloadKeys: readonly 
     if (!isOneOf(reason, OMISSION_REASONS) || reasons.includes(reason)) return invalidRepository<never>('repositoryResult.omissionReasons');
     reasons.push(reason);
   }
-  if ((coverage === 'complete' && reasons.length > 0) || (nextCursor !== undefined && (!validCursor(nextCursor) || reasons.includes('scan-limit')))) {
+  if ((coverage === 'complete' && (reasons.length > 0 || nextCursor !== undefined)) || (nextCursor !== undefined && (!validCursor(nextCursor) || reasons.includes('scan-limit')))) {
     return invalidRepository<never>('repositoryResult.coverage');
   }
   const result = { coverage, omissionReasons: Object.freeze(reasons) } as const;

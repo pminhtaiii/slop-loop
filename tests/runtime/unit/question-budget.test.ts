@@ -494,3 +494,87 @@ test('summary projection and clarification rounds consume their task-wide byte a
   );
   assert.equal(created.value.snapshot().consumed.clarificationRounds, 1);
 });
+
+test('cancel resolves an in-flight operation before the adapter settles', async () => {
+  const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => 10 });
+  assert.ok(created.ok);
+  const read = created.value.reserveRepositoryOperation('read');
+  assert.ok(read.ok);
+  const response = Promise.withResolvers<{ scannedFiles: number }>();
+  let accountCalls = 0;
+  const running = read.value.execute(
+    () => response.promise,
+    work => {
+      accountCalls += 1;
+      return { kind: 'work', work };
+    },
+  );
+  created.value.cancel();
+  const observed = await Promise.race([running, new Promise(resolve => setImmediate(() => resolve('still pending')))]);
+  response.reject(new Error('adapter failed after cancellation'));
+  assert.deepEqual(observed, { ok: false, reasonCode: 'cancelled' });
+  assert.equal(accountCalls, 0);
+  assert.equal(created.value.snapshot().reserved.scannedBytes, validRuntime.maxScannedBytes);
+});
+
+test('a deadline resolves an in-flight operation before the adapter settles', async () => {
+  const created = createQuestionBudgetLedger(validProfile({ maxElapsedMsTask: 50 }), { pricing });
+  assert.ok(created.ok);
+  const read = created.value.reserveRepositoryOperation('read');
+  assert.ok(read.ok);
+  const response = Promise.withResolvers<{ scannedFiles: number }>();
+  let accountCalls = 0;
+  const running = read.value.execute(
+    () => response.promise,
+    work => {
+      accountCalls += 1;
+      return { kind: 'work', work };
+    },
+  );
+  assert.equal(read.value.signal.aborted, false);
+  const observed = Promise.race([running, new Promise(resolve => read.value.signal.addEventListener('abort', () => setImmediate(() => resolve('still pending')), { once: true }))]);
+  const result = await observed;
+  response.resolve({ scannedFiles: 1 });
+  assert.deepEqual(result, { ok: false, reasonCode: 'elapsed-deadline' });
+  assert.equal(accountCalls, 0);
+  assert.equal(created.value.snapshot().reserved.scannedBytes, validRuntime.maxScannedBytes);
+});
+
+test('a busy admission cannot exhaust the ledger even when the planner would refuse', async () => {
+  const created = createQuestionBudgetLedger(validProfile({ maxToolCalls: 1 }), { pricing, now: () => 10 });
+  assert.ok(created.ok);
+  const read = created.value.reserveRepositoryOperation('read');
+  assert.ok(read.ok);
+  const response = Promise.withResolvers<{ scannedFiles: number }>();
+  const running = read.value.execute(
+    () => response.promise,
+    work => ({ kind: 'work', work }),
+  );
+  try {
+    assert.deepEqual(created.value.reserveRepositoryOperation('read'), { ok: false, reasonCode: 'busy' });
+    assert.equal(created.value.snapshot().status, 'open');
+  } finally {
+    response.resolve({ scannedFiles: 1 });
+    await running;
+  }
+  assert.equal(created.value.snapshot().consumed.toolCalls, 1);
+});
+
+test('cancelling a blocked ledger preserves the hold and prevents reconciliation reopening it', async () => {
+  const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => 10 });
+  assert.ok(created.ok);
+  const call = created.value.reserveModelCall(100);
+  assert.ok(call.ok);
+  assert.deepEqual(
+    await call.value.execute(
+      async () => ({ status: 'unknown', reasonCode: 'timeout' }),
+      usage => ({ kind: 'model-usage', usage }),
+    ),
+    { ok: false, reasonCode: 'accounting-unknown' },
+  );
+  created.value.cancel();
+  assert.equal(created.value.snapshot().status, 'cancelled');
+  assert.equal(created.value.snapshot().reserved.billableTokens, 600);
+  assert.equal(call.value.reconcile({ kind: 'model-usage', usage: { status: 'complete', inputTokens: 80, outputTokens: 12 } }).ok, false);
+  assert.deepEqual(created.value.reserveModelCall(100), { ok: false, reasonCode: 'cancelled' });
+});

@@ -78,9 +78,13 @@ export class BudgetReservationEngine implements QuestionBudgetReservationPortV1 
   public async execute<T>(operation: (context: QuestionBudgetExecutionContextV1) => Promise<T>, account: (value: T) => QuestionBudgetAccountingReceiptV1): Promise<QuestionBudgetExecutionResultV1<T>> {
     const started = this.owner._start(this.internal);
     if (!started.ok) return started;
-    let value: T;
+    const aborted = Symbol('reservation-aborted');
+    const cancellation = Promise.withResolvers<typeof aborted>();
+    const onAbort = () => cancellation.resolve(aborted);
+    this.signal.addEventListener('abort', onAbort, { once: true });
+    let value: T | typeof aborted;
     try {
-      value = await operation({ signal: this.signal, deadlineAt: this.deadlineAt, remainingMs: started.value });
+      value = await Promise.race([cancellation.promise, operation({ signal: this.signal, deadlineAt: this.deadlineAt, remainingMs: started.value })]);
     } catch (error) {
       if (this.signal.aborted) {
         this.owner._ignoreLate(this.internal);
@@ -89,11 +93,13 @@ export class BudgetReservationEngine implements QuestionBudgetReservationPortV1 
       }
       this.owner._hold(this.internal, 'accounting-unknown');
       throw error;
+    } finally {
+      this.signal.removeEventListener('abort', onAbort);
     }
     const responseStatus = this.owner._checkResponse(this.internal);
-    if (responseStatus !== undefined) {
+    if (value === aborted || responseStatus !== undefined) {
       this.owner._ignoreLate(this.internal);
-      return { ok: false, reasonCode: responseStatus };
+      return { ok: false, reasonCode: responseStatus ?? 'cancelled' };
     }
     let receipt: QuestionBudgetAccountingReceiptV1;
     try {

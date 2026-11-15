@@ -20,6 +20,7 @@ export interface DirectoryOperationContext {
   readonly limits: QuestionRepositoryReadLimits;
   readonly snapshotReader: QuestionRepositorySnapshotReader;
   readonly cursors: Map<string, CursorState>;
+  readonly hasCursorCapacity: () => boolean;
   readonly returnedBytes: ReturnedByteCounter;
 }
 
@@ -66,7 +67,7 @@ export async function listDirectoryGuarded(
   const after = await context.snapshotReader.checkBinding(control);
   if (after) return after;
   const resumable = more && !scanLimited;
-  if (resumable && context.cursors.size >= context.limits.maxCursors) return failure('exhausted', 'output-limit');
+  if (resumable && !context.hasCursorCapacity()) return failure('exhausted', 'output-limit');
   const nextCursor = resumable ? createCursorId() : undefined;
   const result = {
     status: 'ok',

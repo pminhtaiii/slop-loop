@@ -763,3 +763,67 @@ test('question repository keeps root selection host-owned and exposes no mutatio
   });
   assert.deepEqual(reads, []);
 });
+
+test('a new directory page reclaims cursor capacity that expires during the guarded operation', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const fixture = makeTools({
+    files: new Map([
+      ['a.py', fileBytes],
+      ['b.py', fileBytes],
+    ]),
+    limits: { maxPageEntries: 1, maxCursors: 1 },
+  });
+  const reader = questionTools(fixture.tools);
+  const first = await reader.listDirectory({ path: '.' }, control());
+  if (first.status !== 'ok' || !first.nextCursor) assert.fail('expected an initial cursor');
+
+  fixture.guard.beforeExecute = () => t.mock.timers.tick(1_001);
+  const next = await reader.listDirectory({ path: '.' }, control());
+  if (next.status !== 'ok' || !next.nextCursor) assert.fail('expected a cursor in the reclaimed slot');
+  assert.notEqual(next.nextCursor, first.nextCursor);
+  assert.deepEqual(await reader.listDirectory({ path: '.', cursor: first.nextCursor }, control()), { status: 'invalid', reasonCode: 'invalid-cursor' });
+});
+
+test('snapshot admission can retry after an interrupted or rejected acquisition', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const manifest = [{ path: 'src/example.py', originalByteDigest: computeFileDigest(fileBytes) }];
+  const lease = {
+    snapshot: {
+      snapshotId: 'snapshot-1',
+      binding,
+      manifestDigest: computeSourceManifestDigest(manifest),
+      acquisitionId: 'acquisition-1',
+      admissionLimits: { maxFiles: questionLimits.maxScannedFiles, maxBytes: 1_024, maxElapsedMs: 1_000 },
+      manifest,
+    },
+    readFile: async () => ({ status: 'ok', bytes: Buffer.from(fileBytes), scannedBytes: fileBytes.byteLength }),
+  };
+  const controller = new AbortController();
+  let acquisitions = 0;
+  const fixture = makeTools({
+    acquireSnapshot: async () => {
+      acquisitions += 1;
+      if (acquisitions === 1) {
+        controller.abort();
+      } else if (acquisitions === 2) {
+        t.mock.timers.tick(5_001);
+      } else if (acquisitions === 3) {
+        return {
+          get snapshot() {
+            throw new Error('fixture lease failed during inspection');
+          },
+        };
+      }
+      return lease;
+    },
+  });
+  const reader = questionTools(fixture.tools);
+  const request = { path: 'src/example.py', startLine: 2, endLine: 2 };
+  assert.deepEqual(await reader.readSpan(request, { ...control(), signal: controller.signal }), { status: 'cancelled', reasonCode: 'cancelled' });
+  assert.deepEqual(await reader.readSpan(request, control()), { status: 'exhausted', reasonCode: 'deadline' });
+  assert.deepEqual(await reader.readSpan(request, control()), { status: 'unavailable', reasonCode: 'unreadable' });
+  const retry = await reader.readSpan(request, control());
+  if (retry.status !== 'ok') assert.fail('expected the next operation to admit the snapshot');
+  assert.equal(retry.span.excerpt, 'two');
+  assert.equal(acquisitions, 4);
+});

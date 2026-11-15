@@ -102,6 +102,15 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     return absoluteTarget.startsWith(prefix) ? toPosix(absoluteTarget.slice(prefix.length)) : toPosix(absoluteTarget);
   }
 
+  private async checkedAbsolute(canonicalPath: string, control: QuestionRepositoryOperationControl): Promise<string> {
+    const expected = this.absolute(canonicalPath);
+    checkControl(control);
+    const resolved = await realpath(expected);
+    checkControl(control);
+    if (resolved !== expected) throw new Error('WORKSPACE_ESCAPE: Controlled traversal must stay on canonical workspace paths');
+    return resolved;
+  }
+
   async stat(canonicalPath: string, control?: QuestionRepositoryOperationControl): Promise<FileStat> {
     if (control) checkControl(control);
     const result = toFileStat(await stat(this.absolute(canonicalPath)));
@@ -140,7 +149,7 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
   async readDirBounded(canonicalPath: string, maxEntries: number, control: QuestionRepositoryOperationControl): Promise<readonly TrustedFilesystemEntry[]> {
     if (!positiveLimit(maxEntries)) throw new Error('INVALID_LIMITS: maxEntries must be a positive safe integer');
     checkControl(control);
-    const directory = await opendir(this.absolute(canonicalPath));
+    const directory = await opendir(await this.checkedAbsolute(canonicalPath, control));
     const entries: TrustedFilesystemEntry[] = [];
     for await (const entry of directory) {
       checkControl(control);
@@ -244,8 +253,8 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
   }
 
   private async readBytes(canonicalPath: string, maxBytes?: number, control?: QuestionRepositoryOperationControl): Promise<Buffer> {
-    if (control) checkControl(control);
-    const handle = await open(this.absolute(canonicalPath), 'r');
+    const path = control ? await this.checkedAbsolute(canonicalPath, control) : this.absolute(canonicalPath);
+    const handle = await open(path, 'r');
     try {
       if (control) checkControl(control);
       if (maxBytes === undefined) {

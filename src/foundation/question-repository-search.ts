@@ -29,6 +29,7 @@ export interface SearchOperationContext {
   readonly limits: QuestionRepositoryReadLimits;
   readonly snapshotReader: QuestionRepositorySnapshotReader;
   readonly cursors: Map<string, CursorState>;
+  readonly hasCursorCapacity: () => boolean;
   readonly returnedBytes: ReturnedByteCounter;
 }
 
@@ -151,7 +152,7 @@ export async function searchLiteralGuarded(
   if (after) return after;
   let nextCursor: string | undefined;
   if (hasMore && !stopped && !omissions.includes('scan-limit') && !omissions.includes('output-limit')) {
-    if (context.cursors.size >= context.limits.maxCursors) {
+    if (!context.hasCursorCapacity()) {
       if (hits.length === 0) return failure('exhausted', 'output-limit');
       addOmission(omissions, 'output-limit');
     } else {

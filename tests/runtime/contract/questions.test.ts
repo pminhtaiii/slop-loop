@@ -513,6 +513,8 @@ test('repository tool results enforce bounded evidence and distinguish partial c
   const hit = { span, line: 12, column: 1, matchLength: 8 };
   const search = { status: 'ok', hits: [hit], coverage: 'partial', omissionReasons: ['scan-limit'] };
   assert.equal(validateDirectoryPage(page, repositoryLimits).ok, true);
+  assert.equal(validateDirectoryPage({ ...page, nextCursor: 'cursor-001' }, repositoryLimits).ok, false);
+  assert.equal(validateSearchPage({ ...search, coverage: 'complete', omissionReasons: [], nextCursor: 'cursor-001' }, repositoryLimits).ok, false);
   assert.equal(validateDirectoryPage({ ...page, entries: [{ path: 'C:src', kind: 'directory' }] }, repositoryLimits).ok, false);
   assert.equal(validateSpanResult({ status: 'ok', span }, repositoryLimits).ok, true);
   assert.equal(validateSpanResult({ status: 'invalid', reasonCode: 'out-of-range' }, repositoryLimits).ok, true);

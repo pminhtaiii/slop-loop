@@ -65,17 +65,25 @@ export class QuestionRepositorySnapshotReader {
   }
 
   async ensureSnapshot(control: QuestionRepositoryOperationControl): Promise<AdmittedSnapshot | ToolFailure> {
+    while (this.admissionPromise) {
+      const active = activeControl(control);
+      if (active) return active;
+      await this.admissionPromise;
+    }
+    const active = activeControl(control);
+    if (active) return active;
     if (this.admittedSnapshot) return this.admittedSnapshot;
     if (this.admissionFailure) return this.admissionFailure;
-    if (this.admissionPromise) {
-      const pendingFailure = await this.admissionPromise;
-      return pendingFailure ?? this.admittedSnapshot ?? failure('unavailable', 'unsupported-adapter');
-    }
     this.admissionPromise = this.acquireSnapshot(control);
-    const result = await this.admissionPromise;
-    this.admissionPromise = undefined;
-    if (result && !(control.work && result.status === 'exhausted')) this.admissionFailure = result;
-    return result ?? this.admittedSnapshot ?? failure('unavailable', 'unsupported-adapter');
+    try {
+      const result = await this.admissionPromise;
+      const stopped = activeControl(control);
+      if (stopped) return stopped;
+      if (result && result.status !== 'cancelled' && result.status !== 'exhausted') this.admissionFailure = result;
+      return result ?? this.admittedSnapshot ?? failure('unavailable', 'unsupported-adapter');
+    } finally {
+      this.admissionPromise = undefined;
+    }
   }
 
   async checkBinding(control: QuestionRepositoryOperationControl): Promise<ToolFailure | undefined> {
