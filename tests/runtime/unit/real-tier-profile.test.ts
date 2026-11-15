@@ -1,21 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_REAL_TIER_ENDPOINT, loadRealTierProfile, type RealTierProfile } from '../../../src/runtime/real-tier-profile.ts';
 import { sha256Text, type Validation } from '../../../src/uc01/contracts.ts';
-
 // Reserved documentation addresses (RFC 5737) and synthetic values only: no real host, port or key.
 const repoRoot = mkdtempSync(join(tmpdir(), 't047-repository-'));
 const outsideRoot = mkdtempSync(join(tmpdir(), 't047-outside-'));
 const KEY = 'synthetic-key-0123456789abcdef';
+const DIGEST_KEY = 'ab'.repeat(32);
 const MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
 const HTTPS = 'https://192.0.2.10:8443/v1/messages';
 const HTTP = 'http://192.0.2.10:8080/v1/messages';
 const sha = (seed: string): string => sha256Text(seed);
 
-const PROVIDER = { endpoint: HTTPS, model: MODEL, mode: 'nonstreaming', timeoutMs: 60000 } as const;
+const PROVIDER = { endpoint: HTTPS, model: MODEL, mode: 'nonstreaming', timeoutMs: 60000, endpointDigestKey: DIGEST_KEY } as const;
 const PRICING = { pricingId: 'placeholder-unverified', denominator: 1000000, inputRate: 2000000, cacheRate: 2000000, outputRate: 8000000, overheadRate: 0 };
 const LIMITS = {
   totalModelCalls: 24,
@@ -77,7 +78,8 @@ test('loads a valid external profile and pins the endpoint identity', () => {
   assert.equal(value.schema, 'uc03-real-tier-profile/1');
   assert.equal(value.endpoint.href, HTTPS);
   assert.equal(value.endpoint.scheme, 'https');
-  assert.equal(value.endpoint.endpointDigest, sha256Text(HTTPS));
+  assert.equal(value.endpoint.endpointDigest, createHmac('sha256', DIGEST_KEY).update(HTTPS).digest('hex'));
+  assert.notEqual(value.endpoint.endpointDigest, sha256Text(HTTPS));
   assert.equal(value.endpoint.insecureHttpAcknowledged, false);
   assert.equal(value.endpoint.model, MODEL);
   assert.equal(value.transport, 'https');
@@ -87,6 +89,43 @@ test('loads a valid external profile and pins the endpoint identity', () => {
   assert.equal(value.artifacts.retainRawStreams, false);
   assert.equal(value.catalog.path, join(repoRoot, 'fixtures', 'uc03', 'catalog.json'));
   assert.ok(Object.isFrozen(value));
+});
+
+test('keys the endpoint digest, deterministically for one key and href', () => {
+  const first = loaded(load(profileOf())).endpoint.endpointDigest;
+  const second = loaded(load(profileOf())).endpoint.endpointDigest;
+  assert.match(first, /^[a-f0-9]{64}$/u);
+  assert.equal(first, second);
+  const otherKey = loaded(load(profileOf({ provider: { ...PROVIDER, endpointDigestKey: '0'.repeat(64) } }))).endpoint.endpointDigest;
+  assert.notEqual(first, otherKey);
+});
+
+test('refuses a non-default endpoint without a valid digest key, and accepts the public default without one', () => {
+  const { endpoint, model: providerModel, mode, timeoutMs } = PROVIDER;
+  const keyless = { endpoint, model: providerModel, mode, timeoutMs };
+  for (const provider of [keyless, { ...PROVIDER, endpointDigestKey: 'AB'.repeat(32) }, { ...PROVIDER, endpointDigestKey: 'ab'.repeat(31) }]) {
+    assert.equal(reasonOf(load(profileOf({ provider }))), 'endpoint-digest-key-missing');
+  }
+
+  const value = loaded(load(profileOf({ provider: { ...keyless, endpoint: undefined, model: undefined } }), { ANTHROPIC_MODEL: MODEL }));
+  assert.equal(value.endpoint.href, DEFAULT_REAL_TIER_ENDPOINT);
+  assert.equal(value.endpoint.endpointDigest, sha256Text(DEFAULT_REAL_TIER_ENDPOINT));
+});
+
+test('never serializes the digest key', () => {
+  const sentinel = 'ab'.repeat(32);
+  const value = loaded(load(profileOf({ provider: { ...PROVIDER, endpointDigestKey: sentinel } })));
+  const json = JSON.stringify(value);
+  assert.equal(json.includes(sentinel), false);
+  assert.equal(JSON.stringify(Object.entries(value)).includes(sentinel), false);
+  assert.equal(json.includes(KEY), false);
+  // Like the credential, the key stays an in-memory, non-enumerable handle.
+  assert.equal(Object.keys(value).includes('endpointDigestKey'), false);
+  assert.equal(value.endpointDigestKey, sentinel);
+  assert.equal(Object.keys(value.endpoint).includes('endpointDigestKey'), false);
+
+  const refused = load(profileOf({ provider: { ...PROVIDER, endpointDigestKey: sentinel }, campaignId: 'x'.repeat(5000) }));
+  assert.equal(JSON.stringify(refused).includes(sentinel), false);
 });
 
 test('serialization, digest input and enumerable keys carry only the digest and the scheme', () => {
@@ -212,6 +251,13 @@ test('refuses any profile, state or artifact path inside the repository root', (
 
   assert.equal(reasonOf(load(profileOf({ stateRoot: join(repoRoot, 'state') }))), 'state-root-inside-repository');
   assert.equal(reasonOf(load(profileOf({ artifacts: { retainRoot: join(repoRoot, 'artifacts'), retainRawStreams: false } }))), 'artifacts-inside-repository');
+});
+
+test('refuses a dot-dot-prefixed directory name inside the repository', () => {
+  // `..private` is a name inside the checkout, not the parent path `..`.
+  mkdirSync(join(repoRoot, '..private'), { recursive: true });
+  assert.equal(reasonOf(load(profileOf({ stateRoot: join(repoRoot, '..private', 'state') }))), 'state-root-inside-repository');
+  assert.equal(reasonOf(load(profileOf({ artifacts: { retainRoot: join(repoRoot, '..private'), retainRawStreams: false } }))), 'artifacts-inside-repository');
 });
 
 test('refuses any path that reaches the repository through a directory junction', t => {
