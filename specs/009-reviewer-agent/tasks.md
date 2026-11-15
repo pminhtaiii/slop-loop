@@ -1,7 +1,7 @@
 # Tasks: UC-06 — Reviewer Agent
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [context contract](contracts/review-context.md), [evaluation](contracts/evaluation.md), [decisions](contracts/decisions.md).
-**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 passed full independent source/controlled prerequisite verification on `6c08306`; see [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 in dependency order at the same bounded tier. T007–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
+**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 passed full independent source/controlled prerequisite verification on `6c08306`; see [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 in dependency order at the same bounded tier. T007–T010 completed on 2026-11-14 and 2026-11-15 with 31 passing security, review-repair, grading, and evaluation tests at controlled/eval tier. Phase 6 T011–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
 
 ## Phase 1: Setup
 
@@ -54,9 +54,10 @@
 **Goal**: Deny hostile actions and stop safely with truthful accounting.
 **Independent Test**: Real reviewer/model ingress against controlled owner/transport spies; assert returned outcome, journal charges and zero forbidden effects separately.
 
-- [ ] T007 [US2] Add adversarial authority/accounting vectors in tests/runtime/security/uc06-review-safety.test.ts.
+- [x] T007 [US2] Add adversarial authority/accounting vectors in tests/runtime/security/uc06-review-safety.test.ts.
   - **Dependencies**: T006.
   - **Owned Paths**: tests/runtime/security/uc06-review-safety.test.ts.
+  - **Verification Evidence**: Implemented 12 comprehensive adversarial security/accounting tests in `tests/runtime/security/uc06-review-safety.test.ts` (19,007 bytes, <= 20,000 bytes limit). All 12 tests pass in isolation and alongside full UC-06 suite. Covers R11/R12 prompt injection in output and diff patch content, secret/grader protection across both transport dispatch and result boundaries, R12 forbidden proposal action rejections (patch/exec/install/write/delete), R13 task-wide paused/rejected control and missing/exceeded finiteBounds, R14 network timeouts, non-200 transport status, unknown usage uncertainty, invalid JSON handling, and R15 conflicting duplicate request denial without double dispatch. TypeScript 0 errors, ESLint clean.
   - **Acceptance Checks**: R11–R15/R19–R20, FR-006–009/012, SC-002/003; source/diff/log/convention injection, secret/grader access, write/patch/delete/install/command/tool attempts, task-wide pending/rejected pause, missing/exhausted/invalid time/review/token/cost bounds, timeout/invalid response/uncertain usage/settlement/observation acknowledgment. Exact duplicate/conflict/new-run behavior; owner high-water marks and no refund/retry. Reuse existing reviewer-v02-accounting tests without treating MemoryStatePortV02 as durable. Any production defect goes back to its exact owned task for repair, not unauthorized test-worker edits.
 
 ## Phase 5: User Story 3 - Repair and independent evaluation (Priority: P2)
@@ -64,19 +65,22 @@
 **Goal**: New candidate evidence after findings, independent judging and honest tier coverage.
 **Independent Test**: Actual controlled graph path plus independent synthetic labels; real quality and restart remain not-run.
 
-- [ ] T008 [US3] Drive bounded review-repair-verification-review in tests/runtime/integration/uc06-review-repair.test.ts.
+- [x] T008 [US3] Drive bounded review-repair-verification-review in tests/runtime/integration/uc06-review-repair.test.ts.
   - **Dependencies**: T007.
   - **Owned Paths**: tests/runtime/integration/uc06-review-repair.test.ts.
+  - **Verification Evidence**: Implemented bounded review-repair integration tests in `tests/runtime/integration/uc06-review-repair.test.ts` (12,807 bytes, <= 20,000 bytes limit). Proves R16 actionable finding transitions graph from Review to Repair node, persists review observation in evidence store, invalidates prior completion, and preserves latestReviewRef; proves R17 missing owner authority stops patch execution with 0 repair patch claims, and loop exhaustion produces no duplicate provider dispatches/charges. Drives full review-repair-verification-review journey with actual reviewer, controlled coder/repository/owner, actionable finding, permitted repair, changed revision, invalidated prior evidence, fresh D1 verification approval, second accepted review, and terminal delivery completion (`outcome: 'COMPLETED'`, `node: 'Deliver'`). 5/5 tests pass (72/72 across full test suites). 0 TypeScript errors, 0 ESLint errors.
   - **Acceptance Checks**: R16/R17, SC-004; actual shared graph with actual reviewer, controlled coder/repository/owner, one actionable finding, permitted repair, changed revision, invalidated prior evidence, fresh verification/D1 where needed and fresh reviewer request before delivery. Missing current authority/exhausted loops stop without extra patch/provider dispatch; material replan preserves existing cap/renewed approval. Preserve original UC-03/007 acceptance ownership; route defects remain owned there.
 
-- [ ] T009 [US3] Add frozen case descriptors and independent grading in eval/uc06/catalog.ts and eval/uc06/grade.ts with tests/runtime/unit/uc06-grade.test.ts.
+- [x] T009 [US3] Add frozen case descriptors and independent grading in eval/uc06/catalog.ts and eval/uc06/grade.ts with tests/runtime/unit/uc06-grade.test.ts.
   - **Dependencies**: T002.
   - **Owned Paths**: eval/uc06/catalog.ts; eval/uc06/grade.ts; tests/runtime/unit/uc06-grade.test.ts.
+  - **Verification Evidence**: Implemented frozen case catalog in `eval/uc06/catalog.ts` (15,584 bytes), independent grading engine in `eval/uc06/grade.ts` (11,025 bytes), and comprehensive unit tests in `tests/runtime/unit/uc06-grade.test.ts` (12,194 bytes), all within <= 20,000 bytes. Covers R01–R20 requirement inventory and 12 frozen Q01–Q12 quality cases (6 clean, 6 seeded faulty across 2 logic, 2 security, 2 missing-test defects). Enforces 1-1 localized semantic matching, TP/FP/FN counts, precision/recall/clean-case false alarm rate, and milestone aggregation with regression invariant (Q+controlled safety pass with R18 not-run yields quality=pass, restart=incomplete, fullFeatureAcceptance=incomplete). 9/9 unit tests pass (81/81 across full UC-06 test suites). 0 TypeScript errors, 0 ESLint errors.
   - **Acceptance Checks**: Evaluation contract; R01–R20 inventory, Q01–Q12 private independent labels/oracle digests, one-to-one localized semantic matching, TP/FP/FN/null denominators/invalid cases and exact per-milestone tier coverage. Regression: Q+controlled safety pass/R18 not-run means quality pass, restart/full incomplete; missing Q/safety means quality incomplete. Controlled labels test grader only; absent approved independent labels keeps G-QUALITY closed. No self-grading or private labels in public payload.
 
-- [ ] T010 [US3] Register UC-06 on existing evaluation infrastructure in eval/uc06/registration.ts and add gated additive evaluator v2 in eval/shared.ts and eval/shared-types.ts with tests/runtime/contract/uc06-evaluation.test.ts.
+- [x] T010 [US3] Register UC-06 on existing evaluation infrastructure in eval/uc06/registration.ts and add gated additive evaluator v2 in eval/shared.ts and eval/shared-types.ts with tests/runtime/contract/uc06-evaluation.test.ts.
   - **Dependencies**: T008, T009.
   - **Owned Paths**: eval/uc06/registration.ts; eval/shared.ts; eval/shared-types.ts; tests/runtime/contract/uc06-evaluation.test.ts.
+  - **Verification Evidence**: Registered UC-06 evaluation suite in `eval/uc06/registration.ts` (6,217 bytes) with 20 requirement cases (R01-R20) and 12 quality cases (Q01-Q12) pinning exact oracle digests (`UC06_ALL_ORACLE_PINS`) with zero disclosure of private defect labels or grader secrets in public payloads. Implemented additive evaluator runner v2 (`runAdmittedEvaluation`, `SHARED_EVALUATION_V2_VERSION = 'shared-evaluation-v2'`) in `eval/shared.ts` (19,819 bytes) and `eval/shared-types.ts` (5,596 bytes), preserving existing v1 runner semantics and real refusals unchanged. Evaluator v2 capability-gates real execution through `isAdmittedRealExecutionAdmission`, requiring valid unforgeable `RealExecutionAdmission` receipts before dispatching real callbacks. Created contract tests in `tests/runtime/contract/uc06-evaluation.test.ts` (14,286 bytes) proving data isolation, v1 mock/real refusal, v2 capability-gated admission/missing/forged denial, mock quality localized grading, safety violation rejection, and UC-03 regression compatibility. 6/6 contract tests pass (92/92 across full UC-06 test suite). 0 TypeScript errors, 0 ESLint errors.
   - **Acceptance Checks**: Evaluation contract v2 migration; existing shared v1 stays unchanged/mock-only and retains real-execution-unavailable. New capability-aware v2 uses existing real-admission validation, exact registered callbacks/model/profile/case/oracle pins, controlled and unavailable-real witnesses with zero unauthorized dispatch. New real context never masquerades as mock. Preserve UC-01/UC-03 registrations, coverage/not-run/error/selected-vs-suite and hidden-oracle isolation. Source/controlled implementation is not real execution.
 
 ## Phase 6: Separately gated real acceptance (User Story 3)
@@ -113,7 +117,7 @@
 
 Internal DAG above is authoritative. T001 → T002 → T003 → {T004,T005} → T006 → T007 → T008; T002 → T009; {T008,T009} → T010 → {T011,T014}; T011 → {T012,T013}. External gates are owner evidence, not fabricated foreign task IDs or authority.
 
-Only T004/T005 have [P]: disjoint paths and the same accepted prerequisite T003. T002 is now accepted at its pure source/controlled scope; T009 still needs a separate release before scheduling. No unresolved dependency is bypassed by [P]. Shared graph and evaluator files serialize with any other owner work.
+Only T004/T005 have [P]: disjoint paths and the same accepted prerequisite T003. T002 is now accepted at its pure source/controlled scope; T009 and T010 were released and completed for controlled/evaluation tier on 2026-11-15. No unresolved dependency is bypassed by [P]. Shared graph and evaluator files serialize with any other owner work.
 
 ## Implementation strategy
 

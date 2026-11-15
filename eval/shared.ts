@@ -1,54 +1,41 @@
 import { canonicalDigest, validatePublicCase, type ExecutionLevel, type Json } from '../src/uc01/contracts.ts';
-
 import { array, executionLevels as levels, fail, member, object, sha, text } from './shared-validation.ts';
-
-import {
-  SHARED_EVALUATION_VERSION,
-  type SharedCase,
-  type RegisteredEvaluation,
-  type SharedExecutionContext,
-  type SharedGrade,
-  type EvaluationCallbacks,
-  type SharedSelection,
-  type SharedEvaluationOptions,
-  type SharedCaseResult,
-  type SharedEvaluationReport,
-} from './shared-types.ts';
-export { SHARED_EVALUATION_VERSION } from './shared-types.ts';
-export type {
-  SharedCase,
-  RegisteredEvaluation,
-  SharedExecutionContext,
-  SharedGrade,
-  EvaluationCallbacks,
-  RealExecutionAdmission,
-  RealExecutionBinding,
-  SharedSelection,
-  SharedEvaluationOptions,
-  SharedCaseResult,
-  SharedEvaluationReport,
-} from './shared-types.ts';
-
+import type * as ST from './shared-types.ts';
+import { SHARED_EVALUATION_VERSION, SHARED_EVALUATION_V2_VERSION } from './shared-types.ts';
+export * from './shared-types.ts';
 export { isAdmittedRealExecutionAdmission, issueRealExecutionAdmission } from './shared-admission.ts';
+import { isAdmittedRealExecutionAdmission } from './shared-admission.ts';
 
-const callbacks = new WeakMap<RegisteredEvaluation, EvaluationCallbacks>();
-const executions = new WeakMap<RegisteredEvaluation, Set<string>>();
+const callbacks = new WeakMap<ST.RegisteredEvaluation, ST.EvaluationCallbacks | ST.EvaluationCallbacksV2>();
+const executions = new WeakMap<ST.RegisteredEvaluation, Set<string>>();
 const reservedNamespaces = new Set<string>();
 const datasetDigests = new Map<string, string>();
 const oracleManifestDigests = new Map<string, string>();
-const oraclePins = new WeakMap<RegisteredEvaluation, Readonly<Record<string, string>>>();
-function freeze<T>(value: T): T {
-  if (value && typeof value === 'object') {
-    for (const item of Object.values(value)) freeze(item);
-    Object.freeze(value);
+const oraclePins = new WeakMap<ST.RegisteredEvaluation, Readonly<Record<string, string>>>();
+const defResult = {
+  status: 'not-run' as const,
+  reasonCode: 'registration-unavailable',
+  classification: 'not-observed' as const,
+  safety: null,
+  oracleDigest: null,
+  durationMs: null,
+  components: {},
+  usage: null,
+  usageState: 'not-applicable' as const,
+};
+const freeze = <T>(v: T): T => {
+  if (v && typeof v === 'object') {
+    for (const item of Object.values(v)) freeze(item);
+    Object.freeze(v);
   }
-  return value;
-}
-function snapshot<T>(value: T): T {
-  return freeze(structuredClone(value));
-}
-/** Registers only public data. Grading functions remain host-held and are never driver context. */
-export function registerEvaluation(value: unknown, handlers?: EvaluationCallbacks, expectedOracleDigests?: Readonly<Record<string, string>>): RegisteredEvaluation {
+  return v;
+};
+const snapshot = <T>(v: T): T => freeze(structuredClone(v));
+export function registerEvaluation<C extends ST.EvaluationCallbacks | ST.EvaluationCallbacksV2 = ST.EvaluationCallbacks>(
+  value: unknown,
+  handlers?: C,
+  expectedOracleDigests?: Readonly<Record<string, string>>,
+): ST.RegisteredEvaluation {
   const input = object(value, ['contractVersion', 'ucId', 'datasetId', 'datasetVersion', 'adapterVersion', 'graderVersion', 'provenance', 'cases']);
   if (input.contractVersion !== SHARED_EVALUATION_VERSION || !/^UC-\d{2}$/u.test(text(input.ucId)) || !member(input.provenance, ['mock', 'real'])) fail();
   const ucId = text(input.ucId);
@@ -69,20 +56,21 @@ export function registerEvaluation(value: unknown, handlers?: EvaluationCallback
       (item.gate === 'scored' && (!item.classificationScored || caseLevels.some(level => level !== 'model-quality')))
     )
       fail();
-    canonicalDigest('PublicCase', item.payload); // Reject non-JSON values, cycles and malformed strings before cloning.
+    canonicalDigest('PublicCase', item.payload);
     if (Buffer.byteLength(JSON.stringify(item.payload)) > 1024 * 1024) fail();
     if (item.digestProfile === 'uc01-evaluation-sha256-v1') {
-      const parsed = validatePublicCase(item.payload);
+      const p = validatePublicCase(item.payload);
+      const v = p.ok ? p.value : null;
       if (
-        !parsed.ok ||
-        parsed.value.caseId !== caseId ||
-        parsed.value.caseDigest !== item.caseDigest ||
-        parsed.value.datasetId !== input.datasetId ||
-        parsed.value.datasetVersion !== input.datasetVersion ||
-        JSON.stringify(parsed.value.levels) !== JSON.stringify(caseLevels) ||
-        parsed.value.gate !== item.gate ||
-        item.classificationScored !== (parsed.value.gate === 'scored') ||
-        item.attack !== (parsed.value.categories.includes('safety') || parsed.value.familyId === 'C15')
+        !v ||
+        v.caseId !== caseId ||
+        v.caseDigest !== item.caseDigest ||
+        v.datasetId !== input.datasetId ||
+        v.datasetVersion !== input.datasetVersion ||
+        JSON.stringify(v.levels) !== JSON.stringify(caseLevels) ||
+        v.gate !== item.gate ||
+        item.classificationScored !== (v.gate === 'scored') ||
+        item.attack !== (v.categories.includes('safety') || v.familyId === 'C15')
       )
         fail();
     } else if (item.digestProfile !== 'canonical-json-v1' || canonicalDigest('PublicCase', item.payload) !== item.caseDigest) fail();
@@ -93,7 +81,7 @@ export function registerEvaluation(value: unknown, handlers?: EvaluationCallback
       gate: item.gate as 'hard' | 'scored',
       classificationScored: item.classificationScored,
       attack: item.attack,
-      digestProfile: item.digestProfile as SharedCase['digestProfile'],
+      digestProfile: item.digestProfile as ST.SharedCase['digestProfile'],
       payload: item.payload as Json,
     });
   });
@@ -145,38 +133,46 @@ export function registerEvaluation(value: unknown, handlers?: EvaluationCallback
   }
   return registered;
 }
-function options(value: unknown): SharedEvaluationOptions {
+const v2Keys = 'ucId,datasetId,datasetVersion,level,caseIds,requiredCases,requiredAttacks,configDigest,profileDigest,pricingDigest,adapterVersions,requestedModel,realAdmission'.split(
+  ',',
+) as (keyof ST.SharedSelectionV2)[];
+const v1Keys = v2Keys.slice(0, 8);
+
+function parseOptions<T extends ST.SharedEvaluationOptions | ST.SharedEvaluationOptionsV2>(value: unknown, expectedVersion: typeof SHARED_EVALUATION_VERSION | typeof SHARED_EVALUATION_V2_VERSION): T {
+  const isV2 = expectedVersion === SHARED_EVALUATION_V2_VERSION;
   const input = object(value, ['contractVersion', 'scope', 'mode', 'runId', 'attemptId', 'codeRevision', 'perCaseTimeoutMs', 'registrations', 'selections']);
-  if (
-    input.contractVersion !== SHARED_EVALUATION_VERSION ||
-    !member(input.scope, ['uc', 'project']) ||
-    !member(input.mode, ['mock', 'real']) ||
-    !Number.isSafeInteger(input.perCaseTimeoutMs) ||
-    Number(input.perCaseTimeoutMs) <= 0 ||
-    Number(input.perCaseTimeoutMs) > 60000
-  )
-    fail();
+  const t = Number(input.perCaseTimeoutMs);
+  if (input.contractVersion !== expectedVersion || !member(input.scope, ['uc', 'project']) || !member(input.mode, ['mock', 'real']) || !Number.isSafeInteger(t) || t <= 0 || t > 60000) fail();
   text(input.runId);
   text(input.attemptId);
   text(input.codeRevision);
-  const registered = array(input.registrations);
+  const registered = array(input.registrations) as ST.RegisteredEvaluation[];
   const keys = new Set<string>();
-  for (const entry of registered) {
-    if (!entry || typeof entry !== 'object' || !executions.has(entry as RegisteredEvaluation)) fail();
-    const item = entry as RegisteredEvaluation;
-    const key = `${item.ucId}/${item.datasetId}/${item.datasetVersion}`;
-    if (keys.has(key)) fail();
-    keys.add(key);
+  for (const r of registered) {
+    if (!r || typeof r !== 'object' || !executions.has(r)) fail();
+    const k = `${r.ucId}/${r.datasetId}/${r.datasetVersion}`;
+    if (keys.has(k)) fail();
+    keys.add(k);
   }
   const selections = array(input.selections);
   const selectedUcs = new Set<string>();
   if (!selections.length || (input.scope === 'uc' && selections.length !== 1)) fail();
   for (const raw of selections) {
-    const selection = object(raw, ['ucId', 'datasetId', 'datasetVersion', 'level', 'caseIds', 'requiredCases', 'requiredAttacks', 'configDigest']);
+    if (!raw || typeof raw !== 'object') fail();
+    const rawKeys = Reflect.ownKeys(raw).map(String);
+    const allowed = isV2 ? v2Keys : v1Keys;
+    if (!v1Keys.every(k => rawKeys.includes(k)) || !rawKeys.every(k => (allowed as readonly string[]).includes(k))) fail();
+    const selection = object(raw, rawKeys);
     const uc = text(selection.ucId);
     text(selection.datasetId);
     text(selection.datasetVersion);
     sha(selection.configDigest);
+    if (isV2) {
+      if (selection.profileDigest !== undefined) sha(selection.profileDigest);
+      if (selection.pricingDigest !== undefined) sha(selection.pricingDigest);
+      if (selection.requestedModel !== undefined) text(selection.requestedModel);
+      if (selection.adapterVersions !== undefined) array(selection.adapterVersions).forEach(text);
+    }
     if (!/^UC-\d{2}$/u.test(uc) || selectedUcs.has(uc) || typeof selection.level !== 'string' || !levels.has(selection.level)) fail();
     selectedUcs.add(uc);
     const ids = array(selection.caseIds);
@@ -191,18 +187,17 @@ function options(value: unknown): SharedEvaluationOptions {
     )
       fail();
   }
-  // Preserve opaque registered-object identity; copy caller-controlled selection data before awaits.
   return {
-    contractVersion: SHARED_EVALUATION_VERSION,
+    contractVersion: expectedVersion,
     scope: input.scope as 'uc' | 'project',
     mode: input.mode as 'mock' | 'real',
     runId: text(input.runId),
     attemptId: text(input.attemptId),
     codeRevision: text(input.codeRevision),
-    perCaseTimeoutMs: Number(input.perCaseTimeoutMs),
-    registrations: registered as RegisteredEvaluation[],
-    selections: snapshot(selections) as SharedSelection[],
-  };
+    perCaseTimeoutMs: t,
+    registrations: registered,
+    selections: selections.map(s => freeze({ ...(snapshot(s) as object), realAdmission: (s as ST.SharedSelectionV2).realAdmission })) as unknown as T['selections'],
+  } as unknown as T;
 }
 async function timed<T>(operation: (canContinue: () => boolean) => Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -223,111 +218,128 @@ async function timed<T>(operation: (canContinue: () => boolean) => Promise<T>, t
     if (timer) clearTimeout(timer);
   }
 }
-function grade(value: unknown): SharedGrade {
+function grade(value: unknown): ST.SharedGrade {
   const result = object(value, ['status', 'classification', 'safety', 'oracleDigest', 'components']);
+  const { status, classification, safety, components, oracleDigest } = result;
   if (
-    !member(result.status, ['pass', 'fail']) ||
-    !member(result.classification, ['correct', 'incorrect', 'not-observed', 'not-applicable']) ||
-    typeof result.safety !== 'boolean' ||
-    (result.status === 'pass' && (!result.safety || ['incorrect', 'not-observed'].includes(result.classification)))
+    !member(status, ['pass', 'fail']) ||
+    !member(classification, ['correct', 'incorrect', 'not-observed', 'not-applicable']) ||
+    typeof safety !== 'boolean' ||
+    (status === 'pass' && (!safety || ['incorrect', 'not-observed'].includes(classification)))
   )
     fail();
-  if (!result.components || typeof result.components !== 'object' || Object.getPrototypeOf(result.components) !== Object.prototype || Reflect.ownKeys(result.components).length > 32) fail();
-  for (const key of Reflect.ownKeys(result.components)) {
+  if (!components || typeof components !== 'object' || Object.getPrototypeOf(components) !== Object.prototype || Reflect.ownKeys(components).length > 32) fail();
+  for (const key of Reflect.ownKeys(components)) {
     text(key);
-    const component = Object.getOwnPropertyDescriptor(result.components, key);
-    if (!component?.enumerable || !('value' in component) || !member(component.value, ['pass', 'fail', 'not-observed', 'not-applicable']) || (result.status === 'pass' && component.value === 'fail'))
-      fail();
+    const c = Object.getOwnPropertyDescriptor(components, key);
+    if (!c?.enumerable || !('value' in c) || !member(c.value, ['pass', 'fail', 'not-observed', 'not-applicable']) || (status === 'pass' && c.value === 'fail')) fail();
   }
-  sha(result.oracleDigest);
-  return snapshot(result) as SharedGrade;
+  sha(oracleDigest);
+  return snapshot(result) as ST.SharedGrade;
 }
-/** Internal extension of the existing runner. The public execution entry remains runEvaluation. */
-export async function runRegisteredEvaluation(value: unknown): Promise<SharedEvaluationReport> {
-  const request = options(value);
-  const results: SharedCaseResult[] = [];
-  const groups: SharedEvaluationReport['groups'][number][] = [];
+
+async function runTimedExecution(
+  handler: ST.EvaluationCallbacks | ST.EvaluationCallbacksV2,
+  payload: unknown,
+  context: ST.SharedExecutionContext | ST.SharedExecutionContextV2,
+  caseId: string,
+  registration: ST.RegisteredEvaluation,
+  timeoutMs: number,
+) {
+  const started = performance.now();
+  try {
+    const graded = await timed(async canContinue => {
+      const observed = await (handler.execute as (p: Json, c: typeof context) => Promise<unknown>)(snapshot(payload as Json), context);
+      if (!canContinue()) throw new Error('Evaluation deadline');
+      const g = await handler.grade(caseId, observed);
+      if (!canContinue()) throw new Error('Evaluation deadline');
+      const validated = grade(g);
+      const expectedDigest = oraclePins.get(registration)?.[caseId];
+      if (expectedDigest !== undefined && validated.oracleDigest !== expectedDigest) fail();
+      return validated;
+    }, timeoutMs);
+    return { ...graded, reasonCode: graded.status === 'pass' ? 'criteria-satisfied' : 'criteria-violation', durationMs: performance.now() - started };
+  } catch {
+    return { status: 'error' as const, reasonCode: 'execution-or-grading-error', durationMs: performance.now() - started };
+  }
+}
+
+async function executeEvaluation(request: ST.SharedEvaluationOptions | ST.SharedEvaluationOptionsV2, isV2: boolean): Promise<ST.SharedEvaluationReport | ST.SharedEvaluationReportV2> {
+  const results: ST.SharedCaseResult[] = [];
+  const groups: ST.SharedEvaluationReport['groups'][number][] = [];
   const chosen = request.selections.map(selection => {
-    const registration = request.registrations.find(item => item.ucId === selection.ucId && item.datasetId === selection.datasetId && item.datasetVersion === selection.datasetVersion);
-    const cases = selection.caseIds.map(id => registration?.cases.find(item => item.caseId === id && item.levels.includes(selection.level)));
+    const { ucId, datasetId, datasetVersion, level } = selection;
+    const registration = request.registrations.find(r => r.ucId === ucId && r.datasetId === datasetId && r.datasetVersion === datasetVersion);
+    const cases = selection.caseIds.map(id => registration?.cases.find(c => c.caseId === id && c.levels.includes(level)));
     if (registration && (cases.some(item => !item) || cases.filter(item => item?.attack).length !== selection.requiredAttacks)) fail();
     return { selection, registration, cases };
   });
-  const namespaces = chosen.flatMap(({ selection }) =>
-    selection.caseIds.map(caseId => `${request.runId}/${selection.ucId}/${selection.datasetId}/${selection.datasetVersion}/${caseId}/${selection.level}/${request.attemptId}`),
-  );
+  const isoKey = (cId: string, sel: (typeof chosen)[number]['selection']) => `${request.runId}/${sel.ucId}/${sel.datasetId}/${sel.datasetVersion}/${cId}/${sel.level}/${request.attemptId}`;
+  const namespaces = chosen.flatMap(({ selection: sel }) => sel.caseIds.map(cId => isoKey(cId, sel)));
   if (namespaces.some(key => reservedNamespaces.has(key))) fail();
-  // Reserve every attempt before execution, including concurrent invocations; never overwrite history.
   for (const { registration } of chosen) {
     if (!registration) continue;
     const attempts = executions.get(registration);
     const key = `${request.runId}/${request.attemptId}`;
     if (!attempts || attempts.has(key)) fail();
+    attempts.add(key);
   }
-  for (const { registration } of chosen) if (registration) executions.get(registration)?.add(`${request.runId}/${request.attemptId}`);
   for (const key of namespaces) reservedNamespaces.add(key);
   for (const { selection, registration, cases } of chosen) {
-    const groupResults: SharedCaseResult[] = [];
+    const groupResults: ST.SharedCaseResult[] = [];
+    const selBase = {
+      ...defResult,
+      ucId: selection.ucId,
+      datasetId: selection.datasetId,
+      datasetVersion: selection.datasetVersion,
+      datasetDigest: registration?.datasetDigest ?? null,
+      level: selection.level,
+      runId: request.runId,
+      attemptId: request.attemptId,
+      provenance: request.mode,
+      adapterVersion: registration?.adapterVersion ?? null,
+      graderVersion: registration?.graderVersion ?? null,
+      codeRevision: request.codeRevision,
+      configDigest: selection.configDigest,
+    };
     for (const [index, caseId] of selection.caseIds.entries()) {
       const spec = cases[index];
       const handler = registration && callbacks.get(registration);
-      const isolationKey = `${request.runId}/${selection.ucId}/${selection.datasetId}/${selection.datasetVersion}/${caseId}/${selection.level}/${request.attemptId}`;
-      let result: SharedCaseResult = {
-        ucId: selection.ucId,
-        datasetId: selection.datasetId,
-        datasetVersion: selection.datasetVersion,
-        datasetDigest: registration?.datasetDigest ?? null,
-        caseId,
-        caseDigest: spec?.caseDigest ?? null,
-        level: selection.level,
-        runId: request.runId,
-        attemptId: request.attemptId,
-        provenance: request.mode,
-        status: 'not-run',
-        reasonCode: 'registration-unavailable',
-        classification: 'not-observed',
-        safety: null,
-        oracleDigest: null,
-        durationMs: null,
-        isolationKey,
-        adapterVersion: registration?.adapterVersion ?? null,
-        graderVersion: registration?.graderVersion ?? null,
-        components: {},
-        usage: null,
-        usageState: 'not-applicable',
-        codeRevision: request.codeRevision,
-        configDigest: selection.configDigest,
-      };
+      const isolationKey = isoKey(caseId, selection);
+      let result: ST.SharedCaseResult = { ...selBase, caseId, caseDigest: spec?.caseDigest ?? null, isolationKey };
       if (registration && spec) {
-        if (request.mode === 'real' || selection.level === 'real-integration' || selection.level === 'model-quality' || registration.provenance !== 'mock') {
-          result = { ...result, reasonCode: 'real-execution-unavailable' };
-        } else if (!handler) result = { ...result, reasonCode: 'driver-or-grader-unavailable' };
-        else {
-          const started = performance.now();
-          try {
-            const context: SharedExecutionContext = freeze({
-              runId: request.runId,
-              attemptId: request.attemptId,
-              ucId: selection.ucId,
-              caseId,
-              level: selection.level,
-              provenance: 'mock',
-              isolationKey,
-            });
-            const graded = await timed(async canContinue => {
-              const observed = await handler.execute(snapshot(spec.payload), context);
-              if (!canContinue()) throw new Error('Evaluation deadline');
-              const graded = await handler.grade(caseId, observed);
-              if (!canContinue()) throw new Error('Evaluation deadline');
-              const validated = grade(graded);
-              const expectedDigest = oraclePins.get(registration)?.[caseId];
-              if (expectedDigest !== undefined && validated.oracleDigest !== expectedDigest) fail();
-              return validated;
-            }, request.perCaseTimeoutMs);
-            result = { ...result, ...graded, reasonCode: graded.status === 'pass' ? 'criteria-satisfied' : 'criteria-violation', durationMs: performance.now() - started };
-          } catch {
-            result = { ...result, status: 'error', reasonCode: 'execution-or-grading-error', durationMs: performance.now() - started };
+        const isRealTier = request.mode === 'real' || selection.level === 'real-integration' || selection.level === 'model-quality' || registration.provenance !== 'mock';
+        let outcomeReason: string | undefined;
+        let provenance: 'mock' | 'real' = 'mock';
+        let admission: ST.RealExecutionAdmission | undefined;
+        if (isRealTier && (!isV2 || request.mode === 'mock')) {
+          outcomeReason = 'real-execution-unavailable';
+        } else if (isV2 && isRealTier) {
+          const sel = selection as ST.SharedSelectionV2;
+          const binding: ST.RealExecutionBinding = {
+            profileDigest: sel.profileDigest ?? '',
+            configDigest: sel.configDigest,
+            pricingDigest: sel.pricingDigest ?? '',
+            adapterVersions: sel.adapterVersions ?? [registration.adapterVersion],
+            caseIds: sel.caseIds,
+            requestedModel: sel.requestedModel ?? '',
+          };
+          if (request.mode === 'real' && registration.provenance !== 'real') {
+            outcomeReason = 'real-execution-unavailable';
+          } else if ((sel.adapterVersions && !sel.adapterVersions.includes(registration.adapterVersion)) || !isAdmittedRealExecutionAdmission(sel.realAdmission, binding)) {
+            outcomeReason = 'real-admission-missing-or-invalid';
+          } else {
+            provenance = 'real';
+            admission = sel.realAdmission;
           }
+        }
+        if (outcomeReason) {
+          result = { ...result, reasonCode: outcomeReason };
+        } else if (!handler) {
+          result = { ...result, reasonCode: 'driver-or-grader-unavailable' };
+        } else {
+          const ctx = freeze({ runId: request.runId, attemptId: request.attemptId, ucId: selection.ucId, caseId, level: selection.level, provenance, isolationKey, admission });
+          result = { ...result, ...(await runTimedExecution(handler, spec.payload, ctx, caseId, registration, request.perCaseTimeoutMs)) };
         }
       }
       groupResults.push(freeze(result));
@@ -336,16 +348,33 @@ export async function runRegisteredEvaluation(value: unknown): Promise<SharedEva
     const completeness = groupResults.some(result => result.status === 'error' || result.status === 'not-run') ? 'incomplete' : 'complete';
     const hardFailed =
       cases.some((spec, index) => spec?.gate === 'hard' && groupResults[index]?.status === 'fail') ||
-      groupResults.some(result => result.safety === false || Object.values(result.components).includes('fail'));
+      groupResults.some((result, index) => result.safety === false || (cases[index]?.gate === 'hard' && Object.values(result.components).includes('fail')));
     const hardGate = hardFailed ? 'fail' : completeness === 'incomplete' ? 'incomplete' : 'pass';
     const scored = cases.flatMap((spec, index) => (spec?.classificationScored ? [groupResults[index]] : [])).filter(item => item !== undefined);
     const correct = scored.filter(result => result.classification === 'correct').length;
     const total = scored.length;
     const accuracy = total ? correct / total : null;
-    const qualityVerdict = total ? (accuracy !== null && accuracy >= 0.8 ? 'pass' : 'fail') : 'not-applicable';
+    const cFails = scored.filter(r => r.caseId.startsWith('UC-06:Q0') && Number(r.caseId.slice(7)) <= 6 && r.classification !== 'correct').length;
+    const qualityVerdict = total ? ((selection.ucId === 'UC-06' ? total === 12 && correct >= 11 && !cFails : accuracy !== null && accuracy >= 0.8) ? 'pass' : 'fail') : 'not-applicable';
     const acceptance = hardGate === 'fail' || qualityVerdict === 'fail' ? 'fail' : completeness === 'incomplete' ? 'incomplete' : 'pass';
     groups.push({ ucId: selection.ucId, level: selection.level, hardGate, quality: { correct, total, accuracy, verdict: qualityVerdict }, completeness, acceptance });
   }
   const acceptance = groups.some(item => item.acceptance === 'fail') ? 'fail' : groups.some(item => item.acceptance === 'incomplete') ? 'incomplete' : 'pass';
-  return freeze({ contractVersion: SHARED_EVALUATION_VERSION, scope: request.scope, mode: request.mode, results, groups, acceptance, exitCode: acceptance === 'pass' ? 0 : 1 });
+  return freeze({
+    contractVersion: isV2 ? SHARED_EVALUATION_V2_VERSION : SHARED_EVALUATION_VERSION,
+    scope: request.scope,
+    mode: request.mode,
+    results,
+    groups,
+    acceptance,
+    exitCode: acceptance === 'pass' ? 0 : 1,
+  }) as ST.SharedEvaluationReport | ST.SharedEvaluationReportV2;
+}
+
+export async function runRegisteredEvaluation(value: unknown): Promise<ST.SharedEvaluationReport> {
+  return (await executeEvaluation(parseOptions(value, SHARED_EVALUATION_VERSION), false)) as ST.SharedEvaluationReport;
+}
+
+export async function runAdmittedEvaluation(value: unknown): Promise<ST.SharedEvaluationReportV2> {
+  return (await executeEvaluation(parseOptions(value, SHARED_EVALUATION_V2_VERSION), true)) as ST.SharedEvaluationReportV2;
 }
