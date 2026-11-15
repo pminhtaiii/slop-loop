@@ -342,7 +342,7 @@ test('material replan: an unknown write outcome is uncertain and the exact looku
   }
 });
 
-test('material replan: an unknown write outcome with nothing written resolves to absent', async () => {
+test('material replan: an unknown write outcome with nothing written stays unknown, never absent', async () => {
   const c = await openCase({
     commitTransaction: async () => {
       throw new Error('write refused');
@@ -354,7 +354,7 @@ test('material replan: an unknown write outcome with nothing written resolves to
     if (result.outcome !== 'uncertain') return;
 
     assert.deepEqual(await c.port.loadTask(c.state.taskId), c.state, 'nothing was written');
-    assert.deepEqual(await createJournalOperationLookup(c.port).lookupOperation(result.operationRef), { outcome: 'absent' });
+    assert.deepEqual(await createJournalOperationLookup(c.port).lookupOperation(result.operationRef), { outcome: 'unknown' });
   } finally {
     c.close();
   }
