@@ -600,3 +600,41 @@ test('authoritative usage settles a cancelled ledger without permitting another 
     { ok: false, reasonCode: 'cancelled' },
   );
 });
+
+test('complete usage reconciles a call cancelled in flight while subsequent starts remain refused', async () => {
+  const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => 10 });
+  assert.ok(created.ok);
+  const summary = created.value.reserveSummary(4);
+  assert.ok(summary.ok);
+  const call = created.value.reserveModelCall(100);
+  assert.ok(call.ok);
+  const response = Promise.withResolvers<{ status: 'complete'; inputTokens: number; outputTokens: number }>();
+  const running = call.value.execute(
+    () => response.promise,
+    usage => ({ kind: 'model-usage', usage }),
+  );
+  created.value.cancel();
+  assert.deepEqual(await running, { ok: false, reasonCode: 'cancelled' });
+  assert.equal(created.value.snapshot().reserved.billableTokens, 600);
+  const receipt = { kind: 'model-usage', usage: { status: 'complete', inputTokens: 80, outputTokens: 12 } } as const;
+  assert.deepEqual(call.value.reconcile(receipt), { ok: true, value: undefined });
+  const settled = created.value.snapshot();
+  assert.equal(settled.status, 'cancelled');
+  assert.equal(settled.reserved.modelCalls, 0);
+  assert.equal(settled.reserved.billableTokens, 0);
+  assert.equal(settled.reserved.costMicros, 0);
+  assert.equal(settled.consumed.modelCalls, 1);
+  assert.equal(settled.consumed.billableTokens, 92);
+  assert.equal(settled.consumed.costMicros, 11);
+  response.resolve(receipt.usage);
+  await Promise.resolve();
+  assert.deepEqual(created.value.snapshot(), settled);
+  assert.deepEqual(created.value.reserveModelCall(100), { ok: false, reasonCode: 'cancelled' });
+  assert.deepEqual(
+    await summary.value.execute(
+      () => assert.fail('cancelled ledger dispatched another call'),
+      () => assert.fail('cancelled ledger accounted for another response'),
+    ),
+    { ok: false, reasonCode: 'cancelled' },
+  );
+});

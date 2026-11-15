@@ -428,7 +428,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   }
 
   public _reconcile(internal: InternalReservation, receipt: unknown): QuestionBudgetExecutionResultV1<void> {
-    if (internal.status !== 'held' || internal.holdReason !== 'accounting-unknown' || (this.status !== 'blocked' && this.status !== 'cancelled')) {
+    if (internal.status !== 'held' || (internal.holdReason !== 'accounting-unknown' && internal.holdReason !== 'cancelled') || (this.status !== 'blocked' && this.status !== 'cancelled')) {
       return { ok: false, reasonCode: 'duplicate-settlement' };
     }
     if (this.activeReservationId !== undefined || [...this.reservations.values()].some(reservation => reservation !== internal && reservation.status === 'held')) {
