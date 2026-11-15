@@ -22,7 +22,7 @@ import { MAX_TASK_REPLANS } from '../../uc03/replan-accounting.ts';
 import type { MaterialReplanPortV02, MaterialReplanRequestV02, MaterialReplanResultV02 } from '../../uc03/graph-types-v02.ts';
 import type { TrustedReplanDirection } from '../../uc03/repair-types.ts';
 import { isSafeStorageId } from '../store.ts';
-import { chargeLanded, journalOperationPath, journalOperationRef, operationSnapshot } from './state-port-v02-operation-lookup.ts';
+import { chargeLanded, journalOperationId, journalOperationPath, journalOperationRef, operationSnapshot } from './state-port-v02-operation-lookup.ts';
 import type { JournalOperationRecordV02 } from './state-port-v02-operation-lookup.ts';
 import type { DurableStatePortV02 } from './state-port-v02.ts';
 import { StatePortStore } from './state-port-v02-storage.ts';
@@ -184,13 +184,16 @@ export function createMaterialReplanPort(options: MaterialReplanPortOptions): Ma
       const identity = hex(requestIdentity(owned));
       // Keyed by the proposal, not the full identity: a different request under the same proposal
       // id must find this record and be refused, not slip past it as a fresh operation.
-      const operationId = `replan-${hex(computeCanonicalSha256({ taskId: owned.taskId, proposalId: owned.proposalId }))}`;
+      const operationId = journalOperationId(owned.taskId, owned.proposalId);
       const operationRef = journalOperationRef(operationId);
       const recordPath = journalOperationPath(store, owned.taskId, operationId);
       const reservationReceipt = `replan-reservation-${hex(computeCanonicalSha256({ kind: 'reservation', identity }))}`;
       const transitionReceipt = `replan-transition-${hex(computeCanonicalSha256({ kind: 'transition', identity }))}`;
       const renewedDecisionId = `dec-replan-${identity}`;
       const charge = { reservationId: reservationReceipt, keyedId: owned.proposalId } as const;
+      // Lock cleanup runs after the callback, so a lock failure can follow a committed write: only the
+      // phase says whether the journal may already hold this operation.
+      let writing = false;
 
       try {
         return await state.store.withLockRetry(`uc03v02-${owned.taskId}`, async (): Promise<MaterialReplanResultV02> => {
@@ -205,8 +208,10 @@ export function createMaterialReplanPort(options: MaterialReplanPortOptions): Ma
             // The record carries its own committed snapshot, and the task itself keeps this proposal's
             // charge, so the same replay still proves its transition after the task has moved on —
             // while another proposal's commit at the same version never carried this charge.
-            const snapshot = operationSnapshot(record);
-            if (!snapshot || !chargeLanded(prior, snapshot.charge)) return denied('replay-state-superseded');
+            const snapshot = operationSnapshot(record, operationId);
+            // The record must carry the charge this request computes, not one borrowed from another operation.
+            if (!snapshot || snapshot.charge.reservationId !== charge.reservationId || snapshot.charge.keyedId !== charge.keyedId) return denied('replay-state-superseded');
+            if (!chargeLanded(prior, snapshot.charge)) return denied('replay-state-superseded');
             return { outcome: 'already-accepted', state: snapshot.state, reservationReceipt, transitionReceipt };
           }
 
@@ -234,6 +239,7 @@ export function createMaterialReplanPort(options: MaterialReplanPortOptions): Ma
           // The record keeps the snapshot it commits plus the charge it owns, so a replay after later
           // progress still returns the identical committed state and receipts.
           const write = async (): Promise<void> => {
+            writing = true;
             await store.writeJson(recordPath, {
               taskId: next.taskId,
               stateVersion: next.stateVersion,
@@ -257,8 +263,8 @@ export function createMaterialReplanPort(options: MaterialReplanPortOptions): Ma
           }
         });
       } catch {
-        // A busy or unreadable journal cannot authorize the transition; nothing is written.
-        return denied('transaction-unavailable');
+        // Past the first write the outcome is unknown: only the lookup can say whether it landed.
+        return writing ? { outcome: 'uncertain', operationRef } : denied('transaction-unavailable');
       }
     },
   };

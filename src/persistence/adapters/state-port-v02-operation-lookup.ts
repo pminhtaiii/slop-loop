@@ -62,17 +62,27 @@ export interface JournalOperationSnapshotV02 {
   readonly charge: JournalOperationChargeV02;
 }
 
+/** The operation id a (task, proposal) pair names; exported so the writer and the lookup derive it once. */
+export function journalOperationId(taskId: string, proposalId: string): string {
+  const digest = computeCanonicalSha256({ taskId, proposalId });
+  return `replan-${digest.startsWith('sha256:') ? digest.slice('sha256:'.length) : digest}`;
+}
+
 /**
  * The exact snapshot a record proves, or undefined when the record is not a coherent commit: the
- * snapshot must be the one its digest names, a valid task state for the same task, and hold its own
- * charge. Later progress does not touch a replan charge, so the same record keeps proving.
+ * snapshot must be the one its digest names, a valid task state for the record's own task, and hold
+ * the charge its own receipts and this operation id name. Later progress does not touch a replan
+ * charge, so the same record keeps proving.
  */
-export function operationSnapshot(record: JournalOperationRecordV02): JournalOperationSnapshotV02 | undefined {
+export function operationSnapshot(record: JournalOperationRecordV02, operationId: string): JournalOperationSnapshotV02 | undefined {
   const snapshot = record.state;
   const charge = record.charge;
   if (!snapshot || !charge || typeof charge.reservationId !== 'string' || typeof charge.keyedId !== 'string') return undefined;
-  if (typeof record.stateDigest !== 'string' || computeCanonicalSha256(snapshot) !== record.stateDigest) return undefined;
-  if (record.stateVersion !== snapshot.stateVersion || !validateTaskState(snapshot).ok || !chargeLanded(snapshot, charge)) return undefined;
+  if (!Array.isArray(record.receipts) || typeof record.stateDigest !== 'string' || computeCanonicalSha256(snapshot) !== record.stateDigest) return undefined;
+  if (record.stateVersion !== snapshot.stateVersion || snapshot.taskId !== record.taskId || !validateTaskState(snapshot).ok) return undefined;
+  // A snapshot, charge or receipt borrowed from another task or proposal is a different operation.
+  if (record.receipts[0] !== charge.reservationId || journalOperationId(record.taskId, charge.keyedId) !== operationId) return undefined;
+  if (!chargeLanded(snapshot, charge)) return undefined;
   return { state: structuredClone(snapshot), charge };
 }
 
@@ -275,7 +285,7 @@ async function lookupRecord(state: StatePortStore, operationId: string): Promise
     const record = await state.readJson<JournalOperationRecordV02>(journalOperationPath(state, taskId, operationId));
     if (!record) continue;
     if (record.taskId !== taskId || !Array.isArray(record.receipts) || !record.receipts.every(item => typeof item === 'string')) return UNKNOWN;
-    const snapshot = operationSnapshot(record);
+    const snapshot = operationSnapshot(record, operationId);
     if (!snapshot) return UNKNOWN;
     const task = await state.readTask(taskId);
     // The written task and the record are separate files, so the version alone cannot prove whose

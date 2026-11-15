@@ -12,7 +12,7 @@ import test from 'node:test';
 import { computeCanonicalSha256, computeCheckSetDigest } from '../../../src/contracts/foundation/uc03.ts';
 import type { BudgetLedger, BudgetReservation, BugTask, FixPlan, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { createMaterialReplanPort } from '../../../src/persistence/adapters/material-replan-port.ts';
-import { createJournalOperationLookup } from '../../../src/persistence/adapters/state-port-v02-operation-lookup.ts';
+import { createJournalOperationLookup, journalOperationId, journalOperationPath, journalOperationRef } from '../../../src/persistence/adapters/state-port-v02-operation-lookup.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { StatePortStore } from '../../../src/persistence/adapters/state-port-v02-storage.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
@@ -481,6 +481,78 @@ test('material replan: a record whose task write failed stays unknown and is nev
 
     const replay = await c.replan.accept(a);
     assert.notEqual(replay.outcome, 'already-accepted', 'a replay must not claim the transition A never wrote');
+  } finally {
+    StatePortStore.prototype.writeTask = original;
+    c.close();
+  }
+});
+
+test('material replan: a lock failure after the callback committed is uncertain, never a denial', async () => {
+  const c = await openCase();
+  const lock = DurableStore.prototype.withLockRetry;
+  try {
+    // The production lock closes its handle after the callback, so its cleanup can fail post-commit.
+    DurableStore.prototype.withLockRetry = async function <T>(this: DurableStore, resourceId: string, operation: () => Promise<T>): Promise<T> {
+      await lock.call(this, resourceId, operation);
+      throw new Error('synthetic lock cleanup failure');
+    };
+    const result = await c.replan.accept(requestOf(c.state, candidateOf(c.state.plan as FixPlan)));
+    DurableStore.prototype.withLockRetry = lock;
+    assert.equal(result.outcome, 'uncertain', 'a denial would hide a plan and allowance charge that did land');
+    if (result.outcome !== 'uncertain') return;
+    const committed = await c.port.loadTask(c.state.taskId);
+    assert.notDeepEqual(committed, c.state, 'the write landed before the lock failed');
+    const resolved = await createJournalOperationLookup(c.port).lookupOperation(result.operationRef);
+    assert.equal(resolved.outcome, 'committed');
+    if (resolved.outcome !== 'committed') return;
+    assert.deepEqual(resolved.state, committed);
+  } finally {
+    DurableStore.prototype.withLockRetry = lock;
+    c.close();
+  }
+});
+
+test('material replan: a record holding another operation’s committed snapshot is never replayed as accepted', async () => {
+  const c = await openCase();
+  const original = StatePortStore.prototype.writeTask;
+  try {
+    const store = new StatePortStore(c.port.store);
+    const a = requestOf(c.state, candidateOf(c.state.plan as FixPlan));
+    const recordA = journalOperationPath(store, c.state.taskId, journalOperationId(c.state.taskId, PROPOSAL));
+    try {
+      StatePortStore.prototype.writeTask = async () => {
+        throw new Error('synthetic task write failure');
+      };
+      assert.equal((await c.replan.accept(a)).outcome, 'uncertain', 'A writes its record but not its transition');
+    } finally {
+      StatePortStore.prototype.writeTask = original;
+    }
+    // A's own receipts, which its replay will recompute and match.
+    const ownReceipts = (await store.readJson<{ readonly receipts: readonly string[] }>(recordA))?.receipts;
+    assert.equal(ownReceipts?.length, 2);
+
+    // B commits the same resulting version under another proposal.
+    const b = requestOf(c.state, candidateOf(c.state.plan as FixPlan, OTHER_STRATEGY), { proposalId: 'replan-prop-other' });
+    const second = await c.replan.accept(b);
+    assert.equal(second.outcome, 'accepted');
+    if (second.outcome !== 'accepted') return;
+    assert.equal((await c.port.loadTask(c.state.taskId))?.plan?.strategy, OTHER_STRATEGY);
+
+    // Forge A's record: B's committed snapshot, digest and charge, with A's own receipts kept.
+    const recordB = await store.readJson<Record<string, unknown>>(journalOperationPath(store, c.state.taskId, journalOperationId(c.state.taskId, 'replan-prop-other')));
+    assert.ok(recordB);
+    await store.writeJson(recordA, { ...recordB, receipts: ownReceipts });
+    const before = await c.port.loadTask(c.state.taskId);
+
+    assert.deepEqual(
+      await createJournalOperationLookup(c.port).lookupOperation(journalOperationRef(journalOperationId(c.state.taskId, PROPOSAL))),
+      { outcome: 'unknown' },
+      "B's snapshot and charge are not A's commit",
+    );
+    const replay = await c.replan.accept(a);
+    assert.equal(replay.outcome, 'denied', 'A never wrote its transition, so its replay must not claim acceptance');
+    if (replay.outcome === 'denied') assert.equal(replay.reason, 'replay-state-superseded');
+    assert.deepEqual(await c.port.loadTask(c.state.taskId), before, 'a refused replay writes nothing');
   } finally {
     StatePortStore.prototype.writeTask = original;
     c.close();
