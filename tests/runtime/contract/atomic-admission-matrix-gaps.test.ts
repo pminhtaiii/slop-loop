@@ -6,7 +6,8 @@
  *
  * 1. SPEC-R1-003 — settled patch ancestry must survive a reconciliation, not only recordOutcome.
  * 2. fresh-receiver recovery state — an observed-unsettled patch reconciles on a new receiver.
- * 3. trusted evidence-invalidation refs/digests — recovery evidence binds them.
+ * 3. trusted evidence-invalidation refs/digests — recovery evidence binds them, including on a
+ *    first write with no prior record to compare against.
  * 4. public dispatched-state visibility — a begun attempt with no outcome is published.
  * 5. public checkpoint/fencing coverage — both are readable from a new receiver.
  *
@@ -208,6 +209,42 @@ test('trusted evidence invalidation: recovery evidence binds its invalidated ref
       await third.publishRecoveryEvidence(patchContext.taskId, { ...evidence, effectEvidenceRef: { ...effectEvidenceRef, digest: computeCanonicalSha256('gap-invalidation-forged') } }),
       false,
     );
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('trusted evidence invalidation: a first write cannot skip the digest binding by having no predecessor', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc03-gap-invalidation-first-'));
+  try {
+    const { receiver, claim, attempt } = await openClaim(baseDir, patchContext);
+    const uncertain = createTestRepositoryOutcomeReceiptV02(claim, attempt, patchContext, { outcome: 'uncertain' });
+    assert.deepEqual(await receiver.recordOutcome(uncertain), { outcome: 'uncertain', receiptId: uncertain.receiptId });
+
+    const observedRevisionDigest = computeCanonicalSha256({ synthetic: 'gap-invalidation-first-revision' });
+    const accountingEvidenceRefs = [safeRef('gap-invalidation-first-accounting')];
+    const boundEvidence = [safeRef('gap-invalidation-first-prior-diagnosis')];
+    const effectEvidenceRef = {
+      reference: 'gap-invalidation-first-effect',
+      digest: computeCanonicalSha256({
+        schemaVersion: 'uc03-observed-patch-recovery/0.2-draft',
+        predecessorReceiptId: uncertain.receiptId,
+        effectConfirmation: true,
+        observedRevisionDigest,
+        invalidatedEvidence: boundEvidence,
+        accountingEvidenceRefs,
+      }),
+    };
+    // No recovery record exists for this predecessor yet, so no prior-record comparison can refuse
+    // this write: only the digest binding itself can.
+    const first = openReceiver(baseDir, patchContext);
+    const tampered = { predecessorReceiptId: uncertain.receiptId, effectEvidenceRef, accountingEvidenceRefs, observedRevisionDigest, invalidatedEvidence: [safeRef('gap-invalidation-first-other')] };
+    assert.equal(await first.publishRecoveryEvidence(patchContext.taskId, tampered), false, 'a first write whose refs do not match its digest is refused');
+
+    const snapshot = journalSnapshotV02(openReceiver(baseDir, patchContext).getJournalSnapshot(patchContext.taskId));
+    assert.ok(snapshot);
+    assert.deepEqual(rowsOf(snapshot).recoveryEvidencePredecessorReceiptIds, [], 'the refused evidence was never persisted');
+    assert.equal(await first.publishRecoveryEvidence(patchContext.taskId, { ...tampered, invalidatedEvidence: boundEvidence }), true, 'the correctly bound evidence is still a first write afterwards');
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }
