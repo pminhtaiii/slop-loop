@@ -2,6 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -17,9 +18,12 @@ const BASE = mkdtempSync(join(tmpdir(), 't057-dir-'));
 const KEY = 'sentinel-key-0123456789abcdef';
 const MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
 const HREF = 'http://192.0.2.10:54321/v1/messages';
+const PRIVATE = 'http://192.0.2.11:54321/v1/messages';
 const sha = (seed: string): string => sha256Text(seed);
+/** A strong key derived in the test: the loader refuses weak ones, and the value is itself a needle. */
+const DIGEST_KEY = sha('t057-endpoint-digest-key');
 
-const PROVIDER = { endpoint: HREF, allowInsecureHttp: true, model: MODEL, mode: 'nonstreaming', timeoutMs: 60000 } as const;
+const PROVIDER = { endpoint: HREF, allowInsecureHttp: true, endpointDigestKey: DIGEST_KEY, model: MODEL, mode: 'nonstreaming', timeoutMs: 60000 } as const;
 const PRICING = { pricingId: 'placeholder-unverified', denominator: 1000000, inputRate: 2000000, cacheRate: 2000000, outputRate: 8000000, overheadRate: 0 };
 const LIMITS = {
   totalModelCalls: 24,
@@ -73,7 +77,7 @@ function scanFile(name: string, content: string, env: RealTierEnvironment = envO
 
 /** Every row proves the quiet half of the contract: no needle and no sentinel is ever echoed. */
 function quiet(result: ScanResult): void {
-  for (const forbidden of ['192.0.2.10', '54321', KEY, 'model.invalid', '127.0.0.1']) {
+  for (const forbidden of ['192.0.2.10', '192.0.2.11', '54321', KEY, DIGEST_KEY, 'model.invalid', '127.0.0.1']) {
     assert.equal(result.output.includes(forbidden), false, 'output must not echo a needle or sentinel');
   }
   assert.doesNotMatch(result.output, /matched|fatal|Error:/u, 'no matched line or child error text');
@@ -105,7 +109,8 @@ test('host-boundary and loopback rules keep the host-only needle narrow', () => 
   assert.equal(neighbour.exitCode, 0, '192.0.2.7 does not match 192.0.2.70');
   assert.equal(neighbour.output, 'SCAN_CLEAN');
 
-  const loopback = envOf({ provider: { ...PROVIDER, endpoint: 'http://127.0.0.1:54321/v1/messages' } });
+  // A loopback endpoint hides the remote host, so the profile lists it as a private endpoint.
+  const loopback = envOf({ provider: { ...PROVIDER, endpoint: 'http://127.0.0.1:54321/v1/messages' }, privacy: { additionalPrivateEndpoints: [PRIVATE] } });
   const bare = scanFile('result.json', 'tunnel on 127.0.0.1\n', loopback);
   assert.equal(bare.exitCode, 0, 'a loopback host yields no host-only needle');
   const ported = scanFile('result.json', 'tunnel on 127.0.0.1:54321\n', loopback);
@@ -113,9 +118,49 @@ test('host-boundary and loopback rules keep the host-only needle narrow', () => 
   quiet(ported);
 });
 
+test('a loopback endpoint without a listed private endpoint is a scan error', () => {
+  const env = envOf({ provider: { ...PROVIDER, endpoint: 'http://127.0.0.1:54321/v1/messages' } });
+  const result = scanFile('result.json', 'clean\n', env);
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.output, 'SCAN_ERROR tunnel-endpoint-missing');
+});
+
+test('each additional private endpoint contributes the same needles as the endpoint', () => {
+  const env = envOf({ provider: { ...PROVIDER, endpoint: 'http://127.0.0.1:54321/v1/messages' }, privacy: { additionalPrivateEndpoints: ['http://198.51.100.20:8080/v1/messages'] } });
+  const forms = [
+    'http://198.51.100.20:8080/v1/messages',
+    'http://198.51.100.20:8080/v1',
+    '198.51.100.20:8080',
+    '198.51.100.20',
+    '198.51.100.20:8080/v1/messages',
+    encodeURIComponent('198.51.100.20:8080'),
+  ];
+  for (const form of forms) {
+    const result = scanFile('result.json', `${form}\n`, env);
+    assert.equal(result.exitCode, 1, form);
+    assert.equal(result.output, 'result.json:1 ENDPOINT_LEAK\nSCAN_LEAK', form);
+    quiet(result);
+  }
+  const neighbour = scanFile('result.json', 'host 198.51.100.200 served\n', env);
+  assert.equal(neighbour.exitCode, 0, 'the host boundary still holds for a private endpoint');
+});
+
+test('the digest key is a needle in content and paths, printed only as DIGEST_KEY_LEAK', () => {
+  const content = scanFile('result.json', `{"provider":{"endpointDigestKey":"${DIGEST_KEY}"}}\n`);
+  assert.equal(content.exitCode, 1);
+  assert.match(content.output, /^result\.json:1 DIGEST_KEY_LEAK\nSCAN_LEAK$/u);
+  quiet(content);
+
+  const path = scanFile(`evidence/${DIGEST_KEY}/result.json`, '{"outcome":"pass"}\n');
+  assert.equal(path.exitCode, 1);
+  assert.match(path.output, /^path-hmac:[a-f0-9]{12}:0 DIGEST_KEY_LEAK\nSCAN_LEAK$/u);
+  quiet(path);
+});
+
 test('the default public endpoint yields no needles', () => {
   const provider = { ...PROVIDER } as Record<string, unknown>;
   delete provider.endpoint;
+  delete provider.endpointDigestKey;
   const env = envOf({ provider });
   const result = scanFile('result.json', 'endpoint https://api.deepseek.com/anthropic/v1/messages\n', env);
   assert.equal(result.exitCode, 0);
@@ -153,16 +198,34 @@ test('an unset credential needle is reported, never guessed', () => {
 test('paths are data: a needle-bearing path leaks even with clean content', () => {
   const hostPath = scanFile('evidence/192.0.2.10/result.json', '{"outcome":"pass"}\n');
   assert.equal(hostPath.exitCode, 1);
-  assert.match(hostPath.output, /^path-sha256:[a-f0-9]{12}:0 ENDPOINT_LEAK\nSCAN_LEAK$/u);
+  assert.match(hostPath.output, /^path-hmac:[a-f0-9]{12}:0 ENDPOINT_LEAK\nSCAN_LEAK$/u);
   quiet(hostPath);
 
   const credentialPath = scanFile(`${KEY}.txt`, '{"outcome":"pass"}\n');
   assert.equal(credentialPath.exitCode, 1);
-  assert.match(credentialPath.output, /^path-sha256:[a-f0-9]{12}:0 CREDENTIAL_LEAK\nSCAN_LEAK$/u);
+  assert.match(credentialPath.output, /^path-hmac:[a-f0-9]{12}:0 CREDENTIAL_LEAK\nSCAN_LEAK$/u);
   quiet(credentialPath);
 
   const encodedPath = scanFile('evidence/192.0.2.10%3A54321/result.json', '{"outcome":"pass"}\n');
   assert.equal(encodedPath.exitCode, 1);
+});
+
+test('with the default public endpoint and no digest key a path hit is path-sha256', () => {
+  const provider = { ...PROVIDER } as Record<string, unknown>;
+  delete provider.endpoint;
+  delete provider.endpointDigestKey;
+  const result = scanFile(`evidence/${KEY}/result.json`, '{"outcome":"pass"}\n', envOf({ provider }));
+  assert.equal(result.exitCode, 1);
+  assert.match(result.output, /^path-sha256:[a-f0-9]{12}:0 CREDENTIAL_LEAK\nSCAN_LEAK$/u);
+  quiet(result);
+});
+
+test('the path hash is keyed: an operator matches it locally with the digest key', () => {
+  const path = 'evidence/192.0.2.10/result.json';
+  const expected = createHmac('sha256', DIGEST_KEY).update(path, 'utf8').digest('hex').slice(0, 12);
+  const result = scanFile(path, 'clean\n');
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.output, `path-hmac:${expected}:0 ENDPOINT_LEAK\nSCAN_LEAK`);
 });
 
 test('a leak under a clean path prints the plain relative path; a non-printable path is hashed', () => {
@@ -172,13 +235,13 @@ test('a leak under a clean path prints the plain relative path; a non-printable 
 
   const nonPrintable = scanFile('café.json', `${HREF}\n`);
   assert.equal(nonPrintable.exitCode, 1);
-  assert.match(nonPrintable.output, /^path-sha256:[a-f0-9]{12}:1 ENDPOINT_LEAK\nSCAN_LEAK$/u);
+  assert.match(nonPrintable.output, /^path-hmac:[a-f0-9]{12}:1 ENDPOINT_LEAK\nSCAN_LEAK$/u);
   quiet(nonPrintable);
 });
 
 test('a leak under a needle-bearing path hashes the location and keeps the line', () => {
   const result = scanFile('evidence/192.0.2.10/result.json', 'clean\nproviderPort = 54321\n');
   assert.equal(result.exitCode, 1);
-  assert.match(result.output, /^path-sha256:[a-f0-9]{12}:0 ENDPOINT_LEAK\npath-sha256:[a-f0-9]{12}:2 ENDPOINT_LEAK\nSCAN_LEAK$/u);
+  assert.match(result.output, /^path-hmac:[a-f0-9]{12}:0 ENDPOINT_LEAK\npath-hmac:[a-f0-9]{12}:2 ENDPOINT_LEAK\nSCAN_LEAK$/u);
   quiet(result);
 });

@@ -1,14 +1,15 @@
 /**
  * Operator entry for the G-PRIVACY endpoint scanner (T057, contract §(d)/§(i)).
  *
- * Modes: `--staged` scans the candidate index, `--dir <path>` scans retained evidence, and
+ * Modes: `--staged` scans the candidate index, `--all` audits the whole index, `--range <base>` scans
+ * every commit the base does not contain, `--dir <path>` scans retained evidence, and
  * `--print-host-template` prints the host.json template with computed digests. Every mode resolves
  * the endpoint through `loadRealTierProfile`, so no argument supplies a needle. Output is the
  * scanner's quiet report only; nothing here echoes argv, the profile or a child-process error.
  */
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createScanGit, resolveScanProfile, scanDirectory, scanError, scanStaged, type ScanGit, type ScanOptions, type ScanResult } from '../runtime/real-tier-endpoint-scan.ts';
+import { createScanGit, resolveScanProfile, scanAll, scanDirectory, scanError, scanRange, scanStaged, type ScanGit, type ScanOptions, type ScanResult } from '../runtime/real-tier-endpoint-scan.ts';
 import type { RealTierProfile } from '../runtime/real-tier-profile.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
@@ -20,11 +21,13 @@ const TEMPLATE_ASSEMBLY = 'dist/src/runtime/real-tier-assembly.js';
 const TEMPLATE_ADAPTERS = ['uc03-real-tier/1'];
 const TEMPLATE_CONTRACT = 'uc03-host-composition/2';
 
-function parse(args: readonly string[]): Readonly<{ mode: 'staged' | 'template' } | { mode: 'dir'; path: string }> | undefined {
-  if (args.length === 1 && (args[0] === '--staged' || args[0] === '--print-host-template')) {
-    return { mode: args[0] === '--staged' ? 'staged' : 'template' };
+function parse(args: readonly string[]): Readonly<{ mode: 'staged' | 'all' | 'template' } | { mode: 'dir'; path: string } | { mode: 'range'; base: string }> | undefined {
+  if (args.length === 1 && (args[0] === '--staged' || args[0] === '--all' || args[0] === '--print-host-template')) {
+    const mode = args[0] === '--print-host-template' ? 'template' : args[0] === '--all' ? 'all' : 'staged';
+    return { mode };
   }
   if (args.length === 2 && args[0] === '--dir' && args[1] !== undefined && args[1] !== '' && !args[1].startsWith('--')) return { mode: 'dir', path: args[1] };
+  if (args.length === 2 && args[0] === '--range' && args[1] !== undefined && args[1] !== '' && !args[1].startsWith('--')) return { mode: 'range', base: args[1] };
   return undefined;
 }
 
@@ -55,9 +58,16 @@ async function hostTemplate(profile: RealTierProfile, git: ScanGit): Promise<Sca
 export async function runRealTierScanCli(args: readonly string[], options: RealTierScanCliOptions): Promise<ScanResult> {
   const parsed = parse(args);
   if (parsed === undefined) return scanError('arguments');
-  const scanOptions: ScanOptions = { env: options.env, repositoryRoot: options.repositoryRoot, ...(options.cwd === undefined ? {} : { cwd: options.cwd }) };
+  const scanOptions: ScanOptions = {
+    env: options.env,
+    repositoryRoot: options.repositoryRoot,
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...(options.git === undefined ? {} : { git: options.git }),
+  };
   if (parsed.mode === 'dir') return scanDirectory(parsed.path, scanOptions);
-  if (parsed.mode === 'staged') return scanStaged({ ...scanOptions, ...(options.git === undefined ? {} : { git: options.git }) });
+  if (parsed.mode === 'staged') return scanStaged(scanOptions);
+  if (parsed.mode === 'all') return scanAll(scanOptions);
+  if (parsed.mode === 'range') return scanRange(scanOptions, parsed.base);
   const resolved = resolveScanProfile(options.env, options.repositoryRoot);
   if (!resolved.ok) return resolved.result;
   return hostTemplate(resolved.profile, options.git ?? createScanGit(options.cwd ?? process.cwd()));

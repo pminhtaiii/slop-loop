@@ -2,13 +2,15 @@
  * G-PRIVACY quiet endpoint and credential leak scanner (T057, contract §(d) "Privacy").
  *
  * `scanStaged` reads exactly the candidate index (`git diff --cached --name-only -z --diff-filter=ACMR`
- * plus `git show :<path>`) and `scanDirectory` walks retained evidence; both scan the relative paths and
- * the contents against needles derived in memory from `loadRealTierProfile`. Output is only
- * `<location>:<line> ENDPOINT_LEAK|CREDENTIAL_LEAK` lines and a final verdict, with `<location>` hashed
- * when the path itself would reveal a needle, so a needle, a matched line and a child-process error are
- * never echoed. Exit codes: 0 clean, 1 leak, 2 scan error.
+ * plus `git show :<path>`), `scanAll` audits the whole index, `scanRange` walks every commit a base does
+ * not contain, and `scanDirectory` walks retained evidence; all scan the relative paths and the contents
+ * against needles derived in memory from `loadRealTierProfile`. Output is only
+ * `<location>:<line> ENDPOINT_LEAK|CREDENTIAL_LEAK|DIGEST_KEY_LEAK` lines and a final verdict, with
+ * `<location>` hashed when the path itself would reveal a needle, so a needle, a matched line and a
+ * child-process error are never echoed. Exit codes: 0 clean, 1 leak, 2 scan error.
  */
 import { execFile } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { sha256Text } from '../uc01/contracts.ts';
@@ -22,7 +24,10 @@ export type ScanGit = (args: readonly string[]) => Promise<Readonly<{ ok: true; 
 
 export type ScanOptions = Readonly<{ env: RealTierEnvironment; repositoryRoot: string; cwd?: string | undefined; git?: ScanGit | undefined }>;
 
-type Needles = Readonly<{ endpoint: readonly RegExp[]; credential: RegExp | undefined }>;
+type LeakKind = 'ENDPOINT_LEAK' | 'CREDENTIAL_LEAK' | 'DIGEST_KEY_LEAK';
+
+/** `key` is the HMAC key for the hashed location; empty when the public default endpoint needs none. */
+type Needles = Readonly<{ endpoint: readonly RegExp[]; credential: RegExp | undefined; digestKey: RegExp | undefined; key: string }>;
 
 type ProfileLoad = Readonly<{ ok: true; profile: RealTierProfile }> | Readonly<{ ok: false; result: ScanResult }>;
 
@@ -76,23 +81,40 @@ export function resolveScanProfile(env: RealTierEnvironment, repositoryRoot: str
   return loaded.ok ? { ok: true, profile: loaded.value } : { ok: false, result: scanError(loaded.reasonCode) };
 }
 
+const isLoopback = (href: string): boolean => LOOPBACK.has(new URL(href).hostname);
+
+/**
+ * The needle set: the resolved endpoint, each additional private endpoint, the credential and the
+ * digest key. A loopback endpoint hides the remote host, so it is only scannable when the profile
+ * lists the remote private endpoint.
+ */
 function needlesOf(env: RealTierEnvironment, repositoryRoot: string): Readonly<{ ok: true; needles: Needles }> | Readonly<{ ok: false; result: ScanResult }> {
   const resolved = resolveScanProfile(env, repositoryRoot);
   if (!resolved.ok) return resolved;
+  const profile = resolved.profile;
+  const privateEndpoints = profile.privacy.additionalPrivateEndpoints;
+  if (isLoopback(profile.endpoint.href) && privateEndpoints.length === 0) return { ok: false, result: scanError('tunnel-endpoint-missing') };
   const credential = env.ANTHROPIC_API_KEY?.trim() ? env.ANTHROPIC_API_KEY : undefined;
+  const digestKey = profile.endpointDigestKey === '' ? undefined : profile.endpointDigestKey;
   return {
     ok: true,
-    needles: { endpoint: endpointNeedles(resolved.profile.endpoint.href), credential: credential === undefined ? undefined : new RegExp(escape(credential), 'u') },
+    needles: {
+      endpoint: [profile.endpoint.href, ...privateEndpoints].flatMap(endpointNeedles),
+      credential: credential === undefined ? undefined : new RegExp(escape(credential), 'u'),
+      digestKey: digestKey === undefined ? undefined : new RegExp(escape(digestKey), 'u'),
+      key: digestKey ?? '',
+    },
   };
 }
 
-function leakAt(line: string, needles: Needles): 'ENDPOINT_LEAK' | 'CREDENTIAL_LEAK' | undefined {
+function leakAt(line: string, needles: Needles): LeakKind | undefined {
   if (needles.endpoint.some(needle => needle.test(line))) return 'ENDPOINT_LEAK';
-  return needles.credential?.test(line) ? 'CREDENTIAL_LEAK' : undefined;
+  if (needles.credential?.test(line) === true) return 'CREDENTIAL_LEAK';
+  return needles.digestKey?.test(line) === true ? 'DIGEST_KEY_LEAK' : undefined;
 }
 
 /** A path hit is a leak even when its content is clean: consult the raw and the percent-decoded path. */
-function pathLeak(path: string, needles: Needles): 'ENDPOINT_LEAK' | 'CREDENTIAL_LEAK' | undefined {
+function pathLeak(path: string, needles: Needles): LeakKind | undefined {
   const direct = leakAt(path, needles);
   if (direct !== undefined) return direct;
   const decoded = percentDecoded(path);
@@ -107,9 +129,15 @@ function percentDecoded(value: string): string {
   }
 }
 
-/** The plain relative path only when it reveals nothing and is printable; otherwise a local-matchable hash. */
+/**
+ * The plain relative path only when it reveals nothing and is printable; otherwise a location the
+ * operator can match locally. The HMAC key exists exactly when a private-host needle does, so an
+ * unkeyed digest never confirms a guessable path.
+ */
 function locationOf(path: string, needles: Needles): string {
-  return PRINTABLE.test(path) && pathLeak(path, needles) === undefined ? path : `path-sha256:${sha256Text(path).slice(0, 12)}`;
+  if (PRINTABLE.test(path) && pathLeak(path, needles) === undefined) return path;
+  const key = needles.key;
+  return `path-${key === '' ? 'sha256' : 'hmac'}:${(key === '' ? sha256Text(path) : createHmac('sha256', key).update(path, 'utf8').digest('hex')).slice(0, 12)}`;
 }
 
 function scanEntry(path: string, content: string, needles: Needles, lines: string[]): void {
@@ -179,6 +207,25 @@ export function createScanGit(cwd: string): ScanGit {
     });
 }
 
+/** A `-z` listing, POSIX-normalized and sorted so the report is stable. */
+function nulPaths(stdout: string | Buffer): readonly string[] {
+  return textOf(stdout)
+    .split('\0')
+    .filter(path => path !== '')
+    .map(POSIX)
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
+/** Reads each path's blob at `revision` (`:` for the index, `<sha>:` for a commit) and scans it. */
+async function scanBlobs(git: ScanGit, paths: readonly string[], revision: string, needles: Needles, lines: string[]): Promise<ScanResult | undefined> {
+  for (const path of paths) {
+    const blob = await git(['show', `${revision}${path}`]);
+    if (!blob.ok) return scanError('blob-unreadable');
+    scanEntry(path, textOf(blob.stdout), needles, lines);
+  }
+  return undefined;
+}
+
 /**
  * Scans exactly the candidate index. Deletions are skipped (their bytes are not in the candidate), and a
  * rename or copy is scanned under its new path only. A blob read or git failure is a scan error, never a
@@ -190,15 +237,53 @@ export async function scanStaged(options: ScanOptions): Promise<ScanResult> {
   const git = options.git ?? createScanGit(options.cwd ?? process.cwd());
   const listing = await git(['diff', '--cached', '--name-only', '-z', '--diff-filter=ACMR']);
   if (!listing.ok) return scanError('git-failure');
-  const paths = textOf(listing.stdout)
-    .split('\0')
-    .filter(path => path !== '')
-    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   const lines: string[] = [];
-  for (const path of paths) {
-    const blob = await git(['show', `:${path}`]);
-    if (!blob.ok) return scanError('blob-unreadable');
-    scanEntry(POSIX(path), textOf(blob.stdout), resolved.needles, lines);
+  const failure = await scanBlobs(git, nulPaths(listing.stdout), ':', resolved.needles, lines);
+  return failure ?? verdict(lines, resolved.needles.credential !== undefined);
+}
+
+/**
+ * Audits the whole index, which `--staged` cannot see: a needle added to the profile after a file was
+ * committed is invisible to the per-commit check. Same needles, path rules and output contract.
+ */
+export async function scanAll(options: ScanOptions): Promise<ScanResult> {
+  const resolved = needlesOf(options.env, options.repositoryRoot);
+  if (!resolved.ok) return resolved.result;
+  const git = options.git ?? createScanGit(options.cwd ?? process.cwd());
+  const listing = await git(['ls-files', '-z']);
+  if (!listing.ok) return scanError('git-failure');
+  const lines: string[] = [];
+  const failure = await scanBlobs(git, nulPaths(listing.stdout), ':', resolved.needles, lines);
+  return failure ?? verdict(lines, resolved.needles.credential !== undefined);
+}
+
+/**
+ * Scans every commit `base` does not contain, so a host removed by a later commit is still reported and a
+ * commit message is scanned too. Merge commits add no blobs here, which is the contract's scope.
+ */
+export async function scanRange(options: ScanOptions, base: string): Promise<ScanResult> {
+  const resolved = needlesOf(options.env, options.repositoryRoot);
+  if (!resolved.ok) return resolved.result;
+  const git = options.git ?? createScanGit(options.cwd ?? process.cwd());
+  const listing = await git(['rev-list', `${base}..HEAD`]);
+  if (!listing.ok) return scanError('git-failure');
+  const lines: string[] = [];
+  for (const sha of textOf(listing.stdout)
+    .split('\n')
+    .map(line => line.trim())
+    .filter(sha => sha !== '')) {
+    const message = await git(['log', '-1', '--format=%B', sha]);
+    if (!message.ok) return scanError('git-failure');
+    textOf(message.stdout)
+      .split(/\r?\n/u)
+      .forEach((line, index) => {
+        const kind = leakAt(line, resolved.needles);
+        if (kind !== undefined) lines.push(`commit-message:${sha}:${index + 1} ${kind}`);
+      });
+    const changed = await git(['diff-tree', '--root', '-r', '--no-commit-id', '--diff-filter=ACMR', '-z', '--name-only', sha]);
+    if (!changed.ok) return scanError('git-failure');
+    const failure = await scanBlobs(git, nulPaths(changed.stdout), `${sha}:`, resolved.needles, lines);
+    if (failure !== undefined) return failure;
   }
   return verdict(lines, resolved.needles.credential !== undefined);
 }
