@@ -130,3 +130,18 @@ test(
     assert.equal(await port.getCurrentRevisionDigest(4097), await port.getCurrentRevisionDigest(), 'a bound at or above the file must digest identically to the unbounded read');
   }),
 );
+
+test(
+  'workspace filesystem port: bounded traversal uses canonical paths and preserves the tree digest',
+  withWorkspace(async root => {
+    const port = new WorkspaceFilesystemPort({ root });
+    const control = { signal: new AbortController().signal, deadlineEpochMs: Date.now() + 5_000 };
+    const entries = await port.readDirBounded('src', 1, control);
+    assert.deepEqual(
+      entries.map(entry => entry.name),
+      ['a.py'],
+    );
+    const limits = { maxEntries: 2, maxFiles: 1, maxBytes: 256 };
+    assert.equal(await port.getCurrentRevisionDigestBounded(limits, control), await port.getCurrentRevisionDigest());
+  }),
+);

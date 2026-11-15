@@ -24,3 +24,9 @@ The user explicitly requested a PR and emphasized concurrent work by another age
 Authority: user-provided UC-02 requirements and confirmed Q1–Q14, including logical splitting with original-definition linkage and budgeted expansion, exact token admission, compatibility, persistence and benchmark conditions. Replace the literal-only retrieval choice. Keep the read-only Python target and controlled source tools, durable index with incremental refresh, and in-memory question sessions. Feature 008 moves to specs/008-retrieval-augmented-generation; new UC-02 branches use feat/rag-*. Historical planning snapshots and reports refer to their original candidate and cannot certify this revision.
 
 G-PLAN requires fresh automated and independent review of this revision. G-IMPLEMENT remains a separate task/path/tier release. G-LIVE and G-QUALITY still govern real owner/provider and answer-quality acceptance. Durable store compatibility and real local embedding benchmark runs require explicit implementation/test release. Planning and review are authorized; issue publication follows approval of the proposed ticket breakdown and configured paired tracker access.
+
+## 2026-11-14 — T001–T006 controlled implementation release
+
+After the UC-02 planning review, the user explicitly requested implementation of T001–T006 in [`tasks.md`](../tasks.md), with Luna Max implementing and Sol medium reviewing and repairing the batch. G-IMPLEMENT covers those six task scopes at the source and controlled-test tier, including the assigned foundation, question contracts, fixture, budget, and evidence paths.
+
+T007 onward, live owner/provider composition, production defaults, durable storage and restart acceptance, embedding experiments, and real-model quality acceptance require their own releases and evidence. The contributor workflow governs publication and the human merge decision.
