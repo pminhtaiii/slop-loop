@@ -240,6 +240,52 @@ test('v2 runner admits real execution with valid RealExecutionAdmission and reje
   assert.equal(reportForged.results[0]?.status, 'not-run');
   assert.equal(reportForged.results[0]?.reasonCode, 'real-admission-missing-or-invalid');
   assert.equal(callCount, 1, 'Callback must NOT be called with forged admission');
+
+  // Adapter version mismatch in selection vs registered adapter
+  const foreignAdmission = issueRealExecutionAdmission({
+    ...binding,
+    adapterVersions: ['foreign-adapter-v1'],
+  });
+  const selForeign = makeSelectionV2(reg, 'model-quality', caseIds, {
+    adapterVersions: ['foreign-adapter-v1'],
+    realAdmission: foreignAdmission,
+  });
+  const reqForeign: SharedEvaluationOptionsV2 = {
+    ...reqAdmitted,
+    runId: `v2-real-${++runSeq}`,
+    selections: [selForeign],
+  };
+  const reportForeign = await runAdmittedEvaluation(reqForeign);
+  assert.equal(reportForeign.results[0]?.status, 'not-run');
+  assert.equal(reportForeign.results[0]?.reasonCode, 'real-admission-missing-or-invalid');
+  assert.equal(callCount, 1, 'Callback must NOT be called when adapter version mismatches registration');
+});
+
+test('requirement observation with mismatched caseId is rejected', async () => {
+  const adapter: UC06EvaluationAdapter = {
+    version: 'mismatch-adapter-v1',
+    provenance: 'mock',
+    execute: async () => ({
+      caseId: 'UC-06:R01',
+      status: 'pass',
+    }),
+  };
+  const reg = registerUC06Evaluation(adapter);
+  const sel = makeSelectionV2(reg, 'mock-behavior', ['UC-06:R02']);
+  const req: SharedEvaluationOptionsV2 = {
+    contractVersion: 'shared-evaluation-v2',
+    scope: 'uc',
+    mode: 'mock',
+    runId: `v2-req-mismatch-${++runSeq}`,
+    attemptId: 'att-1',
+    codeRevision: 'rev-1',
+    perCaseTimeoutMs: 2000,
+    registrations: [reg],
+    selections: [sel],
+  };
+  const report = await runAdmittedEvaluation(req);
+  assert.equal(report.results[0]?.status, 'fail');
+  assert.equal(report.results[0]?.reasonCode, 'criteria-violation');
 });
 
 test('v2 runner executes mock and quality evaluation with exact localized grading and oracle pins', async () => {

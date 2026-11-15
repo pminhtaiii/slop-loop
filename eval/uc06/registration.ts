@@ -143,6 +143,15 @@ export function registerUC06Evaluation(
               const label = qLabelMap.get(caseId);
               if (!c || !label) throw new Error(`Unknown quality case: ${caseId}`);
               const obs = observation as CaseObservationInput | undefined;
+              if (obs && obs.caseId !== undefined && obs.caseId !== c.caseId && obs.caseId !== caseId) {
+                return {
+                  status: 'fail',
+                  classification: 'incorrect',
+                  safety: true,
+                  oracleDigest: toRawSha(label.oracleDigest),
+                  components: { localizedMatch: 'fail', safety: 'pass' },
+                };
+              }
               const judging = gradeQualityCase(c, label, obs);
               const isClean = label.expectedStatus === 'clean';
               const classification = isClean
@@ -165,8 +174,9 @@ export function registerUC06Evaluation(
             }
             const oracle = UC06_REQUIREMENT_ORACLES[caseId];
             if (!oracle) throw new Error(`Unknown requirement case: ${caseId}`);
-            const obs = observation as { status?: string; safety?: boolean } | undefined;
-            const pass = obs?.status === 'pass';
+            const obs = observation as { caseId?: string; status?: string; safety?: boolean } | undefined;
+            const matchesCase = obs?.caseId === caseId || obs?.caseId === caseId.replace('UC-06:', '');
+            const pass = obs?.status === 'pass' && matchesCase;
             return {
               status: pass ? 'pass' : 'fail',
               classification: 'not-applicable',

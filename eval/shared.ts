@@ -321,7 +321,7 @@ async function executeEvaluation(
             caseIds: sel.caseIds,
             requestedModel: sel.requestedModel ?? '',
           };
-          if (!isAdmittedRealExecutionAdmission(sel.realAdmission, binding)) {
+          if ((sel.adapterVersions && !sel.adapterVersions.includes(registration.adapterVersion)) || !isAdmittedRealExecutionAdmission(sel.realAdmission, binding)) {
             outcomeReason = 'real-admission-missing-or-invalid';
           } else {
             provenance = 'real';
