@@ -145,6 +145,11 @@ function endpointOf(raw: string, allowInsecureHttp: boolean | undefined, model: 
 function digestKeyOf(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || !DIGEST_KEY.test(value)) deny('endpoint-digest-key-missing', '$.provider.endpointDigestKey');
+  // Obviously weak keys stay guessable, so a retained digest would confirm endpoint guesses. A period ≤ 8
+  // string holds at most 8 distinct characters, so the first rule also refuses every repeating pattern.
+  const counts = new Map<string, number>();
+  for (const char of value) counts.set(char, (counts.get(char) ?? 0) + 1);
+  if (counts.size < 10 || Math.max(...counts.values()) > 16) deny('endpoint-digest-key-weak', '$.provider.endpointDigestKey');
   return value;
 }
 

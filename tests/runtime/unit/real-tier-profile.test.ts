@@ -10,7 +10,8 @@ import { sha256Text, type Validation } from '../../../src/uc01/contracts.ts';
 const repoRoot = mkdtempSync(join(tmpdir(), 't047-repository-'));
 const outsideRoot = mkdtempSync(join(tmpdir(), 't047-outside-'));
 const KEY = 'synthetic-key-0123456789abcdef';
-const DIGEST_KEY = 'ab'.repeat(32);
+// A synthetic 64-character hex key with no literal: the secret scanner runs in CI.
+const DIGEST_KEY = sha256Text('uc03 synthetic digest key');
 const MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
 const HTTPS = 'https://192.0.2.10:8443/v1/messages';
 const HTTP = 'http://192.0.2.10:8080/v1/messages';
@@ -99,8 +100,24 @@ test('keys the endpoint digest, deterministically for one key and href', () => {
   const second = loaded(load(profileOf())).endpoint.endpointDigest;
   assert.match(first, /^[a-f0-9]{64}$/u);
   assert.equal(first, second);
-  const otherKey = loaded(load(profileOf({ provider: { ...PROVIDER, endpointDigestKey: '0'.repeat(64) } }))).endpoint.endpointDigest;
+  const otherKey = loaded(load(profileOf({ provider: { ...PROVIDER, endpointDigestKey: sha256Text('uc03 synthetic digest key alternate') } }))).endpoint.endpointDigest;
   assert.notEqual(first, otherKey);
+});
+
+test('refuses an obviously weak digest key without echoing it', () => {
+  // Pinned literals stay out: every fixture is generated, and none is derived from a real endpoint.
+  const weak = [
+    ['all-same', '0'.repeat(64)],
+    ['low-variety', '012345678'.repeat(7) + '0'],
+    ['repeating period 2', 'ab'.repeat(32)],
+    ['repeating period 8', '01234567'.repeat(8)],
+    ['one character over a quarter', '0'.repeat(17) + '123456789abc'.repeat(3) + '1'.repeat(11)],
+  ] as const;
+  for (const [name, endpointDigestKey] of weak) {
+    const result = load(profileOf({ provider: { ...PROVIDER, endpointDigestKey } }));
+    assert.equal(reasonOf(result), 'endpoint-digest-key-weak', name);
+    assert.equal(JSON.stringify(result).includes(endpointDigestKey), false, name);
+  }
 });
 
 test('refuses a non-default endpoint without a valid digest key, and accepts the public default without one', () => {
@@ -116,7 +133,7 @@ test('refuses a non-default endpoint without a valid digest key, and accepts the
 });
 
 test('never serializes the digest key', () => {
-  const sentinel = 'ab'.repeat(32);
+  const sentinel = sha256Text('uc03 synthetic digest key sentinel');
   const value = loaded(load(profileOf({ provider: { ...PROVIDER, endpointDigestKey: sentinel } })));
   const json = JSON.stringify(value);
   assert.equal(json.includes(sentinel), false);
