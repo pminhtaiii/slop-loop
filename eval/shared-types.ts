@@ -108,3 +108,53 @@ export type SharedEvaluationReport = Readonly<{
     acceptance: 'pass' | 'fail' | 'incomplete';
   }>[];
 }>;
+
+export const SHARED_EVALUATION_V2_VERSION = 'shared-evaluation-v2' as const;
+
+export type SharedExecutionContextV2 = Readonly<{
+  runId: string;
+  attemptId: string;
+  ucId: string;
+  caseId: string;
+  level: ExecutionLevel;
+  provenance: 'mock' | 'real';
+  isolationKey: string;
+  admission?: RealExecutionAdmission | undefined;
+}>;
+
+export type SharedSelectionV2 = SharedSelection & Readonly<{
+  profileDigest?: string | undefined;
+  pricingDigest?: string | undefined;
+  adapterVersions?: readonly string[] | undefined;
+  requestedModel?: string | undefined;
+  realAdmission?: RealExecutionAdmission | undefined;
+}>;
+
+export type SharedEvaluationOptionsV2 = Readonly<{
+  contractVersion: typeof SHARED_EVALUATION_V2_VERSION;
+  scope: 'uc' | 'project';
+  mode: 'mock' | 'real';
+  runId: string;
+  attemptId: string;
+  codeRevision: string;
+  perCaseTimeoutMs: number;
+  registrations: readonly RegisteredEvaluation[];
+  selections: readonly SharedSelectionV2[];
+}>;
+
+export type SharedEvaluationReportV2 = Readonly<{
+  contractVersion: typeof SHARED_EVALUATION_V2_VERSION;
+  scope: 'uc' | 'project';
+  mode: 'mock' | 'real';
+  results: readonly SharedCaseResult[];
+  acceptance: 'pass' | 'fail' | 'incomplete';
+  exitCode: 0 | 1;
+  groups: readonly Readonly<{
+    ucId: string;
+    level: ExecutionLevel;
+    hardGate: 'pass' | 'fail' | 'incomplete';
+    quality: Readonly<{ correct: number; total: number; accuracy: number | null; verdict: 'pass' | 'fail' | 'not-applicable' }>;
+    completeness: 'complete' | 'incomplete';
+    acceptance: 'pass' | 'fail' | 'incomplete';
+  }>[];
+}>;

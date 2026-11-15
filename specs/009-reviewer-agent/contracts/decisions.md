@@ -55,7 +55,7 @@ On 2026-11-14, the user explicitly directed to proceed with Phase 4 (T007), Phas
 | D6 | Trusted reviewer prompt/schema branch in existing transport | Planner-only prompt is insufficient; no second adapter |
 | D7 | Separate controlled, integrated real, quality and restart milestones | Checked predecessor tasks/doubles do not prove broader acceptance |
 
-The T001 entry records user-relayed acceptance of the exact design/ownership baseline. Remaining production/rubric approvals and owner deliveries are explicit release conditions, not unresolved design placeholders.
+The T001 entry records user-relayed acceptance of the exact design/ownership baseline. Remaining production/rubric approvals and owner deliveries are explicit release conditions, not unresolved design placeholders. Phase 4 (T007-T008) and Phase 5 (T009-T010) are completed and verified at source/controlled tier. T010 registers UC-06 on existing evaluation infrastructure with additive capability-aware runner v2, pinned oracle digests, and real execution gating. Phase 6 real acceptance tasks (T011–T013) remain gated.
 
 ## Gates and handoff evidence
 
