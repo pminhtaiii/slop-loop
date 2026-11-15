@@ -39,6 +39,9 @@ const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, 
 /** Host matches need a non-host character on each side, so `192.0.2.7` cannot match `192.0.2.70`. */
 const bounded = (value: string): RegExp => new RegExp(`(?<![A-Za-z0-9.-])${escape(value)}(?![A-Za-z0-9.-])`, 'u');
 
+/** The raw and once-encoded spellings of a host-bearing token, both under the same boundary rule. */
+const boundedForms = (value: string): readonly RegExp[] => [value, encodeURIComponent(value)].map(bounded);
+
 const HOST_LIKE = '(?:[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+|localhost|\\[[0-9A-Fa-f:.]+\\])';
 const PORT_KEY = '["\']?[A-Za-z0-9_.-]*port[A-Za-z0-9_.-]*["\']?';
 
@@ -57,19 +60,19 @@ export function scanError(code: string): ScanResult {
   return { exitCode: 2, output: `SCAN_ERROR ${code}` };
 }
 
-/** Needles for one endpoint: the URL forms, the encoded forms, the host and the port rule. */
+/** Needles for one endpoint: the URL forms, their once-encoded forms, the host and the port rule. */
 function endpointNeedles(href: string): readonly RegExp[] {
   // The pinned default is a public host, so it carries no needle and never blocks a publication.
   if (href === DEFAULT_REAL_TIER_ENDPOINT || href === new URL(DEFAULT_REAL_TIER_ENDPOINT).href) return [];
   const url = new URL(href);
   const host = url.hostname;
   const port = url.port;
-  const forms = [href, href.replace(/\/messages$/u, ''), href.replace(/^[a-z]+:\/\//u, '')];
-  const encoded = port === '' ? [] : [encodeURIComponent(`${host}:${port}`)];
-  const needles = forms.map(form => new RegExp(escape(form), 'u')).concat([...forms, ...encoded].map(form => new RegExp(escape(encodeURIComponent(form)), 'u')));
-  if (port !== '') needles.push(bounded(`${host}:${port}`));
+  // Every raw form first, then its once-encoded equivalent: an encoded IPv6 host appears in no raw form.
+  const raw = [href, href.replace(/\/messages$/u, ''), href.replace(/^[a-z]+:\/\//u, '')];
+  const needles = [...new Set([...raw, ...raw.map(form => encodeURIComponent(form))])].map(form => new RegExp(escape(form), 'u'));
+  if (port !== '') needles.push(...boundedForms(`${host}:${port}`));
   // A loopback host (SSH tunnel) is too common to be a needle of its own; only its port and URL forms are.
-  if (!LOOPBACK.has(host)) needles.push(bounded(host));
+  if (!LOOPBACK.has(host)) needles.push(...boundedForms(host));
   if (port !== '' && port !== '80' && port !== '443') needles.push(portRule(port));
   return needles;
 }
@@ -113,6 +116,17 @@ function leakAt(line: string, needles: Needles): LeakKind | undefined {
   return needles.digestKey?.test(line) === true ? 'DIGEST_KEY_LEAK' : undefined;
 }
 
+/**
+ * The guard for a value the scanner derives rather than reads, such as the host template: `undefined`
+ * when `text` carries no needle, otherwise the scan error to return instead of printing. The host
+ * template is built, so it gets this one check rather than a leak report.
+ */
+export function needleGuard(text: string, env: RealTierEnvironment, repositoryRoot: string): ScanResult | undefined {
+  const resolved = needlesOf(env, repositoryRoot);
+  if (!resolved.ok) return resolved.result;
+  return text.split(/\r?\n/u).some(line => leakAt(line, resolved.needles) !== undefined) ? scanError('template-needle') : undefined;
+}
+
 /** A path hit is a leak even when its content is clean: consult the raw and the percent-decoded path. */
 function pathLeak(path: string, needles: Needles): LeakKind | undefined {
   const direct = leakAt(path, needles);
@@ -140,6 +154,12 @@ function locationOf(path: string, needles: Needles): string {
   return `path-${key === '' ? 'sha256' : 'hmac'}:${(key === '' ? sha256Text(path) : createHmac('sha256', key).update(path, 'utf8').digest('hex')).slice(0, 12)}`;
 }
 
+/** A directory name no other path spells out is reported like a path hit. */
+function scanPath(path: string, needles: Needles, lines: string[]): void {
+  const kind = pathLeak(path, needles);
+  if (kind !== undefined) lines.push(`${locationOf(path, needles)}:0 ${kind}`);
+}
+
 function scanEntry(path: string, content: string, needles: Needles, lines: string[]): void {
   const pathKind = pathLeak(path, needles);
   const location = locationOf(path, needles);
@@ -164,37 +184,42 @@ function readOrError(path: string): string | undefined {
   }
 }
 
-/** One file entry per relative path under `dir`, sorted so the report is stable; `undefined` on a failed walk. */
-function filesUnder(root: string): readonly string[] | undefined {
+/** Every entry under `dir`, sorted so the report is stable; `undefined` on a failed walk. */
+function entriesUnder(root: string): readonly Readonly<{ path: string; isFile: boolean }>[] | undefined {
   try {
     return readdirSync(root, { recursive: true, withFileTypes: true })
-      .filter(entry => entry.isFile())
-      .map(entry => POSIX(relative(root, join(entry.parentPath, entry.name))))
-      .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+      .map(entry => ({ path: POSIX(relative(root, join(entry.parentPath, entry.name))), isFile: entry.isFile() }))
+      .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   } catch {
     return undefined;
   }
 }
 
+const dirPrefix = (path: string): string => `${path}/`;
+
 /**
- * Scans a directory of retained evidence recursively. Every file's relative path (so each directory
- * name too) and contents are checked; a path hit is reported at line 0.
- *
- * shortcut: an empty directory whose own name leaks is not reported, add an entry walk if evidence
- * ever retains empty directories.
+ * Scans a directory of retained evidence recursively. Every file path (which carries its directory
+ * names) and every file's contents are checked, and a leaf directory name — one no other path spells
+ * out — is checked on its own. A path hit is reported at line 0.
  */
 export function scanDirectory(dir: string, options: ScanOptions): ScanResult {
   const resolved = needlesOf(options.env, options.repositoryRoot);
   if (!resolved.ok) return resolved.result;
   const root = resolve(dir);
   if (statSync(root, { throwIfNoEntry: false })?.isDirectory() !== true) return scanError('directory-unreadable');
-  const files = filesUnder(root);
-  if (files === undefined) return scanError('directory-unreadable');
+  const entries = entriesUnder(root);
+  if (entries === undefined) return scanError('directory-unreadable');
+  const paths = entries.map(entry => entry.path);
   const lines: string[] = [];
-  for (const path of files) {
-    const content = readOrError(join(root, path));
+  for (const entry of entries) {
+    if (!entry.isFile) {
+      // A directory with any entry under it is spelled by that entry's path already.
+      if (!paths.some(path => path.startsWith(dirPrefix(entry.path)))) scanPath(entry.path, resolved.needles, lines);
+      continue;
+    }
+    const content = readOrError(join(root, entry.path));
     if (content === undefined) return scanError('file-unreadable');
-    scanEntry(path, content, resolved.needles, lines);
+    scanEntry(entry.path, content, resolved.needles, lines);
   }
   return verdict(lines, resolved.needles.credential !== undefined);
 }
@@ -259,7 +284,7 @@ export async function scanAll(options: ScanOptions): Promise<ScanResult> {
 
 /**
  * Scans every commit `base` does not contain, so a host removed by a later commit is still reported and a
- * commit message is scanned too. Merge commits add no blobs here, which is the contract's scope.
+ * commit message is scanned too. A merge commit's paths come from every parent (`-m`), deduplicated.
  */
 export async function scanRange(options: ScanOptions, base: string): Promise<ScanResult> {
   const resolved = needlesOf(options.env, options.repositoryRoot);
@@ -280,9 +305,10 @@ export async function scanRange(options: ScanOptions, base: string): Promise<Sca
         const kind = leakAt(line, resolved.needles);
         if (kind !== undefined) lines.push(`commit-message:${sha}:${index + 1} ${kind}`);
       });
-    const changed = await git(['diff-tree', '--root', '-r', '--no-commit-id', '--diff-filter=ACMR', '-z', '--name-only', sha]);
+    // `-m` makes a merge list its blobs against each parent; without it a merge contributes no paths.
+    const changed = await git(['diff-tree', '-m', '--root', '-r', '--no-commit-id', '--diff-filter=ACMR', '-z', '--name-only', sha]);
     if (!changed.ok) return scanError('git-failure');
-    const failure = await scanBlobs(git, nulPaths(changed.stdout), `${sha}:`, resolved.needles, lines);
+    const failure = await scanBlobs(git, [...new Set(nulPaths(changed.stdout))], `${sha}:`, resolved.needles, lines);
     if (failure !== undefined) return failure;
   }
   return verdict(lines, resolved.needles.credential !== undefined);

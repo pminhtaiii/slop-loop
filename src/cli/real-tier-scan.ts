@@ -9,7 +9,19 @@
  */
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createScanGit, resolveScanProfile, scanAll, scanDirectory, scanError, scanRange, scanStaged, type ScanGit, type ScanOptions, type ScanResult } from '../runtime/real-tier-endpoint-scan.ts';
+import {
+  createScanGit,
+  needleGuard,
+  resolveScanProfile,
+  scanAll,
+  scanDirectory,
+  scanError,
+  scanRange,
+  scanStaged,
+  type ScanGit,
+  type ScanOptions,
+  type ScanResult,
+} from '../runtime/real-tier-endpoint-scan.ts';
 import type { RealTierProfile } from '../runtime/real-tier-profile.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
@@ -34,8 +46,10 @@ function parse(args: readonly string[]): Readonly<{ mode: 'staged' | 'all' | 'te
 /**
  * The contract §(i) host.json. Digests come from the loaded profile and the revisions from
  * `git rev-parse HEAD`; the endpoint itself never appears, only its digest inside `profileDigest`.
+ * A model id may itself be a URL or a credential, so the serialized template is checked against the
+ * scanner's needles and refused as a fixed error code rather than printed.
  */
-async function hostTemplate(profile: RealTierProfile, git: ScanGit): Promise<ScanResult> {
+async function hostTemplate(profile: RealTierProfile, git: ScanGit, scan: ScanOptions): Promise<ScanResult> {
   const head = await git(['rev-parse', 'HEAD']);
   if (!head.ok) return scanError('git-failure');
   const revision = (typeof head.stdout === 'string' ? head.stdout : head.stdout.toString('utf8')).trim();
@@ -51,7 +65,8 @@ async function hostTemplate(profile: RealTierProfile, git: ScanGit): Promise<Sca
     revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(component => [component, revision])),
     assembly: TEMPLATE_ASSEMBLY,
   };
-  return { exitCode: 0, output: JSON.stringify(template, null, 2) };
+  const serialized = JSON.stringify(template, null, 2);
+  return needleGuard(serialized, scan.env, scan.repositoryRoot) ?? { exitCode: 0, output: serialized };
 }
 
 /** Parses one mode and runs it. A malformed mode is a scan error, never a default pass. */
@@ -70,7 +85,7 @@ export async function runRealTierScanCli(args: readonly string[], options: RealT
   if (parsed.mode === 'range') return scanRange(scanOptions, parsed.base);
   const resolved = resolveScanProfile(options.env, options.repositoryRoot);
   if (!resolved.ok) return resolved.result;
-  return hostTemplate(resolved.profile, options.git ?? createScanGit(options.cwd ?? process.cwd()));
+  return hostTemplate(resolved.profile, options.git ?? createScanGit(options.cwd ?? process.cwd()), scanOptions);
 }
 
 function isDirectExecution(): boolean {
