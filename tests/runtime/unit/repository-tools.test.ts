@@ -18,6 +18,10 @@ import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
 import {
   ControlledRepositoryTools,
   ControlledRepositoryToolsV02,
@@ -3485,4 +3489,29 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(Object.getOwnPropertyDescriptor(receiver, 'executionGuardApiVersion')?.value, '0.2.0');
     });
   });
+});
+
+it('UC-02 T003 filesystem work operations stay bounded and observe cancellation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rag-t003-bounded-fs-'));
+  try {
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(root, 'src', 'a.py'), 'a\n');
+    writeFileSync(join(root, 'src', 'b.py'), 'b\n');
+    const fs = new WorkspaceFilesystemPort({ root });
+    const control = { signal: new AbortController().signal, deadlineEpochMs: Date.now() + 5_000 };
+    const onePage = await fs.readDirBounded('src', 2, control);
+    assert.deepEqual(
+      onePage.map(entry => entry.name),
+      ['a.py', 'b.py'],
+    );
+    await assert.rejects(() => fs.readDirBounded('src', 1, control), /DIRECTORY_TOO_LARGE/u);
+    assert.match(await fs.getCurrentRevisionDigestBounded({ maxEntries: 3, maxFiles: 2, maxBytes: 1_024 }, control), /^sha256:[a-f0-9]{64}$/u);
+    await assert.rejects(() => fs.getCurrentRevisionDigestBounded({ maxEntries: 2, maxFiles: 2, maxBytes: 1_024 }, control), /DIRECTORY_TOO_LARGE|SCAN_LIMIT/u);
+    await assert.rejects(() => fs.getCurrentRevisionDigestBounded({ maxEntries: 3, maxFiles: 2, maxBytes: 64 }, control), /SCAN_LIMIT/u);
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await assert.rejects(() => fs.readDirBounded('src', 2, { signal: cancelled.signal, deadlineEpochMs: Date.now() + 1_000 }), /CANCELLED/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
