@@ -189,7 +189,9 @@ export function createBaselineEvidenceStore(options: BaselineEvidenceStoreOption
     provenance: 'real',
 
     async persist(request): Promise<BaselineWriteOutcome> {
-      const { content } = request;
+      // Snapshot before the first await: the caller keeps its nested arrays and could mutate them
+      // while a filesystem step is pending, which would store content under the old digest.
+      const content = structuredClone(request.content);
       if (request.contentDigest !== computeCanonicalSha256(content)) {
         return { outcome: 'denied', reason: 'the content digest does not match the canonical candidate' };
       }

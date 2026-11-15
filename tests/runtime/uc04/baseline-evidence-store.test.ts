@@ -118,6 +118,27 @@ test('a durable write acknowledges only after the bytes exist', async t => {
   assert.match(await readFile(await soleRecordPath(dir), 'utf8'), new RegExp(acknowledgement.evidenceId));
 });
 
+test('mutating the caller content after persist returns cannot change what is stored', async t => {
+  const dir = await stateDir(t);
+  const store = storeAt(dir);
+  const criteria = ['the reported defect no longer reproduces'];
+  const content = candidate(criteria);
+  const original = structuredClone(content);
+  const request = writeRequest(content);
+
+  const pending = store.persist(request);
+  // `criteria` is the caller's own array; the first filesystem step is still pending here.
+  criteria.push('mutated while the write was pending');
+  const outcome = await pending;
+
+  assert.ok(outcome.outcome === 'durable', `expected a durable write, got ${outcome.outcome}`);
+  assert.equal(outcome.acknowledgement.contentDigest, request.contentDigest);
+  const loaded = await store.load({ taskId: content.taskId, workspaceId: content.workspaceId, repositoryId: content.repositoryId, evidenceId: outcome.acknowledgement.evidenceId });
+  assert.ok(loaded.outcome === 'found', `expected the stored record to load, got ${loaded.outcome}`);
+  assert.deepEqual(loaded.content, original);
+  assert.equal(loaded.acknowledgement.contentDigest, request.contentDigest);
+});
+
 test('replaying identical content returns the same acknowledgement and writes nothing further', async t => {
   const dir = await stateDir(t);
   const writes: string[] = [];
