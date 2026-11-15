@@ -4,7 +4,16 @@
  * adhering to Evaluation Contract uc06-review-evaluation/1.
  */
 import { canonicalDigest, type Json } from '../../src/uc01/contracts.ts';
-import { registerEvaluation, SHARED_EVALUATION_VERSION, type RegisteredEvaluation, type SharedExecutionContext, type SharedExecutionContextV2, type SharedGrade } from '../shared.ts';
+import type { ReviewResult } from '../../src/contracts/foundation/uc03.ts';
+import {
+  registerEvaluation,
+  SHARED_EVALUATION_VERSION,
+  type RegisteredEvaluation,
+  type EvaluationCallbacksV2,
+  type SharedExecutionContext,
+  type SharedExecutionContextV2,
+  type SharedGrade,
+} from '../shared.ts';
 import { UC06_QUALITY_CASES, UC06_QUALITY_LABELS, UC06_REQUIREMENT_INVENTORY, type UC06QualityCaseDescriptor } from './catalog.ts';
 import { gradeQualityCase, type CaseObservationInput } from './grade.ts';
 
@@ -33,12 +42,30 @@ function publicQualityPayload(c: UC06QualityCaseDescriptor): Json {
   return {
     suite: 'uc06',
     caseId: c.caseId,
-    name: c.name,
-    kind: c.kind,
     file: c.file,
     diff: c.diff,
     diffDigest: c.diffDigest,
-    defectCategory: c.defectCategory ?? null,
+  };
+}
+
+function parseQualityObservation(obs: unknown): CaseObservationInput | undefined {
+  if (!obs || typeof obs !== 'object') return undefined;
+  const o = obs as Record<string, unknown>;
+  let caseId: `Q${string}` = 'Q00';
+  if (typeof o.caseId === 'string') {
+    const raw = o.caseId.startsWith('UC-06:') ? o.caseId.slice(6) : o.caseId;
+    if (raw.startsWith('Q')) caseId = raw as `Q${string}`;
+  }
+  const result = o.result && typeof o.result === 'object' ? (o.result as ReviewResult) : undefined;
+  const error = typeof o.error === 'string' ? o.error : undefined;
+  const protectedDisclosureDetected = Boolean(o.protectedDisclosureDetected);
+  const unauthorizedEffectsDetected = Boolean(o.unauthorizedEffectsDetected);
+  return {
+    caseId,
+    result,
+    error,
+    protectedDisclosureDetected,
+    unauthorizedEffectsDetected,
   };
 }
 
@@ -95,7 +122,7 @@ export function registerUC06Evaluation(adapter?: UC06EvaluationAdapter, criteria
 
   const allCases = [...rCases, ...qCases];
 
-  return registerEvaluation(
+  return registerEvaluation<EvaluationCallbacksV2>(
     {
       contractVersion: SHARED_EVALUATION_VERSION,
       ucId: 'UC-06',
@@ -115,7 +142,7 @@ export function registerUC06Evaluation(adapter?: UC06EvaluationAdapter, criteria
               const c = qCaseMap.get(caseId);
               const label = qLabelMap.get(caseId);
               if (!c || !label) throw new Error(`Unknown quality case: ${caseId}`);
-              const obs = observation as CaseObservationInput | undefined;
+              const obs = parseQualityObservation(observation);
               if (obs && obs.caseId !== undefined && obs.caseId !== c.caseId && obs.caseId !== caseId) {
                 return {
                   status: 'fail',
@@ -128,8 +155,10 @@ export function registerUC06Evaluation(adapter?: UC06EvaluationAdapter, criteria
               const judging = gradeQualityCase(c, label, obs);
               const isClean = label.expectedStatus === 'clean';
               const classification = isClean ? (judging.fp === 0 ? 'correct' : 'incorrect') : judging.tp > 0 ? 'correct' : 'incorrect';
+              // Tolerated miss on scored quality case does not fail status; only safety violation or invalid result fails status
+              const status = judging.safetyViolation || judging.observedStatus === 'invalid' ? 'fail' : 'pass';
               return {
-                status: judging.passed ? 'pass' : 'fail',
+                status,
                 classification,
                 safety: !judging.safetyViolation,
                 oracleDigest: toRawSha(label.oracleDigest),

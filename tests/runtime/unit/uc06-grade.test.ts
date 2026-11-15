@@ -9,12 +9,13 @@ const REPO_DIGEST = 'sha256:' + 'a'.repeat(64);
 const DIFF_DIGEST = 'sha256:' + 'b'.repeat(64);
 const CHECKSET_DIGEST = 'sha256:' + 'c'.repeat(64);
 
-function mockReviewResult(status: 'accepted' | 'findings' | 'invalid', findings: ReviewResult['findings'] = []): ReviewResult {
+function mockReviewResult(status: 'accepted' | 'findings' | 'invalid', findings: ReviewResult['findings'] = [], caseId?: string): ReviewResult {
+  const c = UC06_QUALITY_CASES.find(item => item.caseId === caseId);
   return {
     reviewId: 'rev-test',
     reviewerRoleConfigId: 'cfg-test',
     repoDigest: REPO_DIGEST,
-    diffDigest: DIFF_DIGEST,
+    diffDigest: c ? c.diffDigest : DIFF_DIGEST,
     checkSetDigest: CHECKSET_DIGEST,
     iterationReservationRef: 'res-test',
     status,
@@ -89,7 +90,7 @@ test('gradeQualityCase passes clean case with accepted status and 0 actionable f
   const label = UC06_QUALITY_LABELS.find(l => l.caseId === caseDesc.caseId);
   assert.ok(label);
 
-  const cleanResult = mockReviewResult('accepted', []);
+  const cleanResult = mockReviewResult('accepted', [], caseDesc.caseId);
   const judged = gradeQualityCase(caseDesc, label, { caseId: caseDesc.caseId, result: cleanResult });
   assert.equal(judged.passed, true);
   assert.equal(judged.tp, 0);
@@ -103,16 +104,20 @@ test('gradeQualityCase flags spurious actionable finding on clean case as FP', (
   const label = UC06_QUALITY_LABELS.find(l => l.caseId === caseDesc.caseId);
   assert.ok(label);
 
-  const falseAlarmResult = mockReviewResult('findings', [
-    {
-      file: 'src/math_util.py',
-      line: 10,
-      side: 'new',
-      severity: 'warning',
-      message: 'Unnecessary whitespace.',
-      evidenceRef: 'source',
-    },
-  ]);
+  const falseAlarmResult = mockReviewResult(
+    'findings',
+    [
+      {
+        file: 'src/math_util.py',
+        line: 10,
+        side: 'new',
+        severity: 'warning',
+        message: 'Unnecessary whitespace.',
+        evidenceRef: 'source',
+      },
+    ],
+    caseDesc.caseId,
+  );
 
   const judged = gradeQualityCase(caseDesc, label, { caseId: caseDesc.caseId, result: falseAlarmResult });
   assert.equal(judged.passed, false);
@@ -126,16 +131,20 @@ test('gradeQualityCase correctly matches seeded defect on faulty case as TP', ()
   const label = UC06_QUALITY_LABELS.find(l => l.caseId === 'Q07');
   assert.ok(label && label.defect);
 
-  const detectedResult = mockReviewResult('findings', [
-    {
-      file: label.defect.file,
-      line: label.defect.startLine,
-      side: label.defect.side,
-      severity: 'error',
-      message: 'Division by zero check is inverted: b < 0 allowing zero denominator.',
-      evidenceRef: 'source',
-    },
-  ]);
+  const detectedResult = mockReviewResult(
+    'findings',
+    [
+      {
+        file: label.defect.file,
+        line: label.defect.startLine,
+        side: label.defect.side,
+        severity: 'error',
+        message: 'Division by zero check is inverted: b < 0 allowing zero denominator.',
+        evidenceRef: 'source',
+      },
+    ],
+    'Q07',
+  );
 
   const judged = gradeQualityCase(caseDesc, label, { caseId: 'Q07', result: detectedResult });
   assert.equal(judged.passed, true);
@@ -152,16 +161,20 @@ test('gradeQualityCase negative controls: finding pointing to unchanged context 
   assert.ok(label && label.defect);
 
   // Line 14 is unchanged context line in Q07 ("def divide(a: float, b: float) -> float:")
-  const unchangedLineResult = mockReviewResult('findings', [
-    {
-      file: label.defect.file,
-      line: 14,
-      side: label.defect.side,
-      severity: 'error',
-      message: 'Division by zero check is inverted: b < 0 allowing zero denominator.',
-      evidenceRef: 'source',
-    },
-  ]);
+  const unchangedLineResult = mockReviewResult(
+    'findings',
+    [
+      {
+        file: label.defect.file,
+        line: 14,
+        side: label.defect.side,
+        severity: 'error',
+        message: 'Division by zero check is inverted: b < 0 allowing zero denominator.',
+        evidenceRef: 'source',
+      },
+    ],
+    'Q07',
+  );
 
   const judged = gradeQualityCase(caseDesc, label, { caseId: 'Q07', result: unchangedLineResult });
   assert.equal(judged.passed, false);
@@ -177,21 +190,53 @@ test('gradeQualityCase negative controls: unrelated docstring/formatting message
   assert.ok(label && label.defect);
 
   // Unrelated docstring comment that happens to contain "Add"
-  const unrelatedResult = mockReviewResult('findings', [
-    {
-      file: label.defect.file,
-      line: 23,
-      side: label.defect.side,
-      severity: 'warning',
-      message: 'Add a docstring to this function.',
-      evidenceRef: 'source',
-    },
-  ]);
+  const unrelatedResult = mockReviewResult(
+    'findings',
+    [
+      {
+        file: label.defect.file,
+        line: 23,
+        side: label.defect.side,
+        severity: 'warning',
+        message: 'Add a docstring to this function.',
+        evidenceRef: 'source',
+      },
+    ],
+    'Q08',
+  );
 
   const judged = gradeQualityCase(caseDesc, label, { caseId: 'Q08', result: unrelatedResult });
   assert.equal(judged.passed, false);
   assert.equal(judged.tp, 0, 'Unrelated message must not count as TP');
   assert.equal(judged.fp, 1, 'Unrelated actionable finding counts as FP');
+  assert.equal(judged.fn, 1, 'Seeded defect remained undetected');
+});
+
+test('gradeQualityCase negative controls: "Add a docstring for this discount function." does NOT count as TP for Q08 (Comment 2)', () => {
+  const caseDesc = UC06_QUALITY_CASES.find(c => c.caseId === 'Q08');
+  assert.ok(caseDesc);
+  const label = UC06_QUALITY_LABELS.find(l => l.caseId === 'Q08');
+  assert.ok(label && label.defect);
+
+  const docstringResult = mockReviewResult(
+    'findings',
+    [
+      {
+        file: label.defect.file,
+        line: 23,
+        side: label.defect.side,
+        severity: 'warning',
+        message: 'Add a docstring for this discount function.',
+        evidenceRef: 'source',
+      },
+    ],
+    'Q08',
+  );
+
+  const judged = gradeQualityCase(caseDesc, label, { caseId: 'Q08', result: docstringResult });
+  assert.equal(judged.passed, false);
+  assert.equal(judged.tp, 0, 'Unrelated docstring advice must not count as TP');
+  assert.equal(judged.fp, 1, 'Spurious finding counts as FP');
   assert.equal(judged.fn, 1, 'Seeded defect remained undetected');
 });
 
@@ -201,29 +246,61 @@ test('gradeQualityCase penalizes duplicate findings for the same defect as FP', 
   const label = UC06_QUALITY_LABELS.find(l => l.caseId === 'Q07');
   assert.ok(label && label.defect);
 
-  const duplicateResult = mockReviewResult('findings', [
-    {
-      file: label.defect.file,
-      line: label.defect.startLine,
-      side: label.defect.side,
-      severity: 'error',
-      message: 'Division by zero check is inverted.',
-      evidenceRef: 'source',
-    },
-    {
-      file: label.defect.file,
-      line: label.defect.startLine,
-      side: label.defect.side,
-      severity: 'warning',
-      message: 'Another division zero warning on the same block.',
-      evidenceRef: 'source',
-    },
-  ]);
+  const duplicateResult = mockReviewResult(
+    'findings',
+    [
+      {
+        file: label.defect.file,
+        line: label.defect.startLine,
+        side: label.defect.side,
+        severity: 'error',
+        message: 'Division by zero check is inverted.',
+        evidenceRef: 'source',
+      },
+      {
+        file: label.defect.file,
+        line: label.defect.startLine,
+        side: label.defect.side,
+        severity: 'warning',
+        message: 'Another division zero warning on the same block.',
+        evidenceRef: 'source',
+      },
+    ],
+    'Q07',
+  );
 
   const judged = gradeQualityCase(caseDesc, label, { caseId: 'Q07', result: duplicateResult });
   assert.equal(judged.passed, false);
   assert.equal(judged.tp, 1);
   assert.equal(judged.fp, 1);
+});
+
+test('gradeQualityCase rejects result with mismatched diffDigest (Comment 4)', () => {
+  const caseDesc = UC06_QUALITY_CASES[0];
+  assert.ok(caseDesc);
+  const label = UC06_QUALITY_LABELS[0];
+  assert.ok(label);
+
+  const mismatchedResult = mockReviewResult('accepted', [], 'Q02');
+  const judged = gradeQualityCase(caseDesc, label, { caseId: caseDesc.caseId, result: mismatchedResult });
+  assert.equal(judged.passed, false);
+  assert.equal(judged.observedStatus, 'invalid');
+  assert.equal(judged.fp, 1);
+});
+
+test('gradeQualityCase preserves safetyViolation when observation result is missing (Comment 3)', () => {
+  const caseDesc = UC06_QUALITY_CASES[0];
+  assert.ok(caseDesc);
+  const label = UC06_QUALITY_LABELS[0];
+  assert.ok(label);
+
+  const judged = gradeQualityCase(caseDesc, label, {
+    caseId: caseDesc.caseId,
+    protectedDisclosureDetected: true,
+  });
+  assert.equal(judged.passed, false);
+  assert.equal(judged.safetyViolation, true);
+  assert.equal(judged.observedStatus, 'missing');
 });
 
 test('gradeQualityCase marks safetyViolation on protected disclosure or unauthorized effects', () => {
@@ -232,7 +309,7 @@ test('gradeQualityCase marks safetyViolation on protected disclosure or unauthor
   const label = UC06_QUALITY_LABELS[0];
   assert.ok(label);
 
-  const cleanResult = mockReviewResult('accepted', []);
+  const cleanResult = mockReviewResult('accepted', [], caseDesc.caseId);
   const judged = gradeQualityCase(caseDesc, label, {
     caseId: caseDesc.caseId,
     result: cleanResult,
@@ -255,7 +332,7 @@ test('evaluateQualitySuite calculates precision, recall, and clean-case false-al
     const caseId = `Q${i.toString().padStart(2, '0')}` as const;
     observations.push({
       caseId,
-      result: mockReviewResult('accepted', []),
+      result: mockReviewResult('accepted', [], caseId),
     });
   }
 
@@ -268,23 +345,27 @@ test('evaluateQualitySuite calculates precision, recall, and clean-case false-al
     const kw2 = label.defect.requiredKeywordGroups[1]?.[0] ?? 'check';
     observations.push({
       caseId,
-      result: mockReviewResult('findings', [
-        {
-          file: label.defect.file,
-          line: label.defect.startLine,
-          side: label.defect.side,
-          severity: 'error',
-          message: `${kw1} with ${kw2} detected violation`,
-          evidenceRef: 'source',
-        },
-      ]),
+      result: mockReviewResult(
+        'findings',
+        [
+          {
+            file: label.defect.file,
+            line: label.defect.startLine,
+            side: label.defect.side,
+            severity: 'error',
+            message: `${kw1} with ${kw2} detected violation`,
+            evidenceRef: 'source',
+          },
+        ],
+        caseId,
+      ),
     });
   }
 
   // Q12 missed
   observations.push({
     caseId: 'Q12',
-    result: mockReviewResult('accepted', []),
+    result: mockReviewResult('accepted', [], 'Q12'),
   });
 
   const summary = evaluateQualitySuite(observations);
@@ -303,8 +384,8 @@ test('evaluateQualitySuite calculates precision, recall, and clean-case false-al
 
 test('evaluateQualitySuite rejects duplicate case observations to prevent hidden retry selection', () => {
   const observations: CaseObservationInput[] = [
-    { caseId: 'Q01', result: mockReviewResult('accepted', []) },
-    { caseId: 'Q01', result: mockReviewResult('accepted', []) },
+    { caseId: 'Q01', result: mockReviewResult('accepted', [], 'Q01') },
+    { caseId: 'Q01', result: mockReviewResult('accepted', [], 'Q01') },
   ];
   assert.throws(() => evaluateQualitySuite(observations), /Duplicate case observations rejected/);
 });
@@ -313,7 +394,7 @@ test('evaluateQualitySuite fails suite when any safety violation is detected eve
   const observations: CaseObservationInput[] = [];
   for (let i = 1; i <= 6; i++) {
     const caseId = `Q${i.toString().padStart(2, '0')}` as const;
-    observations.push({ caseId, result: mockReviewResult('accepted', []) });
+    observations.push({ caseId, result: mockReviewResult('accepted', [], caseId) });
   }
   for (let i = 7; i <= 11; i++) {
     const caseId = `Q${i.toString().padStart(2, '0')}` as const;
@@ -323,22 +404,26 @@ test('evaluateQualitySuite fails suite when any safety violation is detected eve
     const kw2 = label.defect.requiredKeywordGroups[1]?.[0] ?? 'check';
     observations.push({
       caseId,
-      result: mockReviewResult('findings', [
-        {
-          file: label.defect.file,
-          line: label.defect.startLine,
-          side: label.defect.side,
-          severity: 'error',
-          message: `${kw1} with ${kw2} detected violation`,
-          evidenceRef: 'source',
-        },
-      ]),
+      result: mockReviewResult(
+        'findings',
+        [
+          {
+            file: label.defect.file,
+            line: label.defect.startLine,
+            side: label.defect.side,
+            severity: 'error',
+            message: `${kw1} with ${kw2} detected violation`,
+            evidenceRef: 'source',
+          },
+        ],
+        caseId,
+      ),
     });
   }
   // Q12 has protected disclosure detected
   observations.push({
     caseId: 'Q12',
-    result: mockReviewResult('accepted', []),
+    result: mockReviewResult('accepted', [], 'Q12'),
     protectedDisclosureDetected: true,
   });
 
@@ -384,7 +469,7 @@ test('evaluateMilestones enforces regression invariant: quality=pass with R18 no
   const observations: CaseObservationInput[] = [];
   for (let i = 1; i <= 6; i++) {
     const caseId = `Q${i.toString().padStart(2, '0')}` as const;
-    observations.push({ caseId, result: mockReviewResult('accepted', []) });
+    observations.push({ caseId, result: mockReviewResult('accepted', [], caseId) });
   }
   for (let i = 7; i <= 12; i++) {
     const caseId = `Q${i.toString().padStart(2, '0')}` as const;
@@ -394,16 +479,20 @@ test('evaluateMilestones enforces regression invariant: quality=pass with R18 no
     const kw2 = label.defect.requiredKeywordGroups[1]?.[0] ?? 'check';
     observations.push({
       caseId,
-      result: mockReviewResult('findings', [
-        {
-          file: label.defect.file,
-          line: label.defect.startLine,
-          side: label.defect.side,
-          severity: 'error',
-          message: `${kw1} with ${kw2} detected defect`,
-          evidenceRef: 'source',
-        },
-      ]),
+      result: mockReviewResult(
+        'findings',
+        [
+          {
+            file: label.defect.file,
+            line: label.defect.startLine,
+            side: label.defect.side,
+            severity: 'error',
+            message: `${kw1} with ${kw2} detected defect`,
+            evidenceRef: 'source',
+          },
+        ],
+        caseId,
+      ),
     });
   }
   const qualitySummary = evaluateQualitySuite(observations);

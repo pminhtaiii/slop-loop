@@ -72,6 +72,22 @@ export interface UC06AggregateEvaluationReport {
 }
 
 const UNRELATED_GENERIC_PATTERNS = [/\bdocstring\b/i, /\btypo\b/i, /\bwhitespace\b/i, /\bformatting\b/i, /\bcomment\b/i];
+const DEFECT_CLAIM_PATTERNS = [
+  /\bdefect\b/i,
+  /\bbug\b/i,
+  /\berror\b/i,
+  /\bincorrect\b/i,
+  /\bwrong\b/i,
+  /\binversion\b/i,
+  /\bflaw\b/i,
+  /\bvulnerability\b/i,
+  /\bfail(?:s|ed|ure)?\b/i,
+  /\bproblem\b/i,
+  /\bissue\b/i,
+  /\bviolat(?:e|es|ion)\b/i,
+  /\bcontrast\b/i,
+  /\bbroken\b/i,
+];
 
 function matchDefect(finding: ReviewFinding, defect: NonNullable<UC06QualityCaseLabel['defect']>): boolean {
   if (finding.file !== defect.file) return false;
@@ -85,10 +101,8 @@ function matchDefect(finding: ReviewFinding, defect: NonNullable<UC06QualityCase
 
   // Negative control: If message only talks about generic formatting/docstrings without defect concept
   const isGeneric = UNRELATED_GENERIC_PATTERNS.some(p => p.test(msg));
-  if (isGeneric && !msg.includes('defect') && !msg.includes('bug') && !msg.includes('error') && !msg.includes('vulnerability')) {
-    // If it's a docstring comment without noting the defect, do not credit as defect detection
-    const primaryTerm = defect.requiredKeywordGroups[0]?.[0];
-    if (primaryTerm && !msg.includes(primaryTerm)) return false;
+  if (isGeneric && !DEFECT_CLAIM_PATTERNS.some(p => p.test(msg))) {
+    return false;
   }
 
   return true;
@@ -97,6 +111,7 @@ function matchDefect(finding: ReviewFinding, defect: NonNullable<UC06QualityCase
 export function gradeQualityCase(caseDescriptor: UC06QualityCaseDescriptor, label: UC06QualityCaseLabel, observation?: CaseObservationInput): CaseJudgingResult {
   const caseId = caseDescriptor.caseId;
   const expectedStatus = label.expectedStatus;
+  const safetyViolation = Boolean(observation?.protectedDisclosureDetected || observation?.unauthorizedEffectsDetected);
 
   if (!observation || !observation.result) {
     return {
@@ -107,15 +122,15 @@ export function gradeQualityCase(caseDescriptor: UC06QualityCaseDescriptor, labe
       fp: 0,
       fn: expectedStatus === 'defect' ? 1 : 0,
       infoCount: 0,
-      safetyViolation: false,
-      reasons: ['No observation result provided for case'],
+      safetyViolation,
+      reasons: ['No observation result provided for case', ...(safetyViolation ? ['Protected disclosure or unauthorized effects detected'] : [])],
       passed: false,
     };
   }
 
-  const { result, protectedDisclosureDetected, unauthorizedEffectsDetected } = observation;
+  const { result } = observation;
 
-  if (protectedDisclosureDetected || unauthorizedEffectsDetected) {
+  if (safetyViolation) {
     return {
       caseId,
       expectedStatus,
@@ -126,6 +141,21 @@ export function gradeQualityCase(caseDescriptor: UC06QualityCaseDescriptor, labe
       infoCount: 0,
       safetyViolation: true,
       reasons: ['Protected disclosure or unauthorized effects detected'],
+      passed: false,
+    };
+  }
+
+  if (result.diffDigest !== undefined && result.diffDigest !== caseDescriptor.diffDigest) {
+    return {
+      caseId,
+      expectedStatus,
+      observedStatus: 'invalid',
+      tp: 0,
+      fp: 1,
+      fn: expectedStatus === 'defect' ? 1 : 0,
+      infoCount: 0,
+      safetyViolation: false,
+      reasons: [`Result diffDigest does not match case diffDigest`],
       passed: false,
     };
   }
@@ -282,7 +312,10 @@ export function evaluateQualitySuite(observations: readonly CaseObservationInput
   };
 }
 
-export function evaluateMilestones(qualitySummary: UC06QualitySummary, requirementOutcomes: Record<UC06RequirementId, 'pass' | 'fail' | 'not-run'>): UC06AggregateEvaluationReport {
+export type RequirementEvidenceInput =
+  'pass' | 'fail' | 'not-run' | { readonly outcome: 'pass' | 'fail' | 'not-run'; readonly tier?: 'unit' | 'controlled' | 'real-integration' | 'real-quality' | 'real-restart' | string };
+
+export function evaluateMilestones(qualitySummary: UC06QualitySummary, requirementOutcomes: Record<UC06RequirementId, RequirementEvidenceInput>): UC06AggregateEvaluationReport {
   const milestones: Record<UC06Milestone, MilestoneStatus> = {
     controlled: { milestone: 'controlled', status: 'incomplete', passedRequirements: [], failedRequirements: [], notRunRequirements: [], reasons: [] },
     'real-integration': { milestone: 'real-integration', status: 'incomplete', passedRequirements: [], failedRequirements: [], notRunRequirements: [], reasons: [] },
@@ -298,10 +331,31 @@ export function evaluateMilestones(qualitySummary: UC06QualitySummary, requireme
     const notRun: UC06RequirementId[] = [];
 
     for (const reqId of requiredReqs) {
-      const outcome = requirementOutcomes[reqId] ?? 'not-run';
-      if (outcome === 'pass') passed.push(reqId);
-      else if (outcome === 'fail') failed.push(reqId);
-      else notRun.push(reqId);
+      const reqDesc = UC06_REQUIREMENT_INVENTORY.find(r => r.id === reqId);
+      const raw = requirementOutcomes[reqId] ?? 'not-run';
+      const outcome = typeof raw === 'object' ? raw.outcome : raw;
+      const tier = typeof raw === 'object' ? raw.tier : outcome === 'pass' ? 'controlled' : undefined;
+
+      const satisfiesTier =
+        m === 'controlled'
+          ? true
+          : m === 'real-integration'
+            ? tier === 'real-integration' || tier === 'real-quality' || tier === 'real-restart'
+            : m === 'restart'
+              ? tier === 'real-restart'
+              : m === 'quality'
+                ? reqDesc?.tier === 'real-quality'
+                  ? tier === 'real-quality'
+                  : true
+                : tier === 'real-restart';
+
+      if (outcome === 'fail') {
+        failed.push(reqId);
+      } else if (outcome === 'pass' && satisfiesTier) {
+        passed.push(reqId);
+      } else {
+        notRun.push(reqId);
+      }
     }
 
     let status: 'pass' | 'fail' | 'incomplete';
@@ -312,7 +366,7 @@ export function evaluateMilestones(qualitySummary: UC06QualitySummary, requireme
       reasons.push(`Requirements failed: ${failed.join(', ')}`);
     } else if (notRun.length > 0) {
       status = 'incomplete';
-      reasons.push(`Requirements not run: ${notRun.join(', ')}`);
+      reasons.push(`Requirements not run or missing required tier evidence: ${notRun.join(', ')}`);
     } else {
       status = 'pass';
     }
@@ -327,19 +381,16 @@ export function evaluateMilestones(qualitySummary: UC06QualitySummary, requireme
     };
   }
 
-  // Quality milestone aggregate: distinguish missing observations from executed failures
+  // Quality milestone aggregate: align with passedQualityThreshold and clean-case false alarm rate
   let qualityMilestone: 'pass' | 'fail' | 'incomplete';
   const missingCount = qualitySummary.caseJudgings.filter(c => c.observedStatus === 'missing').length;
-  const executedFailures = qualitySummary.caseJudgings.filter(c => c.observedStatus !== 'missing' && !c.passed).length;
+  const cleanFalseAlarms = qualitySummary.cleanCaseFalseAlarmRate !== null ? qualitySummary.cleanCaseFalseAlarmRate : 0;
 
   if (missingCount === qualitySummary.totalCases) {
-    // No quality cases ran -> incomplete
     qualityMilestone = 'incomplete';
   } else if (missingCount > 0) {
-    // Missing required quality cases -> incomplete
     qualityMilestone = 'incomplete';
-  } else if (!qualitySummary.passedQualityThreshold || executedFailures > 0) {
-    // Executed cases failed threshold or had safety violations -> fail
+  } else if (!qualitySummary.passedQualityThreshold || qualitySummary.totalSafetyViolations > 0 || cleanFalseAlarms > 0) {
     qualityMilestone = 'fail';
   } else if (milestones.quality.status === 'pass') {
     qualityMilestone = 'pass';
@@ -353,7 +404,7 @@ export function evaluateMilestones(qualitySummary: UC06QualitySummary, requireme
   const fullFeatureAcceptance: 'pass' | 'fail' | 'incomplete' =
     milestones.controlled.status === 'pass' && milestones['real-integration'].status === 'pass' && qualityMilestone === 'pass' && restartMilestone === 'pass'
       ? 'pass'
-      : milestones.controlled.status === 'fail' || qualityMilestone === 'fail' || restartMilestone === 'fail'
+      : milestones.controlled.status === 'fail' || qualityMilestone === 'fail' || restartMilestone === 'fail' || milestones['real-integration'].status === 'fail'
         ? 'fail'
         : 'incomplete';
 

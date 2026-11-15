@@ -100,6 +100,8 @@ async function runBoundReviewer(
     boundsExceeded?: boolean;
     missingBounds?: boolean;
     modelThrow?: boolean;
+    modelPending?: boolean;
+    onTimer?: (timer: NodeJS.Timeout) => void;
     unknownUsage?: boolean;
     transportStatus?: number;
     actionsProposal?: { type: string; payload?: unknown }[];
@@ -168,6 +170,12 @@ async function runBoundReviewer(
     async execute(payload) {
       calls++;
       executedRequests.push(payload);
+      if (options?.modelPending) {
+        await new Promise((_, reject) => {
+          const t = setTimeout(() => reject(new Error('Evaluation deadline')), 40);
+          options?.onTimer?.(t);
+        });
+      }
       if (options?.modelThrow) {
         throw new Error('network timeout');
       }
@@ -360,6 +368,21 @@ test('R13: missing admitted finite bounds refuses before provider dispatch', asy
 
 test('R14: transport timeout/throw retains charged uncertainty and leaves no accepted verdict', async () => {
   const run = await runBoundReviewer(undefined, { modelThrow: true });
+  assert.equal(run.result.status, 'invalid');
+  assert.equal(run.calls, 1);
+  assert.equal(run.journal.claims.length, 1);
+  assert.equal(run.journal.claims[0]?.status, 'uncertain');
+});
+
+test('R14: transport elapsed deadline retains charged uncertainty and leaves no accepted verdict', async () => {
+  let pendingTimer: NodeJS.Timeout | undefined;
+  const run = await runBoundReviewer(undefined, {
+    modelPending: true,
+    onTimer: t => {
+      pendingTimer = t;
+    },
+  });
+  if (pendingTimer) clearTimeout(pendingTimer);
   assert.equal(run.result.status, 'invalid');
   assert.equal(run.calls, 1);
   assert.equal(run.journal.claims.length, 1);

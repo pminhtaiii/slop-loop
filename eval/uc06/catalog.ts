@@ -322,36 +322,30 @@ export const UC06_QUALITY_CASES: readonly UC06QualityCaseDescriptor[] = [
   { caseId: 'Q12', name: 'Untested internal subnet rate limit bypass', kind: 'faulty', defectCategory: 'missing-test', diff: DIFF_Q12, file: 'src/rate_limiter.py', diffDigest: hash(DIFF_Q12) },
 ];
 
-export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
+const RAW_QUALITY_LABELS: readonly Omit<UC06QualityCaseLabel, 'oracleDigest'>[] = [
   {
     caseId: 'Q01',
     expectedStatus: 'clean',
-    oracleDigest: hash({ caseId: 'Q01', status: 'clean' }),
   },
   {
     caseId: 'Q02',
     expectedStatus: 'clean',
-    oracleDigest: hash({ caseId: 'Q02', status: 'clean' }),
   },
   {
     caseId: 'Q03',
     expectedStatus: 'clean',
-    oracleDigest: hash({ caseId: 'Q03', status: 'clean' }),
   },
   {
     caseId: 'Q04',
     expectedStatus: 'clean',
-    oracleDigest: hash({ caseId: 'Q04', status: 'clean' }),
   },
   {
     caseId: 'Q05',
     expectedStatus: 'clean',
-    oracleDigest: hash({ caseId: 'Q05', status: 'clean' }),
   },
   {
     caseId: 'Q06',
     expectedStatus: 'clean',
-    oracleDigest: hash({ caseId: 'Q06', status: 'clean' }),
   },
   {
     caseId: 'Q07',
@@ -370,7 +364,6 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
         ['<', 'invert', '==', 'check', 'zero division'],
       ],
     },
-    oracleDigest: hash({ caseId: 'Q07', defect: 'DEF-Q07-DIV-ZERO' }),
   },
   {
     caseId: 'Q08',
@@ -384,9 +377,24 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
       category: 'logic',
       severity: 'error',
       rationale: 'Discount rate adds rather than subtracts from original price, increasing cost.',
-      requiredKeywordGroups: [['discount'], ['+', 'add', 'increase', 'subtraction', 'subtract', 'minus', 'sign', 'rate']],
+      requiredKeywordGroups: [
+        ['discount'],
+        [
+          'adds instead of',
+          'increases price',
+          'addition instead of subtraction',
+          '+ instead of -',
+          'inverted discount',
+          'should subtract',
+          'wrong sign',
+          'rate adds',
+          'adds rather than',
+          'subtract',
+          'minus',
+          'inversion',
+        ],
+      ],
     },
-    oracleDigest: hash({ caseId: 'Q08', defect: 'DEF-Q08-DISCOUNT-ADD' }),
   },
   {
     caseId: 'Q09',
@@ -402,7 +410,6 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
       rationale: 'Direct string interpolation inside SQL query introduces SQL injection vulnerability.',
       requiredKeywordGroups: [['sql', 'injection', 'interpolate', 'parameter', 'query']],
     },
-    oracleDigest: hash({ caseId: 'Q09', defect: 'DEF-Q09-SQL-INJECTION' }),
   },
   {
     caseId: 'Q10',
@@ -421,7 +428,6 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
         ['log', 'leak', 'expose', 'plaintext'],
       ],
     },
-    oracleDigest: hash({ caseId: 'Q10', defect: 'DEF-Q10-SECRET-LOGGING' }),
   },
   {
     caseId: 'Q11',
@@ -437,7 +443,6 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
       rationale: 'Payment processing replaced with refund call without verified test coverage.',
       requiredKeywordGroups: [['refund'], ['test', 'untested', 'coverage']],
     },
-    oracleDigest: hash({ caseId: 'Q11', defect: 'DEF-Q11-UNTESTED-REFUND' }),
   },
   {
     caseId: 'Q12',
@@ -456,6 +461,10 @@ export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = [
         ['test', 'untested', 'coverage'],
       ],
     },
-    oracleDigest: hash({ caseId: 'Q12', defect: 'DEF-Q12-UNTESTED-BYPASS' }),
   },
 ];
+
+export const UC06_QUALITY_LABELS: readonly UC06QualityCaseLabel[] = RAW_QUALITY_LABELS.map(item => ({
+  ...item,
+  oracleDigest: hash(item),
+}));

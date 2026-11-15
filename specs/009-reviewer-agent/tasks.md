@@ -1,7 +1,7 @@
 # Tasks: UC-06 — Reviewer Agent
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [context contract](contracts/review-context.md), [evaluation](contracts/evaluation.md), [decisions](contracts/decisions.md).
-**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 passed full independent source/controlled prerequisite verification on `6c08306`; see [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 in dependency order at the same bounded tier. T007–T009 completed on 2026-11-14 with 25 passing security, review-repair, and grading tests at controlled/eval tier. T010–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
+**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 passed full independent source/controlled prerequisite verification on `6c08306`; see [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 in dependency order at the same bounded tier. T007–T010 completed on 2026-11-14 and 2026-11-15 with 31 passing security, review-repair, grading, and evaluation tests at controlled/eval tier. Phase 6 T011–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
 
 ## Phase 1: Setup
 

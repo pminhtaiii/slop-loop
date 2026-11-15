@@ -149,8 +149,12 @@ test('R17: missing owner authority after actionable findings prevents unauthoriz
 
   // Verify journal does not contain unexpected patch execution or extra provider claims
   const journal = fixture.owner.getJournalSnapshot();
-  const repairPatchClaims = journal.claims.filter(c => c.claimId.startsWith('claim-repair-patch-'));
+  const repairPatchClaims = journal.claims.filter(c => c.claimId.startsWith('claim-act-repair-'));
   assert.equal(repairPatchClaims.length, 0, 'no repair patch executed without explicit authority');
+
+  // Permitted-repair control assertion proving the filter identifies actual claim-act-repair- claims
+  const controlClaims = [...journal.claims, { claimId: 'claim-act-repair-control' }];
+  assert.equal(controlClaims.filter(c => c.claimId.startsWith('claim-act-repair-')).length, 1);
 });
 
 test('R17: loop exhaustion or halted repair preserves charges and produces no duplicate provider dispatches', async () => {
