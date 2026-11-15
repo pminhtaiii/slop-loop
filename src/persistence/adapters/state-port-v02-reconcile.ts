@@ -158,7 +158,14 @@ export async function reconcileObservedOutcome(store: StatePortStore, receipt: A
     if (nextTask) await store.writeTask(taskId, nextTask);
     await store.writeJson(store.statePath(taskId, `recon-${snapshot.reconciliationId}.json`), snapshot);
     await store.writeJson(store.statePath(taskId, `attempt-${attempt.receipt.attemptId}.json`), { ...attempt, status: 'settled' } satisfies StoredAttemptV02);
-    await store.writeClaim(taskId, { ...claim, status: 'settled', settlement: settlementBinding(snapshot) });
+    // settlementResult is the observed outcome this recovery settled; readSettledPatchAncestry
+    // requires it to hand the verifier a validated execution receipt.
+    await store.writeClaim(taskId, {
+      ...claim,
+      status: 'settled',
+      settlementResult: { outcome: 'settled', receiptId: predecessor.receiptId },
+      settlement: settlementBinding(snapshot),
+    });
     await store.writeControl(taskId, {
       ...control,
       controlVersion: control.controlVersion + 1,
