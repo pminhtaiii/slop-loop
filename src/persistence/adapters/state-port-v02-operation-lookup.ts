@@ -25,6 +25,7 @@ import type { DurableStatePortV02 } from './state-port-v02.ts';
 import { isValidRecoveryEvidence } from './state-port-v02-reconcile.ts';
 import { StatePortStore } from './state-port-v02-storage.ts';
 import type { StoredAttemptV02, StoredClaimV02 } from './state-port-v02-types.ts';
+import { DEFAULT_CONTROL } from './state-port-v02-types.ts';
 
 export const JOURNAL_OPERATION_PREFIX = 'uc04-journal:';
 
@@ -117,7 +118,12 @@ async function reconciliationFacts(
   };
 }
 
-/** A persisted reconciliation is trusted only when the canonical v0.2 validator accepts it as settling this outcome. */
+/**
+ * A persisted reconciliation is trusted only when the canonical v0.2 validator accepts it as settling
+ * this outcome AND the durable journal shows the settlement the writer produces: the claim and attempt
+ * rewritten `settled`, then the control head advanced past the receipt's own reconcile-time snapshot.
+ * Without that binding a forged receipt could nominate its own current head.
+ */
 async function reconciliationValid(
   state: StatePortStore,
   taskId: string,
@@ -125,7 +131,17 @@ async function reconciliationValid(
   attempt: StoredAttemptV02,
   outcome: AttemptOutcomeReceiptV02,
   receipt: AttemptReconciliationReceiptV02,
+  task: TaskState,
 ): Promise<boolean> {
+  if (claim.status !== 'settled' || attempt.status !== 'settled') return false;
+  const control = await state.readControl(taskId, DEFAULT_CONTROL);
+  if (
+    // The writer always advanced the head, so its equal is impossible and a future head is forged.
+    receipt.expectedCurrentControlVersion >= control.controlVersion ||
+    receipt.expectedCurrentTaskStateVersion > task.stateVersion ||
+    receipt.expectedCurrentEpoch > control.epoch
+  )
+    return false;
   const facts = await reconciliationFacts(state, taskId, claim, outcome, receipt);
   if (!facts) return false;
   const status = receipt.reconciliationKind === 'uncertain-attempt' ? 'uncertain' : 'observed-unsettled';
@@ -154,6 +170,7 @@ async function readReconciliation(
   claim: StoredClaimV02,
   attempt: StoredAttemptV02,
   outcome: AttemptOutcomeReceiptV02,
+  task: TaskState,
 ): Promise<AttemptReconciliationReceiptV02 | null> {
   const names = await readdir(dirname(state.statePath(taskId, 'x'))).catch((err: unknown) => {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [] as string[];
@@ -164,7 +181,7 @@ async function readReconciliation(
     const receipt = await state.readJson<AttemptReconciliationReceiptV02>(state.statePath(taskId, name));
     if (receipt?.claimId !== claim.receipt.claimId) continue;
     // A present receipt for this claim that does not settle it is corruption, not an absence.
-    if (!(await reconciliationValid(state, taskId, claim, attempt, outcome, receipt))) throw new Error('Corrupted UC-03 reconciliation receipt');
+    if (!(await reconciliationValid(state, taskId, claim, attempt, outcome, receipt, task))) throw new Error('Corrupted UC-03 reconciliation receipt');
     return receipt;
   }
   return null;
@@ -191,7 +208,7 @@ async function lookupClaim(state: StatePortStore, claimId: string): Promise<Jour
       claim: structuredClone(claim.receipt),
       attempt: structuredClone(attempt.receipt),
       outcome: structuredClone(outcome),
-      reconciliation: await readReconciliation(state, taskId, claim, attempt, outcome),
+      reconciliation: await readReconciliation(state, taskId, claim, attempt, outcome, task),
     },
   };
 }

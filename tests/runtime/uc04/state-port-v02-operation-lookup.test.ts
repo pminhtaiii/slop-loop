@@ -161,6 +161,84 @@ test('operation lookup: a reconciled uncertain attempt is committed with its rec
   }
 });
 
+test('operation lookup: a forged reconciliation the writer never settled is unknown', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-recon-forged-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const state = new StatePortStore(port.store);
+    const executor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
+    const attempt = await port.beginAttempt(claim.claimId, executor);
+    const uncertain = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, { outcome: 'uncertain' });
+    assert.deepEqual(await port.recordOutcome(uncertain), { outcome: 'uncertain', receiptId: uncertain.receiptId });
+    assert.equal(await port.setTaskControl(context.taskId, 'paused', 'pause-t040-forged-1'), true);
+    const fence = await port.fenceAttemptRecipient(claim.claimId, executor);
+    assert.ok(fence, 'the uncertain attempt must be fenceable');
+    const task = (await port.loadTask(context.taskId)) as TaskState;
+    const control = port.getJournalSnapshot(context.taskId) as { controlVersion: number };
+    // Digest-valid, but claiming a control head the writer refuses: only the settlement journal
+    // (claim and attempt rewritten settled, then control advanced) can make this a commit.
+    const forged = createTestUncertainReconciliationReceiptV02(uncertain, claim, attempt, context, {
+      disposition: 'proven-not-dispatched',
+      fencedRecipientIdentity: fence.recipientIdentity,
+      fencingGeneration: fence.fencingGeneration,
+      fencingProof: fence.proofRef,
+      adapterEvidenceRefs: fence.adapterEvidenceRefs,
+      evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
+      expectedCurrentTaskStateVersion: task.stateVersion,
+      expectedCurrentControlVersion: control.controlVersion + 1000,
+    });
+    assert.equal((await port.reconcileUncertain(forged)).outcome, 'conflict', 'the writer must refuse the forged head');
+    await state.writeJson(state.statePath(context.taskId, `recon-${forged.reconciliationId}.json`), forged);
+    const lookup = createJournalOperationLookup(port);
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, 'an unsettled claim makes the reconciliation a partial write');
+
+    // Hand-setting the statuses cannot fabricate the advance the writer never made.
+    const storedClaim = await state.readClaim(context.taskId, claim.claimId);
+    const storedAttempt = await state.readAttempt(context.taskId, attempt.attemptId);
+    assert.ok(storedClaim && storedAttempt);
+    await state.writeClaim(context.taskId, { ...storedClaim, status: 'settled' });
+    await state.writeJson(state.statePath(context.taskId, `attempt-${attempt.attemptId}.json`), { ...storedAttempt, status: 'settled' });
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, 'a future control head is impossible');
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('operation lookup: a settled reconciliation stays committed after control advances further', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-recon-historical-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const executor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
+    const attempt = await port.beginAttempt(claim.claimId, executor);
+    const uncertain = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, { outcome: 'uncertain' });
+    assert.deepEqual(await port.recordOutcome(uncertain), { outcome: 'uncertain', receiptId: uncertain.receiptId });
+    assert.equal(await port.setTaskControl(context.taskId, 'paused', 'pause-t040-historical-1'), true);
+    const fence = await port.fenceAttemptRecipient(claim.claimId, executor);
+    assert.ok(fence, 'the uncertain attempt must be fenceable');
+    const task = (await port.loadTask(context.taskId)) as TaskState;
+    const control = port.getJournalSnapshot(context.taskId) as { controlVersion: number };
+    const reconciliation = createTestUncertainReconciliationReceiptV02(uncertain, claim, attempt, context, {
+      disposition: 'proven-not-dispatched',
+      fencedRecipientIdentity: fence.recipientIdentity,
+      fencingGeneration: fence.fencingGeneration,
+      fencingProof: fence.proofRef,
+      adapterEvidenceRefs: fence.adapterEvidenceRefs,
+      evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
+      expectedCurrentTaskStateVersion: task.stateVersion,
+      expectedCurrentControlVersion: control.controlVersion,
+    });
+    assert.deepEqual(await port.reconcileUncertain(reconciliation), { outcome: 'settled', receiptId: reconciliation.reconciliationId });
+    assert.equal(await port.setTaskControl(context.taskId, 'paused', 'pause-t040-historical-2'), true, 'control must advance past the reconcile-time head');
+
+    const result = await createJournalOperationLookup(port).lookupOperation(journalOperationRef(claim.claimId));
+    assert.equal(result.outcome, 'committed', 'a real historical settlement stays committed');
+    if (result.outcome !== 'committed' || result.commit.kind !== 'claim') return;
+    assert.deepEqual(result.commit.reconciliation, reconciliation);
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
 test('operation lookup: a committed replan operation record resolves with its receipts', async () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-operation-'));
   try {
