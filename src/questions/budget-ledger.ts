@@ -243,8 +243,9 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   }
 
   private complete(internal: InternalReservation, receipt: unknown, reconciled = false): QuestionBudgetExecutionResultV1<undefined> {
-    if (internal.status !== 'running') return { ok: false, reasonCode: 'duplicate-settlement' };
-    if (internal.controller.signal.aborted || this.status !== 'open') {
+    const expectedStatus = reconciled ? 'held' : 'running';
+    if (internal.status !== expectedStatus) return { ok: false, reasonCode: 'duplicate-settlement' };
+    if (!reconciled && (internal.controller.signal.aborted || this.status !== 'open')) {
       this.ignoreLate(internal);
       return { ok: false, reasonCode: this.terminalReason ?? 'cancelled' };
     }
@@ -254,11 +255,12 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
         : undefined;
     const accounting = terminalWork && isRecord(receipt) ? { kind: 'work', work: receipt['work'] } : receipt;
     const settlement = settleBudgetReceipt(accounting, internal.kind, internal.maximumWork, internal.reservedCounters, internal.maximumInputTokens, internal.maximumOutputTokens, this.pricing);
+    const elapsedMs = !reconciled && settlement.ok ? this.elapsedFor(internal) : 0;
+    if (internal.status !== expectedStatus) return { ok: false, reasonCode: reconciled ? 'duplicate-settlement' : (this.terminalReason ?? 'duplicate-settlement') };
     if (!settlement.ok) {
       this.hold(internal, 'accounting-unknown');
       return { ok: false, reasonCode: settlement.reasonCode };
     }
-    const elapsedMs = reconciled ? 0 : this.elapsedFor(internal);
     if (elapsedMs === undefined) {
       this.hold(internal, 'elapsed-deadline');
       return { ok: false, reasonCode: 'elapsed-deadline' };
@@ -266,7 +268,12 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     settlement.counters['elapsedMs'] = elapsedMs;
     if (internal.kind.startsWith('repository-') || internal.kind === 'final-validation') settlement.counters['toolCalls'] = 1;
     const settled = this.settleCounters(internal, settlement.counters);
-    if (!settled.ok || terminalWork === undefined) return settled;
+    if (!settled.ok) return settled;
+    if (reconciled && this.status === 'blocked') {
+      this.status = 'open';
+      this.terminalReason = undefined;
+    }
+    if (terminalWork === undefined) return settled;
     this.exhaust(terminalWork);
     return { ok: false, reasonCode: terminalWork };
   }
@@ -421,17 +428,13 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   }
 
   public _reconcile(internal: InternalReservation, receipt: unknown): QuestionBudgetExecutionResultV1<void> {
-    if (internal.status !== 'held' || internal.holdReason !== 'accounting-unknown' || this.status !== 'blocked') {
+    if (internal.status !== 'held' || internal.holdReason !== 'accounting-unknown' || (this.status !== 'blocked' && this.status !== 'cancelled')) {
       return { ok: false, reasonCode: 'duplicate-settlement' };
     }
     if (this.activeReservationId !== undefined || [...this.reservations.values()].some(reservation => reservation !== internal && reservation.status === 'held')) {
       return { ok: false, reasonCode: 'accounting-unknown' };
     }
-    this.status = 'open';
-    this.terminalReason = undefined;
-    internal.status = 'running';
-    const completion = this.complete(internal, receipt, true);
-    return completion.ok ? { ok: true, value: undefined } : completion;
+    return this.complete(internal, receipt, true);
   }
 }
 

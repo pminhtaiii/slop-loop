@@ -560,9 +560,11 @@ test('a busy admission cannot exhaust the ledger even when the planner would ref
   assert.equal(created.value.snapshot().consumed.toolCalls, 1);
 });
 
-test('cancelling a blocked ledger preserves the hold and prevents reconciliation reopening it', async () => {
+test('authoritative usage settles a cancelled ledger without permitting another dispatch', async () => {
   const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => 10 });
   assert.ok(created.ok);
+  const summary = created.value.reserveSummary(4);
+  assert.ok(summary.ok);
   const call = created.value.reserveModelCall(100);
   assert.ok(call.ok);
   assert.deepEqual(
@@ -575,6 +577,26 @@ test('cancelling a blocked ledger preserves the hold and prevents reconciliation
   created.value.cancel();
   assert.equal(created.value.snapshot().status, 'cancelled');
   assert.equal(created.value.snapshot().reserved.billableTokens, 600);
-  assert.equal(call.value.reconcile({ kind: 'model-usage', usage: { status: 'complete', inputTokens: 80, outputTokens: 12 } }).ok, false);
+  assert.deepEqual(call.value.reconcile({ kind: 'model-usage', usage: { status: 'complete', inputTokens: 101, outputTokens: 12 } }), { ok: false, reasonCode: 'over-reservation' });
+  assert.equal(created.value.snapshot().reserved.billableTokens, 600);
+  const receipt = { kind: 'model-usage', usage: { status: 'complete', inputTokens: 80, outputTokens: 12 } } as const;
+  assert.deepEqual(call.value.reconcile(receipt), { ok: true, value: undefined });
+  const settled = created.value.snapshot();
+  assert.equal(settled.status, 'cancelled');
+  assert.equal(settled.reserved.modelCalls, 0);
+  assert.equal(settled.reserved.billableTokens, 0);
+  assert.equal(settled.reserved.costMicros, 0);
+  assert.equal(settled.consumed.modelCalls, 1);
+  assert.equal(settled.consumed.billableTokens, 92);
+  assert.equal(settled.consumed.costMicros, 11);
+  assert.deepEqual(call.value.reconcile(receipt), { ok: false, reasonCode: 'duplicate-settlement' });
+  assert.deepEqual(created.value.snapshot(), settled);
   assert.deepEqual(created.value.reserveModelCall(100), { ok: false, reasonCode: 'cancelled' });
+  assert.deepEqual(
+    await summary.value.execute(
+      () => assert.fail('cancelled reservation dispatched'),
+      () => assert.fail('cancelled reservation accounted for an adapter response'),
+    ),
+    { ok: false, reasonCode: 'cancelled' },
+  );
 });
