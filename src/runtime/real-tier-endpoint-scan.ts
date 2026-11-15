@@ -127,7 +127,7 @@ export function needleGuard(text: string, env: RealTierEnvironment, repositoryRo
   return text.split(/\r?\n/u).some(line => leakAt(line, resolved.needles) !== undefined) ? scanError('template-needle') : undefined;
 }
 
-/** A path hit is a leak even when its content is clean: consult the raw and the percent-decoded path. */
+/** A path hit is a leak even when its content is clean: consult the raw and the decoded path. */
 function pathLeak(path: string, needles: Needles): LeakKind | undefined {
   const direct = leakAt(path, needles);
   if (direct !== undefined) return direct;
@@ -135,12 +135,21 @@ function pathLeak(path: string, needles: Needles): LeakKind | undefined {
   return decoded === path ? undefined : leakAt(decoded, needles);
 }
 
-function percentDecoded(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value; // A stray `%` is not an encoding; the raw form was already scanned.
-  }
+/**
+ * Decodes each segment on its own, so a malformed `%` in one segment cannot discard the valid
+ * encoding of another: decoding a whole path would throw and lose every segment with it.
+ */
+function percentDecoded(path: string): string {
+  return path
+    .split('/')
+    .map(segment => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        return segment; // A stray `%` is not an encoding; the raw form was already scanned.
+      }
+    })
+    .join('/');
 }
 
 /**
@@ -171,7 +180,10 @@ function scanEntry(path: string, content: string, needles: Needles, lines: strin
 }
 
 function verdict(lines: readonly string[], credentialChecked: boolean): ScanResult {
-  if (lines.length > 0) return { exitCode: 1, output: [...lines, 'SCAN_LEAK'].join('\n') };
+  // An ancestor name and a child path can spell the same hit; identical reports carry identical
+  // information, so each is printed once. Distinct lines at one location stay distinct.
+  const unique = [...new Set(lines)];
+  if (unique.length > 0) return { exitCode: 1, output: [...unique, 'SCAN_LEAK'].join('\n') };
   return { exitCode: 0, output: credentialChecked ? 'SCAN_CLEAN' : 'SCAN_CLEAN credential-unchecked' };
 }
 
@@ -198,9 +210,10 @@ function entriesUnder(root: string): readonly Readonly<{ path: string; isFile: b
 const dirPrefix = (path: string): string => `${path}/`;
 
 /**
- * Scans a directory of retained evidence recursively. Every file path (which carries its directory
- * names) and every file's contents are checked, and a leaf directory name — one no other path spells
- * out — is checked on its own. A path hit is reported at line 0.
+ * Scans a directory of retained evidence recursively. Every file path and every file's contents are
+ * checked, so each ancestor directory name is scanned (raw and per-segment decoded) as part of a
+ * child's path, and a leaf directory name — one no other path spells out — is checked on its own. A
+ * path hit is reported at line 0.
  */
 export function scanDirectory(dir: string, options: ScanOptions): ScanResult {
   const resolved = needlesOf(options.env, options.repositoryRoot);
@@ -252,34 +265,34 @@ async function scanBlobs(git: ScanGit, paths: readonly string[], revision: strin
 }
 
 /**
- * Scans exactly the candidate index. Deletions are skipped (their bytes are not in the candidate), and a
- * rename or copy is scanned under its new path only. A blob read or git failure is a scan error, never a
- * pass, and its raw child output is dropped.
+ * The one index pipeline: `--staged` and `--all` differ only in the listing that names the paths.
+ * A blob read or git failure is a scan error, never a pass, and its raw child output is dropped.
  */
-export async function scanStaged(options: ScanOptions): Promise<ScanResult> {
+async function scanIndex(options: ScanOptions, listing: readonly string[]): Promise<ScanResult> {
   const resolved = needlesOf(options.env, options.repositoryRoot);
   if (!resolved.ok) return resolved.result;
   const git = options.git ?? createScanGit(options.cwd ?? process.cwd());
-  const listing = await git(['diff', '--cached', '--name-only', '-z', '--diff-filter=ACMR']);
-  if (!listing.ok) return scanError('git-failure');
+  const listed = await git(listing);
+  if (!listed.ok) return scanError('git-failure');
   const lines: string[] = [];
-  const failure = await scanBlobs(git, nulPaths(listing.stdout), ':', resolved.needles, lines);
+  const failure = await scanBlobs(git, nulPaths(listed.stdout), ':', resolved.needles, lines);
   return failure ?? verdict(lines, resolved.needles.credential !== undefined);
+}
+
+/**
+ * Scans exactly the candidate index. Deletions are skipped (their bytes are not in the candidate), and a
+ * rename or copy is scanned under its new path only.
+ */
+export function scanStaged(options: ScanOptions): Promise<ScanResult> {
+  return scanIndex(options, ['diff', '--cached', '--name-only', '-z', '--diff-filter=ACMR']);
 }
 
 /**
  * Audits the whole index, which `--staged` cannot see: a needle added to the profile after a file was
  * committed is invisible to the per-commit check. Same needles, path rules and output contract.
  */
-export async function scanAll(options: ScanOptions): Promise<ScanResult> {
-  const resolved = needlesOf(options.env, options.repositoryRoot);
-  if (!resolved.ok) return resolved.result;
-  const git = options.git ?? createScanGit(options.cwd ?? process.cwd());
-  const listing = await git(['ls-files', '-z']);
-  if (!listing.ok) return scanError('git-failure');
-  const lines: string[] = [];
-  const failure = await scanBlobs(git, nulPaths(listing.stdout), ':', resolved.needles, lines);
-  return failure ?? verdict(lines, resolved.needles.credential !== undefined);
+export function scanAll(options: ScanOptions): Promise<ScanResult> {
+  return scanIndex(options, ['ls-files', '-z']);
 }
 
 /**

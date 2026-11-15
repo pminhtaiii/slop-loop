@@ -3,67 +3,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { scanDirectory, type ScanResult } from '../../../src/runtime/real-tier-endpoint-scan.ts';
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
-import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { createScanFixture } from './real-tier-scan-fixtures.ts';
 
 // RFC 5737 / `.invalid` sentinels and a synthetic key only: no real host, port or credential.
-const OUTSIDE = mkdtempSync(join(tmpdir(), 't057-outside-'));
-const REPO = mkdtempSync(join(tmpdir(), 't057-repository-'));
-const BASE = mkdtempSync(join(tmpdir(), 't057-dir-'));
-const KEY = 'sentinel-key-0123456789abcdef';
-const MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
-const HREF = 'http://192.0.2.10:54321/v1/messages';
+const { REPO, BASE, KEY, HREF, DIGEST_KEY, PROVIDER, envOf } = createScanFixture('t057-', 't057-endpoint-digest-key');
 const PRIVATE = 'http://192.0.2.11:54321/v1/messages';
-const sha = (seed: string): string => sha256Text(seed);
-/** A strong key derived in the test: the loader refuses weak ones, and the value is itself a needle. */
-const DIGEST_KEY = sha('t057-endpoint-digest-key');
-
-const PROVIDER = { endpoint: HREF, allowInsecureHttp: true, endpointDigestKey: DIGEST_KEY, model: MODEL, mode: 'nonstreaming', timeoutMs: 60000 } as const;
-const PRICING = { pricingId: 'placeholder-unverified', denominator: 1000000, inputRate: 2000000, cacheRate: 2000000, outputRate: 8000000, overheadRate: 0 };
-const LIMITS = {
-  totalModelCalls: 24,
-  inputTokensPerRequest: 32768,
-  outputTokensPerRequest: 8192,
-  providerTimeoutMs: 60000,
-  activeExecutionMs: 900000,
-  repairs: 2,
-  reviewerIterations: 2,
-  materialReplans: 3,
-  commandTimeoutMs: 60000,
-  outputBytes: 1048576,
-  memoryBytes: 1073741824,
-  cpus: 1,
-  processes: 128,
-};
-const IMAGE = { label: 'uc03-pytest:real-tier', imageId: `sha256:${sha('image')}`, base: `python:3.12-alpine@sha256:${sha('base')}`, platform: 'linux/amd64', user: '1000:1000' };
-
-const defaults = (): Record<string, unknown> => ({
-  schema: 'uc03-real-tier-profile/1',
-  campaignId: 'uc03-real-tier-2026-11',
-  stateRoot: join(OUTSIDE, 'state'),
-  provider: { ...PROVIDER },
-  pricing: { ...PRICING },
-  runLimits: { perRunInputTokens: 400000, perRunOutputTokens: 80000 },
-  limits: { ...LIMITS },
-  image: { ...IMAGE },
-  catalog: { path: join(REPO, 'fixtures', 'uc03', 'catalog.json') },
-  artifacts: { retainRoot: join(OUTSIDE, 'artifacts'), retainRawStreams: false },
-  approvalPolicy: { profileVersion: 'real-tier-2026-11-14' },
-});
-
-let profiles = 0;
-
-/** Writes the profile outside the checkout and injects the environment; nothing here reads the process env. */
-function envOf(patch: Record<string, unknown> = {}, env: Record<string, string | undefined> = {}): RealTierEnvironment {
-  const file = join(OUTSIDE, `profile-${profiles++}.json`);
-  writeFileSync(file, JSON.stringify({ ...defaults(), ...patch }), 'utf8');
-  return { UC03_REAL_TIER_PROFILE: file, ANTHROPIC_API_KEY: KEY, ...env };
-}
 
 let cases = 0;
 

@@ -11,60 +11,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runRealTierScanCli } from '../../../src/cli/real-tier-scan.ts';
-import { scanDirectory, scanRange, type ScanResult } from '../../../src/runtime/real-tier-endpoint-scan.ts';
+import { scanDirectory, scanRange, scanStaged, type ScanResult } from '../../../src/runtime/real-tier-endpoint-scan.ts';
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
-import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { createScanFixture } from './real-tier-scan-fixtures.ts';
 
 // RFC 3849 / RFC 5737 sentinels and a synthetic key only: no real host, port or credential.
-const OUTSIDE = mkdtempSync(join(tmpdir(), 't057c-outside-'));
-const REPO = mkdtempSync(join(tmpdir(), 't057c-repository-'));
-const BASE = mkdtempSync(join(tmpdir(), 't057c-dir-'));
-const KEY = 'sentinel-key-0123456789abcdef';
-const MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
-const HREF = 'http://192.0.2.10:54321/v1/messages';
-const sha = (seed: string): string => sha256Text(seed);
-const DIGEST_KEY = sha('t057c-endpoint-digest-key');
-
-const PROVIDER = { endpoint: HREF, allowInsecureHttp: true, endpointDigestKey: DIGEST_KEY, model: MODEL, mode: 'nonstreaming', timeoutMs: 60000 } as const;
-const PRICING = { pricingId: 'placeholder-unverified', denominator: 1000000, inputRate: 2000000, cacheRate: 2000000, outputRate: 8000000, overheadRate: 0 };
-const LIMITS = {
-  totalModelCalls: 24,
-  inputTokensPerRequest: 32768,
-  outputTokensPerRequest: 8192,
-  providerTimeoutMs: 60000,
-  activeExecutionMs: 900000,
-  repairs: 2,
-  reviewerIterations: 2,
-  materialReplans: 3,
-  commandTimeoutMs: 60000,
-  outputBytes: 1048576,
-  memoryBytes: 1073741824,
-  cpus: 1,
-  processes: 128,
-};
-const IMAGE = { label: 'uc03-pytest:real-tier', imageId: `sha256:${sha('image')}`, base: `python:3.12-alpine@sha256:${sha('base')}`, platform: 'linux/amd64', user: '1000:1000' };
-
-const defaults = (): Record<string, unknown> => ({
-  schema: 'uc03-real-tier-profile/1',
-  campaignId: 'uc03-real-tier-2026-11',
-  stateRoot: join(OUTSIDE, 'state'),
-  provider: { ...PROVIDER },
-  pricing: { ...PRICING },
-  runLimits: { perRunInputTokens: 400000, perRunOutputTokens: 80000 },
-  limits: { ...LIMITS },
-  image: { ...IMAGE },
-  catalog: { path: join(REPO, 'fixtures', 'uc03', 'catalog.json') },
-  artifacts: { retainRoot: join(OUTSIDE, 'artifacts'), retainRawStreams: false },
-  approvalPolicy: { profileVersion: 'real-tier-2026-11-14' },
-});
-
-let profiles = 0;
-
-function envOf(patch: Record<string, unknown> = {}): RealTierEnvironment {
-  const file = join(OUTSIDE, `profile-${profiles++}.json`);
-  writeFileSync(file, JSON.stringify({ ...defaults(), ...patch }), 'utf8');
-  return { UC03_REAL_TIER_PROFILE: file, ANTHROPIC_API_KEY: KEY };
-}
+const { REPO, BASE, KEY, MODEL, HREF, DIGEST_KEY, PROVIDER, envOf } = createScanFixture('t057c-', 't057c-endpoint-digest-key');
 
 let cases = 0;
 
@@ -162,6 +114,62 @@ test('TEMPLATE: the host template refuses to echo an endpoint, credential or dig
   const clean = await runRealTierScanCli(['--print-host-template'], { env: envOf(), cwd: dir, repositoryRoot: dir });
   assert.equal(clean.exitCode, 0, 'a clean model still prints the template');
   assert.equal(clean.output.includes(MODEL), true);
+});
+
+/** The sentinel host `192.0.2.10`, fully percent-encoded: every character has a `%XX` spelling. */
+const ENCODED_HOST = '%31%39%32%2E%30%2E%32%2E%31%30';
+
+test('ENCODED-ANCESTOR: an encoded ancestor stays a leak when a descendant has a malformed percent', () => {
+  // The reproducer: no leaf directory exists, so the ancestor is only spelled by the child's path,
+  // and decoding that whole path fails on `bad%.txt`.
+  const dir = mkdtempSync(join(tmpdir(), 't057c-encoded-ancestor-'));
+  mkdirSync(join(dir, ENCODED_HOST), { recursive: true });
+  writeFileSync(join(dir, ENCODED_HOST, 'bad%.txt'), 'clean\n', 'utf8');
+  const result = scanDirectory(dir, { env: envOf(), repositoryRoot: REPO });
+  assert.equal(result.exitCode, 1);
+  assert.match(result.output, /^path-hmac:[a-f0-9]{12}:0 ENDPOINT_LEAK\nSCAN_LEAK$/u);
+  quiet(result, [ENCODED_HOST, '192.0.2.10', '54321']);
+});
+
+test('SEGMENT-DECODE: a valid encoded segment next to a malformed one is a leak', () => {
+  // The encoded host is the file name and the malformed segment is its parent, so only a
+  // per-segment decode finds it: the whole path throws.
+  const dir = mkdtempSync(join(tmpdir(), 't057c-segment-decode-'));
+  mkdirSync(join(dir, 'bad%'), { recursive: true });
+  writeFileSync(join(dir, 'bad%', ENCODED_HOST), 'clean\n', 'utf8');
+  const result = scanDirectory(dir, { env: envOf(), repositoryRoot: REPO });
+  assert.equal(result.exitCode, 1);
+  assert.match(result.output, /^path-hmac:[a-f0-9]{12}:0 ENDPOINT_LEAK\nSCAN_LEAK$/u);
+  quiet(result, [ENCODED_HOST, '192.0.2.10', '54321']);
+});
+
+test('NO-DUPLICATE: a nested leak name is reported once', () => {
+  const raw = mkdtempSync(join(tmpdir(), 't057c-nested-raw-'));
+  mkdirSync(join(raw, 'evidence', '192.0.2.10', 'run-1'), { recursive: true });
+  writeFileSync(join(raw, 'evidence', '192.0.2.10', 'run-1', 'result.json'), '{"outcome":"pass"}\n', 'utf8');
+  const rawResult = scanDirectory(raw, { env: envOf(), repositoryRoot: REPO });
+  assert.equal(rawResult.exitCode, 1);
+  assert.match(rawResult.output, /^path-hmac:[a-f0-9]{12}:0 ENDPOINT_LEAK\nSCAN_LEAK$/u);
+  quiet(rawResult, ['192.0.2.10', '54321']);
+
+  const encoded = mkdtempSync(join(tmpdir(), 't057c-nested-encoded-'));
+  mkdirSync(join(encoded, 'evidence', ENCODED_HOST, 'run-1'), { recursive: true });
+  writeFileSync(join(encoded, 'evidence', ENCODED_HOST, 'run-1', 'result.json'), '{"outcome":"pass"}\n', 'utf8');
+  const encodedResult = scanDirectory(encoded, { env: envOf(), repositoryRoot: REPO });
+  assert.equal(encodedResult.exitCode, 1);
+  assert.match(encodedResult.output, /^path-hmac:[a-f0-9]{12}:0 ENDPOINT_LEAK\nSCAN_LEAK$/u);
+  quiet(encodedResult, [ENCODED_HOST, '192.0.2.10', '54321']);
+});
+
+test('SEGMENT-DECODE: the staged mode decodes each path segment on its own', async () => {
+  const dir = repoWith({ 'a.txt': 'clean\n' });
+  mkdirSync(join(dir, 'evidence', ENCODED_HOST), { recursive: true });
+  writeFileSync(join(dir, 'evidence', ENCODED_HOST, 'bad%.txt'), 'clean\n', 'utf8');
+  git(dir, ['add', '-A']);
+  const result = await scanStaged({ env: envOf(), cwd: dir, repositoryRoot: dir });
+  assert.equal(result.exitCode, 1);
+  assert.match(result.output, /^path-hmac:[a-f0-9]{12}:0 ENDPOINT_LEAK\nSCAN_LEAK$/u);
+  quiet(result, [ENCODED_HOST, '192.0.2.10', '54321']);
 });
 
 test('EMPTY-DIR: a directory entry name is scanned even when the directory is empty', () => {
