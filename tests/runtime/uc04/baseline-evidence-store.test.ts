@@ -139,6 +139,25 @@ test('mutating the caller content after persist returns cannot change what is st
   assert.equal(loaded.acknowledgement.contentDigest, request.contentDigest);
 });
 
+test('mutating the caller digest after persist returns cannot change what is stored', async t => {
+  const dir = await stateDir(t);
+  const store = storeAt(dir);
+  const content = candidate();
+  const request = { ...writeRequest(content) };
+  const digest = request.contentDigest;
+
+  const pending = store.persist(request);
+  // The digest is a caller-owned field too; the first filesystem step is still pending here.
+  request.contentDigest = 'sha256:' + '0'.repeat(64);
+  const outcome = await pending;
+
+  assert.ok(outcome.outcome === 'durable', `expected a durable write, got ${outcome.outcome}`);
+  assert.equal(outcome.acknowledgement.contentDigest, digest);
+  const loaded = await store.load({ taskId: content.taskId, workspaceId: content.workspaceId, repositoryId: content.repositoryId, evidenceId: outcome.acknowledgement.evidenceId });
+  assert.ok(loaded.outcome === 'found', `expected the stored record to load, got ${loaded.outcome}`);
+  assert.equal(loaded.acknowledgement.contentDigest, digest);
+});
+
 test('replaying identical content returns the same acknowledgement and writes nothing further', async t => {
   const dir = await stateDir(t);
   const writes: string[] = [];
