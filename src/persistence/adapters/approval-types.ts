@@ -1,5 +1,5 @@
 import { dirname, join } from 'node:path';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
 import type { StoreResponse } from '../../approvals/service-data.ts';
 import {
   type ApprovalRequestRecord,
@@ -15,6 +15,7 @@ import {
 } from '../../contracts/approvals/contracts.ts';
 import type { DurableStore } from '../store.ts';
 import { isSafeStorageId } from '../store.ts';
+import { StatePortStore } from './state-port-v02-storage.ts';
 
 export interface DurableApprovalStoreOptions {
   readonly storageDir: string;
@@ -102,13 +103,84 @@ export const taskDir = (storageDir: string, taskId: string): string => join(stor
 /** Resolves the storage directory for a decision. */
 export const decisionDir = (storageDir: string, dId: string): string => join(storageDir, 'decisions', dId);
 
-/** Generates initial default ApprovalTaskControl for a newly observed task. */
-export function makeInitialControl(taskId: string): ApprovalTaskControl {
+/** Controlled fallback mapping; real callers pass the task's actual repository/workspace. */
+export const DEFAULT_TASK_MAPPING = { repositoryId: 'default-repo', workspaceId: 'default-ws' } as const;
+
+interface TaskMapping {
+  readonly repositoryId: string;
+  readonly workspaceId: string;
+}
+
+const isApprovalId = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/.test(value);
+
+/**
+ * The actual repository/workspace mapping for a first control write.
+ *
+ * A pending request wins because UC-05 refuses a request whose mapping differs from the
+ * control; otherwise the persisted task record supplies the binding. The durable v0.2 port is
+ * the production owner of the task, so its claim-directory `v02/task.json` wins over the legacy
+ * state path. A task with no record at all keeps the controlled seed; a record that exists but
+ * cannot be read answers `null`, since persisting the seed would discard the real mapping.
+ */
+export function initialControlMapping(durableStore: DurableStore | undefined, taskId: string, request: TaskMapping | undefined): TaskMapping | null {
+  if (request !== undefined) return { repositoryId: request.repositoryId, workspaceId: request.workspaceId };
+  for (const taskPath of taskPaths(durableStore, taskId)) {
+    const record = readTaskRecord(taskPath);
+    if (!record.ok) return null;
+    if (record.text === null) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(record.text);
+    } catch {
+      return null;
+    }
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const { taskId: recordTaskId, repositoryId, workspaceId } = parsed as Record<string, unknown>;
+    // Mirror DurableStore.loadTask: a record whose identity names another task cannot supply this task's binding.
+    if (recordTaskId !== taskId) return null;
+    if (typeof repositoryId !== 'string' || !isApprovalId(repositoryId) || typeof workspaceId !== 'string' || !isApprovalId(workspaceId)) return null;
+    return { repositoryId, workspaceId };
+  }
+  return DEFAULT_TASK_MAPPING;
+}
+
+/** The initial control for a first write, or a refusal when an existing owner task record is unreadable. */
+export function initialControl(taskId: string, mapping: TaskMapping | null): StoreResponse<ApprovalTaskControl> {
+  if (mapping === null) return makeFailure<ApprovalTaskControl>(taskId, 1, 'denied', 'invalid-stored-task');
+  const control = makeInitialControl(taskId, mapping);
+  return makeResponse(control, 'ok', 'initial-control-created', control);
+}
+
+/** Task record locations in owner precedence order: the v0.2 claim directory, then the legacy state path. */
+function taskPaths(durableStore: DurableStore | undefined, taskId: string): readonly string[] {
+  if (durableStore === undefined) return [];
+  return [new StatePortStore(durableStore).statePath(taskId, 'task.json'), durableStore.getTaskPath(taskId)];
+}
+
+/**
+ * Reads one candidate task record. `ok` with `null` text is an absent record; a refused read is
+ * not absence, since a legacy or default mapping would discard the record's real binding.
+ */
+function readTaskRecord(path: string): { readonly ok: true; readonly text: string | null } | { readonly ok: false } {
+  try {
+    return { ok: true, text: readFileSync(path, 'utf8') };
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? { ok: true, text: null } : { ok: false };
+  }
+}
+
+/** Generates initial default ApprovalTaskControl for a newly observed task.
+ *
+ * The mapping is the caller's actual task binding. A task-bound UC-05 context cannot be
+ * re-mapped after the fact, so a store without one keeps the controlled fallback.
+ */
+export function makeInitialControl(taskId: string, mapping: { readonly repositoryId: string; readonly workspaceId: string } = DEFAULT_TASK_MAPPING): ApprovalTaskControl {
   return {
     schemaVersion: UC05_APPROVAL_SCHEMA_VERSION,
     taskId,
-    repositoryId: 'default-repo',
-    workspaceId: 'default-ws',
+    repositoryId: mapping.repositoryId,
+    workspaceId: mapping.workspaceId,
     version: 1,
     epoch: 1,
     mode: 'runnable',

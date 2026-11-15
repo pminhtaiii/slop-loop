@@ -104,7 +104,7 @@ test('provenance is real and the constructor rejects unpinned or unsafe profiles
   );
 });
 
-test('execution uses the exact structured argv: pinned image@digest, isolation flags, limits and verbatim argv', async () => {
+test('execution uses the exact structured argv: pinned image ID, --pull=never, isolation flags, limits and verbatim argv', async () => {
   const { calls, spawn } = recorder();
   const controller = makeController(spawn);
 
@@ -114,7 +114,7 @@ test('execution uses the exact structured argv: pinned image@digest, isolation f
   assert.ok(call);
   assert.equal(call.command, 'docker');
 
-  const name = call.args[11];
+  const name = call.args[12];
   assert.ok(name?.startsWith('--name=ctr-'));
 
   assert.deepEqual(call.args, [
@@ -129,6 +129,7 @@ test('execution uses the exact structured argv: pinned image@digest, isolation f
     '--memory=536870912',
     '--cpus=1',
     '--pids-limit=64',
+    '--pull=never',
     name,
     '-w',
     '/workspace/repo',
@@ -138,7 +139,7 @@ test('execution uses the exact structured argv: pinned image@digest, isolation f
     'TMPDIR=/workspace/scratch',
     '--mount=type=volume,source=view-ws1,target=/workspace/repo,readonly',
     '--mount=type=volume,source=vol-scratch-bbb,target=/workspace/scratch',
-    `${PROFILE.image}@${IMAGE_DIGEST}`,
+    IMAGE_DIGEST,
     'pytest',
     '-q',
     'tests/test_add.py',
@@ -409,7 +410,7 @@ test('cleanup removes containers it created after a clean run and preserves unce
   const controller = makeController(spawn);
 
   await controller.executeContainer(plan());
-  const ctrName = calls[0]?.args[11]?.replace('--name=', '');
+  const ctrName = calls[0]?.args[12]?.replace('--name=', '');
   assert.ok(ctrName);
 
   const before = calls.length;

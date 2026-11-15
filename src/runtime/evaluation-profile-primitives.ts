@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { isPlainObject } from '../contracts/foundation/uc03/v01/validation/common.ts';
 import { sha256Text, type Validation } from '../uc01/contracts.ts';
+import { pinnedEndpointUrl } from '../foundation/deepseek-transport-request.ts';
 import type { CatalogEntry, EvaluationLimits, EvaluationPricing } from './evaluation-profile-types.ts';
 
 export const DIGEST = /^[a-f0-9]{64}$/u;
@@ -99,13 +100,14 @@ export function assertNoSecret(value: unknown, path: string): void {
   if (plain(value)) for (const [key, item] of Object.entries(value)) assertNoSecret(item, `${path}.${key}`);
 }
 
-export function endpointOf(value: unknown, path: string): Readonly<{ origin: string; path: string }> {
+/**
+ * The shared operator-endpoint rule (T049): an absolute http(s) URL with no credentials, query or
+ * fragment whose path ends in `/messages`; `http:` only with an explicit acknowledgement.
+ */
+export function endpointOf(value: unknown, path: string, allowInsecureHttp = false): Readonly<{ origin: string; path: string }> {
   const raw = text(value, path, 512);
-  if (!URL.canParse(raw)) deny('INVALID_ENDPOINT', path);
-  const url = new URL(raw);
-  if (url.protocol !== 'https:' || url.hostname !== 'api.deepseek.com' || url.port !== '' || url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') {
-    deny('INVALID_ENDPOINT', path);
-  }
+  const url = pinnedEndpointUrl(raw, allowInsecureHttp);
+  if (url === undefined) deny('INVALID_ENDPOINT', path);
   return Object.freeze({ origin: url.origin, path: url.pathname });
 }
 

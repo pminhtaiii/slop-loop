@@ -92,6 +92,11 @@ export function isValidRecoveryEvidence(evidence: RecoveryEvidenceV02, claim: St
   return evidence.observedUsage === undefined && evidence.observedRevisionDigest === undefined && evidence.invalidatedEvidence === undefined;
 }
 
+/** The binding written with the settled claim: names the exact receipt, which the writer alone wrote. */
+export function settlementBinding(receipt: AttemptReconciliationReceiptV02): NonNullable<StoredClaimV02['settlement']> {
+  return { reconciliationId: receipt.reconciliationId, receiptDigest: receipt.reconciliationDigest };
+}
+
 async function reconciliationReplay(store: StatePortStore, taskId: string, receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02 | null> {
   const prior = await store.readReconciliation(taskId, receipt.reconciliationId);
   if (!prior) return null;
@@ -153,7 +158,7 @@ export async function reconcileObservedOutcome(store: StatePortStore, receipt: A
     if (nextTask) await store.writeTask(taskId, nextTask);
     await store.writeJson(store.statePath(taskId, `recon-${snapshot.reconciliationId}.json`), snapshot);
     await store.writeJson(store.statePath(taskId, `attempt-${attempt.receipt.attemptId}.json`), { ...attempt, status: 'settled' } satisfies StoredAttemptV02);
-    await store.writeClaim(taskId, { ...claim, status: 'settled' });
+    await store.writeClaim(taskId, { ...claim, status: 'settled', settlement: settlementBinding(snapshot) });
     await store.writeControl(taskId, {
       ...control,
       controlVersion: control.controlVersion + 1,
@@ -246,7 +251,7 @@ export async function reconcileUncertain(store: StatePortStore, receipt: Attempt
     else if (staged.size) await store.writeTask(taskId, replaceLedgers(task, staged));
     await store.writeJson(store.statePath(taskId, `recon-${snapshot.reconciliationId}.json`), snapshot);
     await store.writeJson(store.statePath(taskId, `attempt-${attempt.receipt.attemptId}.json`), { ...attempt, status: 'settled' } satisfies StoredAttemptV02);
-    await store.writeClaim(taskId, { ...claim, status: 'settled' });
+    await store.writeClaim(taskId, { ...claim, status: 'settled', settlement: settlementBinding(snapshot) });
     await store.writeControl(taskId, {
       ...control,
       controlVersion: control.controlVersion + 1,

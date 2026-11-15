@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { structuredSpawn } from '../../../src/foundation/docker-spawn.ts';
+import { SPAWN_ENV_ALLOWLIST, structuredSpawn } from '../../../src/foundation/docker-spawn.ts';
 
 const NODE = process.execPath;
 const OPTS = { timeoutMs: 5_000, maxOutputBytes: 64 * 1024 };
@@ -68,4 +68,44 @@ test('stdin is written and ended, and an absent stdin is closed rather than left
 test('a nonexistent command rejects with a message naming it', async () => {
   const missing = 'slop-loop-definitely-not-a-command';
   await assert.rejects(structuredSpawn(missing, [], OPTS), new RegExp(`SPAWN_FAILED.*${missing}`));
+});
+
+test('the child environment is the minimal allowlist; parent secrets never reach it', async () => {
+  const sentinel = 'sk-ant-SENTINEL-do-not-forward';
+  process.env['ANTHROPIC_API_KEY'] = sentinel;
+  process.env['SLOP_LOOP_UNRELATED_SECRET'] = sentinel;
+  try {
+    const script = 'process.stdout.write(JSON.stringify(process.env))';
+    const result = await structuredSpawn(NODE, ['-e', script], OPTS);
+    assert.equal(result.exitCode, 0);
+    const childEnv: Record<string, string> = JSON.parse(result.stdout);
+
+    // No key outside the allowlist arrives carrying a parent value; on POSIX nothing outside it arrives at all.
+    const allowed = new Set<string>(SPAWN_ENV_ALLOWLIST);
+    for (const [key, value] of Object.entries(childEnv)) {
+      if (allowed.has(key)) continue;
+      assert.notEqual(value, sentinel, `secret '${key}' reached the child`);
+    }
+    if (process.platform !== 'win32') {
+      assert.deepEqual(
+        Object.keys(childEnv).filter(key => !allowed.has(key)),
+        [],
+      );
+    }
+    assert.equal(JSON.stringify(childEnv).includes(sentinel), false, 'a synthetic parent secret must never reach the child');
+
+    // The allowlist is present in the parent here, so the values it names are forwarded.
+    assert.ok(
+      SPAWN_ENV_ALLOWLIST.some(key => childEnv[key] !== undefined),
+      'allowlisted parent values are forwarded',
+    );
+    assert.equal(childEnv['PATH'], process.env['PATH']);
+  } finally {
+    delete process.env['ANTHROPIC_API_KEY'];
+    delete process.env['SLOP_LOOP_UNRELATED_SECRET'];
+  }
+});
+
+test('the allowlist is exactly the minimal docker/host set', () => {
+  assert.deepEqual([...SPAWN_ENV_ALLOWLIST].sort(), ['DOCKER_CONFIG', 'DOCKER_HOST', 'HOME', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'USERPROFILE']);
 });

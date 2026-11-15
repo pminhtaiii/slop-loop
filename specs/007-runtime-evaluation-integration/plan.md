@@ -68,7 +68,7 @@ No production imports from test support. Operator catalog points to ignored loca
 
 Reviewable local profile, not approved production defaults: 24 total coder+reviewer calls; 32,768 input/8,192 output tokens per request; 60s provider timeout; 15 minutes active execution excluding human wait; two repairs; two reviewer iterations; three material replans; 30s commands; 1 MiB output; 2 GiB memory, 2 CPUs, 64 processes. Values are explicit trusted configuration; absent/invalid limits deny corresponding actions. Operator supplies credentials, actual image digest/platform and pricing, without a chat interview.
 
-`spendPolicy = derived-exposure`: no user monetary budget. Compute finite task/run dollar ledger ceilings sufficient for every permitted call from conservative billable bounds and pinned highest applicable input/output/cache/overhead rates. Round upward in integer micro-USD, detect overflow, expose derivation. Retain reservation/settlement/uncertainty; no infinity, arbitrary huge sentinel, low hidden cap or replenishment. Changed configuration creates a new experiment; same-task increases use existing explicit authorization. Unsupported billable bounds/pricing deny real dispatch.
+`spendPolicy = derived-exposure`: no user monetary budget. Compute finite task/run dollar ledger ceilings sufficient for every permitted call from conservative billable bounds and pinned highest applicable input/output/cache/overhead rates. Round upward in integer micro-USD, detect overflow, expose derivation. Retain reservation/settlement/uncertainty; no infinity, arbitrary huge sentinel, low hidden cap or replenishment. Changed configuration creates a new experiment; same-task increases use existing explicit authorization. Unsupported billable bounds/pricing deny real dispatch. Recorded exception: under the 2026-11-14 real-tier operator decisions ([decisions](contracts/decisions.md) lines 106-108) the user waived the economic cap, so for this real tier `placeholder-unverified` pricing reports cost as `estimate-unverified`/`unknown` and never gates dispatch; the per-run runaway stop (calls/tokens) still gates.
 
 ## Existing Task and External Dependency Mapping
 
@@ -122,3 +122,39 @@ T033 binds a retained immutable initial repository tree and its admitted-file ma
 ## Source/controlled completion — 2026-11-12
 
 Follow [completion](contracts/completion.md) for targeted coder/replan/loop/host/evidence/control corrections and their acceptance seams. Execute T026, then T027, T028, T029, the integrated T030/T014 controlled matrix, and T031. Preserve original real acceptance tasks and gates. Existing approved artifacts govern all unaffected behavior.
+
+## Real-tier prerequisite plan — 2026-11-14
+
+**Branch/base**: `feat/uc03-real-tier-prerequisites` at `c1eba127` (`origin/development` `6c9ee150` plus the release entry). **Authority**: the [decisions](contracts/decisions.md) entries "Real-tier prerequisite release — 2026-11-14" and "Real-tier operator decisions — 2026-11-14". Planning is released now; T040–T060 are released for implementation only after automated validation and both independent planning lanes pass. Contract: [real-tier](contracts/real-tier.md).
+
+### Design choices and boundaries
+
+- **Owner lanes.** Coordinator workers build the missing UC-04 surfaces on the existing `DurableStatePortV02` and durable store: read fencing, exact-operation lookup, baseline evidence store, approval-store interop fixes, authority publication/recovery admission, and the material replan transaction. They also build the missing UC-05 pieces, reusing `src/approvals/`: real-journal acceptance for control/continuation and a production `ConsoleApprovalPort`. They implement the T019-agreed surfaces unchanged. They are not Thanh Tan's or Trong Tan's deliveries, and G-OWNERS stays single-attested. By the user's decision, they count toward X04-STATE/X05-GATE for these evidence runs only, and every UC-03 acceptance entry must say so.
+- **Real provenance by construction, not declaration.** A component counts as real only when a module-private brand proves that the production factory built it (`isDeepSeekTransport`; the new dependency-neutral `src/foundation/production-journal-registry.ts`, registered only by the `DurableStatePortV02` constructor, so `src/approvals/` never imports persistence and the module graph stays acyclic). A declared `provenance: 'real'` string is not enough.
+- **G-PROFILE.** The operator profile lives outside every checkout and is named by `UC03_REAL_TIER_PROFILE`; the credential comes only from `ANTHROPIC_API_KEY`. The image is built from a digest-pinned base, and runs reference it by content-addressed image ID with `--pull=never`. The Docker CLI child gets a minimal environment.
+- **Operator-pinned endpoint.** The user's model is self-hosted behind an Anthropic-compatible endpoint (`ANTHROPIC_BASE_URL`, an `http://<host>:<port>/v1` base) with model `po/deepseek-ai/deepseek-v4.1-flash-1017`. The transport's hard-coded endpoint and the profile's `endpointOf` both become operator-pinned. That means an exact `<base>/messages` URL plus model id, read from the profile or the environment at assembly, validated, frozen and compared exactly on every call. `api.deepseek.com` stays the default when no endpoint is set. A non-`https` endpoint loads only with the explicit `allowInsecureHttp: true` acknowledgement; the contract recommends TLS or an SSH tunnel. No tracked file may contain the real host, port or URL; evidence records only `endpointDigest` and the scheme.
+- **No economic cap.** FR-006 stands. T049 adds only a runaway stop (per-run call and token limits enforced before dispatch, failing closed) and reports cost as an `estimate-unverified` (or `unknown`) figure from a placeholder table, never as zero. That `placeholder-unverified` table never gates dispatch, under the recorded 2026-11-14 exception above; outside it, unsupported accounting blocks dispatch.
+- **Assembly.** `src/runtime/real-tier-assembly.ts` exports the `createHostAssembly()` factory that the existing CLI loader imports, so `prepareUC03Host` can return `ready` from real deliveries. T060 adds a validated `metadata` projection and an operational Docker `preflight` member to the resolution, both integrated into `evaluate preflight/run` after `src/cli/evaluate.ts` is split into `evaluate-host.ts` (contract §(i)).
+- **Evidence runs.** T024 and T025 make zero model calls, and T026/T066 run at controlled tier. T028 drives `runUC03GraphV02` plus the independent snapshot grader, not the evaluation service, so no T011 run happens. It runs as one guarded `--campaign` invocation (preflight → conformance → cases) whose conformance receipt binds any later `--case` (T059). Real-tier runners use non-`.test` file names, so CI never runs Docker or live calls.
+
+### Execution order
+
+1. Phase 14 owner lanes: T040, T041 and T042 in parallel, then T043 and T044, then T045 and T046.
+2. Phase 15 profile, image, endpoint and runaway stop: T047, T048 and T049, in parallel with Phase 14.
+3. Phase 16 assembly: T058 (uncertainty gate, after T040/T041/T044), then T050, then T060 (CLI metadata and Docker preflight). T057 (endpoint scanner) follows T047.
+4. Phase 17 evidence, serialized: T051 (T024), T052 (T025), T053 (T026) and T056 (T066), both controlled and able to start after T044/T040; T059 (T028 runner and gate, controlled); then T054 (T028, live calls).
+5. Phase 18 context refresh: T055.
+6. Later and separately released: T011 (G-REAL/SC-001), T014's real half, T017, G-RESTART, merge and T039.
+
+### Planned paths
+
+| Concern | Principal paths |
+|---|---|
+| UC-04 owner lane | `src/persistence/adapters/state-port-v02-read-fence.ts`, `state-port-v02-operation-lookup.ts`, `baseline-evidence-store.ts`, `approval-store-adapter.ts`, `state-port-v02-authority.ts`, `material-replan-port.ts`; `tests/runtime/uc04/*` |
+| UC-05 owner lane | `src/approvals/journal-acceptance-v02.ts`, `control-v02.ts`, `recovery-v02.ts`; `src/runtime/console-approval-port.ts` |
+| Profile, image, endpoint, runaway stop | `src/runtime/real-tier-profile.ts`, `docker/uc03/Dockerfile`, `src/foundation/docker-controller-argv.ts`, `docker-spawn.ts`, `deepseek-transport.ts`, `src/runtime/evaluation-profile-primitives.ts`, `src/foundation/run-usage-limit.ts` |
+| Assembly, recovery, CLI | `src/runtime/real-tier-assembly.ts`, `real-tier-owners.ts`, `real-tier-recovery.ts`; `src/cli/evaluate.ts`, `evaluate-host.ts`; `src/foundation/docker-readiness.ts`, `production-journal-registry.ts` |
+| Privacy scanner | `src/runtime/real-tier-endpoint-scan.ts`, `src/cli/real-tier-scan.ts` |
+| Evidence | `tests/runtime/security/uc03-real-containment-probe.ts`, `tests/runtime/integration/uc03-approvals*.ts`, `uc03-success-real-*.ts`, `uc03-success-real-run-gate.test.ts`, `real-tier-uncertainty.test.ts`; new focused `tests/runtime/unit/uc03-graph-gaps.test.ts` and `tests/runtime/contract/atomic-admission-matrix-gaps.test.ts` (the oversized legacy files are read-only) |
+
+No new dependency, framework, persistence engine or spend ledger. Governance check: no policy is waived. The cleartext-endpoint risk is an explicit operator acknowledgement, not a waiver, and the constitution remains a placeholder.

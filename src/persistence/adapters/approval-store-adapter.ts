@@ -29,12 +29,15 @@ import {
   decisionDir,
   isSafeId,
   makeFailure,
+  initialControlMapping,
+  initialControl,
   makeInitialControl,
   makeResponse,
   parseStoredHistory,
   taskDir,
   writeJsonAtomic,
 } from './approval-types.ts';
+import { committedEventId, directionReceiptId, directionResponse, requestCreatedResponse, requestEventId, requestReplacedResponse, resolutionResponse } from './approval-store-receipts.ts';
 import { appendEvent, appendEvents, readEvents } from './approval-events.ts';
 
 /** Durable file-backed approval store adapter implementing UC-05 contracts. */
@@ -66,21 +69,11 @@ export class DurableApprovalStore implements ApprovalStore {
   /** Loads or initializes task control metadata. */
   loadTaskControl(taskId: string): StoreResponse<ApprovalTaskControl> {
     if (!isSafeId(taskId)) return makeFailure<ApprovalTaskControl>('unknown', 1, 'denied', 'invalid-id');
-    const filePath = join(taskDir(this.storageDir, taskId), 'control.json');
-    if (!existsSync(filePath)) {
-      const defaultControl = makeInitialControl(taskId);
-      writeJsonAtomic(filePath, defaultControl);
-      return makeResponse(defaultControl, 'ok', 'initial-control-created', defaultControl);
-    }
-
-    try {
-      const raw = JSON.parse(readFileSync(filePath, 'utf8'));
-      const validation = validateApprovalTaskControl(raw);
-      if (!validation.ok) return makeFailure<ApprovalTaskControl>(taskId, 1, 'denied', 'invalid-stored-control');
-      return makeResponse(validation.value, 'ok', 'task-control-loaded', validation.value);
-    } catch {
-      return makeFailure<ApprovalTaskControl>(taskId, 1, 'unavailable', 'read-error');
-    }
+    const res = this.readTaskControl(taskId);
+    if (res.safe.safeReasonCode !== 'control-not-found') return res;
+    const initial = initialControl(taskId, initialControlMapping(this.durableStore, taskId, undefined));
+    if (initial.value !== null) writeJsonAtomic(join(taskDir(this.storageDir, taskId), 'control.json'), initial.value);
+    return initial;
   }
 
   private readTaskControl(taskId: string): StoreResponse<ApprovalTaskControl> {
@@ -101,7 +94,8 @@ export class DurableApprovalStore implements ApprovalStore {
   readRequest(decisionId: string): StoreResponse<ApprovalRequestRecord> {
     if (!isSafeId(decisionId)) return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'invalid-id', decisionId);
     const filePath = join(decisionDir(this.storageDir, decisionId), 'request.json');
-    if (!existsSync(filePath)) return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'request-not-found', decisionId);
+    // UC-05 requires invalid/unknown-decision for a missing decision.
+    if (!existsSync(filePath)) return makeFailure<ApprovalRequestRecord>('unknown', 1, 'invalid', 'unknown-decision');
 
     try {
       const raw = JSON.parse(readFileSync(filePath, 'utf8'));
@@ -150,7 +144,7 @@ export class DurableApprovalStore implements ApprovalStore {
     if (currentControlRes.safe.outcome === 'ok' && currentControlRes.value) {
       currentControl = currentControlRes.value;
     } else if (currentControlRes.safe.safeReasonCode === 'control-not-found') {
-      currentControl = makeInitialControl(request.taskId);
+      currentControl = makeInitialControl(request.taskId, request);
     } else {
       return makeFailure<ApprovalRequestRecord>(request.taskId, 1, 'denied', 'control-unavailable');
     }
@@ -177,6 +171,7 @@ export class DurableApprovalStore implements ApprovalStore {
     };
 
     const reqPath = join(decPath, 'request.json');
+    let eventRef: string | null;
     try {
       writeJsonAtomic(reqPath, request);
       const evRes = this.appendEvent(request.taskId, payload.event);
@@ -185,12 +180,13 @@ export class DurableApprovalStore implements ApprovalStore {
         return makeFailure<ApprovalRequestRecord>(request.taskId, currentControl.version, evRes.error, evRes.reason, request.decisionId);
       }
       writeJsonAtomic(join(taskDir(this.storageDir, request.taskId), 'control.json'), updatedControl);
+      eventRef = committedEventId(payload.event, this.profile);
     } catch {
       rmSync(reqPath, { force: true });
       return makeFailure<ApprovalRequestRecord>(request.taskId, currentControl.version, 'unavailable', 'storage-error', request.decisionId);
     }
 
-    return makeResponse(updatedControl, 'ok', 'pending-created', request, request.decisionId, request.requestVersion);
+    return requestCreatedResponse(updatedControl, request, eventRef);
   }
 
   /** Resolves a pending decision with trusted operator decision. */
@@ -234,7 +230,8 @@ export class DurableApprovalStore implements ApprovalStore {
     }
 
     const priorResolution = historyRes.value.resolutions.find(r => r.decisionId === resolution.decisionId);
-    if (priorResolution !== undefined && priorResolution.responseKey !== resolution.responseKey) {
+    // A replay must match the stored decision too: the response key comes from the operator, so a retry could otherwise rewrite control under the committed event's identity.
+    if (priorResolution !== undefined && (priorResolution.responseKey !== resolution.responseKey || priorResolution.decision !== resolution.decision)) {
       return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'conflict', 'decision-not-pending', decisionId);
     }
 
@@ -262,7 +259,8 @@ export class DurableApprovalStore implements ApprovalStore {
 
     writeJsonAtomic(join(taskDir(this.storageDir, request.taskId), 'control.json'), updatedControl);
 
-    return makeResponse(updatedControl, 'ok', priorResolution !== undefined ? 'already-resolved' : 'pending-resolved', resolution, decisionId, request.requestVersion);
+    // The receipt names the event the store committed: the replayed resolution's own event, never a new one.
+    return resolutionResponse(updatedControl, resolution, priorResolution?.eventId ?? committedEventId(payload.event, this.profile), priorResolution !== undefined);
   }
 
   /** Records an operator direction to pause, resume, or end task execution. */
@@ -280,7 +278,9 @@ export class DurableApprovalStore implements ApprovalStore {
     if (controlReadRes.safe.outcome === 'ok' && controlReadRes.value) {
       currentControl = controlReadRes.value;
     } else if (controlReadRes.safe.safeReasonCode === 'control-not-found') {
-      currentControl = makeInitialControl(taskId);
+      const mapping = initialControlMapping(this.durableStore, taskId, undefined);
+      if (mapping === null) return makeFailure<DeveloperDirection>(taskId, 1, 'denied', 'invalid-stored-task');
+      currentControl = makeInitialControl(taskId, mapping);
     } else {
       return makeFailure<DeveloperDirection>(taskId, 1, controlReadRes.safe.outcome, controlReadRes.safe.safeReasonCode);
     }
@@ -334,7 +334,8 @@ export class DurableApprovalStore implements ApprovalStore {
 
     writeJsonAtomic(join(taskDir(this.storageDir, direction.taskId), 'control.json'), updatedControl);
 
-    return makeResponse(updatedControl, 'ok', 'direction-recorded', direction);
+    // A replay acknowledges the stored direction's own event, never a freshly supplied id.
+    return directionResponse(updatedControl, direction, directionReceiptId(this.storageDir, direction, priorDirection !== undefined, payload.event, this.profile));
   }
 
   /** Replaces a stale pending approval request with a refreshed request. */
@@ -373,6 +374,7 @@ export class DurableApprovalStore implements ApprovalStore {
     };
 
     const repFile = join(decisionDir(this.storageDir, replacement.decisionId), 'request.json');
+    let eventRef: string | null;
     try {
       writeJsonAtomic(repFile, replacement);
       const evRes = this.appendEvents(replacement.taskId, payload.events);
@@ -381,12 +383,13 @@ export class DurableApprovalStore implements ApprovalStore {
         return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, evRes.error, evRes.reason, replacement.decisionId);
       }
       writeJsonAtomic(join(taskDir(this.storageDir, replacement.taskId), 'control.json'), updatedControl);
+      eventRef = requestEventId(payload.events ?? [], replacement.decisionId, this.profile);
     } catch {
       rmSync(repFile, { force: true });
       return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'unavailable', 'storage-error', replacement.decisionId);
     }
 
-    return makeResponse(updatedControl, 'ok', 'stale-pending-replaced', replacement, replacement.decisionId, replacement.requestVersion);
+    return requestReplacedResponse(updatedControl, replacement, eventRef);
   }
 
   /** Appends a decision event to the task audit log. */

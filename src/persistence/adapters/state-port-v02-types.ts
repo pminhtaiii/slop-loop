@@ -68,6 +68,11 @@ export interface StoredClaimV02 {
   readonly status: 'claimed' | 'attempting' | 'settled' | 'uncertain' | 'observed-unsettled' | 'closed';
   readonly attemptId?: string | undefined;
   readonly settlementResult?: (OutcomeRecordResultV02 & { readonly outcome: 'settled' }) | undefined;
+  /**
+   * Written by the reconciler only, with the receipt it wrote: the reconcile-time control head is
+   * never journaled, so this is the only durable proof of which receipt actually settled the claim.
+   */
+  readonly settlement?: { readonly reconciliationId: string; readonly receiptDigest: string } | undefined;
 }
 
 export interface StoredAttemptV02 {
