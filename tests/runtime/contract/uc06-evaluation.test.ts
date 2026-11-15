@@ -148,7 +148,14 @@ test('v2 runner admits real execution with valid RealExecutionAdmission and reje
     provenance: 'real',
     execute: async () => {
       callCount++;
-      return { caseId: 'UC-06:Q01', result: { status: 'accepted', summary: 'clean', findings: [] } };
+      return {
+        caseId: 'UC-06:Q01',
+        result: {
+          status: 'accepted',
+          diffDigest: 'sha256:c9e4f686906523bce3b15df0a96244da06389ba15f10715c59c9dccee60d4f38',
+          findings: [],
+        },
+      };
     },
   };
 
@@ -295,23 +302,30 @@ test('v2 runner executes mock and quality evaluation with exact localized gradin
     execute: async payload => {
       const p = payload as { caseId: string };
       if (p.caseId === 'Q01') {
-        return { caseId: 'UC-06:Q01', result: { status: 'accepted', summary: 'clean', findings: [] } };
+        return {
+          caseId: 'UC-06:Q01',
+          result: {
+            status: 'accepted',
+            diffDigest: 'sha256:c9e4f686906523bce3b15df0a96244da06389ba15f10715c59c9dccee60d4f38',
+            findings: [],
+          },
+        };
       }
       if (p.caseId === 'Q07') {
         return {
           caseId: 'UC-06:Q07',
           result: {
-            status: 'changes_requested',
-            summary: 'Defect detected',
+            status: 'findings',
+            diffDigest: 'sha256:0c1e3ba1dfc7f36ee3c1ec226cf08426bffd47b17ed3f91d6201621e654089a7',
             findings: [
               {
-                findingId: 'F1',
                 file: 'src/calculator.py',
                 side: 'new',
                 line: 15,
                 category: 'logic',
                 severity: 'error',
                 message: 'Division by zero check has inverted comparison allowing zero denominator',
+                evidenceRef: 'source',
               },
             ],
           },

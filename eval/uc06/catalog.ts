@@ -408,7 +408,10 @@ const RAW_QUALITY_LABELS: readonly Omit<UC06QualityCaseLabel, 'oracleDigest'>[] 
       category: 'security',
       severity: 'error',
       rationale: 'Direct string interpolation inside SQL query introduces SQL injection vulnerability.',
-      requiredKeywordGroups: [['sql', 'injection', 'interpolate', 'parameter', 'query']],
+      requiredKeywordGroups: [
+        ['sql', 'query'],
+        ['injection', 'interpolate', 'interpolation', 'parameter', 'parameterized', 'sanitize', 'escaping'],
+      ],
     },
   },
   {

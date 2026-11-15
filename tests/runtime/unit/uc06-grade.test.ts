@@ -240,6 +240,34 @@ test('gradeQualityCase negative controls: "Add a docstring for this discount fun
   assert.equal(judged.fn, 1, 'Seeded defect remained undetected');
 });
 
+test('gradeQualityCase negative controls: unrelated query message does NOT count as TP for Q09 SQL injection', () => {
+  const caseDesc = UC06_QUALITY_CASES.find(c => c.caseId === 'Q09');
+  assert.ok(caseDesc);
+  const label = UC06_QUALITY_LABELS.find(l => l.caseId === 'Q09');
+  assert.ok(label && label.defect);
+
+  const unrelatedQueryResult = mockReviewResult(
+    'findings',
+    [
+      {
+        file: label.defect.file,
+        line: label.defect.startLine,
+        side: label.defect.side,
+        severity: 'error',
+        message: 'The query uses the wrong table.',
+        evidenceRef: 'source',
+      },
+    ],
+    'Q09',
+  );
+
+  const judged = gradeQualityCase(caseDesc, label, { caseId: 'Q09', result: unrelatedQueryResult });
+  assert.equal(judged.passed, false);
+  assert.equal(judged.tp, 0, 'Unrelated table message must NOT match SQL injection defect');
+  assert.equal(judged.fp, 1, 'Unrelated message counts as FP');
+  assert.equal(judged.fn, 1);
+});
+
 test('gradeQualityCase penalizes duplicate findings for the same defect as FP', () => {
   const caseDesc = UC06_QUALITY_CASES.find(c => c.caseId === 'Q07');
   assert.ok(caseDesc);

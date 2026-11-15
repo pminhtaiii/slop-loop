@@ -117,7 +117,7 @@
 
 Internal DAG above is authoritative. T001 → T002 → T003 → {T004,T005} → T006 → T007 → T008; T002 → T009; {T008,T009} → T010 → {T011,T014}; T011 → {T012,T013}. External gates are owner evidence, not fabricated foreign task IDs or authority.
 
-Only T004/T005 have [P]: disjoint paths and the same accepted prerequisite T003. T002 is now accepted at its pure source/controlled scope; T009 still needs a separate release before scheduling. No unresolved dependency is bypassed by [P]. Shared graph and evaluator files serialize with any other owner work.
+Only T004/T005 have [P]: disjoint paths and the same accepted prerequisite T003. T002 is now accepted at its pure source/controlled scope; T009 and T010 were released and completed for controlled/evaluation tier on 2026-11-15. No unresolved dependency is bypassed by [P]. Shared graph and evaluator files serialize with any other owner work.
 
 ## Implementation strategy
 

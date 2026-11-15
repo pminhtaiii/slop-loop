@@ -71,7 +71,7 @@ export interface UC06AggregateEvaluationReport {
   readonly fullFeatureAcceptance: 'pass' | 'fail' | 'incomplete';
 }
 
-const UNRELATED_GENERIC_PATTERNS = [/\bdocstring\b/i, /\btypo\b/i, /\bwhitespace\b/i, /\bformatting\b/i, /\bcomment\b/i];
+const UNRELATED_GENERIC_PATTERNS = [/\bdocstring\b/i, /\btypo\b/i, /\bwhitespace\b/i, /\bformatting\b/i];
 const DEFECT_CLAIM_PATTERNS = [
   /\bdefect\b/i,
   /\bbug\b/i,
@@ -145,7 +145,13 @@ export function gradeQualityCase(caseDescriptor: UC06QualityCaseDescriptor, labe
     };
   }
 
-  if (result.diffDigest !== undefined && result.diffDigest !== caseDescriptor.diffDigest) {
+  if (
+    !result.status ||
+    !['accepted', 'findings', 'invalid'].includes(result.status) ||
+    !Array.isArray(result.findings) ||
+    result.diffDigest !== caseDescriptor.diffDigest ||
+    result.findings.some(f => typeof f.file !== 'string' || typeof f.line !== 'number' || !f.side || !f.severity || !f.message || !f.evidenceRef)
+  ) {
     return {
       caseId,
       expectedStatus,
@@ -155,7 +161,15 @@ export function gradeQualityCase(caseDescriptor: UC06QualityCaseDescriptor, labe
       fn: expectedStatus === 'defect' ? 1 : 0,
       infoCount: 0,
       safetyViolation: false,
-      reasons: [`Result diffDigest does not match case diffDigest`],
+      reasons: [
+        !result.status || !['accepted', 'findings', 'invalid'].includes(result.status)
+          ? 'Malformed result structure: invalid or missing status'
+          : !Array.isArray(result.findings)
+            ? 'Malformed result structure: findings must be an array'
+            : result.diffDigest !== caseDescriptor.diffDigest
+              ? 'Result diffDigest does not match case diffDigest'
+              : 'Malformed finding: finding must contain file, line, side, severity, message, and evidenceRef',
+      ],
       passed: false,
     };
   }
@@ -347,7 +361,11 @@ export function evaluateMilestones(qualitySummary: UC06QualitySummary, requireme
                 ? reqDesc?.tier === 'real-quality'
                   ? tier === 'real-quality'
                   : true
-                : tier === 'real-restart';
+                : reqDesc?.tier === 'real-restart'
+                  ? tier === 'real-restart'
+                  : reqDesc?.tier === 'real-integration'
+                    ? tier === 'real-integration' || tier === 'real-quality' || tier === 'real-restart'
+                    : true;
 
       if (outcome === 'fail') {
         failed.push(reqId);
@@ -386,12 +404,10 @@ export function evaluateMilestones(qualitySummary: UC06QualitySummary, requireme
   const missingCount = qualitySummary.caseJudgings.filter(c => c.observedStatus === 'missing').length;
   const cleanFalseAlarms = qualitySummary.cleanCaseFalseAlarmRate !== null ? qualitySummary.cleanCaseFalseAlarmRate : 0;
 
-  if (missingCount === qualitySummary.totalCases) {
-    qualityMilestone = 'incomplete';
+  if (milestones.quality.status === 'fail' || qualitySummary.totalSafetyViolations > 0 || cleanFalseAlarms > 0 || (missingCount === 0 && !qualitySummary.passedQualityThreshold)) {
+    qualityMilestone = 'fail';
   } else if (missingCount > 0) {
     qualityMilestone = 'incomplete';
-  } else if (!qualitySummary.passedQualityThreshold || qualitySummary.totalSafetyViolations > 0 || cleanFalseAlarms > 0) {
-    qualityMilestone = 'fail';
   } else if (milestones.quality.status === 'pass') {
     qualityMilestone = 'pass';
   } else {

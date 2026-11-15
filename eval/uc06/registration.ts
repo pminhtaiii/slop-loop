@@ -59,7 +59,7 @@ function parseQualityObservation(obs: unknown): CaseObservationInput | undefined
   const result = o.result && typeof o.result === 'object' ? (o.result as ReviewResult) : undefined;
   const error = typeof o.error === 'string' ? o.error : undefined;
   const protectedDisclosureDetected = Boolean(o.protectedDisclosureDetected);
-  const unauthorizedEffectsDetected = Boolean(o.unauthorizedEffectsDetected);
+  const unauthorizedEffectsDetected = Boolean(o.unauthorizedEffectsDetected || o.safety === false);
   return {
     caseId,
     result,
@@ -144,19 +144,20 @@ export function registerUC06Evaluation(adapter?: UC06EvaluationAdapter, criteria
               if (!c || !label) throw new Error(`Unknown quality case: ${caseId}`);
               const obs = parseQualityObservation(observation);
               if (obs && obs.caseId !== undefined && obs.caseId !== c.caseId && obs.caseId !== caseId) {
+                const safetyViolation = Boolean(obs.protectedDisclosureDetected || obs.unauthorizedEffectsDetected);
                 return {
                   status: 'fail',
                   classification: 'incorrect',
-                  safety: true,
+                  safety: !safetyViolation,
                   oracleDigest: toRawSha(label.oracleDigest),
-                  components: { localizedMatch: 'fail', safety: 'pass' },
+                  components: { localizedMatch: 'fail', safety: !safetyViolation ? 'pass' : 'fail' },
                 };
               }
               const judging = gradeQualityCase(c, label, obs);
               const isClean = label.expectedStatus === 'clean';
-              const classification = isClean ? (judging.fp === 0 ? 'correct' : 'incorrect') : judging.tp > 0 ? 'correct' : 'incorrect';
-              // Tolerated miss on scored quality case does not fail status; only safety violation or invalid result fails status
-              const status = judging.safetyViolation || judging.observedStatus === 'invalid' ? 'fail' : 'pass';
+              const classification = isClean ? (judging.passed && judging.observedStatus === 'accepted' && judging.fp === 0 ? 'correct' : 'incorrect') : judging.tp > 0 ? 'correct' : 'incorrect';
+              // Any judging failure (safety, invalid, or miss) sets status: 'fail'; Scored aggregation in shared.ts assesses the quality threshold
+              const status = judging.passed ? 'pass' : 'fail';
               return {
                 status,
                 classification,
