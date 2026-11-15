@@ -720,6 +720,45 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
     });
   });
 
+  await t.test('a replay with the same key but a different decision is refused and writes nothing', () => {
+    withFreshStore('uc05-approval-replay-decision-', (dir, store) => {
+      const task = 'task-replay-decision';
+      const pending = 'decision-replay-decision';
+      store.createPendingAndPause({ request: requestFor(task, pending), event: eventOf({ eventId: 'event-replay-decision-request', taskId: task, decisionId: pending }) });
+
+      const committed = resolutionOf('response-replay-decision', 'event-replay-decision-committed');
+      const approvalsDir = join(dir, 'tasks', task, 'approvals');
+      writeFileSync(join(approvalsDir, 'history.json'), JSON.stringify({ resolutions: [{ ...committed, decisionId: pending }], directions: [], assessments: [], claims: [] }), 'utf8');
+      writeFileSync(
+        join(approvalsDir, 'events.json'),
+        JSON.stringify([
+          eventOf({ eventId: 'event-replay-decision-request', taskId: task, decisionId: pending }),
+          eventOf({ eventId: committed.eventId, taskId: task, decisionId: pending, type: 'human-resolution-recorded', outcome: 'ok' }),
+        ]),
+        'utf8',
+      );
+
+      const retry = store.resolvePending({
+        trustedOperator,
+        trustedResponse: { ...committed, decisionId: pending, decision: 'rejected', safeReasonCode: 'developer-rejected', eventId: 'event-replay-decision-retried' },
+        event: eventOf({ eventId: 'event-replay-decision-retried', taskId: task, decisionId: pending, type: 'human-resolution-recorded', outcome: 'paused' }),
+      });
+
+      assert.equal(retry.safe.outcome, 'conflict');
+      assert.equal(retry.safe.safeReasonCode, 'decision-not-pending');
+      const control = store.loadTaskControl(task).value;
+      assert.deepEqual([control?.mode, control?.version, control?.pendingDecisionId], ['waiting', 2, pending]);
+      assert.deepEqual(
+        store.readHistory(task).value?.resolutions.map(r => r.decision),
+        ['approved'],
+      );
+      assert.deepEqual(
+        store.readEvents(task).value?.map(ev => ev.eventId),
+        ['event-replay-decision-request', committed.eventId],
+      );
+    });
+  });
+
   await t.test('a direction retry after a failed control write acknowledges the committed event, not the retried id', () => {
     withFreshStore('uc05-approval-direction-replay-', (dir, store) => {
       const task = 'task-direction-replay';
@@ -774,6 +813,30 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
       assert.equal(directed.safe.outcome, 'denied');
       assert.equal(directed.safe.safeReasonCode, 'invalid-stored-task');
       assert.equal(existsSync(join(dir, 'tasks', 'task-unreadable', 'approvals')), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('refuses a task record whose identity names another task and writes no control', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uc05-approval-foreign-task-'));
+    try {
+      const durable = new DurableStore(dir);
+      const foreign = durable.getTaskPath('task-foreign-record');
+      mkdirSync(join(dir, 'tasks'), { recursive: true });
+      // A valid record for another task sits at this task's path.
+      writeFileSync(foreign, JSON.stringify({ ...taskStateOf('repo-1', 'workspace-1'), taskId: 'task-other' }), 'utf8');
+      const approvals = new DurableApprovalStore({ storageDir: dir, durableStore: durable });
+
+      const loaded = approvals.loadTaskControl('task-foreign-record');
+      assert.equal(loaded.safe.outcome, 'denied');
+      assert.equal(loaded.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(existsSync(join(dir, 'tasks', 'task-foreign-record', 'approvals')), false);
+
+      const directed = approvals.recordDirection({ direction: { taskId: 'task-foreign-record' }, trustedOperator });
+      assert.equal(directed.safe.outcome, 'denied');
+      assert.equal(directed.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(existsSync(join(dir, 'tasks', 'task-foreign-record', 'approvals')), false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

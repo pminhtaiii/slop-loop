@@ -230,7 +230,8 @@ export class DurableApprovalStore implements ApprovalStore {
     }
 
     const priorResolution = historyRes.value.resolutions.find(r => r.decisionId === resolution.decisionId);
-    if (priorResolution !== undefined && priorResolution.responseKey !== resolution.responseKey) {
+    // A replay must match the stored decision too: the response key comes from the operator, so a retry could otherwise rewrite control under the committed event's identity.
+    if (priorResolution !== undefined && (priorResolution.responseKey !== resolution.responseKey || priorResolution.decision !== resolution.decision)) {
       return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'conflict', 'decision-not-pending', decisionId);
     }
 

@@ -133,7 +133,9 @@ export function initialControlMapping(durableStore: DurableStore | undefined, ta
       return null;
     }
     if (typeof parsed !== 'object' || parsed === null) return null;
-    const { repositoryId, workspaceId } = parsed as Record<string, unknown>;
+    const { taskId: recordTaskId, repositoryId, workspaceId } = parsed as Record<string, unknown>;
+    // Mirror DurableStore.loadTask: a record whose identity names another task cannot supply this task's binding.
+    if (recordTaskId !== taskId) return null;
     if (typeof repositoryId !== 'string' || !isApprovalId(repositoryId) || typeof workspaceId !== 'string' || !isApprovalId(workspaceId)) return null;
     return { repositoryId, workspaceId };
   }
