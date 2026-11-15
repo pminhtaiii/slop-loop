@@ -29,11 +29,13 @@ const MODEL_ID = /^[A-Za-z0-9._:/@-]{1,256}$/u;
 const PINNED_BASE = /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/u;
 const DIGEST_KEY = /^[a-f0-9]{64}$/u;
 const DEFAULT_HREF = new URL(DEFAULT_REAL_TIER_ENDPOINT).href;
-const PROFILE_KEYS = ['schema', 'campaignId', 'stateRoot', 'provider', 'pricing', 'runLimits', 'limits', 'image', 'catalog', 'artifacts', 'approvalPolicy'] as const;
+const PROFILE_KEYS = ['schema', 'campaignId', 'stateRoot', 'provider', 'pricing', 'runLimits', 'limits', 'image', 'privacy', 'catalog', 'artifacts', 'approvalPolicy'] as const;
 const PROVIDER_KEYS = ['endpoint', 'allowInsecureHttp', 'model', 'mode', 'timeoutMs', 'endpointDigestKey'] as const;
 const RUN_LIMIT_KEYS = ['perRunInputTokens', 'perRunOutputTokens'] as const;
 const IMAGE_KEYS = ['label', 'imageId', 'base', 'platform', 'user'] as const;
 const ARTIFACT_KEYS = ['retainRoot', 'retainRawStreams'] as const;
+const PRIVACY_KEYS = ['additionalPrivateEndpoints'] as const;
+const MAX_PRIVATE_ENDPOINTS = 8;
 
 /** In-memory endpoint identity: the `href` is never enumerable, so it cannot be serialized or digested. */
 export type ResolvedEndpoint = Readonly<{
@@ -68,6 +70,11 @@ export type RealTierProfile = Readonly<{
   readonly credential: string;
   /** Non-enumerable HMAC key for `endpointDigest`; empty when the public default endpoint needs none. */
   readonly endpointDigestKey: string;
+  /**
+   * Non-enumerable remote private endpoints hidden behind a loopback tunnel, for the leak scanner (T057).
+   * Empty when the profile lists none; never serialized, digested or logged.
+   */
+  readonly privacy: Readonly<{ additionalPrivateEndpoints: readonly string[] }>;
 }>;
 
 /** A profile or environment value: absent or blank values are absent. */
@@ -111,18 +118,17 @@ function endpointFromBase(base: string): string {
   return `${base.replace(/\/+$/u, '')}/messages`;
 }
 
-function endpointOf(raw: string, allowInsecureHttp: boolean | undefined, model: string, digestKey: string | undefined): ResolvedEndpoint {
-  if (!URL.canParse(raw)) deny('endpoint-invalid', '$');
+/** An absolute `http:`/`https:` URL with a host and no credentials, query or fragment. */
+function absoluteHttpUrl(raw: string): URL | undefined {
+  if (!URL.canParse(raw)) return undefined;
   const url = new URL(raw);
-  const shape =
-    (url.protocol === 'https:' || url.protocol === 'http:') &&
-    url.username === '' &&
-    url.password === '' &&
-    url.search === '' &&
-    url.hash === '' &&
-    url.pathname.endsWith('/messages') &&
-    url.hostname !== '';
-  if (!shape) deny('endpoint-invalid', '$');
+  const shape = (url.protocol === 'https:' || url.protocol === 'http:') && url.username === '' && url.password === '' && url.search === '' && url.hash === '' && url.hostname !== '';
+  return shape ? url : undefined;
+}
+
+function endpointOf(raw: string, allowInsecureHttp: boolean | undefined, model: string, digestKey: string | undefined): ResolvedEndpoint {
+  const url = absoluteHttpUrl(raw);
+  if (url === undefined || !url.pathname.endsWith('/messages')) deny('endpoint-invalid', '$');
   const scheme = url.protocol === 'https:' ? 'https' : 'http';
   const acknowledged = scheme === 'http' && allowInsecureHttp === true;
   if (scheme === 'http' && !acknowledged) deny('insecure-endpoint-unacknowledged', '$');
@@ -163,6 +169,25 @@ function runLimitsOf(value: unknown): RealTierRunLimits {
     perRunInputTokens: positiveInteger(record.perRunInputTokens, '$.runLimits.perRunInputTokens', 'run-limits-invalid'),
     perRunOutputTokens: positiveInteger(record.perRunOutputTokens, '$.runLimits.perRunOutputTokens', 'run-limits-invalid'),
   });
+}
+
+/**
+ * The remote private endpoints behind a loopback tunnel, for the leak scanner's needles (T057).
+ * The path is free-form (a base URL is as useful as a `/messages` one), and `http:` is allowed
+ * without the endpoint acknowledgement: the remote hop stays inside the operator's tunnel.
+ */
+function privateEndpointsOf(value: unknown): readonly string[] {
+  if (value === undefined) return Object.freeze([]);
+  const listed = keysOf(value, PRIVACY_KEYS, '$.privacy').additionalPrivateEndpoints;
+  if (!Array.isArray(listed) || listed.length > MAX_PRIVATE_ENDPOINTS) deny('private-endpoints-invalid', '$.privacy.additionalPrivateEndpoints');
+  return Object.freeze(
+    listed.map((entry, index) => {
+      const path = `$.privacy.additionalPrivateEndpoints[${index}]`;
+      if (typeof entry !== 'string' || !entry.trim() || Buffer.byteLength(entry) > 2048) deny('private-endpoints-invalid', path);
+      const url = absoluteHttpUrl(entry);
+      return url === undefined ? deny('private-endpoints-invalid', path) : url.href;
+    }),
+  );
 }
 
 function checkProfile(raw: unknown, root: string, env: RealTierEnvironment): RealTierProfile {
@@ -217,7 +242,10 @@ function checkProfile(raw: unknown, root: string, env: RealTierEnvironment): Rea
     approvalPolicy,
   };
   const profile = Object.defineProperty({ profileDigest: sha256Text(JSON.stringify(fields)), ...fields }, 'credential', { value: env.ANTHROPIC_API_KEY ?? '', enumerable: false });
-  return Object.freeze(Object.defineProperty(profile, 'endpointDigestKey', { value: digestKey ?? '', enumerable: false })) as RealTierProfile;
+  const keyed = Object.defineProperty(profile, 'endpointDigestKey', { value: digestKey ?? '', enumerable: false });
+  // The private endpoints are host-bearing like `href`: non-enumerable, so they stay out of JSON and the digest.
+  const privacy = Object.freeze({ additionalPrivateEndpoints: privateEndpointsOf(record.privacy) });
+  return Object.freeze(Object.defineProperty(keyed, 'privacy', { value: privacy, enumerable: false })) as RealTierProfile;
 }
 
 /**

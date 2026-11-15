@@ -51,6 +51,9 @@ const defaults = (): Record<string, unknown> => ({
 });
 
 const profileOf = (patch: Record<string, unknown> = {}): Record<string, unknown> => ({ ...defaults(), ...patch });
+// Remote private endpoints behind the operator's loopback SSH tunnel: reserved documentation hosts only.
+const TUNNEL = 'http://192.0.2.20:9443/v1/messages';
+const TUNNEL_INVALID = 'http://model.invalid:8080/v1';
 type Load = Validation<RealTierProfile>;
 
 let writes = 0;
@@ -291,4 +294,58 @@ test('a malformed profile gives a bounded reason with no file content or endpoin
   assert.equal(text.includes('192.0.2.10'), false);
   assert.equal(text.includes(KEY), false);
   assert.equal(text.includes('x'.repeat(64)), false);
+});
+
+test('accepts tunnel private endpoints, keeping their bytes out of serialization, the digest and errors', () => {
+  const second = 'https://tunnel.invalid:8443/v1/messages';
+  const value = loaded(load(profileOf({ privacy: { additionalPrivateEndpoints: [TUNNEL, second, TUNNEL_INVALID] } })));
+
+  assert.deepEqual(value.privacy.additionalPrivateEndpoints, [TUNNEL, second, TUNNEL_INVALID]);
+  assert.ok(Object.isFrozen(value.privacy));
+  assert.equal(Object.keys(value).includes('privacy'), false);
+  const json = JSON.stringify(value);
+  for (const needle of ['192.0.2.20', '9443', 'tunnel.invalid', '/v1/messages']) assert.equal(json.includes(needle), false, needle);
+  assert.deepEqual(loaded(load(profileOf({ privacy: { additionalPrivateEndpoints: [] } }))).privacy.additionalPrivateEndpoints, []);
+
+  const refused = load(profileOf({ privacy: { additionalPrivateEndpoints: [TUNNEL], campaignId: 'x'.repeat(5000) } }));
+  const reason = reasonOf(refused);
+  assert.equal(JSON.stringify(refused).includes('192.0.2.20'), false);
+  assert.equal(reason.includes('192.0.2.20'), false);
+});
+
+test('accepts tunnel private endpoints behind a loopback endpoint', () => {
+  const loopback = 'http://127.0.0.1:54321/v1/messages';
+  const value = loaded(load(profileOf({ provider: { ...PROVIDER, endpoint: loopback, allowInsecureHttp: true }, privacy: { additionalPrivateEndpoints: [TUNNEL] } })));
+
+  assert.equal(value.endpoint.href, loopback);
+  assert.deepEqual(value.privacy.additionalPrivateEndpoints, [TUNNEL]);
+});
+
+test('refuses malformed tunnel private endpoints with a bounded, value-free reason', () => {
+  const invalid: readonly unknown[] = [
+    '',
+    '   ',
+    `http://192.0.2.20:9443/v1/messages#${'x'.repeat(64)}`,
+    'http://user:secret@192.0.2.20:9443/v1/messages',
+    'http://192.0.2.20:9443/v1/messages?token=abc',
+    'ftp://192.0.2.20:9443/v1/messages',
+    '/v1/messages',
+    42,
+    null,
+    ['http://192.0.2.20:9443/v1/messages'],
+  ];
+  for (const entry of invalid) {
+    const result = load(profileOf({ privacy: { additionalPrivateEndpoints: [entry] } }));
+    assert.equal(reasonOf(result), 'private-endpoints-invalid', JSON.stringify(entry));
+    assert.equal(JSON.stringify(result).includes('192.0.2.20'), false);
+    assert.equal(JSON.stringify(result).includes('secret'), false);
+  }
+
+  for (const listed of ['not-an-array', { 0: TUNNEL }, undefined]) {
+    assert.equal(reasonOf(load(profileOf({ privacy: { additionalPrivateEndpoints: listed } }))), 'private-endpoints-invalid');
+  }
+  const nine = Array.from({ length: 9 }, (_, index) => `http://192.0.2.${index + 1}:9443/v1/messages`);
+  assert.equal(reasonOf(load(profileOf({ privacy: { additionalPrivateEndpoints: nine } }))), 'private-endpoints-invalid');
+  assert.equal(reasonOf(load(profileOf({ privacy: { extra: [] } }))), 'UNKNOWN_FIELD');
+  assert.equal(reasonOf(load(profileOf({ privacy: [TUNNEL] }))), 'INVALID_INPUT');
 });
