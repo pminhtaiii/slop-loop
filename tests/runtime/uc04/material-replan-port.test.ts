@@ -216,6 +216,100 @@ test('material replan: the same proposal id with changed content or a substitute
   }
 });
 
+test('material replan: the request is owned as a snapshot, so a caller mutation during verification cannot reach the commit', async () => {
+  let release!: () => void;
+  const pendingVerification = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const c = await openCase({
+    verifyDirection: async () => {
+      await pendingVerification;
+      return true;
+    },
+  });
+  try {
+    const scopedChanges = ['src/calculator.py'];
+    const candidate: FixPlan = { ...candidateOf(c.state.plan as FixPlan), scopedChanges };
+    const request = requestOf(c.state, candidate);
+    const pending = c.replan.accept(request);
+    // The caller still owns its object and mutates it while the direction authority is pending.
+    scopedChanges.push('src/calculator_extra.py');
+    release();
+    const result = await pending;
+    assert.equal(result.outcome, 'accepted');
+    const committed = await c.port.loadTask(c.state.taskId);
+    assert.deepEqual(committed?.plan?.scopedChanges, ['src/calculator.py'], 'the persisted plan is the validated original, never the borrowed mutation');
+  } finally {
+    c.close();
+  }
+});
+
+test('material replan: a readback failure after both writes succeeded is uncertain, never denied', async () => {
+  const c = await openCase();
+  const read = StatePortStore.prototype.readTask;
+  try {
+    let reads = 0;
+    StatePortStore.prototype.readTask = async function (this: StatePortStore, taskId: string): Promise<TaskState | null> {
+      reads += 1;
+      // The prior read inside the lock is the first; the post-write acknowledgement is the second.
+      if (reads > 1) throw new Error('synthetic readback failure');
+      return read.call(this, taskId);
+    };
+    const result = await c.replan.accept(requestOf(c.state, candidateOf(c.state.plan as FixPlan)));
+    // Restored before the assertions read the store again.
+    StatePortStore.prototype.readTask = read;
+    assert.equal(result.outcome, 'uncertain', 'a denial would hide a plan and allowance charge that did land');
+    if (result.outcome !== 'uncertain') return;
+    assert.ok(result.operationRef.startsWith('uc04-journal:'), 'the caller keeps the recovery handle');
+    const committed = await c.port.loadTask(c.state.taskId);
+    assert.notDeepEqual(committed, c.state, 'both writes landed even though the acknowledgement failed');
+    const resolved = await createJournalOperationLookup(c.port).lookupOperation(result.operationRef);
+    assert.equal(resolved.outcome, 'committed');
+    if (resolved.outcome !== 'committed') return;
+    assert.deepEqual(resolved.state, committed);
+  } finally {
+    StatePortStore.prototype.readTask = read;
+    c.close();
+  }
+});
+
+test('material replan: a committed replan stays replayable after later progress, and the lookup proves the same snapshot', async () => {
+  const c = await openCase({
+    commitTransaction: async write => {
+      await write();
+      throw new Error('lost acknowledgement');
+    },
+  });
+  try {
+    const request = requestOf(c.state, candidateOf(c.state.plan as FixPlan));
+    const first = await c.replan.accept(request);
+    assert.equal(first.outcome, 'uncertain');
+    if (first.outcome !== 'uncertain') return;
+    const committed = await c.port.loadTask(c.state.taskId);
+    assert.ok(committed);
+
+    // Normal progress after the accepted replan: the renewed plan is presented to the human.
+    const progressed: TaskState = { ...committed, stateVersion: committed.stateVersion + 1, node: 'AwaitFeedback', nextAction: 'await-human-direction' };
+    await c.port.transition(progressed, committed.stateVersion);
+
+    const replay = await c.replan.accept(request);
+    assert.equal(replay.outcome, 'already-accepted', 'later progress must not destroy an identical replay');
+    if (replay.outcome !== 'already-accepted') return;
+    assert.deepEqual(replay.state, committed, 'the replay returns the committed snapshot, not the moved-on task');
+    assert.match(replay.reservationReceipt, /^replan-reservation-[0-9a-f]{64}$/u);
+    assert.match(replay.transitionReceipt, /^replan-transition-[0-9a-f]{64}$/u);
+    const replanLedger = replay.state.budgetLedgers?.find(item => item.scope === 'task' && item.kind === 'replan');
+    assert.equal(replanLedger?.reservations.length, 1, 'a replay after progress is never charged twice');
+
+    const resolved = await createJournalOperationLookup(c.port).lookupOperation(first.operationRef);
+    assert.equal(resolved.outcome, 'committed', 'the lookup uses the same proof after progress');
+    if (resolved.outcome !== 'committed') return;
+    assert.deepEqual(resolved.state, committed);
+  } finally {
+    c.close();
+  }
+});
+
 test('material replan: two concurrent proposals under CAS yield exactly one winner', async () => {
   const c = await openCase();
   try {

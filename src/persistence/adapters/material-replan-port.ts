@@ -10,9 +10,11 @@
  *
  * Identity is derived, never random: the reservation and transition receipts and the operation id
  * all hash the complete request, so an identical replay finds its own record and returns the same
- * committed state without a second charge, while the same proposal id with different content
- * cannot match it. A write whose outcome is unknown returns `uncertain({operationRef})`, and only
- * the T040 exact-operation lookup can say whether that operation committed.
+ * committed snapshot without a second charge, while the same proposal id with different content
+ * cannot match it. The record carries that committed snapshot and the charge it owns, so the replay
+ * keeps proving after later task progress. A write whose outcome is unknown returns
+ * `uncertain({operationRef})`, and only the T040 exact-operation lookup can say whether that
+ * operation committed.
  */
 import { computeCanonicalSha256, validateFixPlan, validateStateTransition, validateTaskState } from '../../contracts/foundation/uc03.ts';
 import type { BudgetLedger, FixPlan, StateTransitionOptions, TaskState } from '../../contracts/foundation/uc03.ts';
@@ -20,7 +22,7 @@ import { MAX_TASK_REPLANS } from '../../uc03/replan-accounting.ts';
 import type { MaterialReplanPortV02, MaterialReplanRequestV02, MaterialReplanResultV02 } from '../../uc03/graph-types-v02.ts';
 import type { TrustedReplanDirection } from '../../uc03/repair-types.ts';
 import { isSafeStorageId } from '../store.ts';
-import { journalOperationPath, journalOperationRef } from './state-port-v02-operation-lookup.ts';
+import { chargeLanded, journalOperationPath, journalOperationRef, operationSnapshot } from './state-port-v02-operation-lookup.ts';
 import type { JournalOperationRecordV02 } from './state-port-v02-operation-lookup.ts';
 import type { DurableStatePortV02 } from './state-port-v02.ts';
 import { StatePortStore } from './state-port-v02-storage.ts';
@@ -169,21 +171,30 @@ export function createMaterialReplanPort(options: MaterialReplanPortOptions): Ma
     provenance: 'real',
 
     async accept(request: MaterialReplanRequestV02): Promise<MaterialReplanResultV02> {
-      const defect = requestDefect(request);
+      // Own a deep snapshot before anything reads it: the request crosses an await boundary, and a
+      // caller that mutates its own object must not change what gets validated, hashed or persisted.
+      let owned: MaterialReplanRequestV02;
+      try {
+        owned = structuredClone(request);
+      } catch {
+        return denied('invalid-request-identity');
+      }
+      const defect = requestDefect(owned);
       if (defect) return denied(defect);
-      const identity = hex(requestIdentity(request));
+      const identity = hex(requestIdentity(owned));
       // Keyed by the proposal, not the full identity: a different request under the same proposal
       // id must find this record and be refused, not slip past it as a fresh operation.
-      const operationId = `replan-${hex(computeCanonicalSha256({ taskId: request.taskId, proposalId: request.proposalId }))}`;
+      const operationId = `replan-${hex(computeCanonicalSha256({ taskId: owned.taskId, proposalId: owned.proposalId }))}`;
       const operationRef = journalOperationRef(operationId);
-      const recordPath = journalOperationPath(store, request.taskId, operationId);
+      const recordPath = journalOperationPath(store, owned.taskId, operationId);
       const reservationReceipt = `replan-reservation-${hex(computeCanonicalSha256({ kind: 'reservation', identity }))}`;
       const transitionReceipt = `replan-transition-${hex(computeCanonicalSha256({ kind: 'transition', identity }))}`;
       const renewedDecisionId = `dec-replan-${identity}`;
+      const charge = { reservationId: reservationReceipt, keyedId: owned.proposalId } as const;
 
       try {
-        return await state.store.withLockRetry(`uc03v02-${request.taskId}`, async (): Promise<MaterialReplanResultV02> => {
-          const prior = await store.readTask(request.taskId);
+        return await state.store.withLockRetry(`uc03v02-${owned.taskId}`, async (): Promise<MaterialReplanResultV02> => {
+          const prior = await store.readTask(owned.taskId);
           if (!prior) return denied('task-not-found');
 
           // An identical replay finds its own record; anything else under this proposal id is a different request.
@@ -191,54 +202,59 @@ export function createMaterialReplanPort(options: MaterialReplanPortOptions): Ma
           if (record) {
             const same = Array.isArray(record.receipts) && record.receipts[0] === reservationReceipt && record.receipts[1] === transitionReceipt;
             if (!same) return denied('proposal-bound-to-different-content');
-            // The record is written before the task, so a replay proves its own transition by the exact
-            // persisted state: another proposal's commit at the same version is not this one.
-            if (record.taskId !== prior.taskId || record.stateVersion !== prior.stateVersion || record.stateDigest !== computeCanonicalSha256(prior)) return denied('replay-state-superseded');
-            return { outcome: 'already-accepted', state: structuredClone(prior), reservationReceipt, transitionReceipt };
+            // The record carries its own committed snapshot, and the task itself keeps this proposal's
+            // charge, so the same replay still proves its transition after the task has moved on —
+            // while another proposal's commit at the same version never carried this charge.
+            const snapshot = operationSnapshot(record);
+            if (!snapshot || !chargeLanded(prior, snapshot.charge)) return denied('replay-state-superseded');
+            return { outcome: 'already-accepted', state: snapshot.state, reservationReceipt, transitionReceipt };
           }
 
-          const bound = bindingDefect(request, prior);
+          const bound = bindingDefect(owned, prior);
           if (bound) return denied(bound);
           if (prior.replanCount >= MAX_TASK_REPLANS) return denied('replan-cap-exceeded');
-          const control = await store.readControl(request.taskId, DEFAULT_CONTROL);
+          const control = await store.readControl(owned.taskId, DEFAULT_CONTROL);
           if (control.mode !== 'runnable' || control.holdRef !== null || control.activeClaimId !== null) return denied('control-not-runnable');
-          const direction = directionDefect(request.direction, prior);
+          const direction = directionDefect(owned.direction, prior);
           if (direction) return denied(direction);
 
           let verified: boolean;
           try {
-            verified = await options.verifyDirection(prior, request.direction);
+            verified = await options.verifyDirection(prior, owned.direction);
           } catch {
             // An unavailable direction authority verifies nothing; it does not become a pass.
             verified = false;
           }
           if (!verified) return denied('direction-not-verified');
 
-          const next = commitState(prior, request, reservationReceipt, renewedDecisionId);
+          const next = commitState(prior, owned, reservationReceipt, renewedDecisionId);
           if (!next) return denied('replan-transition-invalid');
 
           // Record first: a half-applied write then reads back `unknown`, never a false `absent`.
-          // The record carries the digest of the exact state it commits, so only A's own transition
-          // resolves A, never another proposal's later write at the same version.
+          // The record keeps the snapshot it commits plus the charge it owns, so a replay after later
+          // progress still returns the identical committed state and receipts.
           const write = async (): Promise<void> => {
             await store.writeJson(recordPath, {
               taskId: next.taskId,
               stateVersion: next.stateVersion,
               stateDigest: computeCanonicalSha256(next),
               receipts: [reservationReceipt, transitionReceipt],
+              state: next,
+              charge,
             } satisfies JournalOperationRecordV02);
             await store.writeTask(next.taskId, next);
           };
           try {
             if (options.commitTransaction) await options.commitTransaction(write);
             else await write();
+            // The persisted value is the acknowledgement: the consumer re-reads and compares it exactly.
+            // A failure here is after both writes, so it is an unknown outcome, never a denial.
+            const committed = await store.readTask(next.taskId);
+            return { outcome: 'accepted', state: committed ?? structuredClone(next), reservationReceipt, transitionReceipt };
           } catch {
             // Translated, not rethrown: whether it landed is exactly what the lookup answers.
             return { outcome: 'uncertain', operationRef };
           }
-          // The persisted value is the acknowledgement: the consumer re-reads and compares it exactly.
-          const committed = await store.readTask(next.taskId);
-          return { outcome: 'accepted', state: committed ?? structuredClone(next), reservationReceipt, transitionReceipt };
         });
       } catch {
         // A busy or unreadable journal cannot authorize the transition; nothing is written.

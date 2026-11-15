@@ -11,7 +11,7 @@
  */
 import { readdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { computeCanonicalSha256, validateAttemptOutcomeReceiptV02, validateAttemptReconciliationReceiptV02 } from '../../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, validateAttemptOutcomeReceiptV02, validateAttemptReconciliationReceiptV02, validateTaskState } from '../../contracts/foundation/uc03.ts';
 import type {
   AttemptOutcomeReceiptV02,
   AttemptOutcomeValidationContextV02,
@@ -30,6 +30,12 @@ import { DEFAULT_CONTROL } from './state-port-v02-types.ts';
 
 export const JOURNAL_OPERATION_PREFIX = 'uc04-journal:';
 
+/** The task-scoped replan ledger charge that names one operation; the task carries it from then on. */
+export interface JournalOperationChargeV02 {
+  readonly reservationId: string;
+  readonly keyedId: string;
+}
+
 /** The record the material-replan transaction writes atomically with its task transition. */
 export interface JournalOperationRecordV02 {
   readonly taskId: string;
@@ -37,6 +43,37 @@ export interface JournalOperationRecordV02 {
   readonly stateDigest?: string;
   readonly stateVersion: number;
   readonly receipts: readonly string[];
+  /** The committed snapshot, replayed verbatim even after the task has moved on. */
+  readonly state?: TaskState;
+  /** The charge that snapshot owns; the live task still carrying it is what proves the transition landed. */
+  readonly charge?: JournalOperationChargeV02;
+}
+
+/** Whether this task's own replan ledger carries exactly this charge. */
+export function chargeLanded(task: TaskState, charge: JournalOperationChargeV02): boolean {
+  return (task.budgetLedgers ?? []).some(
+    ledger =>
+      ledger.scope === 'task' && ledger.kind === 'replan' && ledger.reservations.some(item => item.reservationId === charge.reservationId && item.keyedId === charge.keyedId && item.amount === 1),
+  );
+}
+
+export interface JournalOperationSnapshotV02 {
+  readonly state: TaskState;
+  readonly charge: JournalOperationChargeV02;
+}
+
+/**
+ * The exact snapshot a record proves, or undefined when the record is not a coherent commit: the
+ * snapshot must be the one its digest names, a valid task state for the same task, and hold its own
+ * charge. Later progress does not touch a replan charge, so the same record keeps proving.
+ */
+export function operationSnapshot(record: JournalOperationRecordV02): JournalOperationSnapshotV02 | undefined {
+  const snapshot = record.state;
+  const charge = record.charge;
+  if (!snapshot || !charge || typeof charge.reservationId !== 'string' || typeof charge.keyedId !== 'string') return undefined;
+  if (typeof record.stateDigest !== 'string' || computeCanonicalSha256(snapshot) !== record.stateDigest) return undefined;
+  if (record.stateVersion !== snapshot.stateVersion || !validateTaskState(snapshot).ok || !chargeLanded(snapshot, charge)) return undefined;
+  return { state: structuredClone(snapshot), charge };
 }
 
 export type JournalOperationCommitV02 =
@@ -227,7 +264,7 @@ async function lookupClaim(state: StatePortStore, claimId: string): Promise<Jour
   };
 }
 
-/** Resolves a committed operation record; a record whose exact state is not persisted is not a commit. */
+/** Resolves a committed operation record; a record whose exact transition is not persisted is not a commit. */
 async function lookupRecord(state: StatePortStore, operationId: string): Promise<JournalOperationLookupResultV02 | null> {
   const taskIds = await readdir(state.store.claimDir).catch((err: unknown) => {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [] as string[];
@@ -238,11 +275,13 @@ async function lookupRecord(state: StatePortStore, operationId: string): Promise
     const record = await state.readJson<JournalOperationRecordV02>(journalOperationPath(state, taskId, operationId));
     if (!record) continue;
     if (record.taskId !== taskId || !Array.isArray(record.receipts) || !record.receipts.every(item => typeof item === 'string')) return UNKNOWN;
+    const snapshot = operationSnapshot(record);
+    if (!snapshot) return UNKNOWN;
     const task = await state.readTask(taskId);
     // The written task and the record are separate files, so the version alone cannot prove whose
-    // transition landed: only the exact resulting state is this operation's commit.
-    if (!task || task.stateVersion !== record.stateVersion || typeof record.stateDigest !== 'string' || computeCanonicalSha256(task) !== record.stateDigest) return UNKNOWN;
-    return { outcome: 'committed', state: structuredClone(task), commit: { kind: 'operation', receipts: [...record.receipts] } };
+    // transition landed: the live task must still carry this operation's own charge.
+    if (!task || !chargeLanded(task, snapshot.charge)) return UNKNOWN;
+    return { outcome: 'committed', state: snapshot.state, commit: { kind: 'operation', receipts: [...record.receipts] } };
   }
   return null;
 }

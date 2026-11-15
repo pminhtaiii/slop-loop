@@ -461,44 +461,63 @@ test('operation lookup: a real settlement of either kind stays committed after c
   }
 });
 
-test('operation lookup: a committed replan operation record resolves with its receipts', async () => {
+test('operation lookup: a committed replan operation record resolves with its snapshot and receipts, and keeps proving after progress', async () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-operation-'));
   try {
     const { port, claim } = await openClaim(baseDir);
     const state = new StatePortStore(port.store);
     const task = (await port.loadTask(context.taskId)) as TaskState;
+    const charge = { reservationId: 'replan-reservation-001', keyedId: 'prop-001' };
+    const charged: TaskState = {
+      ...task,
+      replanCount: 1,
+      budgetLedgers: (task.budgetLedgers ?? []).map(ledger =>
+        ledger.scope === 'task' && ledger.kind === 'replan' ? { ...ledger, reservations: [{ ...charge, amount: 1 }], version: ledger.version + 1 } : ledger,
+      ),
+    };
+    await state.writeTask(context.taskId, charged);
     const recordPath = journalOperationPath(state, context.taskId, 'replan-op-001');
-    await state.writeJson(recordPath, {
+    const record = {
       taskId: context.taskId,
-      stateVersion: task.stateVersion,
-      stateDigest: computeCanonicalSha256(task),
+      stateVersion: charged.stateVersion,
+      stateDigest: computeCanonicalSha256(charged),
       receipts: ['replan-reservation-001', 'replan-transition-001'],
-    });
+      state: charged,
+      charge,
+    };
+    await state.writeJson(recordPath, record);
     // The claim ref prefix is shared, so prove the claim branch still wins for its own id.
     const lookup = createJournalOperationLookup(port);
     const operation = await lookup.lookupOperation(journalOperationRef('replan-op-001'));
     assert.equal(operation.outcome, 'committed');
     if (operation.outcome === 'committed') {
-      assert.deepEqual(operation.state, task);
+      assert.deepEqual(operation.state, charged, 'the record replays its own snapshot, not the live task');
       assert.deepEqual(operation.commit, { kind: 'operation', receipts: ['replan-reservation-001', 'replan-transition-001'] });
     }
     assert.equal((await lookup.lookupOperation(journalOperationRef(claim.claimId))).outcome, 'unknown', 'an open claim is not superseded by an operation record');
 
-    // The version alone never proves the commit: another state at the same version is not this record's.
-    await state.writeJson(recordPath, {
-      taskId: context.taskId,
-      stateVersion: task.stateVersion,
-      stateDigest: computeCanonicalSha256({ ...task, nextAction: 'some-other-action' }),
-      receipts: ['replan-reservation-001', 'replan-transition-001'],
-    });
+    // Later progress keeps the charge, so the same record still proves its own transition.
+    const progressed: TaskState = { ...charged, stateVersion: charged.stateVersion + 1, node: 'AwaitFeedback', nextAction: 'await-human-direction' };
+    await state.writeTask(context.taskId, progressed);
+    const afterProgress = await lookup.lookupOperation(journalOperationRef('replan-op-001'));
+    assert.equal(afterProgress.outcome, 'committed', 'normal progress does not destroy the commit proof');
+    if (afterProgress.outcome === 'committed') assert.deepEqual(afterProgress.state, charged, 'the snapshot stays the committed one');
+
+    // The live task losing the charge is the same-version impostor: another proposal committed instead.
+    await state.writeTask(context.taskId, { ...progressed, budgetLedgers: task.budgetLedgers });
+    assert.deepEqual(await lookup.lookupOperation(journalOperationRef('replan-op-001')), { outcome: 'unknown' }, 'a version alone never proves whose transition landed');
+
+    await state.writeTask(context.taskId, charged);
+    // A digest that does not name the snapshot is not a coherent record.
+    await state.writeJson(recordPath, { ...record, stateDigest: computeCanonicalSha256({ ...charged, nextAction: 'some-other-action' }) });
     assert.deepEqual(await lookup.lookupOperation(journalOperationRef('replan-op-001')), { outcome: 'unknown' });
 
-    // A record with no state digest at all is a partial write, not a commit.
-    await state.writeJson(recordPath, { taskId: context.taskId, stateVersion: task.stateVersion, receipts: [] });
+    // A record with no snapshot or charge at all is a partial write, not a commit.
+    await state.writeJson(recordPath, { taskId: context.taskId, stateVersion: charged.stateVersion, stateDigest: computeCanonicalSha256(charged), receipts: [] });
     assert.deepEqual(await lookup.lookupOperation(journalOperationRef('replan-op-001')), { outcome: 'unknown' });
 
-    // A record whose task version moved on is no longer that commit.
-    await state.writeJson(recordPath, { taskId: context.taskId, stateVersion: task.stateVersion + 1, stateDigest: computeCanonicalSha256(task), receipts: [] });
+    // A snapshot that does not itself carry its charge never proves one.
+    await state.writeJson(recordPath, { ...record, state: task, stateDigest: computeCanonicalSha256(task), stateVersion: task.stateVersion });
     assert.deepEqual(await lookup.lookupOperation(journalOperationRef('replan-op-001')), { outcome: 'unknown' });
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
