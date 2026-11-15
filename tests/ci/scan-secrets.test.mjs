@@ -424,6 +424,8 @@ test('shipped exemptions validate and clear exactly the reviewed synthetic findi
     ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1086, 'c11a10ac02558451ccf277596e15b2f4d4ee8e87'],
     ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1549, '2f5c9760cbc5ad56a4d7040bfc0be08301310f79'],
     ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1636, '2f5c9760cbc5ad56a4d7040bfc0be08301310f79'],
+    ['generic-api-key', 'tests/runtime/unit/real-tier-profile.test.ts', 12, ''],
+    ['generic-api-key', 'tests/runtime/unit/real-tier-profile.test.ts', 12, 'ca7029fcc28c8eccba1098fcd0b0f2b74b82c1da'],
   ];
   const findings = reviewed.map(([ruleId, path, line, commit]) => ({ ruleId, path, line, commit }));
   // applyExemptions validates every entry (exact path, reason, commit) and rejects duplicates.
