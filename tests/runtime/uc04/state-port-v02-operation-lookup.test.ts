@@ -4,7 +4,7 @@
  * built from a real claim → beginAttempt (→ recordOutcome) sequence; nothing writes or replays here.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -372,6 +372,27 @@ test('operation lookup: a settled claim whose settlement receipt is missing or i
 
     writeFileSync(reconPath, '{not json');
     assert.deepEqual(await lookup.lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' }, 'an unreadable settling receipt is unknown');
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('operation lookup: the same receipt under another recon name does not stand in for the bound one', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-recon-renamed-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const state = new StatePortStore(port.store);
+    const reconciliation = await settleUncertain(port, claim, 'pause-t040-renamed-1');
+    const reconPath = state.statePath(context.taskId, `recon-${reconciliation.reconciliationId}.json`);
+    const receipt = readFileSync(reconPath, 'utf8');
+    rmSync(reconPath, { force: true });
+    writeFileSync(state.statePath(context.taskId, 'recon-copied-under-another-name.json'), receipt);
+
+    assert.deepEqual(
+      await createJournalOperationLookup(port).lookupOperation(journalOperationRef(claim.claimId)),
+      { outcome: 'unknown' },
+      'the binding names one receipt; a valid copy under another name is not that receipt',
+    );
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }

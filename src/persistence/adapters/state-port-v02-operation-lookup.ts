@@ -176,6 +176,14 @@ async function readReconciliation(
   outcome: AttemptOutcomeReceiptV02,
   task: TaskState,
 ): Promise<AttemptReconciliationReceiptV02 | null> {
+  // A settlement binding names the exact receipt the writer wrote: a copy of it under another
+  // `recon-*.json` name, or a different receipt at that name, is still a partial settlement write.
+  if (claim.settlement !== undefined) {
+    const receipt = await state.readReconciliation(taskId, claim.settlement.reconciliationId);
+    if (!receipt) throw new Error('Missing UC-03 settlement reconciliation receipt');
+    if (!(await reconciliationValid(state, taskId, claim, attempt, outcome, receipt, task))) throw new Error('Corrupted UC-03 reconciliation receipt');
+    return receipt;
+  }
   const names = await readdir(dirname(state.statePath(taskId, 'x'))).catch((err: unknown) => {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [] as string[];
     throw err;
@@ -188,8 +196,6 @@ async function readReconciliation(
     if (!(await reconciliationValid(state, taskId, claim, attempt, outcome, receipt, task))) throw new Error('Corrupted UC-03 reconciliation receipt');
     return receipt;
   }
-  // A settlement binding naming no receipt this claim matched is a partial settlement write.
-  if (claim.settlement !== undefined) throw new Error('Missing UC-03 settlement reconciliation receipt');
   return null;
 }
 
