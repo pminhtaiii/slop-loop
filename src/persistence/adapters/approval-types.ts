@@ -119,9 +119,10 @@ const isApprovalId = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,
  * A pending request wins because UC-05 refuses a request whose mapping differs from the
  * control; otherwise the persisted task record supplies the binding. The durable v0.2 port is
  * the production owner of the task, so its claim-directory `v02/task.json` wins over the legacy
- * state path. A task with neither — or with an unreadable record — keeps the controlled seed.
+ * state path. A task with no record at all keeps the controlled seed; a record that exists but
+ * cannot be read answers `null`, since persisting the seed would discard the real mapping.
  */
-export function initialControlMapping(durableStore: DurableStore | undefined, taskId: string, request: TaskMapping | undefined): TaskMapping {
+export function initialControlMapping(durableStore: DurableStore | undefined, taskId: string, request: TaskMapping | undefined): TaskMapping | null {
   if (request !== undefined) return { repositoryId: request.repositoryId, workspaceId: request.workspaceId };
   for (const taskPath of taskPaths(durableStore, taskId)) {
     if (!existsSync(taskPath)) continue;
@@ -129,13 +130,21 @@ export function initialControlMapping(durableStore: DurableStore | undefined, ta
     try {
       parsed = JSON.parse(readFileSync(taskPath, 'utf8'));
     } catch {
-      continue;
+      return null;
     }
-    if (typeof parsed !== 'object' || parsed === null) continue;
+    if (typeof parsed !== 'object' || parsed === null) return null;
     const { repositoryId, workspaceId } = parsed as Record<string, unknown>;
-    if (typeof repositoryId === 'string' && isApprovalId(repositoryId) && typeof workspaceId === 'string' && isApprovalId(workspaceId)) return { repositoryId, workspaceId };
+    if (typeof repositoryId !== 'string' || !isApprovalId(repositoryId) || typeof workspaceId !== 'string' || !isApprovalId(workspaceId)) return null;
+    return { repositoryId, workspaceId };
   }
   return DEFAULT_TASK_MAPPING;
+}
+
+/** The initial control for a first write, or a refusal when an existing owner task record is unreadable. */
+export function initialControl(taskId: string, mapping: TaskMapping | null): StoreResponse<ApprovalTaskControl> {
+  if (mapping === null) return makeFailure<ApprovalTaskControl>(taskId, 1, 'denied', 'invalid-stored-task');
+  const control = makeInitialControl(taskId, mapping);
+  return makeResponse(control, 'ok', 'initial-control-created', control);
 }
 
 /** Task record locations in owner precedence order: the v0.2 claim directory, then the legacy state path. */

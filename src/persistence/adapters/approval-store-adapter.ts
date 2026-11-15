@@ -30,13 +30,14 @@ import {
   isSafeId,
   makeFailure,
   initialControlMapping,
+  initialControl,
   makeInitialControl,
   makeResponse,
   parseStoredHistory,
   taskDir,
   writeJsonAtomic,
 } from './approval-types.ts';
-import { committedEventId, directionResponse, requestCreatedResponse, requestEventId, requestReplacedResponse, resolutionResponse } from './approval-store-receipts.ts';
+import { committedEventId, directionReceiptId, directionResponse, requestCreatedResponse, requestEventId, requestReplacedResponse, resolutionResponse } from './approval-store-receipts.ts';
 import { appendEvent, appendEvents, readEvents } from './approval-events.ts';
 
 /** Durable file-backed approval store adapter implementing UC-05 contracts. */
@@ -68,21 +69,11 @@ export class DurableApprovalStore implements ApprovalStore {
   /** Loads or initializes task control metadata. */
   loadTaskControl(taskId: string): StoreResponse<ApprovalTaskControl> {
     if (!isSafeId(taskId)) return makeFailure<ApprovalTaskControl>('unknown', 1, 'denied', 'invalid-id');
-    const filePath = join(taskDir(this.storageDir, taskId), 'control.json');
-    if (!existsSync(filePath)) {
-      const defaultControl = makeInitialControl(taskId, initialControlMapping(this.durableStore, taskId, undefined));
-      writeJsonAtomic(filePath, defaultControl);
-      return makeResponse(defaultControl, 'ok', 'initial-control-created', defaultControl);
-    }
-
-    try {
-      const raw = JSON.parse(readFileSync(filePath, 'utf8'));
-      const validation = validateApprovalTaskControl(raw);
-      if (!validation.ok) return makeFailure<ApprovalTaskControl>(taskId, 1, 'denied', 'invalid-stored-control');
-      return makeResponse(validation.value, 'ok', 'task-control-loaded', validation.value);
-    } catch {
-      return makeFailure<ApprovalTaskControl>(taskId, 1, 'unavailable', 'read-error');
-    }
+    const res = this.readTaskControl(taskId);
+    if (res.safe.safeReasonCode !== 'control-not-found') return res;
+    const initial = initialControl(taskId, initialControlMapping(this.durableStore, taskId, undefined));
+    if (initial.value !== null) writeJsonAtomic(join(taskDir(this.storageDir, taskId), 'control.json'), initial.value);
+    return initial;
   }
 
   private readTaskControl(taskId: string): StoreResponse<ApprovalTaskControl> {
@@ -153,7 +144,7 @@ export class DurableApprovalStore implements ApprovalStore {
     if (currentControlRes.safe.outcome === 'ok' && currentControlRes.value) {
       currentControl = currentControlRes.value;
     } else if (currentControlRes.safe.safeReasonCode === 'control-not-found') {
-      currentControl = makeInitialControl(request.taskId, initialControlMapping(this.durableStore, request.taskId, request));
+      currentControl = makeInitialControl(request.taskId, request);
     } else {
       return makeFailure<ApprovalRequestRecord>(request.taskId, 1, 'denied', 'control-unavailable');
     }
@@ -267,8 +258,8 @@ export class DurableApprovalStore implements ApprovalStore {
 
     writeJsonAtomic(join(taskDir(this.storageDir, request.taskId), 'control.json'), updatedControl);
 
-    // A replay re-supplies the original event, so its id acknowledges the committed resolution.
-    return resolutionResponse(updatedControl, resolution, committedEventId(payload.event, this.profile) ?? priorResolution?.eventId ?? null, priorResolution !== undefined);
+    // The receipt names the event the store committed: the replayed resolution's own event, never a new one.
+    return resolutionResponse(updatedControl, resolution, priorResolution?.eventId ?? committedEventId(payload.event, this.profile), priorResolution !== undefined);
   }
 
   /** Records an operator direction to pause, resume, or end task execution. */
@@ -286,7 +277,9 @@ export class DurableApprovalStore implements ApprovalStore {
     if (controlReadRes.safe.outcome === 'ok' && controlReadRes.value) {
       currentControl = controlReadRes.value;
     } else if (controlReadRes.safe.safeReasonCode === 'control-not-found') {
-      currentControl = makeInitialControl(taskId, initialControlMapping(this.durableStore, taskId, undefined));
+      const mapping = initialControlMapping(this.durableStore, taskId, undefined);
+      if (mapping === null) return makeFailure<DeveloperDirection>(taskId, 1, 'denied', 'invalid-stored-task');
+      currentControl = makeInitialControl(taskId, mapping);
     } else {
       return makeFailure<DeveloperDirection>(taskId, 1, controlReadRes.safe.outcome, controlReadRes.safe.safeReasonCode);
     }
@@ -340,8 +333,8 @@ export class DurableApprovalStore implements ApprovalStore {
 
     writeJsonAtomic(join(taskDir(this.storageDir, direction.taskId), 'control.json'), updatedControl);
 
-    // The caller re-supplies the committed event on replay, so its id acknowledges both paths.
-    return directionResponse(updatedControl, direction, committedEventId(payload.event, this.profile));
+    // A replay acknowledges the stored direction's own event, never a freshly supplied id.
+    return directionResponse(updatedControl, direction, directionReceiptId(this.storageDir, direction, priorDirection !== undefined, payload.event, this.profile));
   }
 
   /** Replaces a stale pending approval request with a refreshed request. */
