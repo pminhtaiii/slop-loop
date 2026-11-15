@@ -208,7 +208,7 @@ Then run the emitted counterparts under `dist/`. These checks use temp directori
    ```
 
    Record the base digest and the image ID in the profile.
-3. Create `$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json` from the shape in contract §(d). Create `host.json` beside it with `node dist/src/cli/real-tier-scan.js --print-host-template > "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"` (contract §(i)). The template sets `assembly` to `dist/src/runtime/real-tier-assembly.js`, `requestedModel` to `po/deepseek-ai/deepseek-v4.1-flash-1017`, and the computed identity digests; it never contains the endpoint. For a plain-`http` endpoint, set `"allowInsecureHttp": true` only after accepting the cleartext risk in contract §(d). Prefer TLS, or an SSH tunnel to `http://127.0.0.1:<local-port>/v1`.
+3. Create `$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json` from the shape in contract §(d). For any non-default endpoint, set `provider.endpointDigestKey` to 64 locally generated lowercase hex characters (never the API key). For an SSH tunnel, also list the remote private endpoint in `privacy.additionalPrivateEndpoints`. For a plain-`http` endpoint, set `"allowInsecureHttp": true` only after accepting the cleartext risk in contract §(d). Prefer TLS, or an SSH tunnel to `http://127.0.0.1:<local-port>/v1`.
 4. Set the variables for this shell session only. The key is never typed on a command line or stored in a file:
 
    ```powershell
@@ -219,7 +219,9 @@ Then run the emitted counterparts under `dist/`. These checks use temp directori
    $env:ANTHROPIC_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
    ```
 
-5. Readiness only, no run: `node dist/src/cli/evaluate.js preflight --host "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"`. It must report the assembly ready and the operational preflight passing, with metadata `endpointDigest`, `endpointScheme`, `model`, `imageId` and (for `http`) `insecureHttpAcknowledged`. Any `credential-missing`, `endpoint-ambiguous`, `model-ambiguous`, `insecure-endpoint-unacknowledged`, `mock-delivery`, `docker-unavailable`, `image-mismatch`, `HOST_METADATA_INVALID` or `HOST_MODEL_MISMATCH` result stops here.
+5. With those variables set, create `host.json` beside the profile with `node dist/src/cli/real-tier-scan.js --print-host-template > "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"` (contract §(i)). The template sets `assembly` to `dist/src/runtime/real-tier-assembly.js`, `requestedModel` to `po/deepseek-ai/deepseek-v4.1-flash-1017`, and the computed identity digests; it never contains the endpoint.
+
+6. Readiness only, no run: `node dist/src/cli/evaluate.js preflight --host "$env:USERPROFILE\.slop-loop\uc03-real-tier\host.json"`. It must report the assembly ready and the operational preflight passing, with metadata `endpointDigest`, `endpointScheme`, `model`, `imageId` and (for `http`) `insecureHttpAcknowledged`. Any `credential-missing`, `endpoint-ambiguous`, `model-ambiguous`, `insecure-endpoint-unacknowledged`, `mock-delivery`, `docker-unavailable`, `image-mismatch`, `HOST_METADATA_INVALID` or `HOST_MODEL_MISMATCH` result stops here.
 
 ### 3. Real tier, zero model calls: T024 containment (T051) and T025 approval gating (T052)
 

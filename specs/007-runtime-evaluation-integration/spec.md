@@ -79,7 +79,7 @@ As the operator, I select a prepared repository, submit a bug, launch an evaluat
 - **FR-003**: Connect actual model generation and admitted evidence/tool actions to investigation, patch and bounded repair/replan. Supplied answers remain controlled-only.
 - **FR-004**: Preserve canonical approval, test-protection, verification, review, repair/replan and completion rules; no automatic production plan approval.
 - **FR-005**: Admit real components before effects, fail on missing prerequisites and retain truthful provider accounting.
-- **FR-006**: Require no user-set economic cap. Derive conservative finite accounting exposure from explicit operational limits and pinned pricing; defer optimization. Unsupported accounting blocks dispatch.
+- **FR-006**: Require no user-set economic cap. Derive conservative finite accounting exposure from explicit operational limits and pinned pricing; defer optimization. Unsupported accounting blocks dispatch, except under the recorded 2026-11-14 real-tier operator decisions (contracts/decisions.md lines 106-108): the user waived the economic cap, so for that real tier `placeholder-unverified` pricing reports cost as `estimate-unverified`/`unknown` and never gates dispatch, while the per-run runaway stop (calls/tokens) still gates.
 - **FR-007**: Project actual workflow evidence into evaluation, including waits, effects, usage uncertainty, artifacts and safe diagnostic attribution.
 - **FR-008**: Separate selected-case result from complete acceptance and compare different configurations only under explicit compatibility rules.
 - **FR-009**: Version new report semantics while preserving legacy inputs/reports and mock evidence boundaries.
