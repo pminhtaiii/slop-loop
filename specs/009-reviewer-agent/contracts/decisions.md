@@ -39,6 +39,14 @@ Controlled ports/transports and the planned in-memory ReviewEvidencePortV1 doubl
 
 A public `validateBaseModelInputs` probe on the accepted foundation rejects ordinary serialized task identity `task-calc-001` because the shared detector matches embedded `sk-`. This blocks the T004 companion at canonical ingress even though UC-06 validation accepts it. The prepared one-line patch constrains only the shared `sk-` alternative to a token boundary; credential-assignment, Bearer, private-key and protected-marker branches stay enforced. The user explicitly approved expanding T004 to **src/foundation/model.ts and tests/runtime/unit/model.test.ts**, responding “Cho phép; Tai đồng ý phạm vi này”. Record this as user-relayed Tai agreement, not an independent signature or owner delivery. The extension remains source/controlled, under Tai's existing foundation ownership, with public RED–GREEN and independent verification/review. It changes no canonical wire schema, digest input, storage or execution authority.
 
+## Phase 4, Phase 5 T008, and T009 evaluation completion — 2026-11-14
+
+On 2026-11-14, the user explicitly directed to proceed with Phase 4 (T007), Phase 5 (T008), and Phase 5 (T009) at the source/controlled/eval tier. T007 is completed in `tests/runtime/security/uc06-review-safety.test.ts` (12 passing tests), T008 is completed in `tests/runtime/integration/uc06-review-repair.test.ts` (5 passing tests, including full review-repair-delivery traversal), and T009 is completed in `eval/uc06/catalog.ts`, `eval/uc06/grade.ts`, and `tests/runtime/unit/uc06-grade.test.ts` (9 passing tests), establishing the R01–R20 requirement inventory, frozen Q01–Q12 case descriptors/labels, localized semantic grading, and milestone regression invariants. All checks pass in isolation and across all UC-06 suites (81/81 tests pass).
+
+## Phase 5 T010 evaluation release and completion — 2026-11-15
+
+On 2026-11-15, following review of the completed Phase 4 and Phase 5 T007–T009 gates, the user explicitly directed completion of the remaining Phase 5 scope: “tiếp tục với T009”, “h còn phần nào của phase 5 ch làm nx ?”, and “làm thôi”. This releases exactly **T010** at the **source/controlled/eval tier** in its owned paths (`eval/uc06/registration.ts`, `eval/shared.ts`, `eval/shared-types.ts`, `tests/runtime/contract/uc06-evaluation.test.ts`). T010 registers UC-06 on existing evaluation infrastructure with additive capability-aware runner v2, pinned oracle digests, and real execution capability gating via `isAdmittedRealExecutionAdmission`. Controlled tests verify data isolation, v1 mock/real refusal, v2 capability-gated admission, and regression compatibility. Phase 6 real acceptance tasks (T011–T013), actual owner delivery, and standalone review remain unreleased.
+
 ## Selected design proposals
 
 | ID | Proposal | Rationale / limit |
@@ -51,7 +59,7 @@ A public `validateBaseModelInputs` probe on the accepted foundation rejects ordi
 | D6 | Trusted reviewer prompt/schema branch in existing transport | Planner-only prompt is insufficient; no second adapter |
 | D7 | Separate controlled, integrated real, quality and restart milestones | Checked predecessor tasks/doubles do not prove broader acceptance |
 
-The T001 entry records user-relayed acceptance of the exact design/ownership baseline. Remaining production/rubric approvals and owner deliveries are explicit release conditions, not unresolved design placeholders.
+The T001 entry records user-relayed acceptance of the exact design/ownership baseline. Remaining production/rubric approvals and owner deliveries are explicit release conditions, not unresolved design placeholders. Phase 4 (T007-T008) and Phase 5 (T009-T010) are completed and verified at source/controlled tier. T010 registers UC-06 on existing evaluation infrastructure with additive capability-aware runner v2, pinned oracle digests, and real execution gating. Phase 6 real acceptance tasks (T011–T013) remain gated.
 
 ## Gates and handoff evidence
 
