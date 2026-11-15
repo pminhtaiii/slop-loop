@@ -4,20 +4,8 @@
  * adhering to Evaluation Contract uc06-review-evaluation/1.
  */
 import { canonicalDigest, type Json } from '../../src/uc01/contracts.ts';
-import {
-  registerEvaluation,
-  SHARED_EVALUATION_VERSION,
-  type RegisteredEvaluation,
-  type SharedExecutionContext,
-  type SharedExecutionContextV2,
-  type SharedGrade,
-} from '../shared.ts';
-import {
-  UC06_QUALITY_CASES,
-  UC06_QUALITY_LABELS,
-  UC06_REQUIREMENT_INVENTORY,
-  type UC06QualityCaseDescriptor,
-} from './catalog.ts';
+import { registerEvaluation, SHARED_EVALUATION_VERSION, type RegisteredEvaluation, type SharedExecutionContext, type SharedExecutionContextV2, type SharedGrade } from '../shared.ts';
+import { UC06_QUALITY_CASES, UC06_QUALITY_LABELS, UC06_REQUIREMENT_INVENTORY, type UC06QualityCaseDescriptor } from './catalog.ts';
 import { gradeQualityCase, type CaseObservationInput } from './grade.ts';
 
 export const UC06_DATASET_ID = 'uc06-reviewer-evaluation';
@@ -36,10 +24,7 @@ export type UC06EvaluationObservation = Readonly<{
 export type UC06EvaluationAdapter = Readonly<{
   version: string;
   provenance: 'mock' | 'real';
-  execute: (
-    payload: Json,
-    context: SharedExecutionContext | SharedExecutionContextV2,
-  ) => Promise<UC06EvaluationObservation>;
+  execute: (payload: Json, context: SharedExecutionContext | SharedExecutionContextV2) => Promise<UC06EvaluationObservation>;
 }>;
 
 const toRawSha = (val: string) => (val.startsWith('sha256:') ? val.slice(7) : val);
@@ -58,29 +43,17 @@ function publicQualityPayload(c: UC06QualityCaseDescriptor): Json {
 }
 
 export const UC06_REQUIREMENT_ORACLES: Readonly<Record<string, string>> = Object.freeze(
-  Object.fromEntries(
-    UC06_REQUIREMENT_INVENTORY.map(req => [
-      `UC-06:${req.id}`,
-      canonicalDigest('GradingCase', { requirementId: req.id, family: req.family, tier: req.tier, gate: 'hard' }),
-    ]),
-  ),
+  Object.fromEntries(UC06_REQUIREMENT_INVENTORY.map(req => [`UC-06:${req.id}`, canonicalDigest('GradingCase', { requirementId: req.id, family: req.family, tier: req.tier, gate: 'hard' })])),
 );
 
-export const UC06_QUALITY_ORACLES: Readonly<Record<string, string>> = Object.freeze(
-  Object.fromEntries(
-    UC06_QUALITY_LABELS.map(lbl => [`UC-06:${lbl.caseId}`, toRawSha(lbl.oracleDigest)]),
-  ),
-);
+export const UC06_QUALITY_ORACLES: Readonly<Record<string, string>> = Object.freeze(Object.fromEntries(UC06_QUALITY_LABELS.map(lbl => [`UC-06:${lbl.caseId}`, toRawSha(lbl.oracleDigest)])));
 
 export const UC06_ALL_ORACLE_PINS: Readonly<Record<string, string>> = Object.freeze({
   ...UC06_REQUIREMENT_ORACLES,
   ...UC06_QUALITY_ORACLES,
 });
 
-export function registerUC06Evaluation(
-  adapter?: UC06EvaluationAdapter,
-  criteriaGrader?: (caseId: string, observation: unknown) => Promise<SharedGrade>,
-): RegisteredEvaluation {
+export function registerUC06Evaluation(adapter?: UC06EvaluationAdapter, criteriaGrader?: (caseId: string, observation: unknown) => Promise<SharedGrade>): RegisteredEvaluation {
   const qCaseMap = new Map(UC06_QUALITY_CASES.map(c => [`UC-06:${c.caseId}`, c]));
   const qLabelMap = new Map(UC06_QUALITY_LABELS.map(l => [`UC-06:${l.caseId}`, l]));
 
@@ -154,13 +127,7 @@ export function registerUC06Evaluation(
               }
               const judging = gradeQualityCase(c, label, obs);
               const isClean = label.expectedStatus === 'clean';
-              const classification = isClean
-                ? judging.fp === 0
-                  ? 'correct'
-                  : 'incorrect'
-                : judging.tp > 0
-                  ? 'correct'
-                  : 'incorrect';
+              const classification = isClean ? (judging.fp === 0 ? 'correct' : 'incorrect') : judging.tp > 0 ? 'correct' : 'incorrect';
               return {
                 status: judging.passed ? 'pass' : 'fail',
                 classification,

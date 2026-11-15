@@ -122,13 +122,14 @@ export type SharedExecutionContextV2 = Readonly<{
   admission?: RealExecutionAdmission | undefined;
 }>;
 
-export type SharedSelectionV2 = SharedSelection & Readonly<{
-  profileDigest?: string | undefined;
-  pricingDigest?: string | undefined;
-  adapterVersions?: readonly string[] | undefined;
-  requestedModel?: string | undefined;
-  realAdmission?: RealExecutionAdmission | undefined;
-}>;
+export type SharedSelectionV2 = SharedSelection &
+  Readonly<{
+    profileDigest?: string | undefined;
+    pricingDigest?: string | undefined;
+    adapterVersions?: readonly string[] | undefined;
+    requestedModel?: string | undefined;
+    realAdmission?: RealExecutionAdmission | undefined;
+  }>;
 
 export type SharedEvaluationOptionsV2 = Readonly<{
   contractVersion: typeof SHARED_EVALUATION_V2_VERSION;

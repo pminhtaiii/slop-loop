@@ -40,7 +40,6 @@ function freeze<T>(value: T): T {
 function snapshot<T>(value: T): T {
   return freeze(structuredClone(value));
 }
-/** Registers only public data. Grading functions remain host-held and are never driver context. */
 export function registerEvaluation(value: unknown, handlers?: EvaluationCallbacks, expectedOracleDigests?: Readonly<Record<string, string>>): RegisteredEvaluation {
   const input = object(value, ['contractVersion', 'ucId', 'datasetId', 'datasetVersion', 'adapterVersion', 'graderVersion', 'provenance', 'cases']);
   if (input.contractVersion !== SHARED_EVALUATION_VERSION || !/^UC-\d{2}$/u.test(text(input.ucId)) || !member(input.provenance, ['mock', 'real'])) fail();
@@ -67,7 +66,18 @@ export function registerEvaluation(value: unknown, handlers?: EvaluationCallback
     if (item.digestProfile === 'uc01-evaluation-sha256-v1') {
       const p = validatePublicCase(item.payload);
       const v = p.ok ? p.value : null;
-      if (!v || v.caseId !== caseId || v.caseDigest !== item.caseDigest || v.datasetId !== input.datasetId || v.datasetVersion !== input.datasetVersion || JSON.stringify(v.levels) !== JSON.stringify(caseLevels) || v.gate !== item.gate || item.classificationScored !== (v.gate === 'scored') || item.attack !== (v.categories.includes('safety') || v.familyId === 'C15')) fail();
+      if (
+        !v ||
+        v.caseId !== caseId ||
+        v.caseDigest !== item.caseDigest ||
+        v.datasetId !== input.datasetId ||
+        v.datasetVersion !== input.datasetVersion ||
+        JSON.stringify(v.levels) !== JSON.stringify(caseLevels) ||
+        v.gate !== item.gate ||
+        item.classificationScored !== (v.gate === 'scored') ||
+        item.attack !== (v.categories.includes('safety') || v.familyId === 'C15')
+      )
+        fail();
     } else if (item.digestProfile !== 'canonical-json-v1' || canonicalDigest('PublicCase', item.payload) !== item.caseDigest) fail();
     return snapshot({
       caseId,
@@ -128,18 +138,31 @@ export function registerEvaluation(value: unknown, handlers?: EvaluationCallback
   }
   return registered;
 }
-const v2Keys = ['ucId', 'datasetId', 'datasetVersion', 'level', 'caseIds', 'requiredCases', 'requiredAttacks', 'configDigest', 'profileDigest', 'pricingDigest', 'adapterVersions', 'requestedModel', 'realAdmission'] as const;
+const v2Keys = [
+  'ucId',
+  'datasetId',
+  'datasetVersion',
+  'level',
+  'caseIds',
+  'requiredCases',
+  'requiredAttacks',
+  'configDigest',
+  'profileDigest',
+  'pricingDigest',
+  'adapterVersions',
+  'requestedModel',
+  'realAdmission',
+] as const;
 const v1Keys = v2Keys.slice(0, 8);
 
-function parseOptions<T extends SharedEvaluationOptions | SharedEvaluationOptionsV2>(
-  value: unknown,
-  expectedVersion: typeof SHARED_EVALUATION_VERSION | typeof SHARED_EVALUATION_V2_VERSION,
-): T {
+function parseOptions<T extends SharedEvaluationOptions | SharedEvaluationOptionsV2>(value: unknown, expectedVersion: typeof SHARED_EVALUATION_VERSION | typeof SHARED_EVALUATION_V2_VERSION): T {
   const isV2 = expectedVersion === SHARED_EVALUATION_V2_VERSION;
   const input = object(value, ['contractVersion', 'scope', 'mode', 'runId', 'attemptId', 'codeRevision', 'perCaseTimeoutMs', 'registrations', 'selections']);
   const t = Number(input.perCaseTimeoutMs);
   if (input.contractVersion !== expectedVersion || !member(input.scope, ['uc', 'project']) || !member(input.mode, ['mock', 'real']) || !Number.isSafeInteger(t) || t <= 0 || t > 60000) fail();
-  text(input.runId); text(input.attemptId); text(input.codeRevision);
+  text(input.runId);
+  text(input.attemptId);
+  text(input.codeRevision);
   const registered = array(input.registrations) as RegisteredEvaluation[];
   const keys = new Set<string>();
   for (const r of registered) {
@@ -170,7 +193,16 @@ function parseOptions<T extends SharedEvaluationOptions | SharedEvaluationOption
     if (!/^UC-\d{2}$/u.test(uc) || selectedUcs.has(uc) || typeof selection.level !== 'string' || !levels.has(selection.level)) fail();
     selectedUcs.add(uc);
     const ids = array(selection.caseIds);
-    if (!ids.length || new Set(ids).size !== ids.length || ids.some(id => !text(id).startsWith(`${uc}:`)) || selection.requiredCases !== ids.length || !Number.isSafeInteger(selection.requiredAttacks) || Number(selection.requiredAttacks) < 0 || Number(selection.requiredAttacks) > ids.length) fail();
+    if (
+      !ids.length ||
+      new Set(ids).size !== ids.length ||
+      ids.some(id => !text(id).startsWith(`${uc}:`)) ||
+      selection.requiredCases !== ids.length ||
+      !Number.isSafeInteger(selection.requiredAttacks) ||
+      Number(selection.requiredAttacks) < 0 ||
+      Number(selection.requiredAttacks) > ids.length
+    )
+      fail();
   }
   return {
     contractVersion: expectedVersion,
@@ -249,10 +281,7 @@ async function runTimedExecution(
   }
 }
 
-async function executeEvaluation(
-  request: SharedEvaluationOptions | SharedEvaluationOptionsV2,
-  isV2: boolean,
-): Promise<SharedEvaluationReport | SharedEvaluationReportV2> {
+async function executeEvaluation(request: SharedEvaluationOptions | SharedEvaluationOptionsV2, isV2: boolean): Promise<SharedEvaluationReport | SharedEvaluationReportV2> {
   const results: SharedCaseResult[] = [];
   const groups: SharedEvaluationReport['groups'][number][] = [];
   const chosen = request.selections.map(selection => {
@@ -262,8 +291,7 @@ async function executeEvaluation(
     if (registration && (cases.some(item => !item) || cases.filter(item => item?.attack).length !== selection.requiredAttacks)) fail();
     return { selection, registration, cases };
   });
-  const makeIsoKey = (cId: string, sel: (typeof chosen)[number]['selection']) =>
-    `${request.runId}/${sel.ucId}/${sel.datasetId}/${sel.datasetVersion}/${cId}/${sel.level}/${request.attemptId}`;
+  const makeIsoKey = (cId: string, sel: (typeof chosen)[number]['selection']) => `${request.runId}/${sel.ucId}/${sel.datasetId}/${sel.datasetVersion}/${cId}/${sel.level}/${request.attemptId}`;
   const namespaces = chosen.flatMap(({ selection: sel }) => sel.caseIds.map(cId => makeIsoKey(cId, sel)));
   if (namespaces.some(key => reservedNamespaces.has(key))) fail();
   for (const { registration } of chosen) {

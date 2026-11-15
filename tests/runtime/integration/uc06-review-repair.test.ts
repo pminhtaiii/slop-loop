@@ -3,11 +3,7 @@ import test from 'node:test';
 import { runControlledUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
 import { controlledReviewFixture, controlledReviewCompletion } from '../support/uc06/review-evidence.ts';
 import { prepareControlledUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
-import {
-  controlledCompletionContext,
-  controlledGeneratedPlanFixture,
-  type ControlledReviewVerdict,
-} from '../support/uc03/controlled-host-journey.ts';
+import { controlledCompletionContext, controlledGeneratedPlanFixture, type ControlledReviewVerdict } from '../support/uc03/controlled-host-journey.ts';
 import type { TaskState } from '../../../src/contracts/foundation/uc03.ts';
 
 const REPAIR_VERDICTS: readonly ControlledReviewVerdict[] = [

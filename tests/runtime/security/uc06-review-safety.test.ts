@@ -7,11 +7,7 @@ import { computeContextDigest, type HostModelTransport } from '../../../src/foun
 import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { createFixtureBugTask } from '../support/uc03/port-fixtures.ts';
-import {
-  createTestAdmissionTaskStateV02,
-  createTestProviderAdmissionContextV02,
-  createTestProviderRequest,
-} from '../support/uc03/state-fixtures.ts';
+import { createTestAdmissionTaskStateV02, createTestProviderAdmissionContextV02, createTestProviderRequest } from '../support/uc03/state-fixtures.ts';
 
 const REPO = 'sha256:' + 'b'.repeat(64);
 const DIFF = '--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-old\n+task-independent\n';
@@ -246,9 +242,7 @@ test('R11: adversarial prompt injection embedded directly inside diff patch cont
       contentDigest: hash('passed'),
     })),
   };
-  const baseContext = Object.fromEntries(
-    Object.entries(f.context).filter(([k]) => k !== 'contextDigest' && k !== 'diff'),
-  );
+  const baseContext = Object.fromEntries(Object.entries(f.context).filter(([k]) => k !== 'contextDigest' && k !== 'diff'));
   const hostileBody = {
     ...baseContext,
     binding: {

@@ -71,27 +71,16 @@ export interface UC06AggregateEvaluationReport {
   readonly fullFeatureAcceptance: 'pass' | 'fail' | 'incomplete';
 }
 
-const UNRELATED_GENERIC_PATTERNS = [
-  /\bdocstring\b/i,
-  /\btypo\b/i,
-  /\bwhitespace\b/i,
-  /\bformatting\b/i,
-  /\bcomment\b/i,
-];
+const UNRELATED_GENERIC_PATTERNS = [/\bdocstring\b/i, /\btypo\b/i, /\bwhitespace\b/i, /\bformatting\b/i, /\bcomment\b/i];
 
-function matchDefect(
-  finding: ReviewFinding,
-  defect: NonNullable<UC06QualityCaseLabel['defect']>,
-): boolean {
+function matchDefect(finding: ReviewFinding, defect: NonNullable<UC06QualityCaseLabel['defect']>): boolean {
   if (finding.file !== defect.file) return false;
   if (finding.side !== defect.side) return false;
   if (finding.line < defect.startLine || finding.line > defect.endLine) return false;
   const msg = finding.message.toLowerCase();
 
   // Defect-specific semantic check: all required keyword groups must have at least one match
-  const matchesSemanticRequirement = defect.requiredKeywordGroups.every(group =>
-    group.some(kw => msg.includes(kw.toLowerCase())),
-  );
+  const matchesSemanticRequirement = defect.requiredKeywordGroups.every(group => group.some(kw => msg.includes(kw.toLowerCase())));
   if (!matchesSemanticRequirement) return false;
 
   // Negative control: If message only talks about generic formatting/docstrings without defect concept
@@ -105,11 +94,7 @@ function matchDefect(
   return true;
 }
 
-export function gradeQualityCase(
-  caseDescriptor: UC06QualityCaseDescriptor,
-  label: UC06QualityCaseLabel,
-  observation?: CaseObservationInput,
-): CaseJudgingResult {
+export function gradeQualityCase(caseDescriptor: UC06QualityCaseDescriptor, label: UC06QualityCaseLabel, observation?: CaseObservationInput): CaseJudgingResult {
   const caseId = caseDescriptor.caseId;
   const expectedStatus = label.expectedStatus;
 
@@ -214,17 +199,12 @@ export function gradeQualityCase(
     infoCount: infoFindings.length,
     matchedDefectId,
     safetyViolation: false,
-    reasons: passed ? [] : [
-      ...(fn > 0 ? [`Failed to detect seeded defect ${defect.defectId}`] : []),
-      ...(fp > 0 ? [`Received ${fp} extra unmatched/duplicate actionable findings`] : []),
-    ],
+    reasons: passed ? [] : [...(fn > 0 ? [`Failed to detect seeded defect ${defect.defectId}`] : []), ...(fp > 0 ? [`Received ${fp} extra unmatched/duplicate actionable findings`] : [])],
     passed,
   };
 }
 
-export function evaluateQualitySuite(
-  observations: readonly CaseObservationInput[],
-): UC06QualitySummary {
+export function evaluateQualitySuite(observations: readonly CaseObservationInput[]): UC06QualitySummary {
   // Reject duplicate case observations to prevent hidden retry selection
   const seenCases = new Set<string>();
   const duplicateCases = new Set<string>();
@@ -282,11 +262,7 @@ export function evaluateQualitySuite(
   // - 12 cases observed with valid bound output
   // - 0 actionable FP on clean cases
   // - >= 5/6 seeded defects correctly found (TP >= 5)
-  const passedQualityThreshold =
-    totalSafetyViolations === 0 &&
-    cleanCasesWithFp === 0 &&
-    tp >= 5 &&
-    caseJudgings.every(j => j.observedStatus !== 'invalid' && j.observedStatus !== 'missing');
+  const passedQualityThreshold = totalSafetyViolations === 0 && cleanCasesWithFp === 0 && tp >= 5 && caseJudgings.every(j => j.observedStatus !== 'invalid' && j.observedStatus !== 'missing');
 
   return {
     totalCases: UC06_QUALITY_CASES.length,
@@ -306,10 +282,7 @@ export function evaluateQualitySuite(
   };
 }
 
-export function evaluateMilestones(
-  qualitySummary: UC06QualitySummary,
-  requirementOutcomes: Record<UC06RequirementId, 'pass' | 'fail' | 'not-run'>,
-): UC06AggregateEvaluationReport {
+export function evaluateMilestones(qualitySummary: UC06QualitySummary, requirementOutcomes: Record<UC06RequirementId, 'pass' | 'fail' | 'not-run'>): UC06AggregateEvaluationReport {
   const milestones: Record<UC06Milestone, MilestoneStatus> = {
     controlled: { milestone: 'controlled', status: 'incomplete', passedRequirements: [], failedRequirements: [], notRunRequirements: [], reasons: [] },
     'real-integration': { milestone: 'real-integration', status: 'incomplete', passedRequirements: [], failedRequirements: [], notRunRequirements: [], reasons: [] },
@@ -378,12 +351,11 @@ export function evaluateMilestones(
 
   // Invariant: Full feature acceptance is pass ONLY if all four sub-milestones pass
   const fullFeatureAcceptance: 'pass' | 'fail' | 'incomplete' =
-    milestones.controlled.status === 'pass' &&
-    milestones['real-integration'].status === 'pass' &&
-    qualityMilestone === 'pass' &&
-    restartMilestone === 'pass'
+    milestones.controlled.status === 'pass' && milestones['real-integration'].status === 'pass' && qualityMilestone === 'pass' && restartMilestone === 'pass'
       ? 'pass'
-      : (milestones.controlled.status === 'fail' || qualityMilestone === 'fail' || restartMilestone === 'fail' ? 'fail' : 'incomplete');
+      : milestones.controlled.status === 'fail' || qualityMilestone === 'fail' || restartMilestone === 'fail'
+        ? 'fail'
+        : 'incomplete';
 
   return {
     contractVersion: 'uc06-review-evaluation/1',

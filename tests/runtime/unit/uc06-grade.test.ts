@@ -1,17 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  UC06_REQUIREMENT_INVENTORY,
-  UC06_QUALITY_CASES,
-  UC06_QUALITY_LABELS,
-  type UC06RequirementId,
-} from '../../../eval/uc06/catalog.ts';
-import {
-  gradeQualityCase,
-  evaluateQualitySuite,
-  evaluateMilestones,
-  type CaseObservationInput,
-} from '../../../eval/uc06/grade.ts';
+import { UC06_REQUIREMENT_INVENTORY, UC06_QUALITY_CASES, UC06_QUALITY_LABELS, type UC06RequirementId } from '../../../eval/uc06/catalog.ts';
+import { gradeQualityCase, evaluateQualitySuite, evaluateMilestones, type CaseObservationInput } from '../../../eval/uc06/grade.ts';
 import type { ReviewResult } from '../../../src/contracts/foundation/uc03.ts';
 import { validateReviewDiff } from '../../../src/uc06/validation.ts';
 
@@ -316,10 +306,7 @@ test('evaluateQualitySuite rejects duplicate case observations to prevent hidden
     { caseId: 'Q01', result: mockReviewResult('accepted', []) },
     { caseId: 'Q01', result: mockReviewResult('accepted', []) },
   ];
-  assert.throws(
-    () => evaluateQualitySuite(observations),
-    /Duplicate case observations rejected/,
-  );
+  assert.throws(() => evaluateQualitySuite(observations), /Duplicate case observations rejected/);
 });
 
 test('evaluateQualitySuite fails suite when any safety violation is detected even if TP >= 5', () => {
@@ -365,10 +352,26 @@ test('evaluateMilestones distinguishes missing observations from executed failur
   // When no quality cases ran, summary has all missing cases
   const emptySummary = evaluateQualitySuite([]);
   const reqOutcomes: Record<UC06RequirementId, 'pass' | 'fail' | 'not-run'> = {
-    R01: 'pass', R02: 'pass', R03: 'pass', R04: 'pass', R05: 'pass',
-    R06: 'pass', R07: 'pass', R08: 'pass', R09: 'pass', R10: 'pass',
-    R11: 'pass', R12: 'pass', R13: 'pass', R14: 'pass', R15: 'pass',
-    R16: 'pass', R17: 'pass', R18: 'not-run', R19: 'pass', R20: 'pass',
+    R01: 'pass',
+    R02: 'pass',
+    R03: 'pass',
+    R04: 'pass',
+    R05: 'pass',
+    R06: 'pass',
+    R07: 'pass',
+    R08: 'pass',
+    R09: 'pass',
+    R10: 'pass',
+    R11: 'pass',
+    R12: 'pass',
+    R13: 'pass',
+    R14: 'pass',
+    R15: 'pass',
+    R16: 'pass',
+    R17: 'pass',
+    R18: 'not-run',
+    R19: 'pass',
+    R20: 'pass',
   };
 
   const report = evaluateMilestones(emptySummary, reqOutcomes);
@@ -406,10 +409,26 @@ test('evaluateMilestones enforces regression invariant: quality=pass with R18 no
   const qualitySummary = evaluateQualitySuite(observations);
 
   const reqOutcomes: Record<UC06RequirementId, 'pass' | 'fail' | 'not-run'> = {
-    R01: 'pass', R02: 'pass', R03: 'pass', R04: 'pass', R05: 'pass',
-    R06: 'pass', R07: 'pass', R08: 'pass', R09: 'pass', R10: 'pass',
-    R11: 'pass', R12: 'pass', R13: 'pass', R14: 'pass', R15: 'pass',
-    R16: 'pass', R17: 'pass', R18: 'not-run', R19: 'pass', R20: 'pass',
+    R01: 'pass',
+    R02: 'pass',
+    R03: 'pass',
+    R04: 'pass',
+    R05: 'pass',
+    R06: 'pass',
+    R07: 'pass',
+    R08: 'pass',
+    R09: 'pass',
+    R10: 'pass',
+    R11: 'pass',
+    R12: 'pass',
+    R13: 'pass',
+    R14: 'pass',
+    R15: 'pass',
+    R16: 'pass',
+    R17: 'pass',
+    R18: 'not-run',
+    R19: 'pass',
+    R20: 'pass',
   };
 
   const report = evaluateMilestones(qualitySummary, reqOutcomes);
