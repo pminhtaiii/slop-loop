@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { computeAdmissionDigest, computeAttemptOutcomeDigest, computeReconciliationDigest } from '../../../src/contracts/foundation/uc03.ts';
-import type { ClaimReceiptV02, RepositoryAdmissionContextV02, TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import type { AttemptReconciliationReceiptV02, ClaimReceiptV02, RepositoryAdmissionContextV02, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { StatePortStore } from '../../../src/persistence/adapters/state-port-v02-storage.ts';
@@ -18,6 +18,8 @@ import { createDurableUnattemptedClaimClosureHandoff } from '../../../src/founda
 import {
   createTestAdmissionTaskStateV02,
   createTestExecutorIdentityV02,
+  createTestObservedReconciliationReceiptV02,
+  createTestRepositoryAdmissionContextV02,
   createTestRepositoryCommandAdmissionContextV02,
   createTestRepositoryOutcomeReceiptV02,
   createTestUncertainReconciliationReceiptV02,
@@ -25,23 +27,23 @@ import {
 
 const context: RepositoryAdmissionContextV02 = createTestRepositoryCommandAdmissionContextV02();
 
-function seedTask(): TaskState {
-  const task = createTestAdmissionTaskStateV02(context);
+function seedTask(ctx: RepositoryAdmissionContextV02 = context): TaskState {
+  const task = createTestAdmissionTaskStateV02(ctx);
   return {
     ...task,
     budgetLedgers: [...(task.budgetLedgers ?? []), { scope: 'task', kind: 'timeoutMs', limit: 60_000, consumed: 0, reservations: [], unit: 'count', configurationId: 'config-v1', version: 1 }],
   };
 }
 
-async function openClaim(baseDir: string): Promise<{ port: DurableStatePortV02; claim: ClaimReceiptV02 }> {
+async function openClaim(baseDir: string, ctx: RepositoryAdmissionContextV02 = context): Promise<{ port: DurableStatePortV02; claim: ClaimReceiptV02 }> {
   const store = new DurableStore(baseDir);
   await store.init();
   const port = new DurableStatePortV02({
     store,
-    initialControl: { controlVersion: context.expectedControlVersion, epoch: context.expectedEpoch, activeAuthorityRef: context.policyAuthorityRef },
+    initialControl: { controlVersion: ctx.expectedControlVersion, epoch: ctx.expectedEpoch, activeAuthorityRef: ctx.policyAuthorityRef },
   });
-  await port.transition(seedTask(), 0);
-  const claim = await port.claim(context);
+  await port.transition(seedTask(ctx), 0);
+  const claim = await port.claim(ctx);
   assert.notEqual(claim.claimId, '', 'the fixture admission must open a claim');
   return { port, claim };
 }
@@ -236,6 +238,146 @@ test('operation lookup: a settled reconciliation stays committed after control a
     assert.deepEqual(result.commit.reconciliation, reconciliation);
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+/** Drives a real uncertain-attempt settlement through the port and returns the receipt it wrote. */
+async function settleUncertain(port: DurableStatePortV02, claim: ClaimReceiptV02, pauseRef: string): Promise<AttemptReconciliationReceiptV02> {
+  const executor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
+  const attempt = await port.beginAttempt(claim.claimId, executor);
+  const uncertain = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, { outcome: 'uncertain' });
+  assert.deepEqual(await port.recordOutcome(uncertain), { outcome: 'uncertain', receiptId: uncertain.receiptId });
+  assert.equal(await port.setTaskControl(context.taskId, 'paused', pauseRef), true);
+  const fence = await port.fenceAttemptRecipient(claim.claimId, executor);
+  assert.ok(fence, 'the uncertain attempt must be fenceable');
+  const task = (await port.loadTask(context.taskId)) as TaskState;
+  const control = port.getJournalSnapshot(context.taskId) as { controlVersion: number };
+  const reconciliation = createTestUncertainReconciliationReceiptV02(uncertain, claim, attempt, context, {
+    disposition: 'proven-not-dispatched',
+    fencedRecipientIdentity: fence.recipientIdentity,
+    fencingGeneration: fence.fencingGeneration,
+    fencingProof: fence.proofRef,
+    adapterEvidenceRefs: fence.adapterEvidenceRefs,
+    evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
+    expectedCurrentTaskStateVersion: task.stateVersion,
+    expectedCurrentControlVersion: control.controlVersion,
+  });
+  assert.deepEqual(await port.reconcileUncertain(reconciliation), { outcome: 'settled', receiptId: reconciliation.reconciliationId });
+  return reconciliation;
+}
+
+/** Drives a real observed-unsettled settlement of a repair patch: same-version drift records it unsettled, then reconcile settles. */
+async function settleObserved(port: DurableStatePortV02, claim: ClaimReceiptV02, ctx: RepositoryAdmissionContextV02): Promise<AttemptReconciliationReceiptV02> {
+  const state = new StatePortStore(port.store);
+  const attempt = await port.beginAttempt(claim.claimId, createTestExecutorIdentityV02({ payloadDigest: ctx.actionDigest }));
+  const atAttempt = (await port.loadTask(ctx.taskId)) as TaskState;
+  await state.writeTask(ctx.taskId, { ...atAttempt, node: 'Verify' });
+  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, ctx);
+  assert.deepEqual(await port.recordOutcome(outcome), { outcome: 'recorded-unsettled', receiptId: outcome.receiptId });
+  assert.ok(outcome.observedResultRevisionDigest, 'a repair patch outcome carries its observed revision');
+  await state.writeTask(ctx.taskId, { ...atAttempt, repositoryRevisionDigest: outcome.observedResultRevisionDigest });
+  const control = port.getJournalSnapshot(ctx.taskId) as { controlVersion: number };
+  const reconciliation = createTestObservedReconciliationReceiptV02(outcome, claim, attempt, ctx, {
+    expectedCurrentTaskStateVersion: atAttempt.stateVersion,
+    expectedCurrentControlVersion: control.controlVersion,
+  });
+  assert.deepEqual(await port.reconcileObservedOutcome(reconciliation), { outcome: 'settled', receiptId: reconciliation.reconciliationId });
+  return reconciliation;
+}
+
+/** A digest-valid reconciliation naming an older control head: only the writer's binding can refuse it. */
+function reframeHead(reconciliation: AttemptReconciliationReceiptV02, controlVersion: number): AttemptReconciliationReceiptV02 {
+  const forged = { ...reconciliation, expectedCurrentControlVersion: controlVersion } as Record<string, unknown>;
+  return { ...forged, reconciliationDigest: computeReconciliationDigest(forged) } as unknown as AttemptReconciliationReceiptV02;
+}
+
+test('operation lookup: swapping in an older-head reconciliation the writer never produced is unknown', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-recon-older-head-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const state = new StatePortStore(port.store);
+    const reconciliation = await settleUncertain(port, claim, 'pause-t040-older-head-1');
+    // The merger's probe: a receipt naming the head one before the fence is digest-valid and passes
+    // the receipt validator, but the writer's fencing proof was minted at (or past) that head.
+    const forged = reframeHead(reconciliation, reconciliation.expectedCurrentControlVersion - 1);
+    assert.notEqual(forged.reconciliationDigest, reconciliation.reconciliationDigest);
+    await state.writeJson(state.statePath(context.taskId, `recon-${reconciliation.reconciliationId}.json`), forged);
+
+    assert.deepEqual(
+      await createJournalOperationLookup(port).lookupOperation(journalOperationRef(claim.claimId)),
+      { outcome: 'unknown' },
+      'an older-head receipt predates the fencing the writer proved',
+    );
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('operation lookup: a settled claim with no settlement binding is unknown', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-recon-unbound-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const state = new StatePortStore(port.store);
+    await settleUncertain(port, claim, 'pause-t040-unbound-1');
+    const stored = await state.readClaim(context.taskId, claim.claimId);
+    assert.ok(stored?.settlement, 'a real settlement must carry its binding');
+    const unbound = { ...stored, settlement: undefined };
+    await state.writeClaim(context.taskId, unbound);
+
+    assert.deepEqual(
+      await createJournalOperationLookup(port).lookupOperation(journalOperationRef(claim.claimId)),
+      { outcome: 'unknown' },
+      'a settled status alone does not prove which receipt settled it',
+    );
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('operation lookup: a settlement binding naming another receipt digest is unknown', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-recon-rebound-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const state = new StatePortStore(port.store);
+    const reconciliation = await settleUncertain(port, claim, 'pause-t040-rebound-1');
+    const stored = await state.readClaim(context.taskId, claim.claimId);
+    assert.ok(stored?.settlement);
+    const otherDigest = reframeHead(reconciliation, reconciliation.expectedCurrentControlVersion - 1).reconciliationDigest;
+    assert.notEqual(otherDigest, reconciliation.reconciliationDigest);
+    await state.writeClaim(context.taskId, { ...stored, settlement: { ...stored.settlement, receiptDigest: otherDigest } });
+
+    assert.deepEqual(
+      await createJournalOperationLookup(port).lookupOperation(journalOperationRef(claim.claimId)),
+      { outcome: 'unknown' },
+      'a binding to a digest the journal does not hold is not a commit',
+    );
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('operation lookup: a real settlement of either kind stays committed after control advances further', async () => {
+  const kinds: readonly (readonly [string, (port: DurableStatePortV02, claim: ClaimReceiptV02, ctx: RepositoryAdmissionContextV02) => Promise<AttemptReconciliationReceiptV02>])[] = [
+    ['uncertain-attempt', (port, claim) => settleUncertain(port, claim, 'pause-t040-settled-1')],
+    ['observed-unsettled', (port, claim, ctx) => settleObserved(port, claim, ctx)],
+  ];
+  for (const [kind, settle] of kinds) {
+    const baseDir = mkdtempSync(join(tmpdir(), `uc04-lookup-settled-${kind}-`));
+    try {
+      const ctx = kind === 'observed-unsettled' ? createTestRepositoryAdmissionContextV02() : context;
+      const { port, claim } = await openClaim(baseDir, ctx);
+      const reconciliation = await settle(port, claim, ctx);
+      const stored = await new StatePortStore(port.store).readClaim(ctx.taskId, claim.claimId);
+      assert.deepEqual(stored?.settlement, { reconciliationId: reconciliation.reconciliationId, receiptDigest: reconciliation.reconciliationDigest }, `${kind}: the writer must persist its binding`);
+      assert.equal(await port.setTaskControl(ctx.taskId, 'paused', `pause-t040-${kind}-2`), true, 'control must advance past the reconcile-time head');
+
+      const result = await createJournalOperationLookup(port).lookupOperation(journalOperationRef(claim.claimId));
+      assert.equal(result.outcome, 'committed', `${kind}: a real settlement stays committed`);
+      if (result.outcome !== 'committed' || result.commit.kind !== 'claim') return;
+      assert.deepEqual(result.commit.reconciliation, reconciliation);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
   }
 });
 

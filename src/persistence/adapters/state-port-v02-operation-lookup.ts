@@ -121,8 +121,9 @@ async function reconciliationFacts(
 /**
  * A persisted reconciliation is trusted only when the canonical v0.2 validator accepts it as settling
  * this outcome AND the durable journal shows the settlement the writer produces: the claim and attempt
- * rewritten `settled`, then the control head advanced past the receipt's own reconcile-time snapshot.
- * Without that binding a forged receipt could nominate its own current head.
+ * rewritten `settled` with the claim naming this exact receipt, then the control head advanced past
+ * the receipt's own reconcile-time snapshot. Without the binding a forged receipt could nominate its
+ * own current head.
  */
 async function reconciliationValid(
   state: StatePortStore,
@@ -134,6 +135,8 @@ async function reconciliationValid(
   task: TaskState,
 ): Promise<boolean> {
   if (claim.status !== 'settled' || attempt.status !== 'settled') return false;
+  // Only the reconciler writes this, so an absent or mismatched binding is a receipt the writer never settled with.
+  if (claim.settlement?.reconciliationId !== receipt.reconciliationId || claim.settlement.receiptDigest !== receipt.reconciliationDigest) return false;
   const control = await state.readControl(taskId, DEFAULT_CONTROL);
   if (
     // The writer always advanced the head, so its equal is impossible and a future head is forged.
