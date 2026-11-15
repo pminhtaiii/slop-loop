@@ -66,7 +66,9 @@ async function hostTemplate(profile: RealTierProfile, git: ScanGit, scan: ScanOp
     assembly: TEMPLATE_ASSEMBLY,
   };
   const serialized = JSON.stringify(template, null, 2);
-  return needleGuard(serialized, scan.env, scan.repositoryRoot) ?? { exitCode: 0, output: serialized };
+  // The guard uses the profile the template was built from, never a reopen: a profile rewritten between
+  // the git call and the guard would otherwise be checked against needles that do not cover this output.
+  return needleGuard(serialized, profile, scan.env) ?? { exitCode: 0, output: serialized };
 }
 
 /** Parses one mode and runs it. A malformed mode is a scan error, never a default pass. */

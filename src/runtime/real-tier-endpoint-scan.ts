@@ -37,7 +37,7 @@ const UNCHECKED_CREDENTIAL = 'credential-unchecked';
 const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 /** Host matches need a non-host character on each side, so `192.0.2.7` cannot match `192.0.2.70`. */
-const bounded = (value: string): RegExp => new RegExp(`(?<![A-Za-z0-9.-])${escape(value)}(?![A-Za-z0-9.-])`, 'u');
+const bounded = (value: string): RegExp => new RegExp(`(?<![A-Za-z0-9.-])${escape(value)}(?![A-Za-z0-9.-])`, 'iu');
 
 /** The raw and once-encoded spellings of a host-bearing token, both under the same boundary rule. */
 const boundedForms = (value: string): readonly RegExp[] => [value, encodeURIComponent(value)].map(bounded);
@@ -87,18 +87,17 @@ export function resolveScanProfile(env: RealTierEnvironment, repositoryRoot: str
 const isLoopback = (href: string): boolean => LOOPBACK.has(new URL(href).hostname);
 
 /**
- * The needle set: the resolved endpoint, each additional private endpoint, the credential and the
- * digest key. A loopback endpoint hides the remote host, so it is only scannable when the profile
- * lists the remote private endpoint.
+ * The needle set from one loaded profile: the resolved endpoint, each additional private endpoint, the
+ * credential and the digest key. A private endpoint behind the public default still needs the key,
+ * because an unkeyed digest of a guessable private host path confirms a guess. A loopback endpoint
+ * hides the remote host, so it is only scannable when the profile lists the remote private endpoint.
  */
-function needlesOf(env: RealTierEnvironment, repositoryRoot: string): Readonly<{ ok: true; needles: Needles }> | Readonly<{ ok: false; result: ScanResult }> {
-  const resolved = resolveScanProfile(env, repositoryRoot);
-  if (!resolved.ok) return resolved;
-  const profile = resolved.profile;
+function needlesFor(profile: RealTierProfile, env: RealTierEnvironment): Readonly<{ ok: true; needles: Needles }> | Readonly<{ ok: false; result: ScanResult }> {
   const privateEndpoints = profile.privacy.additionalPrivateEndpoints;
-  if (isLoopback(profile.endpoint.href) && privateEndpoints.length === 0) return { ok: false, result: scanError('tunnel-endpoint-missing') };
   const credential = env.ANTHROPIC_API_KEY?.trim() ? env.ANTHROPIC_API_KEY : undefined;
   const digestKey = profile.endpointDigestKey === '' ? undefined : profile.endpointDigestKey;
+  if (digestKey === undefined && privateEndpoints.length > 0) return { ok: false, result: scanError('endpoint-digest-key-missing') };
+  if (isLoopback(profile.endpoint.href) && privateEndpoints.length === 0) return { ok: false, result: scanError('tunnel-endpoint-missing') };
   return {
     ok: true,
     needles: {
@@ -110,6 +109,11 @@ function needlesOf(env: RealTierEnvironment, repositoryRoot: string): Readonly<{
   };
 }
 
+function needlesOf(env: RealTierEnvironment, repositoryRoot: string): Readonly<{ ok: true; needles: Needles }> | Readonly<{ ok: false; result: ScanResult }> {
+  const resolved = resolveScanProfile(env, repositoryRoot);
+  return resolved.ok ? needlesFor(resolved.profile, env) : resolved;
+}
+
 function leakAt(line: string, needles: Needles): LeakKind | undefined {
   if (needles.endpoint.some(needle => needle.test(line))) return 'ENDPOINT_LEAK';
   if (needles.credential?.test(line) === true) return 'CREDENTIAL_LEAK';
@@ -118,11 +122,11 @@ function leakAt(line: string, needles: Needles): LeakKind | undefined {
 
 /**
  * The guard for a value the scanner derives rather than reads, such as the host template: `undefined`
- * when `text` carries no needle, otherwise the scan error to return instead of printing. The host
- * template is built, so it gets this one check rather than a leak report.
+ * when `text` carries no needle, otherwise the scan error to return instead of printing. It takes the
+ * caller's loaded profile, so it never reopens the file and judges the needles the value was built from.
  */
-export function needleGuard(text: string, env: RealTierEnvironment, repositoryRoot: string): ScanResult | undefined {
-  const resolved = needlesOf(env, repositoryRoot);
+export function needleGuard(text: string, profile: RealTierProfile, env: RealTierEnvironment): ScanResult | undefined {
+  const resolved = needlesFor(profile, env);
   if (!resolved.ok) return resolved.result;
   return text.split(/\r?\n/u).some(line => leakAt(line, resolved.needles) !== undefined) ? scanError('template-needle') : undefined;
 }
@@ -265,17 +269,31 @@ async function scanBlobs(git: ScanGit, paths: readonly string[], revision: strin
 }
 
 /**
+ * Git bound to the worktree root, because `git ls-files` lists paths relative to the working directory
+ * while every blob read is root-relative: a scan from `sub` would pair the root `a.txt` with the clean
+ * `sub/a.txt`'s name and miss the leak. An injected `ScanGit` is already bound by its caller.
+ */
+async function rootScanGit(options: ScanOptions): Promise<Readonly<{ ok: true; git: ScanGit }> | Readonly<{ ok: false; result: ScanResult }>> {
+  if (options.git !== undefined) return { ok: true, git: options.git };
+  const atCwd = createScanGit(options.cwd ?? process.cwd());
+  const top = await atCwd(['rev-parse', '--show-toplevel']);
+  const root = top.ok ? textOf(top.stdout).trim() : '';
+  return root === '' ? { ok: false, result: scanError('git-failure') } : { ok: true, git: createScanGit(root) };
+}
+
+/**
  * The one index pipeline: `--staged` and `--all` differ only in the listing that names the paths.
  * A blob read or git failure is a scan error, never a pass, and its raw child output is dropped.
  */
 async function scanIndex(options: ScanOptions, listing: readonly string[]): Promise<ScanResult> {
   const resolved = needlesOf(options.env, options.repositoryRoot);
   if (!resolved.ok) return resolved.result;
-  const git = options.git ?? createScanGit(options.cwd ?? process.cwd());
-  const listed = await git(listing);
+  const bound = await rootScanGit(options);
+  if (!bound.ok) return bound.result;
+  const listed = await bound.git(listing);
   if (!listed.ok) return scanError('git-failure');
   const lines: string[] = [];
-  const failure = await scanBlobs(git, nulPaths(listed.stdout), ':', resolved.needles, lines);
+  const failure = await scanBlobs(bound.git, nulPaths(listed.stdout), ':', resolved.needles, lines);
   return failure ?? verdict(lines, resolved.needles.credential !== undefined);
 }
 
@@ -302,7 +320,9 @@ export function scanAll(options: ScanOptions): Promise<ScanResult> {
 export async function scanRange(options: ScanOptions, base: string): Promise<ScanResult> {
   const resolved = needlesOf(options.env, options.repositoryRoot);
   if (!resolved.ok) return resolved.result;
-  const git = options.git ?? createScanGit(options.cwd ?? process.cwd());
+  const bound = await rootScanGit(options);
+  if (!bound.ok) return bound.result;
+  const git = bound.git;
   const listing = await git(['rev-list', `${base}..HEAD`]);
   if (!listing.ok) return scanError('git-failure');
   const lines: string[] = [];
