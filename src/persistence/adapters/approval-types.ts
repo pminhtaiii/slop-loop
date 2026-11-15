@@ -125,10 +125,12 @@ const isApprovalId = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,
 export function initialControlMapping(durableStore: DurableStore | undefined, taskId: string, request: TaskMapping | undefined): TaskMapping | null {
   if (request !== undefined) return { repositoryId: request.repositoryId, workspaceId: request.workspaceId };
   for (const taskPath of taskPaths(durableStore, taskId)) {
-    if (!existsSync(taskPath)) continue;
+    const record = readTaskRecord(taskPath);
+    if (!record.ok) return null;
+    if (record.text === null) continue;
     let parsed: unknown;
     try {
-      parsed = JSON.parse(readFileSync(taskPath, 'utf8'));
+      parsed = JSON.parse(record.text);
     } catch {
       return null;
     }
@@ -153,6 +155,19 @@ export function initialControl(taskId: string, mapping: TaskMapping | null): Sto
 function taskPaths(durableStore: DurableStore | undefined, taskId: string): readonly string[] {
   if (durableStore === undefined) return [];
   return [new StatePortStore(durableStore).statePath(taskId, 'task.json'), durableStore.getTaskPath(taskId)];
+}
+
+/**
+ * Reads one candidate task record. `ok` with `null` text is an absent record; a refused read is
+ * not absence, since a legacy or default mapping would discard the record's real binding.
+ */
+function readTaskRecord(path: string): { readonly ok: true; readonly text: string | null } | { readonly ok: false } {
+  try {
+    return { ok: true, text: readFileSync(path, 'utf8') };
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? { ok: true, text: null } : { ok: false };
+  }
 }
 
 /** Generates initial default ApprovalTaskControl for a newly observed task.

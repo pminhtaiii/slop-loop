@@ -818,6 +818,29 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
     }
   });
 
+  await t.test('refuses a task record whose read is denied and writes no control', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uc05-approval-denied-task-'));
+    try {
+      const durable = new DurableStore(dir);
+      // A NUL byte fails the read with a non-absence error on every platform; the path itself is never written.
+      const deniedPath = join(dir, 'tasks', 'task-read-denied\u0000.json');
+      durable.getTaskPath = () => deniedPath;
+      const approvals = new DurableApprovalStore({ storageDir: dir, durableStore: durable });
+
+      const loaded = approvals.loadTaskControl('task-read-denied');
+      assert.equal(loaded.safe.outcome, 'denied');
+      assert.equal(loaded.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(loaded.value, null);
+
+      const directed = approvals.recordDirection({ direction: { taskId: 'task-read-denied' }, trustedOperator });
+      assert.equal(directed.safe.outcome, 'denied');
+      assert.equal(directed.safe.safeReasonCode, 'invalid-stored-task');
+      assert.equal(existsSync(join(dir, 'tasks', 'task-read-denied')), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   await t.test('refuses a task record whose identity names another task and writes no control', () => {
     const dir = mkdtempSync(join(tmpdir(), 'uc05-approval-foreign-task-'));
     try {
