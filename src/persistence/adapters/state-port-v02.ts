@@ -64,9 +64,10 @@ export class DurableStatePortV02 implements StatePortV02 {
   readonly provenance: PortProvenance;
   readonly executionGuardApiVersion = '0.2.0' as const;
   readonly store: DurableStore;
+  /** The seed every control read falls back to for this task; shared with port consumers that read heads. */
+  readonly controlSeed: ControlRecordV02;
   private readonly statePort: StatePortStore;
   private readonly boundTaskId: string | undefined;
-  private readonly initialControl: ControlRecordV02;
   private readonly taskOptions: tasks.TaskOperationOptions;
 
   constructor(options: DurableStatePortV02Options) {
@@ -77,7 +78,7 @@ export class DurableStatePortV02 implements StatePortV02 {
     this.boundTaskId = options.taskId;
     this.taskOptions = { store: this.statePort, trustedTransitions: options.trustedTransitions ?? {} };
     const seed = options.initialControl ?? {};
-    this.initialControl = {
+    this.controlSeed = {
       ...DEFAULT_CONTROL,
       ...(seed.controlVersion !== undefined ? { controlVersion: seed.controlVersion } : {}),
       ...(seed.epoch !== undefined ? { epoch: seed.epoch } : {}),
@@ -85,7 +86,7 @@ export class DurableStatePortV02 implements StatePortV02 {
       ...(seed.holdRef !== undefined ? { holdRef: seed.holdRef } : {}),
       ...(seed.activeAuthorityRef !== undefined ? { activeAuthorityRef: seed.activeAuthorityRef } : {}),
     };
-    if (!CONTROL_MODES.includes(this.initialControl.mode)) throw new Error('Invalid initial control mode');
+    if (!CONTROL_MODES.includes(this.controlSeed.mode)) throw new Error('Invalid initial control mode');
     // Construction, not the `provenance` string, is what the production brand attests (contract §(b)5).
     if (this.provenance === 'real') registerProductionJournal(this);
   }
@@ -109,7 +110,7 @@ export class DurableStatePortV02 implements StatePortV02 {
   }
 
   claim(context: AdmissionContextV02): Promise<ClaimReceiptV02> {
-    return claims.claim({ store: this.statePort, initialControl: this.initialControl }, context);
+    return claims.claim({ store: this.statePort, initialControl: this.controlSeed }, context);
   }
 
   beginAttempt(claimId: string, executor: ExecutorIdentityV02): Promise<AttemptReceiptV02> {
@@ -145,7 +146,7 @@ export class DurableStatePortV02 implements StatePortV02 {
   /* ---------------- journal snapshot ---------------- */
 
   getJournalSnapshot(taskId: string): unknown {
-    return journal.getJournalSnapshot({ store: this.statePort, initialControl: this.initialControl }, taskId);
+    return journal.getJournalSnapshot({ store: this.statePort, initialControl: this.controlSeed }, taskId);
   }
 
   /* ---------------- adapter-specific journal control ---------------- */
@@ -169,10 +170,10 @@ export class DurableStatePortV02 implements StatePortV02 {
   /* ---------------- authority publication and recovery admission (real-tier §(b)5) ---------------- */
 
   publishAuthority(options: AuthorityPublicationOptionsV02): Promise<AuthorityPublicationReceiptV02> {
-    return publishAuthority({ store: this.statePort, taskId: this.boundTaskId, initialControl: this.initialControl }, options);
+    return publishAuthority({ store: this.statePort, taskId: this.boundTaskId, initialControl: this.controlSeed }, options);
   }
 
   loadAdmission(decisionId: string): Promise<StoredAdmissionV02 | null> {
-    return loadAdmission({ store: this.statePort, taskId: this.boundTaskId, initialControl: this.initialControl }, decisionId);
+    return loadAdmission({ store: this.statePort, taskId: this.boundTaskId, initialControl: this.controlSeed }, decisionId);
   }
 }

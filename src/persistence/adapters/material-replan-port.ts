@@ -26,7 +26,6 @@ import { chargeLanded, journalOperationId, journalOperationPath, journalOperatio
 import type { JournalOperationRecordV02 } from './state-port-v02-operation-lookup.ts';
 import type { DurableStatePortV02 } from './state-port-v02.ts';
 import { StatePortStore } from './state-port-v02-storage.ts';
-import { DEFAULT_CONTROL } from './state-port-v02-types.ts';
 
 export interface MaterialReplanPortOptions {
   readonly state: DurableStatePortV02;
@@ -218,7 +217,9 @@ export function createMaterialReplanPort(options: MaterialReplanPortOptions): Ma
           const bound = bindingDefect(owned, prior);
           if (bound) return denied(bound);
           if (prior.replanCount >= MAX_TASK_REPLANS) return denied('replan-cap-exceeded');
-          const control = await store.readControl(owned.taskId, DEFAULT_CONTROL);
+          // The same seed claims and authority publication use: a task with no control head is not
+          // implicitly runnable just because nothing wrote one yet.
+          const control = await store.readControl(owned.taskId, state.controlSeed);
           if (control.mode !== 'runnable' || control.holdRef !== null || control.activeClaimId !== null) return denied('control-not-runnable');
           const direction = directionDefect(owned.direction, prior);
           if (direction) return denied(direction);

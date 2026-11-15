@@ -5,7 +5,7 @@
  * exact-operation lookup. All values are synthetic; the durable store lives in a temp directory.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,7 @@ import type { BudgetLedger, BudgetReservation, BugTask, FixPlan, TaskState } fro
 import { createMaterialReplanPort } from '../../../src/persistence/adapters/material-replan-port.ts';
 import { createJournalOperationLookup, journalOperationId, journalOperationPath, journalOperationRef } from '../../../src/persistence/adapters/state-port-v02-operation-lookup.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
+import type { DurableStatePortV02Options } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { StatePortStore } from '../../../src/persistence/adapters/state-port-v02-storage.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { executeReplan } from '../../../src/uc03/repair.ts';
@@ -112,15 +113,23 @@ interface OpenCase {
   readonly close: () => void;
 }
 
+/** The persisted `uc04-journal:` operation records, byte for byte: a refusal must leave them untouched. */
+function operationRecords(port: DurableStatePortV02, taskId: string): Readonly<Record<string, string>> {
+  const dir = join(port.store.claimDir, taskId, 'v02');
+  const names = readdirSync(dir).filter(name => name.startsWith('operation-'));
+  return Object.fromEntries(names.map(name => [name, readFileSync(join(dir, name), 'utf8')]));
+}
+
 async function openCase(options?: {
   readonly state?: TaskState;
+  readonly initialControl?: DurableStatePortV02Options['initialControl'];
   readonly verifyDirection?: (state: TaskState) => boolean | Promise<boolean>;
   readonly commitTransaction?: (write: () => Promise<void>) => Promise<void>;
 }): Promise<OpenCase> {
   const baseDir = mkdtempSync(join(tmpdir(), 'uc04-material-replan-'));
   const store = new DurableStore(baseDir);
   await store.init();
-  const port = new DurableStatePortV02({ store });
+  const port = new DurableStatePortV02({ store, ...(options?.initialControl ? { initialControl: options.initialControl } : {}) });
   const state = options?.state ?? seedState();
   await port.transition(state, 0);
   const replan = createMaterialReplanPort({
@@ -344,10 +353,12 @@ test('material replan: the fourth material replan is denied before any mutation'
   });
   const c = await openCase({ state: capped });
   try {
+    const records = operationRecords(c.port, capped.taskId);
     const result = await c.replan.accept(requestOf(capped, candidateOf(capped.plan as FixPlan)));
     assert.equal(result.outcome, 'denied');
     if (result.outcome === 'denied') assert.equal(result.reason, 'replan-cap-exceeded');
     assert.deepEqual(await c.port.loadTask(capped.taskId), capped, 'the cap denies before mutation');
+    assert.deepEqual(operationRecords(c.port, capped.taskId), records, 'the cap refuses before the operation record too');
   } finally {
     c.close();
   }
@@ -356,10 +367,12 @@ test('material replan: the fourth material replan is denied before any mutation'
 test('material replan: a direction the injected verifyDirection rejects is denied, as is a stale or non-revise one', async () => {
   const refused = await openCase({ verifyDirection: () => false });
   try {
+    const records = operationRecords(refused.port, refused.state.taskId);
     const result = await refused.replan.accept(requestOf(refused.state, candidateOf(refused.state.plan as FixPlan)));
     assert.equal(result.outcome, 'denied');
     if (result.outcome === 'denied') assert.equal(result.reason, 'direction-not-verified');
     assert.deepEqual(await refused.port.loadTask(refused.state.taskId), refused.state);
+    assert.deepEqual(operationRecords(refused.port, refused.state.taskId), records, 'a refused direction writes no operation record');
   } finally {
     refused.close();
   }
@@ -379,6 +392,7 @@ test('material replan: a direction the injected verifyDirection rejects is denie
   const c = await openCase();
   try {
     const plan = c.state.plan as FixPlan;
+    const records = operationRecords(c.port, c.state.taskId);
     const cases: readonly (readonly [string, MaterialReplanRequestV02])[] = [
       ['a resume directive', requestOf(c.state, candidateOf(plan), { direction: directionOf(c.state, { directive: 'resume' }) })],
       ['a stale direction', requestOf(c.state, candidateOf(plan), { direction: directionOf(c.state, { stateVersion: c.state.stateVersion + 1 }) })],
@@ -388,6 +402,7 @@ test('material replan: a direction the injected verifyDirection rejects is denie
       const result = await c.replan.accept(request);
       assert.equal(result.outcome, 'denied', label);
       assert.deepEqual(await c.port.loadTask(c.state.taskId), c.state, `${label} mutates nothing`);
+      assert.deepEqual(operationRecords(c.port, c.state.taskId), records, `${label} writes no operation record`);
     }
   } finally {
     c.close();
@@ -398,12 +413,28 @@ test('material replan: a held control head denies before mutation', async () => 
   const c = await openCase();
   try {
     assert.equal(await c.port.setTaskControl(c.state.taskId, 'paused', 'pause-t044-0001'), true);
+    const records = operationRecords(c.port, c.state.taskId);
     const result = await c.replan.accept(requestOf(c.state, candidateOf(c.state.plan as FixPlan)));
     assert.equal(result.outcome, 'denied');
     if (result.outcome === 'denied') assert.equal(result.reason, 'control-not-runnable');
 
     const paused = await c.port.loadTask(c.state.taskId);
     assert.equal(paused?.replanCount, 0, 'a paused task is never charged');
+    assert.deepEqual(operationRecords(c.port, c.state.taskId), records, 'a paused task records no operation');
+  } finally {
+    c.close();
+  }
+});
+
+test('material replan: a task seeded paused with no control head is refused before mutation', async () => {
+  const c = await openCase({ initialControl: { mode: 'paused', holdRef: 'pause-seed-0001' } });
+  try {
+    const records = operationRecords(c.port, c.state.taskId);
+    const result = await c.replan.accept(requestOf(c.state, candidateOf(c.state.plan as FixPlan)));
+    assert.equal(result.outcome, 'denied', 'the configured seed governs a task that never wrote a control head');
+    if (result.outcome === 'denied') assert.equal(result.reason, 'control-not-runnable');
+    assert.deepEqual(await c.port.loadTask(c.state.taskId), c.state, 'nothing is charged');
+    assert.deepEqual(operationRecords(c.port, c.state.taskId), records, 'nothing is recorded');
   } finally {
     c.close();
   }

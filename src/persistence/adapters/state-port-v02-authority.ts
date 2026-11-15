@@ -16,7 +16,8 @@ import { computeCanonicalSha256, validateAdmissionV02 } from '../../contracts/fo
 import type { AdmissionContextV02, AdmissionTrustedContextV02, PolicyAuthorityRefV02 } from '../../contracts/foundation/uc03.ts';
 import { isSafeStorageId } from '../store.ts';
 import type { StatePortStore } from './state-port-v02-storage.ts';
-import type { ControlRecordV02 } from './state-port-v02-types.ts';
+import { CorruptRecordError } from './state-port-v02-storage.ts';
+import type { ControlRecordV02, StoredClaimV02 } from './state-port-v02-types.ts';
 
 const PUBLICATIONS_FILE = 'authority-publications.json';
 const SHA = /^sha256:[0-9a-f]{64}$/u;
@@ -126,6 +127,8 @@ export async function publishAuthority(options: AuthorityOperationOptions, input
     const control = await store.readControl(taskId, options.initialControl);
     const active = control.activeAuthorityRef;
     if (active && ref.decisionAuthorityGeneration <= active.decisionAuthorityGeneration) return refusal(ref, 'stale');
+    // A row recorded by a failed head write still owns its generation: a different policy may not append over it.
+    if (stored.some(row => row.generation >= ref.decisionAuthorityGeneration)) return refusal(ref, 'conflict');
 
     const entry: StoredPublicationV02 = { publicationId, publicationDigest, authorityRef: ref, generation: ref.decisionAuthorityGeneration, ...(effectiveAt !== undefined ? { effectiveAt } : {}) };
     // Record first, then the shared head: a crash between them is healed by the replay above.
@@ -187,7 +190,12 @@ export async function loadAdmission(options: AuthorityOperationOptions, decision
     });
     const matches = [];
     for (const name of names.filter(entry => entry.endsWith('.json'))) {
-      const claim = await store.readClaim(taskId, name.slice(0, -'.json'.length));
+      // A record the validators reject is the documented `null` outcome, not an outage: like an absent
+      // claim it must not hide an unrelated valid admission. Only unknown failures propagate.
+      const claim: StoredClaimV02 | null = await store.readClaim(taskId, name.slice(0, -'.json'.length)).catch(err => {
+        if (err instanceof CorruptRecordError) return null;
+        throw err;
+      });
       if (claim?.context.taskId === taskId && decisionOf(claim.context).includes(decisionId)) matches.push(claim);
     }
     const match = matches.length === 1 ? matches[0] : undefined;

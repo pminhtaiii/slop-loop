@@ -7,7 +7,7 @@
  * instead of bytes can pass. `loadAdmission` is satisfied from the persisted claim journal alone.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,6 +59,13 @@ async function headOf(baseDir: string, taskId: string): Promise<{ activeAuthorit
 
 function authorityAfter(ref: PolicyAuthorityRefV02, steps = 1): PolicyAuthorityRefV02 {
   return { ...ref, decisionAuthorityGeneration: ref.decisionAuthorityGeneration + steps };
+}
+
+/** The persisted publication rows, or `null` when the file is absent. */
+async function publicationRows(baseDir: string, taskId: string): Promise<readonly { readonly publicationId: string; readonly generation: number }[] | null> {
+  const state = new StatePortStore(new DurableStore(baseDir));
+  const stored = await state.readJson<{ readonly publications: readonly { readonly publicationId: string; readonly generation: number }[] }>(state.statePath(taskId, 'authority-publications.json'));
+  return stored?.publications ?? null;
 }
 
 async function withDir(body: (baseDir: string) => Promise<void>): Promise<void> {
@@ -167,6 +174,59 @@ test('loadAdmission returns the admission a persisted claim recorded, and a type
     const unsigned = { ...first.receipt, claimId: secondId, claimDigest: '' };
     await state.writeClaim(planContext.taskId, { ...first, receipt: { ...unsigned, claimDigest: computeCanonicalSha256({ ...unsigned, claimDigest: undefined }) } });
     assert.equal(await openPort(baseDir, planContext).loadAdmission(DECISION_ID), null);
+  }));
+
+test('a recorded publication whose head write failed refuses a different policy at the same generation', () =>
+  withDir(async baseDir => {
+    const port = openPort(baseDir);
+    await port.transition(seedTask(commandContext), 0);
+    const next = authorityAfter(commandContext.policyAuthorityRef);
+    const head = await headOf(baseDir, commandContext.taskId);
+
+    const original = StatePortStore.prototype.writeControl;
+    try {
+      StatePortStore.prototype.writeControl = async () => {
+        throw new Error('synthetic head write failure');
+      };
+      await assert.rejects(port.publishAuthority({ authorityRef: next }));
+    } finally {
+      StatePortStore.prototype.writeControl = original;
+    }
+    const rows = await publicationRows(baseDir, commandContext.taskId);
+    assert.deepEqual(
+      rows?.map(row => row.generation),
+      [next.decisionAuthorityGeneration],
+      'the row is recorded before the head write',
+    );
+    assert.deepEqual(await headOf(baseDir, commandContext.taskId), head, 'the failed head write left the head behind');
+
+    const other = { ...next, policyId: 'policy-other' };
+    const refused = await port.publishAuthority({ authorityRef: other });
+    assert.equal(refused.status, 'conflict', 'the recorded generation is taken even though the head never advanced');
+    assert.deepEqual(await publicationRows(baseDir, commandContext.taskId), rows, 'no second publication at a recorded generation');
+    assert.deepEqual(await headOf(baseDir, commandContext.taskId), head, 'the refusal writes nothing');
+
+    const healed = await port.publishAuthority({ authorityRef: next });
+    assert.equal(healed.status, 'published', 'an exact replay still heals the head');
+    assert.deepEqual((await headOf(baseDir, commandContext.taskId)).activeAuthorityRef, next);
+  }));
+
+test('loadAdmission ignores a rejected claim record instead of failing the whole lookup', () =>
+  withDir(async baseDir => {
+    const port = openPort(baseDir, planContext);
+    await port.transition(seedTask(planContext), 0);
+    const claim = await port.claim(planContext);
+    assert.notEqual(claim.claimId, '', 'the fixture admission must open a claim');
+
+    const state = new StatePortStore(new DurableStore(baseDir));
+    // A record the claim validators reject: the documented outcome is absence, not a failed lookup.
+    await state.writeJson(state.store.getClaimPath(planContext.taskId, 'claim-malformed-001'), { receipt: {}, context: {}, taskSnapshot: {}, status: 'claimed' });
+    const loaded = await openPort(baseDir, planContext).loadAdmission(DECISION_ID);
+    assert.ok(loaded, 'one malformed unrelated claim cannot hide a valid admission');
+
+    // An unreadable file is an outage, not a rejected record, and must stay distinct.
+    writeFileSync(state.store.getClaimPath(planContext.taskId, 'claim-unreadable-001'), '{not json');
+    await assert.rejects(openPort(baseDir, planContext).loadAdmission(DECISION_ID), SyntaxError);
   }));
 
 test('isProductionJournal brands only a real-provenance DurableStatePortV02 instance', () =>

@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { computeAdmissionDigest, computeAttemptOutcomeDigest, computeCanonicalSha256, computeReconciliationDigest } from '../../../src/contracts/foundation/uc03.ts';
+import { computeAdmissionDigest, computeAttemptOutcomeDigest, computeCanonicalSha256, computeReconciliationDigest, validateTaskState } from '../../../src/contracts/foundation/uc03.ts';
 import type { AttemptReconciliationReceiptV02, ClaimReceiptV02, RepositoryAdmissionContextV02, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
@@ -542,7 +542,12 @@ test('operation lookup: a snapshot or charge borrowed from another task never pr
       ),
     });
     const mine = chargeOf(task, charge);
-    const theirs = chargeOf({ ...task, taskId: otherTaskId, repositoryId: task.repositoryId }, otherCharge);
+    // A task-B state must be a valid state in its own right, or the row would prove only that a malformed record is refused.
+    const theirs = chargeOf(
+      { ...task, taskId: otherTaskId, repositoryId: task.repositoryId, taskContext: { ...(task.taskContext as NonNullable<TaskState['taskContext']>), taskId: otherTaskId } },
+      otherCharge,
+    );
+    assert.ok(validateTaskState(theirs).ok, 'the second-task fixture is a valid task state');
     const operationId = journalOperationId(context.taskId, charge.keyedId);
     const recordPath = journalOperationPath(state, context.taskId, operationId);
     await state.writeTask(context.taskId, mine);
