@@ -93,6 +93,22 @@ test('operation lookup: a claim closed unattempted is absent and leaves no trace
   }
 });
 
+test('operation lookup: closing an attempted claim is refused, so its lookup stays unknown', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-attempted-closure-'));
+  try {
+    const { port, claim } = await openClaim(baseDir);
+    const executor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
+    await port.beginAttempt(claim.claimId, executor);
+    const before = await port.loadTask(context.taskId);
+    const closure = await createDurableUnattemptedClaimClosureHandoff(port).closeUnattemptedClaim({ admission: context, claim, recipientIdentity: executor });
+    assert.equal(closure.closed, false, 'a claim with a begun attempt must not close as unattempted');
+    assert.deepEqual(await port.loadTask(context.taskId), before, 'a refused closure writes nothing');
+    assert.deepEqual(await createJournalOperationLookup(port).lookupOperation(journalOperationRef(claim.claimId)), { outcome: 'unknown' });
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
 test('operation lookup: a begun attempt with no outcome is unknown, as is an unknown id', async () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'uc04-lookup-unknown-attempt-'));
   try {
