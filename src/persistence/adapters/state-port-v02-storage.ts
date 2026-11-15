@@ -15,21 +15,24 @@ import { isRepairPatch } from './state-port-v02-admission.ts';
 const CLAIM_STATUSES: readonly StoredClaimV02['status'][] = ['claimed', 'attempting', 'settled', 'uncertain', 'observed-unsettled', 'closed'];
 const ATTEMPT_STATUSES: readonly StoredAttemptV02['status'][] = ['attempting', 'settled', 'uncertain', 'observed-unsettled'];
 
+/** A present record the canonical validators reject. Kept distinct from an I/O failure so a reader can treat it as absence where the contract says so. */
+export class CorruptRecordError extends Error {}
+
 function corrupt(kind: string, messages: readonly string[]): never {
-  throw new Error(`Corrupted UC-03 ${kind}: ${messages.join(', ')}`);
+  throw new CorruptRecordError(`Corrupted UC-03 ${kind}: ${messages.join(', ')}`);
 }
 
 /** A present control head is authoritative: a bad shape must fail closed, not silently widen authority. */
 function validateControlRecord(value: unknown): ControlRecordV02 {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Corrupted UC-03 control record: expected an object');
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new CorruptRecordError('Corrupted UC-03 control record: expected an object');
   const record = value as Record<string, unknown>;
-  if (!CONTROL_MODES.includes(record['mode'] as TaskControlModeV02)) throw new Error('Corrupted UC-03 control record: invalid mode');
+  if (!CONTROL_MODES.includes(record['mode'] as TaskControlModeV02)) throw new CorruptRecordError('Corrupted UC-03 control record: invalid mode');
   if (!Number.isSafeInteger(record['controlVersion']) || !Number.isSafeInteger(record['epoch'])) {
-    throw new Error('Corrupted UC-03 control record: controlVersion and epoch must be safe integers');
+    throw new CorruptRecordError('Corrupted UC-03 control record: controlVersion and epoch must be safe integers');
   }
-  if (record['holdRef'] !== null && typeof record['holdRef'] !== 'string') throw new Error('Corrupted UC-03 control record: holdRef must be a string or null');
-  if (record['mode'] === 'runnable' && record['holdRef'] !== null) throw new Error('Corrupted UC-03 control record: runnable mode cannot retain a hold');
-  if (record['activeClaimId'] !== null && !isSafeStorageId(record['activeClaimId'])) throw new Error('Corrupted UC-03 control record: activeClaimId must be a safe id or null');
+  if (record['holdRef'] !== null && typeof record['holdRef'] !== 'string') throw new CorruptRecordError('Corrupted UC-03 control record: holdRef must be a string or null');
+  if (record['mode'] === 'runnable' && record['holdRef'] !== null) throw new CorruptRecordError('Corrupted UC-03 control record: runnable mode cannot retain a hold');
+  if (record['activeClaimId'] !== null && !isSafeStorageId(record['activeClaimId'])) throw new CorruptRecordError('Corrupted UC-03 control record: activeClaimId must be a safe id or null');
   return value as ControlRecordV02;
 }
 
