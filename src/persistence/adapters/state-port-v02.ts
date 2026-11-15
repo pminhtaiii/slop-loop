@@ -24,6 +24,11 @@ import type {
 } from '../../contracts/foundation/uc03.ts';
 import type { validateStateTransition } from '../../contracts/foundation/uc03.ts';
 import type { DurableStore } from '../store.ts';
+import { registerProductionJournal } from '../../foundation/production-journal-registry.ts';
+import { loadAdmission, publishAuthority } from './state-port-v02-authority.ts';
+import type { StoredAdmissionV02 } from './state-port-v02-authority.ts';
+import type { AuthorityPublicationReceiptV02 } from '../../approvals/control-v02.ts';
+import type { AuthorityPublicationOptionsV02 } from '../../approvals/control-v02.ts';
 import { StatePortStore } from './state-port-v02-storage.ts';
 import type { ControlRecordV02, FenceProofV02, RecoveryEvidenceV02, TaskControlModeV02 } from './state-port-v02-types.ts';
 import { CONTROL_MODES, DEFAULT_CONTROL } from './state-port-v02-types.ts';
@@ -47,6 +52,8 @@ export type { ControlRecordV02, TaskControlModeV02 } from './state-port-v02-type
 export interface DurableStatePortV02Options {
   readonly store: DurableStore;
   readonly provenance?: PortProvenance;
+  /** The task this port publishes authority and admits continuation for; unbound ports refuse both. */
+  readonly taskId?: string;
   /** Seed for a task that has no persisted control head yet (mirrors the reference initialControl*). */
   readonly initialControl?: Partial<Pick<ControlRecordV02, 'controlVersion' | 'epoch' | 'mode' | 'holdRef' | 'activeAuthorityRef'>>;
   readonly trustedTransitions?: Readonly<Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>>;
@@ -58,6 +65,7 @@ export class DurableStatePortV02 implements StatePortV02 {
   readonly executionGuardApiVersion = '0.2.0' as const;
   readonly store: DurableStore;
   private readonly statePort: StatePortStore;
+  private readonly boundTaskId: string | undefined;
   private readonly initialControl: ControlRecordV02;
   private readonly taskOptions: tasks.TaskOperationOptions;
 
@@ -66,6 +74,7 @@ export class DurableStatePortV02 implements StatePortV02 {
     if (this.provenance !== 'real' && this.provenance !== 'mock') throw new Error('Invalid state port provenance');
     this.store = options.store;
     this.statePort = new StatePortStore(options.store);
+    this.boundTaskId = options.taskId;
     this.taskOptions = { store: this.statePort, trustedTransitions: options.trustedTransitions ?? {} };
     const seed = options.initialControl ?? {};
     this.initialControl = {
@@ -77,6 +86,8 @@ export class DurableStatePortV02 implements StatePortV02 {
       ...(seed.activeAuthorityRef !== undefined ? { activeAuthorityRef: seed.activeAuthorityRef } : {}),
     };
     if (!CONTROL_MODES.includes(this.initialControl.mode)) throw new Error('Invalid initial control mode');
+    // Construction, not the `provenance` string, is what the production brand attests (contract §(b)5).
+    if (this.provenance === 'real') registerProductionJournal(this);
   }
 
   /* ---------------- required StatePort surface ---------------- */
@@ -153,5 +164,15 @@ export class DurableStatePortV02 implements StatePortV02 {
 
   publishRecoveryEvidence(taskId: string, evidence: RecoveryEvidenceV02): Promise<boolean> {
     return control.publishRecoveryEvidence(this.statePort, taskId, evidence);
+  }
+
+  /* ---------------- authority publication and recovery admission (real-tier §(b)5) ---------------- */
+
+  publishAuthority(options: AuthorityPublicationOptionsV02): Promise<AuthorityPublicationReceiptV02> {
+    return publishAuthority({ store: this.statePort, taskId: this.boundTaskId, initialControl: this.initialControl }, options);
+  }
+
+  loadAdmission(decisionId: string): Promise<StoredAdmissionV02 | null> {
+    return loadAdmission({ store: this.statePort, taskId: this.boundTaskId, initialControl: this.initialControl }, decisionId);
   }
 }
