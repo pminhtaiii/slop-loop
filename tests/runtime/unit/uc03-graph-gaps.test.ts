@@ -11,11 +11,7 @@
  *    proposal from the post-review owner state, so the reviewer's settled ledgers survive the write.
  *    Witnessed by `tests/runtime/integration/uc03-host-pipeline.test.ts:1052`; reverting :180 to the
  *    pre-review snapshot fails that row.
- * 3. SPEC-R3-001 subset-repair cumulative diff — **closed**. `src/uc03/graph-completion.ts:131`
- *    compared the newest admission's targets to the cumulative diff, so an A+B patch followed by a
- *    B-only repair was refused. The binding now lives in `src/uc03/graph-completion-paths.ts`:
- *    every cumulative-diff path must sit in the task's monotone changed-path record, and the newest
- *    admission must target only paths the diff shows. The two rows below witness both halves.
+ * 3. SPEC-R3-001 subset-repair cumulative diff — **still open**; see the blocked row at the end.
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -30,7 +26,6 @@ import {
   type TaskState,
 } from '../../../src/contracts/foundation/uc03.ts';
 import { executeReplan } from '../../../src/uc03/replan.ts';
-import { cumulativeDiffBinding } from '../../../src/uc03/graph-completion-paths.ts';
 import { MemoryStatePort } from '../support/uc03/memory-state.ts';
 import { createTestBugTask } from '../support/uc03/state-fixtures.ts';
 
@@ -147,18 +142,13 @@ test('replan keeps the plan baseline evidence ID and refuses a candidate that sw
   assert.deepEqual(await rejectingPort.loadTask(rejected.task.taskId), rejected.state, 'a refused candidate writes nothing');
 });
 
-test('subset repair: the cumulative diff inventory is covered by the recorded admitted-patch union', () => {
-  // The observed route shape: patch one targets A+B, the repair that a failing check provokes
-  // targets only B, and the diff against the initial revision still lists A+B. The binding holds.
-  assert.equal(cumulativeDiffBinding(['src/b.py'], ['src/a.py', 'src/b.py'], ['src/a.py', 'src/b.py']), true);
-  // A later round can also declare a path the diff no longer shows; only coverage is required.
-  assert.equal(cumulativeDiffBinding(['src/b.py'], ['src/a.py', 'src/b.py'], ['src/a.py', 'src/b.py', 'src/c.py']), true);
-});
-
-test('subset repair is still refused when the cumulative diff contains a path no admitted patch targeted', () => {
-  // 'src/c.py' changed in the workspace, but no admitted patch in this task ever declared it.
-  assert.equal(cumulativeDiffBinding(['src/b.py'], ['src/a.py', 'src/b.py', 'src/c.py'], ['src/a.py', 'src/b.py']), false);
-  // And the newest admission itself must still be inside the current diff: a stale or invented
-  // target list is not authorized by an earlier round's record.
-  assert.equal(cumulativeDiffBinding(['src/c.py'], ['src/a.py', 'src/b.py'], ['src/a.py', 'src/b.py', 'src/c.py']), false);
-});
+test(
+  'subset repair: a settled repair that touches fewer paths than the cumulative diff still completes',
+  {
+    skip: 'BLOCKED outside T053 owned paths: src/uc03/graph-completion.ts:131 compares the latest admitted patch targetPaths to the cumulative inspectDiff(initialRevision).changedFiles, so an A+B patch followed by a B-only repair is refused. The fix needs graph-completion.ts, which this task does not own.',
+  },
+  async () => {
+    // Kept as the recorded SPEC-R3-001 witness location. Un-skip when the predicate separates the
+    // latest attempt's authorization from the cumulative diff inventory.
+  },
+);
