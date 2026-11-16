@@ -18,6 +18,7 @@ import { extractCheckTestSelectors } from './selectors.ts';
 import type { evaluateDeterministicCompletion, CompletionPredicateInput, TrustedReviewRecord } from './verification.ts';
 import { buildFinalReport, type FinalReport } from './report.ts';
 import { samePaths } from './graph-validation.ts';
+import { cumulativeDiffBinding } from './graph-completion-paths.ts';
 import type { UC03GraphState } from './graph-state.ts';
 import type { UC03CompletionContextRequest, UC03CompletionContextResolver, UC03RepositoryAdmission } from './graph-types.ts';
 import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
@@ -128,7 +129,7 @@ export async function loadCompletionPredicateInput(args: {
     (admissionValidation.value.runnableNode === 'Patch' && admissionValidation.value.canonicalRevision !== baseline.repositorySnapshotDigest) ||
     admissionValidation.value.expectedTaskStateVersion + 2 > state.stateVersion ||
     admissionValidation.value.planBindingDigest !== currentPlanBindingDigest(task, ancestry.originalTaskState) ||
-    !samePaths(admissionValidation.value.action.targetPaths, diffInfo.changedFiles) ||
+    !cumulativeDiffBinding(admissionValidation.value.action.targetPaths, diffInfo.changedFiles, state.changedPaths) ||
     receiptValidation.value.outcome.repositoryOperation !== 'apply-patch' ||
     receiptValidation.value.outcome.observedResultRevisionDigest !== state.repositoryRevisionDigest
   ) {
@@ -245,7 +246,9 @@ export async function loadCompletionPredicateInput(args: {
   if (!trustedChecksMatch(task, state, diffInfo.diffDigest, verificationResults, ownerCompletion.checks)) {
     return { ok: false, reasons: ['Owner-provided verification receipts do not match the current passing checks'] };
   }
-  if (!samePaths(diffInfo.changedFiles, state.changedPaths)) {
+  // The persisted record is a union, so it can be a strict superset of the diff once a later round
+  // touches less; only the diff's own inventory must be recorded, never equality.
+  if (!cumulativeDiffBinding(diffInfo.changedFiles, diffInfo.changedFiles, state.changedPaths)) {
     return { ok: false, reasons: ['Current diff changed-file inventory does not match persisted task state'] };
   }
 
