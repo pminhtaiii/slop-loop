@@ -10,6 +10,9 @@ import type {
   PolicyAuthorityRefV02,
   SafeReferenceV02,
 } from '../contracts/foundation/uc03/v02/ports.ts';
+import { acceptsJournalV02, dataMethodV02, dataPropertyV02 } from './journal-acceptance-v02.ts';
+
+export { dataMethodV02, dataPropertyV02 };
 
 export interface AuthorityPublicationOptionsV02 {
   readonly authorityRef: PolicyAuthorityRefV02;
@@ -34,7 +37,7 @@ export interface UC04JournalPortV02 {
   publishAuthority?(options: AuthorityPublicationOptionsV02): Promise<unknown>;
   setTaskControl?(taskId: string, mode: 'paused' | 'rejected', eventRef: string): Promise<unknown>;
   loadTask?(taskId: string): Promise<unknown>;
-  getJournalSnapshot?(): unknown;
+  getJournalSnapshot?(taskId: string): unknown;
   fenceClaimRecipient?(claimId: string, recipientIdentity: ExecutorIdentityV02): Promise<unknown>;
   closeUnattemptedClaim?(receipt: JournalClaimClosureReceiptV02): Promise<unknown>;
 }
@@ -85,30 +88,6 @@ const CLAIM_KEYS = ['claimId', 'claimDigest', 'taskId', 'runId', 'subjectKind', 
 const SNAPSHOT_KEYS = ['controlVersion', 'epoch', 'mode', 'holdRef', 'holdEventDigest', 'activeClaimId', 'activeAuthorityRef', 'claims', 'attempts', 'outcomes', 'reconciliations', 'closures', 'authorityPublications', 'controlEventRefs', 'fenceProofs', 'recoveryEvidencePredecessorReceiptIds', 'fencedIncarnations'] as const;
 const FENCE_KEYS = ['claimId', 'claimDigest', 'taskId', 'recipientIdentity', 'fencedExecutorIdentity', 'fencingGeneration', 'proofRef', 'adapterEvidenceRefs', 'holdRef', 'controlVersion', 'epoch'] as const;
 
-export function dataMethodV02(target: unknown, key: string): ((...args: unknown[]) => unknown) | null {
-  if (target === null || typeof target !== 'object') return null;
-  try {
-    let owner: object | null = target;
-    for (let depth = 0; owner && depth < 8; depth += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
-      if (descriptor) return 'value' in descriptor && typeof descriptor.value === 'function' ? descriptor.value.bind(target) as (...args: unknown[]) => unknown : null;
-      owner = Object.getPrototypeOf(owner) as object | null;
-    }
-  } catch { return null; }
-  return null;
-}
-export function dataPropertyV02(target: unknown, key: string): unknown {
-  if (target === null || typeof target !== 'object') return undefined;
-  try {
-    let owner: object | null = target;
-    for (let depth = 0; owner && depth < 8; depth += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
-      if (descriptor) return 'value' in descriptor ? descriptor.value : undefined;
-      owner = Object.getPrototypeOf(owner) as object | null;
-    }
-  } catch { return undefined; }
-  return undefined;
-}
 export function safeDataV02(input: unknown, depth = 0): boolean {
   if (depth > 16) return false;
   if (input === null || input === undefined || typeof input === 'boolean') return true;
@@ -185,7 +164,7 @@ export async function publishAuthorityV02(taskId: string, journal: UC04JournalPo
   readonly receipt: AuthorityPublicationReceiptV02 | null;
 }> {
   try {
-    if (!isIdV02(taskId) || !safeDataV02(input) || dataPropertyV02(journal, 'provenance') !== 'mock') return { outcome: 'paused', receipt: null };
+    if (!isIdV02(taskId) || !safeDataV02(input) || !acceptsJournalV02(journal)) return { outcome: 'paused', receipt: null };
     const fields = plainRecordV02(input, ['authorityRef', 'effectiveAt']);
     if (!fields || Object.keys(fields).some(key => key !== 'authorityRef' && key !== 'effectiveAt') ||
       fields['effectiveAt'] !== undefined && (typeof fields['effectiveAt'] !== 'string' || fields['effectiveAt'].length > 128)) return { outcome: 'paused', receipt: null };

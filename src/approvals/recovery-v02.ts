@@ -6,7 +6,8 @@ import type { AdmissionContextV02, AdmissionTrustedContextV02, ClaimReceiptV02, 
 import type { DispatchClaimV02 } from '../contracts/approvals/contracts.ts';
 import { UC05_APPROVAL_SCHEMA_VERSION_V02, computeDispatchClaimDigestV02, validateDispatchClaimV02, validatePolicyProfile } from '../contracts/approvals/contracts.ts';
 import type { ApprovalService } from './service.ts';
-import { authorityRefV02, dataMethodV02, dataPropertyV02, isIdV02, journalClaimV02, journalSnapshotV02, exactKeysV02, plainRecordV02, safeDataV02, type JournalClaimV02 } from './control-v02.ts';
+import { authorityRefV02, dataMethodV02, isIdV02, journalClaimV02, journalSnapshotV02, exactKeysV02, plainRecordV02, safeDataV02, type JournalClaimV02 } from './control-v02.ts';
+import { acceptsJournalV02, acceptsProvenanceV02 } from './journal-acceptance-v02.ts';
 
 export interface ApprovalContinuationResultV02 {
   readonly outcome: 'claimed' | 'blocked' | 'unavailable';
@@ -30,7 +31,7 @@ interface ApprovalRecoveryPortV02 {
 interface JournalClaimPortV02 {
   readonly provenance?: 'mock' | 'real';
   loadTask?(taskId: string): Promise<unknown>;
-  getJournalSnapshot?(): unknown;
+  getJournalSnapshot?(taskId: string): unknown;
   claim?(context: AdmissionContextV02): Promise<unknown>;
 }
 
@@ -64,13 +65,13 @@ export function createApprovalContinuationV02(options: {
             const getSnapshot = dataMethodV02(options.journal, 'getJournalSnapshot');
             const claimMethod = dataMethodV02(options.journal, 'claim');
             if (
-              dataPropertyV02(options.recovery, 'provenance') !== 'mock' ||
-              dataPropertyV02(options.journal, 'provenance') !== 'mock' ||
+              !acceptsJournalV02(options.recovery, ['loadAdmission']) ||
+              !acceptsJournalV02(options.journal, ['loadTask', 'getJournalSnapshot', 'claim']) ||
               !loadAdmission ||
               !loadTask ||
               !getSnapshot ||
               !claimMethod ||
-              dataPropertyV02(options.approval, 'provenance') !== 'mock'
+              !acceptsProvenanceV02(options.approval)
             )
               throw new Error('approval-recovery-unavailable');
 
@@ -106,7 +107,7 @@ export function createApprovalContinuationV02(options: {
               return result('blocked');
             active();
 
-            const before = journalSnapshotV02(await getSnapshot());
+            const before = journalSnapshotV02(await getSnapshot(options.taskId));
             const taskBefore = validateTaskState(await loadTask(options.taskId));
             active();
             if (!before || !taskBefore.ok) throw new Error('approval-recovery-unavailable');
@@ -133,7 +134,7 @@ export function createApprovalContinuationV02(options: {
             const claim = makeDispatchClaim(context, journalReceipt);
             if (!claim) throw new Error('approval-recovery-unconfirmed');
 
-            const after = journalSnapshotV02(await getSnapshot());
+            const after = journalSnapshotV02(await getSnapshot(options.taskId));
             const taskAfter = validateTaskState(await loadTask(options.taskId));
             active();
             const activeClaim = after?.claims.find(row => row.claimId === journalReceipt.claimId);
