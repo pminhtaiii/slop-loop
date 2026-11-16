@@ -37,6 +37,8 @@ interface Spy {
   mode: 'ok' | 'down' | 'mismatch';
   variant: 'plain' | 'full';
   metadataPatch: Record<string, unknown> | undefined;
+  /** Replaces the real preflight result, so an assembly module can return an arbitrary value. */
+  preflightPatch: unknown;
   env: unknown;
   stateRoot: string | undefined;
 }
@@ -79,7 +81,7 @@ function assemblyModule(): string {
     `import { REQUIRED_PORTS_V02_METHODS as METHODS, UC03_PRODUCTION_COMPONENTS_V02 as COMPONENTS, portDeclarationsV02 as DECLARATIONS } from ${JSON.stringify(types)};
 import { createHostAssembly as realAssembly } from ${JSON.stringify(real)};
 // In a child process the in-process spy is absent; the defaults keep the same code path observable.
-const SPY = globalThis.__t060 ?? { calls: [], production: 0, preflight: 0, mode: 'ok', variant: 'full', metadataPatch: undefined, env: undefined, stateRoot: undefined };
+const SPY = globalThis.__t060 ?? { calls: [], production: 0, preflight: 0, mode: 'ok', variant: 'full', metadataPatch: undefined, preflightPatch: undefined, env: undefined, stateRoot: undefined };
 const CONTRACT = ${JSON.stringify(CONTRACT)};
 const REV = ${JSON.stringify(REV)};
 const DIGEST = ${JSON.stringify(DIGEST)};
@@ -129,7 +131,7 @@ export function createHostAssembly() {
     metadata: { ...built.metadata, ...(SPY.metadataPatch ?? {}) },
     preflight: async () => {
       SPY.preflight += 1;
-      return built.preflight();
+      return SPY.preflightPatch === undefined ? built.preflight() : SPY.preflightPatch;
     },
     production: () => {
       SPY.production += 1;
@@ -147,7 +149,18 @@ const STATE_ROOT = mkdtempSync(join(tmpdir(), 't060-state-'));
 
 /** Install the spy and the profile environment the module's real assembly reads. */
 function install(patch: Partial<Spy> = {}): Spy {
-  const value: Spy = { calls: [], production: 0, preflight: 0, mode: 'ok', variant: 'full', metadataPatch: undefined, env: fixture.envOf(), stateRoot: STATE_ROOT, ...patch };
+  const value: Spy = {
+    calls: [],
+    production: 0,
+    preflight: 0,
+    mode: 'ok',
+    variant: 'full',
+    metadataPatch: undefined,
+    preflightPatch: undefined,
+    env: fixture.envOf(),
+    stateRoot: STATE_ROOT,
+    ...patch,
+  };
   (globalThis as unknown as { __t060: Spy }).__t060 = value;
   return value;
 }
@@ -259,6 +272,42 @@ test('a thrown preflight is the same docker-unavailable refusal', async () => {
   assert.equal((JSON.parse(result.output) as { readonly operational?: unknown }).operational, 'docker-unavailable');
   assert.equal(result.output.includes('probe-detail-9f2'), false);
   assert.equal(state.production, 0);
+});
+
+test('a preflight reasonCode outside the fixed set is refused, never projected', async () => {
+  // A preflight is imported host code: its result is unknown, so only the allowlisted variants project.
+  const hostile = {
+    ok: false,
+    reasonCode: `https://sentinel.invalid/private?api_key=${fixture.KEY}`,
+    sentinel: fixture.DIGEST_KEY,
+  };
+  const state = install({ preflightPatch: hostile });
+  const result = await runEvaluateCli(['preflight', '--host', hostFile(MODEL, assemblyModule())], options());
+  assert.equal(result.exitCode, 4, result.output);
+  const report = JSON.parse(result.output) as { readonly assembly?: string; readonly operational?: string; readonly metadata?: unknown };
+  assert.equal(report.assembly, 'ready', 'the static stage passed; only the operational stage refused');
+  assert.equal(report.operational, 'docker-unavailable', 'an unrecognized result maps to the fixed code');
+  for (const needle of [fixture.KEY, 'sentinel.invalid', 'api_key']) {
+    assert.equal(result.output.includes(needle), false, `${needle} must not reach the output`);
+  }
+  assert.equal(state.production, 0);
+});
+
+test('a preflight ok:true with an unexpected version or image does not project it', async () => {
+  for (const patch of [
+    { ok: true, dockerServerVersion: `https://sentinel.invalid/${fixture.KEY}`, imageId: `sha256:${'c'.repeat(64)}` },
+    { ok: true, dockerServerVersion: '27.3.1', imageId: `https://sentinel.invalid/${fixture.KEY}` },
+    { ok: true },
+    { ok: 'yes', reasonCode: 'docker-unavailable' },
+    'sentinel',
+  ]) {
+    install({ preflightPatch: patch });
+    const result = await runEvaluateCli(['preflight', '--host', hostFile(MODEL, assemblyModule())], options());
+    const report = JSON.parse(result.output) as { readonly operational?: string };
+    assert.equal(report.operational, 'docker-unavailable', JSON.stringify(patch));
+    assert.equal(result.output.includes('sentinel.invalid'), false, JSON.stringify(patch));
+    assert.equal(result.output.includes(fixture.KEY), false, JSON.stringify(patch));
+  }
 });
 
 test('an assembly without metadata or preflight keeps the pre-T060 output exactly', async () => {

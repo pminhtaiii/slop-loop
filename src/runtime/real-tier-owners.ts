@@ -16,7 +16,9 @@ import type { ApprovalService } from '../approvals/service.ts';
 import { ApprovalServiceError } from '../approvals/service.ts';
 import type { ApprovalServiceV02 } from '../approvals/service-v02.ts';
 import { createApprovalService } from '../approvals/service.ts';
+import { createRealContextProvider, type RealContextSource } from '../approvals/real-context-provider.ts';
 import type { ApprovalPort, TaskState } from '../contracts/foundation/uc03.ts';
+import type { PolicyAuthorityRefV02 } from '../contracts/foundation/uc03.ts';
 import type { GuardedReadOwnerPort } from '../foundation/guarded-read-capability.ts';
 import { isProductionJournal } from '../foundation/production-journal-registry.ts';
 import type { OwnerDelivery } from './evaluation-composition.ts';
@@ -35,8 +37,8 @@ import { createStateReadFence } from '../persistence/adapters/state-port-v02-rea
 import { DurableStatePortV02 } from '../persistence/adapters/state-port-v02.ts';
 import { DurableStore } from '../persistence/store.ts';
 
-/** The pinned owner-delivery contract these adapters declare. */
-export const REAL_TIER_DELIVERY_CONTRACT = 'uc03-real-tier/1';
+/** The pinned owner-delivery contract these adapters declare: the host template's own contract. */
+export const REAL_TIER_DELIVERY_CONTRACT = 'uc03-host-composition/2';
 /** Delegated-attestation attribution, in the delivery id so it travels with the composition. */
 const ATTRIBUTION = 'delegated-attestation';
 
@@ -47,6 +49,12 @@ export interface RealTierTaskBinding {
   readonly taskId: string;
   readonly workspaceId: string;
   readonly repositoryId: string;
+  /** The task's own policy identity; the UC-05 profile and the action facts must agree with it. */
+  readonly policyIdentity?: Readonly<{ policyId: string; policyVersion: string; configId: string; configVersion: string }> | undefined;
+  /** The per-task observed-action source; absent leaves the approval service refusing every context. */
+  readonly contextSource?: RealContextSource | undefined;
+  /** The published authority ref the read fence must see; absent leaves the read fence refusing. */
+  readonly authorityRef?: PolicyAuthorityRefV02 | undefined;
 }
 
 /** The per-task owner instances T061 composes; each is already bound to one task. */
@@ -84,6 +92,21 @@ const unbound = (): never => {
   throw new ApprovalServiceError('unavailable');
 };
 
+/**
+ * The durable provider, with the graph's first-request convention: a decision's action id is its
+ * decision id, and no request record exists yet when it is first made. The stored record stays
+ * primary; only its absence falls back to that same observed action.
+ */
+function realContext(provider: ReturnType<typeof createRealContextProvider>, taskId: string): ReturnType<typeof createRealContextProvider> {
+  return {
+    loadForAction: (task, actionId) => provider.loadForAction(task, actionId),
+    loadForDecision: async decisionId => {
+      const stored = await provider.loadForDecision(decisionId).catch(() => undefined);
+      return stored === undefined ? provider.loadForAction(taskId, decisionId) : stored;
+    },
+  };
+}
+
 export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOwners {
   const { stateRoot, revision } = options;
   const verifyDirection = options.verifyDirection ?? ((): false => false);
@@ -93,7 +116,6 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
   const baselineEvidence = createBaselineEvidenceAdapter(baselineStore);
   const journal = createJournalOperationLookup(statePort);
   const recoveryGate = createRecoveryGate({ lookupOperation: ref => journal.lookupOperation(ref), lookupWrite: ref => baselineStore.lookupWrite(ref) });
-  const profile = Object.freeze({ ...DEFAULT_POLICY_PROFILE, profileVersion: options.approvalProfileVersion });
   const bound = new Map<string, RealTierBoundOwners>();
 
   /** One bound task, or a refusal: classify() carries no task and never guesses one. */
@@ -124,17 +146,28 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
   const taskOwners = (binding: RealTierTaskBinding): RealTierBoundOwners => {
     const existing = bound.get(binding.taskId);
     if (existing) return existing;
-    const taskStatePort = new DurableStatePortV02({ store, taskId: binding.taskId });
-    const approvalStore = new DurableApprovalStore({ storageDir: join(stateRoot, 'approvals'), durableStore: store, profile, provenance: 'real' });
-    const approvalService = createApprovalService({
+    // A bound task's read fence needs a persisted, authority-bearing control head. The seed is how a
+    // new task gets one without a claim; an existing head stays authoritative.
+    const taskStatePort = new DurableStatePortV02({
+      store,
       taskId: binding.taskId,
-      profile,
-      store: approvalStore,
-      provenance: 'real',
-      // The real context source is a task-bound producer (T061); until it is supplied, the service
-      // maps a throwing port to its own `unavailable` rather than classifying unseen facts.
-      context: { loadForAction: async () => unbound(), loadForDecision: async () => unbound() },
+      ...(binding.authorityRef === undefined ? {} : { initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable' as const, activeAuthorityRef: binding.authorityRef } }),
     });
+    // The UC-05 policy identity must be the task's own, or every action fact classifies as unbound.
+    const profile = Object.freeze({
+      ...DEFAULT_POLICY_PROFILE,
+      profileVersion: options.approvalProfileVersion,
+      ...(binding.policyIdentity === undefined ? {} : { policyIdentity: binding.policyIdentity }),
+    });
+    const approvalStore = new DurableApprovalStore({ storageDir: join(stateRoot, 'approvals'), durableStore: store, profile, provenance: 'real' });
+    // The per-task observed-action source is what makes an approval request admissible (§3); without
+    // one the service maps the throwing loader to its own `unavailable` rather than guessing facts.
+    // The task record is the v0.2 one this port just seeded, not the legacy store's separate path.
+    const context =
+      binding.contextSource === undefined
+        ? { loadForAction: async () => unbound(), loadForDecision: async () => unbound() }
+        : realContext(createRealContextProvider({ durable: { loadTask: id => taskStatePort.loadTask(id) as never }, approvals: approvalStore, source: binding.contextSource }), binding.taskId);
+    const approvalService = createApprovalService({ taskId: binding.taskId, profile, store: approvalStore, provenance: 'real', context });
     const owners: RealTierBoundOwners = {
       statePort: taskStatePort,
       readFence: createStateReadFence(taskStatePort, binding),

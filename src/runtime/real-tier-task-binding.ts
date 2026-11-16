@@ -6,33 +6,31 @@
  * takes one operator-resolved catalog entry, loads its digest-pinned fixture, seeds the task through
  * the public owner path (`StatePortV02.transition(state, 0)` exactly once) and builds the four
  * task-bound producers, the per-task owner instances and `config.trustedExpectedContext`. It then
- * re-runs the unchanged `prepareUC03Host`. Every refusal happens before any write.
+ * re-runs the unchanged `prepareUC03Host`. Every refusal that can be decided before the seed happens
+ * before it, so a stale pin, a foreign catalog or a bad bound never writes a task record.
  *
  * Task facts come only from the pinned fixture: never argv, a model, or submitted JSON. The profile
- * and host.json schemas are unchanged, because the catalog is already operator-resolved.
+ * and host.json schemas are unchanged, because the catalog is already operator-resolved and the
+ * catalog path is the loaded profile's own `catalog.path`, never a caller-supplied one.
  */
 import { readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { computeCanonicalSha256, computeCheckSetDigest, validateBugTask } from '../contracts/foundation/uc03.ts';
-import type { BugTask, TaskState } from '../contracts/foundation/uc03.ts';
-import { createGuardedReadCapability } from '../foundation/guarded-read-capability.ts';
-import { createExecutionGuardV02 } from '../foundation/execution-guard.ts';
+import { computeCanonicalSha256, validateBugTask } from '../contracts/foundation/uc03.ts';
+import type { BugTask, PolicyAuthorityRefV02, TaskState } from '../contracts/foundation/uc03.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
-import { createDurableAttemptStartRecoveryHandoff, createDurableUnattemptedClaimClosureHandoff, createRefusingPatchRecoveryHandoff } from '../foundation/durable-recovery-handoffs.ts';
-import { createRepositoryReceiverV02 } from '../foundation/repository-tools.ts';
 import type { TrustedFilesystemPort } from '../foundation/repository-types.ts';
 import { stateReadPolicyDigest } from '../persistence/adapters/state-port-v02-read-fence.ts';
 import { MAX_TASK_REPLANS } from '../uc03/replan-accounting.ts';
-import { resolveExpectedTestFiles } from '../uc03/graph-validation.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
-import type { TrustedHostExpectedContext } from '../uc03/investigation-types.ts';
+import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import { createHostActionContext } from './host-action-context.ts';
-import { createTrustedHostSnapshot } from './trusted-host-snapshot.ts';
 import { seedTaskState } from './real-tier-task-seed.ts';
 import type { SeededTaskIds } from './real-tier-task-seed.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import { hostDeliveries } from './real-tier-assembly.ts';
+import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
+import { buildBoundCapabilities, type BoundCapabilities } from './real-tier-task-producers.ts';
 import { prepareUC03Host, type UC03HostInputs, type UC03HostReadiness } from './uc03-host-bootstrap.ts';
 
 /** One catalog entry, as the T047 profile's catalog file already declares it. */
@@ -49,14 +47,12 @@ export interface RealTierFixture {
 }
 
 export interface RealTierBindingOptions {
-  /** The catalog file the profile names; the entry and its fixture are never named by argv. */
-  readonly catalogPath: string;
-  /** The catalog entry to bind, by `caseId`. */
+  /** The catalog entry to bind, by `caseId`; the catalog itself is the profile's `catalog.path`. */
   readonly caseId: string;
   /** Host.json pins and identity, so binding re-runs `prepareUC03Host` on the bound inputs. */
   readonly pins: UC03HostInputs['pins'];
   readonly identity: Readonly<Record<string, string>>;
-  /** Injectable safe-id source for the run and workspace the binding allocates itself. */
+  /** Injectable safe-id source for the run and workspace a new task allocates. */
   readonly ids?: ((kind: 'run' | 'workspace', caseId: string) => string) | undefined;
   /** Reads both files; a test seam that proves the refusal precedes any read of owner state. */
   readonly readTextFile?: ((path: string) => string) | undefined;
@@ -66,6 +62,8 @@ export interface RealTierBindingOptions {
   readonly maxReadPathLength?: number | undefined;
   readonly maxQueryLength?: number | undefined;
   readonly maxFileBytes?: number | undefined;
+  /** Overrides the profile's `artifacts.retainRoot`; tests point it at a temp directory. */
+  readonly retainedRoot?: string | undefined;
 }
 
 export type RealTierBindingRefusal = Readonly<{ status: 'unavailable'; reasonCode: string; path: string }>;
@@ -87,6 +85,7 @@ export type RealTierBinding = RealTierBoundTask | RealTierBindingRefusal;
 
 const refused = (reasonCode: string, path = '$'): RealTierBindingRefusal => Object.freeze({ status: 'unavailable', reasonCode, path });
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const BOUND = (value: unknown): number | undefined => (typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined);
 
 let sequence = 0;
 /** Safe and unique per process: the allocator used when the caller supplies no id source. */
@@ -162,122 +161,103 @@ function policyOf(task: BugTask, options: RealTierBindingOptions): Readonly<{ po
 }
 
 /**
- * Reads, validates, seeds once and binds. A refusal returns no ports; nothing before the seed writes.
+ * Reads, validates, binds and seeds once. The catalog is the loaded profile's own `catalog.path`.
+ *
+ * Everything the binding can decide on its own — the fixture, the ids, the finite bounds, the host
+ * pins against this assembly — is decided before the seed, so those refusals leave no task record.
+ * The per-task capability construction happens after it, because a construction failure is a
+ * documented recover/translate case: the task is already allocated and named, so it stays persisted
+ * and the binding reports a bounded `unavailable` rather than rejecting.
  */
 export async function bindRealTierTask(assembly: RealTierAssembly, options: RealTierBindingOptions): Promise<RealTierBinding> {
   const readText = options.readTextFile ?? ((path: string): string => readFileSync(path, 'utf8'));
+  const catalogPath = assembly.profile.catalog.path;
   let catalogText: string;
   try {
-    catalogText = readText(options.catalogPath);
+    catalogText = readText(catalogPath);
   } catch {
     return refused('catalog-unreadable', '$.catalog');
   }
   const found = entryOf(catalogText, options.caseId);
   if ('status' in found) return found;
-  const fixture = loadFixture(readText, found, options.catalogPath);
+  const fixture = loadFixture(readText, found, catalogPath);
   if ('status' in fixture) return fixture;
   const { task, repositoryRoot } = fixture;
 
-  // `validateTaskState` fixes `state.taskId` to the pinned task's own id (`TASK_CONTEXT_MISMATCH`),
-  // so the allocator owns the run and workspace names; the task id is the fixture's identity.
+  // Every finite bound is validated here, before any effect: a zero TTL or path bound is a bad
+  // binding, not a task that should stay half-built.
+  const actionTtlMs = options.actionTtlMs ?? 60_000;
+  const maxReadPathLength = options.maxReadPathLength ?? 512;
+  const maxQueryLength = options.maxQueryLength ?? 256;
+  const maxFileBytes = options.maxFileBytes ?? 1_048_576;
+  if ([actionTtlMs, maxReadPathLength, maxQueryLength, maxFileBytes].some(value => BOUND(value) === undefined)) return refused('options-invalid', '$.options');
+
+  // Static pins before any write: every delivery this binding emits declares the assembly's own
+  // revision and the host contract, so a drifted host file is named here, not discovered after a seed.
+  if (options.pins.contractVersion !== REAL_TIER_DELIVERY_CONTRACT) return refused('host-incompatible-delivery', '$');
+  if (UC03_PRODUCTION_COMPONENTS_V02.some(component => options.pins.revisions[component] !== assembly.revision)) return refused('host-stale-revision', '$');
+
+  // An existing task is loaded before anything is allocated, and its persisted identity is
+  // authoritative (§(g), §1): a rebind returns the same run and workspace, or it is refused.
+  const existing = await assembly.owners.components.statePort.loadTask(task.taskId);
+  if (existing !== null) {
+    if (existing.taskContext !== undefined && computeCanonicalSha256(existing.taskContext) !== computeCanonicalSha256(task)) return refused('task-identity-mismatch', '$.task');
+    if (existing.repositoryId !== task.repositoryId) return refused('task-repository-mismatch', '$.task.repositoryId');
+    if (existing.repositoryRevisionDigest !== task.initialRevisionDigest) return refused('task-revision-mismatch', '$.task.initialRevisionDigest');
+  }
   const allocate = options.ids ?? defaultIds;
-  const ids: SeededTaskIds = { taskId: task.taskId, runId: allocate('run', options.caseId), workspaceId: allocate('workspace', options.caseId) };
+  const ids: SeededTaskIds =
+    existing === null
+      ? { taskId: task.taskId, runId: allocate('run', options.caseId), workspaceId: allocate('workspace', options.caseId) }
+      : { taskId: task.taskId, runId: existing.runId, workspaceId: existing.workspaceId };
   if (![ids.taskId, ids.runId, ids.workspaceId].every(id => SAFE_ID.test(id) && !id.includes('..'))) return refused('task-id-invalid', '$.ids');
 
-  const owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId });
-  // An existing task is loaded and never re-seeded or overwritten (§(g)); it must be this task.
-  const existing = await owners.statePort.loadTask(ids.taskId);
+  const policy = policyOf(task, options);
+  // The authority ref the read fence will see: seeded as the task's control head, so a bound read is
+  // admitted rather than refused, and digesting to exactly the policy the capability was built with.
+  const authorityRef: PolicyAuthorityRefV02 = { ...policy, issuerKeyRef: `host-${task.configId}`, decisionAuthorityGeneration: 1 };
+  const policyDigest = stateReadPolicyDigest(ids.taskId, authorityRef);
+
+  // The observed-action source is built before the seed so the owner instances are wired once, with
+  // it; `taskOwners` caches by task id, so a later call could never add it.
+  const filesystem: TrustedFilesystemPort = new WorkspaceFilesystemPort({ root: repositoryRoot });
+  const contextSource = createHostActionContext({ filesystem, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, ttlMs: actionTtlMs });
+  const owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, authorityRef, contextSource });
   if (existing === null) {
     try {
       await owners.statePort.transition(seedTaskState(task, ids), 0);
     } catch {
       return refused('seed-refused', '$.task');
     }
-  } else if (existing.taskContext !== undefined && computeCanonicalSha256(existing.taskContext) !== computeCanonicalSha256(task)) {
-    return refused('task-identity-mismatch', '$.task');
   }
   const seeded: TaskState | null = await owners.statePort.loadTask(ids.taskId);
   if (seeded === null) return refused('seed-missing', '$.task');
 
-  const policy = policyOf(task, options);
-  const filesystem: TrustedFilesystemPort = new WorkspaceFilesystemPort({ root: repositoryRoot });
-  const expectedTestFiles = resolveExpectedTestFiles(task);
-  // The digest names the authority ref UC-05 publishes; until then every read is refused by the fence,
-  // which is the intended state rather than a permissive default.
-  const policyDigest = stateReadPolicyDigest(ids.taskId, {
-    ...policy,
-    issuerKeyRef: `host-${task.configId}`,
-    decisionAuthorityGeneration: 1,
-  });
-  const guardedRead = createGuardedReadCapability({
-    capabilityId: `read-${ids.taskId}`,
-    taskId: ids.taskId,
-    workspaceId: ids.workspaceId,
-    repositoryId: task.repositoryId,
-    expectedRevisionDigest: task.initialRevisionDigest,
-    policyDigest,
-    bounds: { maxPathLength: options.maxReadPathLength ?? 512, maxQueryLength: options.maxQueryLength ?? 256 },
-    provenance: 'real',
-    owner: owners.readFence,
-  });
-  const hostAuthority = createTrustedHostSnapshot({
-    filesystem,
-    workspaceId: ids.workspaceId,
-    repositoryId: task.repositoryId,
-    acceptanceCriteria: task.acceptanceCriteria,
-    requiredChecks: task.requiredChecks,
-    expectedTestFiles,
-    maxFileBytes: options.maxFileBytes ?? 1_048_576,
-  });
-  const contextSource = createHostActionContext({ filesystem, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, ttlMs: options.actionTtlMs ?? 60_000 });
-  const repositoryPort = createRepositoryReceiverV02({
-    guardCapability: guardedRead,
-    fsPort: filesystem,
-    limits: { maxExcerptBytes: Math.min(task.limits.maxOutputBytes, 65_536), maxResultCount: 32 },
-    expectedRevisionDigest: task.initialRevisionDigest,
-    provenance: 'real',
-    workspaceRoot: repositoryRoot,
-    statePort: owners.statePort,
-    commandExecutor: assembly.executor,
-    workspaceManager: assembly.workspaceManager,
-    trustedCommandResourcePolicy: { isolationProfileRef: assembly.profile.image.label, limits: task.limits },
-    adapterIdentity: assembly.executor.getAdapterIdentity(),
-    processIncarnation: assembly.executor.getProcessIncarnation(),
-    fencingGeneration: assembly.executor.getFencingGeneration() || 1,
-    unattemptedClaimClosureHandoff: createDurableUnattemptedClaimClosureHandoff(owners.statePort),
-    attemptStartRecoveryHandoff: createDurableAttemptStartRecoveryHandoff(owners.statePort),
-    patchRecoveryHandoff: createRefusingPatchRecoveryHandoff(),
-  });
-  const executionGuard = createExecutionGuardV02({ ports: { statePort: owners.statePort, repositoryPort }, config: { provenance: 'real' } });
-  const configPort = { provenance: 'real' as const, loadConfig: () => ({ configId: task.configId, configVersion: task.configVersion }) };
-  const trustedExpectedContext: TrustedHostExpectedContext = {
-    taskId: ids.taskId,
-    workspaceId: ids.workspaceId,
-    repositoryId: task.repositoryId,
-    revisionDigest: task.initialRevisionDigest,
-    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
-    expectedTestFiles,
-    executionGuard,
-    statePort: owners.statePort,
-  };
-  const ports: UC03GraphPortsV02 = {
-    ...assembly.components,
-    statePort: owners.statePort,
-    guardedRead,
-    hostAuthority,
-    contextSource,
-    repositoryPort,
-    executionGuard,
-    configPort,
-  };
-  const config: UC03GraphConfigV02 = { trustedExpectedContext };
+  // From here the task is persisted. A capability that cannot be constructed is the documented
+  // recover/translate case: a bounded refusal, never a rejection, and never a silent success.
+  let bound: BoundCapabilities;
+  try {
+    bound = await buildBoundCapabilities(assembly, task, ids, filesystem, owners, contextSource, {
+      authorityRef,
+      repositoryRoot,
+      policyDigest,
+      maxReadPathLength,
+      maxQueryLength,
+      maxFileBytes,
+      retainedRoot: options.retainedRoot ?? assembly.profile.artifacts.retainRoot,
+    });
+    // The one genuinely post-seed effect: capturing the retained initial tree (§7).
+    await bound.diff.prepare();
+  } catch {
+    return refused('binding-unavailable', '$');
+  }
 
-  // The unchanged bootstrap over the bound inputs and the host's own pins (§1 second stage).
+  // The unchanged bootstrap over the bound inputs and the host's own pins (§1 second stage). Its pins
+  // were checked above, so only identity or a substitution can refuse here.
   const readiness = prepareUC03Host({
-    owner: hostDeliveries(assembly.owners.deliveries, assembly.components, { repositoryPort, executionGuard, configPort: configPort as UC03GraphPortsV02['configPort'] }, () => assembly.revision),
-    producers: { guardedRead, hostAuthority, contextSource, baselineEvidence: assembly.components.baselineEvidence },
-    config,
+    owner: hostDeliveries(assembly.owners.deliveries, assembly.components, bound.hostPorts, () => assembly.revision),
+    producers: { guardedRead: bound.guardedRead, hostAuthority: bound.hostAuthority, contextSource: bound.contextSource, baselineEvidence: assembly.components.baselineEvidence },
+    config: bound.config,
     pins: options.pins,
     identity: options.identity,
   });
@@ -289,8 +269,8 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
     task,
     ids,
     repositoryRoot,
-    ports,
-    config,
+    ports: bound.ports,
+    config: bound.config,
     readiness,
   });
 }

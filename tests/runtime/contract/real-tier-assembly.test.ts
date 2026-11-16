@@ -17,6 +17,7 @@ import { REAL_TIER_COMPONENTS, createHostAssembly, resolveRealTierAssembly } fro
 import type { RealTierDependencies, RealTierResolution } from '../../../src/runtime/real-tier-assembly.ts';
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
 import { createScanFixture, type ScanFixture } from '../unit/real-tier-scan-fixtures.ts';
+import { prepareAssembly } from '../../../src/cli/evaluate-host.ts';
 
 const fixture: ScanFixture = createScanFixture('t050-assembly-', 't050-assembly-digest-key');
 
@@ -83,7 +84,7 @@ test('a complete real component set builds with zero fetches, zero spawns and ze
   assert.equal(resolved.owners.productionJournal, true);
   assert.deepEqual(
     resolved.owners.deliveries.map(delivery => [delivery.component, delivery.provenance, delivery.contractVersion]),
-    ['statePort', 'approvalPort', 'baselineEvidence', 'replanPort'].map(component => [component, 'real', 'uc03-real-tier/1']),
+    ['statePort', 'approvalPort', 'baselineEvidence', 'replanPort'].map(component => [component, 'real', 'uc03-host-composition/2']),
   );
   // Delegated-attestation attribution only; no personal owner name may appear in a delivery identity.
   for (const delivery of resolved.owners.deliveries) assert.match(delivery.id, /delegated-attestation/u);
@@ -179,4 +180,46 @@ test('each single component swapped for a mock delivery refuses that component',
     assert.deepEqual(effects, { fetch: 0, spawn: 0 });
     assert.deepEqual(entriesUnder(stateRoot), []);
   }
+});
+
+test('(T061 a) the no-argument default revision is the template HEAD pin, so the printed template is assembly-ready', async () => {
+  // The template pins `git rev-parse HEAD`; the factory's default must be the same value, or the host
+  // file the operator prints can never be assembled against the factory that reads it.
+  const { deps } = dependencies({ revision: undefined });
+  const resolved = resolveRealTierAssembly(deps);
+  assert.equal(resolved.status, 'assembly-ready', JSON.stringify(resolved));
+  if (resolved.status !== 'assembly-ready') return;
+
+  const { runRealTierScanCli } = await import('../../../src/cli/real-tier-scan.ts');
+  const { execFileSync } = await import('node:child_process');
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();
+  assert.equal(resolved.revision, head, 'the default revision is the commit the template pins');
+
+  // The printed template is a host file: build one from it and run the unchanged bootstrap over it.
+  const env = fixture.envOf();
+  const printed = await runRealTierScanCli(['--print-host-template'], { env, repositoryRoot: fixture.REPO });
+  assert.equal(printed.exitCode, 0, printed.output);
+  const template = JSON.parse(printed.output) as {
+    readonly profileDigest: string;
+    readonly configDigest: string;
+    readonly pricingDigest: string;
+    readonly requestedModel: string;
+    readonly adapterVersions: readonly string[];
+    readonly contractVersion: string;
+    readonly revisions: Readonly<Record<string, string>>;
+  };
+  const created = createHostAssembly(deps);
+  assert.ok('host' in created, JSON.stringify(created));
+  if (!('host' in created)) return;
+  const readiness = prepareAssembly(created.host, {
+    identity: { profileId: 'uc03-runtime-evaluation-v1', profileDigest: template.profileDigest, configDigest: template.configDigest, pricingDigest: template.pricingDigest },
+    pins: { contractVersion: template.contractVersion, revisions: template.revisions },
+    profileDigest: template.profileDigest,
+    configDigest: template.configDigest,
+    pricingDigest: template.pricingDigest,
+    requestedModel: template.requestedModel,
+    adapterVersions: template.adapterVersions,
+  });
+  assert.equal(readiness?.status, 'ready', JSON.stringify(readiness));
+  assert.equal(template.contractVersion, 'uc03-host-composition/2');
 });

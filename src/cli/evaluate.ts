@@ -12,6 +12,7 @@ import { isEvaluationControlCommand, parseEvaluationControlArgs, runEvaluationCo
 import { runEvaluationConsoleCli } from './evaluate-console.ts';
 import {
   cliError,
+  classifyPreflightResult,
   loadHostConfiguration,
   prepareAssembly,
   resolveHostAssembly,
@@ -21,6 +22,7 @@ import {
   type HostAssemblyResolution,
   type HostConfiguration,
   type HostMetadata,
+  type HostOperational,
   type HostProduction,
   type UC03HostReady,
 } from './evaluate-host.ts';
@@ -142,7 +144,7 @@ export function readinessReport(readiness: UC03HostReadiness, observed?: HostObs
 }
 
 /** The §(i) members the CLI validated; `operational` is absent when the assembly ships no preflight. */
-type HostObservation = Readonly<{ metadata: HostMetadata; operational?: 'ready' | 'docker-unavailable' | 'image-mismatch' | undefined }>;
+type HostObservation = Readonly<{ metadata: HostMetadata; operational?: HostOperational | undefined }>;
 
 type Assembled =
   | Readonly<{
@@ -168,9 +170,10 @@ async function observe(
   if (metadata === undefined) return { ok: false, result: cliError(4, 'HOST_METADATA_INVALID', 'Host metadata was refused; values are not echoed') };
   if (configuration.requestedModel !== metadata.model) return { ok: false, result: cliError(4, 'HOST_MODEL_MISMATCH', 'The requested model does not match the pinned profile') };
   if (resolved.preflight === undefined) return { ok: true, observed: { metadata } };
-  // A preflight that throws is the same refusal as one that reports a dead daemon.
-  const preflight = await resolved.preflight().catch(() => ({ ok: false as const, reasonCode: 'docker-unavailable' as const }));
-  return { ok: true, observed: { metadata, operational: preflight.ok ? 'ready' : preflight.reasonCode } };
+  // A preflight that throws is the same refusal as one that reports a dead daemon, and its result is
+  // untrusted host output: only the allowlisted variants are projected, never a field of the rest.
+  const preflight = await resolved.preflight().catch(() => undefined);
+  return { ok: true, observed: { metadata, operational: classifyPreflightResult(preflight) } };
 }
 
 /** Assemble the production route from the host file; an absent assembly is a gap, never a fallback. */

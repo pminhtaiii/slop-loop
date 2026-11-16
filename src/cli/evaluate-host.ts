@@ -49,6 +49,27 @@ export type HostMetadata = Readonly<{
 
 export type HostPreflight = () => Promise<Readonly<{ ok: true; dockerServerVersion: string; imageId: string }> | Readonly<{ ok: false; reasonCode: 'docker-unavailable' | 'image-mismatch' }>>;
 
+/** The only operational outcomes §(i) projects. Anything else is the dead-daemon refusal. */
+export type HostOperational = 'ready' | 'docker-unavailable' | 'image-mismatch';
+
+const DOCKER_SERVER_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$/u;
+
+/**
+ * A preflight is imported host code, so its result is `unknown`: only the two allowlisted variants
+ * are accepted, each field against its own pattern, and anything else becomes the fixed dead-daemon
+ * refusal. No field of a rejected result is ever projected, so a URL or a key in it cannot be echoed.
+ */
+export function classifyPreflightResult(value: unknown): HostOperational {
+  const record = typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>) : undefined;
+  if (record?.['ok'] === true) {
+    return typeof record['dockerServerVersion'] === 'string' && DOCKER_SERVER_VERSION.test(record['dockerServerVersion']) && typeof record['imageId'] === 'string' && SHA256.test(record['imageId'])
+      ? 'ready'
+      : 'docker-unavailable';
+  }
+  const reason = record?.['ok'] === false ? record['reasonCode'] : undefined;
+  return reason === 'docker-unavailable' || reason === 'image-mismatch' ? reason : 'docker-unavailable';
+}
+
 /** What the operator's assembly module contributes: the host wiring and an optional route binding. */
 export type HostAssemblyResolution = Readonly<{
   host: HostAssembly;

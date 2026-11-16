@@ -29,6 +29,7 @@ import { observeDockerReadiness } from '../foundation/docker-readiness.ts';
 import { structuredSpawn } from '../foundation/docker-spawn.ts';
 import { validateDockerProfile } from '../foundation/docker-workspace-policy.ts';
 import type { DockerProfile } from '../foundation/docker-workspace-types.ts';
+import { spawnSync } from 'node:child_process';
 import { loadRealTierProfile, type RealTierEnvironment, type RealTierProfile } from './real-tier-profile.ts';
 import { createRealTierOwners, type RealTierOwners, type RealTierOwnersOptions } from './real-tier-owners.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
@@ -36,6 +37,10 @@ import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
 import type { UC03HostInputs, UC03HostProducers } from './uc03-host-bootstrap.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import type { OwnerDelivery } from './evaluation-composition.ts';
+import { UNBOUND_CONFIG, unboundHostPorts, unboundProducers, type RealTierHostPorts } from './real-tier-task-producers.ts';
+
+export { UNBOUND_CONFIG, TASK_UNBOUND, unboundHostPorts, unboundProducers } from './real-tier-task-producers.ts';
+export type { RealTierHostPorts } from './real-tier-task-producers.ts';
 
 /** Partial review profile: the pinned identity plus the two byte bounds the transport needs. */
 const REVIEW_PROMPT = Object.freeze({ ...DEEPSEEK_REVIEW_PROMPT, maxOutputBytes: 16_384, maxResponseBytes: 131_072 });
@@ -119,19 +124,6 @@ export type RealTierResolution = RealTierAssembly | RealTierUnavailable;
 
 const unavailable = (reasonCode: string, path = '$'): RealTierUnavailable => Object.freeze({ status: 'unavailable', reasonCode, path });
 
-/** The one refusal an unbound producer makes: named, bounded, and with no effect. */
-const TASK_UNBOUND = 'TASK_UNBOUND' as const;
-const unbound = (): never => {
-  throw new Error(TASK_UNBOUND);
-};
-
-/** The three host-built ports whose binding is per task; unbound they refuse, bound they act. */
-export interface RealTierHostPorts {
-  readonly repositoryPort: UC03GraphPortsV02['repositoryPort'];
-  readonly executionGuard: UC03GraphPortsV02['executionGuard'];
-  readonly configPort: UC03GraphPortsV02['configPort'];
-}
-
 /**
  * The four owner components this host never takes from an owner: `baselineEvidence` is a host producer
  * (host contract §3), and the other three are T061's task-bound producers. Listing any of them twice
@@ -160,58 +152,6 @@ export function hostDeliveries(owner: RealTierOwners['deliveries'], components: 
   );
   return Object.freeze([...owner.filter(delivery => !(PRODUCER_COMPONENTS as readonly string[]).includes(delivery.component)), ...built]);
 }
-
-/**
- * The four task-bound producers before a task exists. Each one has the complete callable surface and
- * `provenance: 'real'`, so the production port check admits them, and every call refuses with
- * `TASK_UNBOUND`. This is what lets `prepareUC03Host` be ready while nothing can act yet (§1).
- */
-function unboundProducers(): UC03HostProducers {
-  return Object.freeze({
-    guardedRead: Object.freeze({
-      provenance: 'real' as const,
-      capabilityId: 'unbound-read',
-      taskId: '',
-      workspaceId: '',
-      mediateRead: async (): Promise<never> => unbound(),
-    }),
-    baselineEvidence: Object.freeze({ provenance: 'real' as const, persistBaselineEvidence: async (): Promise<never> => unbound(), loadBaselineEvidence: async (): Promise<never> => unbound() }),
-    hostAuthority: Object.freeze({ loadSnapshot: async (): Promise<never> => unbound() }),
-    contextSource: Object.freeze({ provenance: 'real' as const, observe: (): never => unbound() }),
-  }) as unknown as UC03HostProducers;
-}
-
-/** The task-bound repository port before a task exists: every method of the v0.2 surface, refusing. */
-function unboundRepositoryPort(): UC03GraphPortsV02['repositoryPort'] {
-  return Object.freeze({
-    provenance: 'real' as const,
-    listDir: async (): Promise<never> => unbound(),
-    readFile: async (): Promise<never> => unbound(),
-    searchCode: async (): Promise<never> => unbound(),
-    applyPatch: async (): Promise<never> => unbound(),
-    runCommand: async (): Promise<never> => unbound(),
-    runTests: async (): Promise<never> => unbound(),
-    inspectDiff: async (): Promise<never> => unbound(),
-  }) as unknown as UC03GraphPortsV02['repositoryPort'];
-}
-
-/** The v0.2 execution guard and config port, likewise refusing until a task is bound. */
-function unboundHostPorts(): RealTierHostPorts {
-  return Object.freeze({
-    repositoryPort: unboundRepositoryPort(),
-    executionGuard: Object.freeze({
-      provenance: 'real' as const,
-      executionGuardApiVersion: '0.2.0' as const,
-      validateAndExecute: async (): Promise<never> => unbound(),
-    }) as unknown as UC03GraphPortsV02['executionGuard'],
-    configPort: Object.freeze({ loadConfig: (): never => unbound() }),
-  });
-}
-
-/** A context that names no task, so `trustedExpectedContext()` refuses it rather than guessing one. */
-const UNBOUND_CONFIG: UC03GraphConfigV02 = Object.freeze({
-  trustedExpectedContext: Object.freeze({ taskId: '', workspaceId: '', repositoryId: '', revisionDigest: '', criteriaDigest: '', checkSetDigest: '', expectedTestFiles: Object.freeze([]) }),
-});
 
 /** The profile's image as the pinned Docker profile the controller and executor both validate. */
 function dockerProfileOf(profile: RealTierProfile): DockerProfile | RealTierUnavailable {
@@ -281,7 +221,9 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
   } catch {
     return unavailable('docker-profile-invalid', '$.image');
   }
-  const revision = dependencies.revision ?? profile.profileDigest;
+  // The template pins the Git HEAD as every delivery revision, so HEAD is the default: a profile
+  // digest here would make the no-argument factory stale against the host file it is printed for.
+  const revision = dependencies.revision ?? gitHead();
   // No catch here: the profile already validated the credential, the endpoint, the pricing and both
   // run limits, so anything that throws is a programming error and must surface, not be relabelled.
   const transport = createDeepSeekTransport({
@@ -332,7 +274,16 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
   });
 }
 
-/** Resolves the operator profile and builds the task-independent set, or refuses with a bounded code. */
+/** The operator's current commit, as `--print-host-template` pins it; a failed query is a bounded refusal. */
+function gitHead(): string {
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true });
+  const revision = head.status === 0 && typeof head.stdout === 'string' ? head.stdout.trim() : '';
+  return /^[a-f0-9]{40,64}$/u.test(revision) ? revision : '';
+}
+
+/**
+ * Resolves the operator profile and builds the task-independent set, or refuses with a bounded code.
+ */
 export function resolveRealTierAssembly(dependencies: RealTierDependencies = {}): RealTierResolution {
   const env = dependencies.env ?? process.env;
   const loaded = loadRealTierProfile(env, dependencies.repositoryRoot === undefined ? {} : { repositoryRoot: dependencies.repositoryRoot });
@@ -340,7 +291,9 @@ export function resolveRealTierAssembly(dependencies: RealTierDependencies = {})
   const profile = loaded.value;
   const stateRoot = dependencies.stateRoot ?? profile.stateRoot;
   if (dependencies.stateRoot !== undefined && !stateRoot.trim()) return unavailable('state-root-invalid', '$.stateRoot');
-  return build(profile, dependencies, stateRoot);
+  const resolved = build(profile, dependencies, stateRoot);
+  // An empty default revision is reported where it is one: never as a built assembly with no pins.
+  return resolved.status === 'assembly-ready' && resolved.revision === '' ? unavailable('delivery-revision-unresolved', '$.revision') : resolved;
 }
 
 /**
