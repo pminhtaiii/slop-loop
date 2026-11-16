@@ -29,8 +29,7 @@ import { observeDockerReadiness } from '../foundation/docker-readiness.ts';
 import { structuredSpawn } from '../foundation/docker-spawn.ts';
 import { validateDockerProfile } from '../foundation/docker-workspace-policy.ts';
 import type { DockerProfile } from '../foundation/docker-workspace-types.ts';
-import { readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { gitHead } from './git-head.ts';
 import { loadRealTierProfile, type RealTierEnvironment, type RealTierProfile } from './real-tier-profile.ts';
 import { createRealTierOwners, type RealTierOwners, type RealTierOwnersOptions } from './real-tier-owners.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
@@ -273,53 +272,6 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
     config: UNBOUND_CONFIG,
     evidenceTier: 'controlled-prerequisite',
   });
-}
-
-const COMMIT = /^[a-f0-9]{40,64}$/u;
-/** One text file, or undefined: a missing file is a refusal, never an exception. */
-const text = (path: string): string | undefined => (statSync(path, { throwIfNoEntry: false })?.isFile() === true ? readFileSync(path, 'utf8') : undefined);
-
-/** Git's own upward `.git` discovery, following a worktree `.git` file. */
-function gitDirOf(root: string): string | undefined {
-  for (let at = resolve(root); ; at = dirname(at)) {
-    const candidate = join(at, '.git');
-    const stat = statSync(candidate, { throwIfNoEntry: false });
-    if (stat?.isDirectory() === true) return candidate;
-    if (stat?.isFile() === true) {
-      const pointer = /^gitdir:\s*(.+)$/mu.exec(text(candidate) ?? '')?.[1]?.trim();
-      return pointer === undefined ? undefined : resolve(at, pointer);
-    }
-    if (dirname(at) === at) return undefined;
-  }
-}
-
-/** A ref's value from a loose ref or a `packed-refs` line; `^` peel lines name no ref. */
-function refValue(ref: string, gitDirs: readonly string[]): string {
-  for (const dir of gitDirs) {
-    const loose = text(join(dir, ref))?.trim();
-    if (loose !== undefined) return loose;
-  }
-  for (const line of gitDirs.flatMap(dir => text(join(dir, 'packed-refs'))?.split('\n') ?? [])) {
-    const [value, name] = line.trim().split(/\s+/u);
-    if (name === ref && value !== undefined) return value;
-  }
-  return '';
-}
-
-/**
- * The commit `--print-host-template` pins, read with plain fs so assembly makes no spawn (contract §(i)):
- * a normal checkout, a worktree `.git` file, a detached HEAD, a symbolic ref and `packed-refs`.
- * Anything unresolved is `''`, reported as `delivery-revision-unresolved`.
- */
-function gitHead(root: string): string {
-  const gitDir = gitDirOf(root);
-  if (gitDir === undefined) return '';
-  const head = text(join(gitDir, 'HEAD'))?.trim() ?? '';
-  const common = text(join(gitDir, 'commondir'))?.trim();
-  // A worktree's refs live in the common directory its `commondir` file names.
-  const ref = /^ref:\s*(\S+)$/u.exec(head)?.[1];
-  const value = ref === undefined ? head : refValue(ref, common === undefined ? [gitDir] : [gitDir, resolve(gitDir, common)]);
-  return COMMIT.test(value) ? value : '';
 }
 
 /**
