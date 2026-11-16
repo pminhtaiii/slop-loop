@@ -5,8 +5,8 @@
  * A `mock` port is accepted unchanged, so the controlled path keeps its behaviour. A port that
  * declares `real` is accepted only when the T043 registry brands its construction and every
  * required method is present: a bare `provenance: 'real'` string is a declaration, never proof.
- * Value access is descriptor-based, so a getter, a proxy or an inherited function cannot stand in
- * for the declared surface.
+ * Value access reads data descriptors along the prototype chain, so a class's inherited methods
+ * count but a getter cannot stand in for one; an unregistered lookalike fails the brand check.
  *
  * This module imports only the dependency-neutral registry (§(b)5); reaching into `src/persistence/`
  * would close the cycle through `state-port-v02-storage.ts`.
