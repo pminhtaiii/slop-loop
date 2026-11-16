@@ -25,6 +25,7 @@ import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import { createHostActionContext } from './host-action-context.ts';
+import type { RealContextSource } from '../approvals/real-context-provider.ts';
 import { seedTaskState } from './real-tier-task-seed.ts';
 import type { SeededTaskIds } from './real-tier-task-seed.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
@@ -196,6 +197,17 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   // revision and the host contract, so a drifted host file is named here, not discovered after a seed.
   if (options.pins.contractVersion !== REAL_TIER_DELIVERY_CONTRACT) return refused('host-incompatible-delivery', '$');
   if (UC03_PRODUCTION_COMPONENTS_V02.some(component => options.pins.revisions[component] !== assembly.revision)) return refused('host-stale-revision', '$');
+  // Identity too is pre-checkable, so it is decided here rather than after the task has been persisted
+  // (STD-W4-003): the unchanged bootstrap over the task-independent inputs validates it with no effect.
+  const staticReadiness = prepareUC03Host({
+    owner: hostDeliveries(assembly.owners.deliveries, assembly.components, assembly.hostPorts, () => assembly.revision),
+    producers: assembly.producers,
+    config: assembly.config,
+    pins: options.pins,
+    identity: options.identity,
+  });
+  if (staticReadiness.status !== 'ready')
+    return refused(`host-${staticReadiness.reasons.find(reason => reason.kind === 'identity')?.reasonCode ?? staticReadiness.reasons[0]?.reasonCode ?? 'unavailable'}`, '$');
 
   // An existing task is loaded before anything is allocated, and its persisted identity is
   // authoritative (§(g), §1): a rebind returns the same run and workspace, or it is refused.
@@ -218,11 +230,12 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   const authorityRef: PolicyAuthorityRefV02 = { ...policy, issuerKeyRef: `host-${task.configId}`, decisionAuthorityGeneration: 1 };
   const policyDigest = stateReadPolicyDigest(ids.taskId, authorityRef);
 
-  // The observed-action source is built before the seed so the owner instances are wired once, with
-  // it; `taskOwners` caches by task id, so a later call could never add it.
+  // The observed-action source is built lazily by the owners, once per task: `taskOwners` caches by
+  // task id, so a second bind must reuse the first bind's source rather than orphan its registry.
   const filesystem: TrustedFilesystemPort = new WorkspaceFilesystemPort({ root: repositoryRoot });
-  const contextSource = createHostActionContext({ filesystem, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, ttlMs: actionTtlMs });
-  const owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, authorityRef, contextSource });
+  const createContext = (): RealContextSource => createHostActionContext({ filesystem, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, ttlMs: actionTtlMs });
+  const owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, authorityRef, createContext });
+  const contextSource = owners.contextSource;
   if (existing === null) {
     try {
       await owners.statePort.transition(seedTaskState(task, ids), 0);

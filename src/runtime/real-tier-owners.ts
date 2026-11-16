@@ -51,8 +51,8 @@ export interface RealTierTaskBinding {
   readonly repositoryId: string;
   /** The task's own policy identity; the UC-05 profile and the action facts must agree with it. */
   readonly policyIdentity?: Readonly<{ policyId: string; policyVersion: string; configId: string; configVersion: string }> | undefined;
-  /** The per-task observed-action source; absent leaves the approval service refusing every context. */
-  readonly contextSource?: RealContextSource | undefined;
+  /** Builds the per-task observed-action source; absent leaves the approval service refusing every context. */
+  readonly createContext?: (() => RealContextSource) | undefined;
   /** The published authority ref the read fence must see; absent leaves the read fence refusing. */
   readonly authorityRef?: PolicyAuthorityRefV02 | undefined;
 }
@@ -64,6 +64,8 @@ export interface RealTierBoundOwners {
   readonly replanPort: MaterialReplanPortV02;
   readonly approvalService: ApprovalService & ApprovalServiceV02;
   readonly console: ConsoleApprovalPort;
+  /** The one observed-action source this task's approval service observes; reused on every rebind. */
+  readonly contextSource: RealContextSource;
 }
 
 export interface RealTierOwnersOptions {
@@ -163,10 +165,13 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
     // The per-task observed-action source is what makes an approval request admissible (§3); without
     // one the service maps the throwing loader to its own `unavailable` rather than guessing facts.
     // The task record is the v0.2 one this port just seeded, not the legacy store's separate path.
+    const created = binding.createContext?.();
+    // Without a factory the service still refuses every context; the stand-in keeps the port shape.
+    const contextSource: RealContextSource = created ?? { provenance: 'real', observe: () => unbound() };
     const context =
-      binding.contextSource === undefined
+      created === undefined
         ? { loadForAction: async () => unbound(), loadForDecision: async () => unbound() }
-        : realContext(createRealContextProvider({ durable: { loadTask: id => taskStatePort.loadTask(id) as never }, approvals: approvalStore, source: binding.contextSource }), binding.taskId);
+        : realContext(createRealContextProvider({ durable: { loadTask: id => taskStatePort.loadTask(id) as never }, approvals: approvalStore, source: created }), binding.taskId);
     const approvalService = createApprovalService({ taskId: binding.taskId, profile, store: approvalStore, provenance: 'real', context });
     const owners: RealTierBoundOwners = {
       statePort: taskStatePort,
@@ -174,6 +179,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
       replanPort: createMaterialReplanPort({ state: taskStatePort, verifyDirection }),
       approvalService,
       console: createConsoleApprovalPort(approvalService, () => binding.taskId),
+      contextSource,
     };
     bound.set(binding.taskId, owners);
     return owners;

@@ -10,7 +10,7 @@
  * A bound task is a prerequisite, never G-OWNERS evidence, and never a real execution claim.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -53,6 +53,17 @@ function tempRoot(label: string): string {
 function entriesUnder(root: string): string[] {
   // A directory that does not exist yet is the strongest form of "no write".
   return existsSync(root) ? readdirSync(root, { recursive: true }).map(entry => String(entry)) : [];
+}
+
+/** Names and byte contents: a refusal that rewrites a file with equal bytes is still a write. */
+function storeFingerprint(root: string): string {
+  const lines = entriesUnder(root)
+    .sort()
+    .map(entry => {
+      const path = join(root, entry);
+      return `${entry}\0${statSync(path, { throwIfNoEntry: false })?.isFile() === true ? sha256Text(readFileSync(path, 'utf8')) : '<dir>'}`;
+    });
+  return lines.join('\n');
 }
 
 function dependencies(overrides: Partial<RealTierDependencies> = {}): { readonly deps: RealTierDependencies; readonly effects: Effects; readonly stateRoot: string } {
@@ -153,17 +164,17 @@ function optionsOf(_catalog: Fixture, overrides: Partial<RealTierBindingOptions>
   return { caseId: CASE, pins: PINS, identity: IDENTITY, readTextFile: undefined, ...overrides };
 }
 
-/** Every refusal names its code and leaves no task file behind. */
+/** Every refusal names its code and leaves no task file behind, byte for byte. */
 async function assertRefused(assembly: RealTierAssembly, options: RealTierBindingOptions, reasonCode: string): Promise<void> {
   // The v0.2 seed lives under the store's claim directory (`claims/<taskId>/v02/task.json`), so the
   // whole store base is what a refusal must leave untouched.
   const taskDirectory = assembly.owners.store.baseDir;
-  const before = entriesUnder(taskDirectory);
+  const before = storeFingerprint(taskDirectory);
   const refused = await bindRealTierTask(assembly, options);
   assert.equal(refused.status, 'unavailable', 'this input must refuse the binding');
   if (refused.status !== 'unavailable') return;
   assert.equal(refused.reasonCode, reasonCode);
-  assert.deepEqual(entriesUnder(taskDirectory), before, 'a refusal writes no task record');
+  assert.equal(storeFingerprint(taskDirectory), before, 'a refusal writes no task record and changes no store byte');
 }
 
 function assemblyOrThrow(overrides: Partial<RealTierDependencies> = {}): { assembly: RealTierAssembly; effects: Effects; stateRoot: string } {
@@ -512,6 +523,14 @@ test('(k) the bound approval service admits a valid request and refuses a stale 
   const { assembly } = assemblyFor(catalog);
   const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog)));
   const owners = assembly.owners.taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId });
+  await approvalScenario(binding, owners.approvalService);
+});
+
+/**
+ * Register one action through the binding's returned source, then assert the valid request is
+ * admitted and the stale one is refused. `approvalService` is whatever the cached owners expose.
+ */
+async function approvalScenario(binding: RealTierBoundTask, approvalService: { requestDecision: (request: never) => Promise<{ status: string }> }): Promise<void> {
   // A genuinely unconfigured command is APPROVAL_REQUIRED under the default policy, so it can be
   // requested; the binding's own context source is what makes the request admissible at all.
   // The graph names a decision's action by its own decision id; a first request has no stored record.
@@ -550,14 +569,53 @@ test('(k) the bound approval service admits a valid request and refuses a stale 
     status: 'pending' as const,
   };
   // A valid request through the bound service is admitted, not unavailable: the context source is wired.
-  const admitted = await owners.approvalService.requestDecision(request);
+  const admitted = await approvalService.requestDecision(request as never);
   assert.equal(admitted.status, 'pending');
-  assert.equal(admitted.decisionId, 'decision-1');
+  assert.equal((admitted as { decisionId?: string }).decisionId, 'decision-1');
 
   // A stale request names another revision than the one the host measured: refused as stale, never
   // admitted. The action is registered at the measured revision, so only the binding disagrees.
   const staleAction = { ...action, actionId: 'decision-2' };
   assert.equal((await source.register({ ...registration, action: staleAction, facts: { ...registration.facts, registeredActionDigest: computeActionDigest(staleAction) } })).actionId, 'decision-2');
   const staleRequest = { ...request, decisionId: 'decision-2', normalizedActionDigest: computeActionDigest(staleAction), repositoryRevisionDigest: `sha256:${'e'.repeat(64)}` };
-  await assert.rejects(owners.approvalService.requestDecision(staleRequest), (error: unknown) => (error as { outcome?: string }).outcome === 'stale');
+  await assert.rejects(approvalService.requestDecision(staleRequest as never), (error: unknown) => (error as { outcome?: string }).outcome === 'stale');
+}
+
+test('(k2) after two binds, the second returned source is the one the cached approval service observes', async () => {
+  // One task has exactly one context source and one action registry (SPEC-W4-103/STD-W4-102): the
+  // approval registration made through the second bind's source must be visible to the cached owners.
+  const catalog = fixtureOf();
+  const { assembly } = assemblyFor(catalog);
+  const first = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog)));
+  const second = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog)));
+  assert.equal(second.ids.taskId, first.ids.taskId);
+  const owners = assembly.owners.taskOwners({ taskId: second.ids.taskId, workspaceId: second.ids.workspaceId, repositoryId: second.task.repositoryId });
+  await approvalScenario(second, owners.approvalService);
+});
+
+test('(l) an empty identity refuses before any write, leaving the whole store byte-identical', async () => {
+  // The identity is pre-checkable, so it is validated before the seed and before the retention (STD-W4-003).
+  const catalog = fixtureOf();
+  const { assembly, effects, stateRoot } = assemblyFor(catalog);
+  await assertRefused(assembly, optionsOf(catalog, { identity: {} }), 'host-incomplete-identity');
+  assert.deepEqual(entriesUnder(stateRoot), [], 'the refused bind leaves no store, approval or artifact file');
+  assert.deepEqual(effects, { fetch: 0, spawn: 0 });
+});
+
+test('(m) a mutated retained tree refuses at rebind instead of binding ready', async () => {
+  // §7 requires the exact immutable base: the retained bytes are re-measured at bind, not trusted.
+  const catalog = fixtureOf();
+  const { assembly } = assemblyFor(catalog);
+  const first = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog)));
+  const retained = join(assembly.profile.artifacts.retainRoot, 'repository', first.ids.taskId);
+  assert.deepEqual(
+    entriesUnder(retained).filter(entry => entry.startsWith('src')),
+    ['src', join('src', 'calculator.py')],
+  );
+  writeFileSync(join(retained, 'src', 'calculator.py'), 'def divide(a, b):\n    return b / a\n', 'utf8');
+
+  const second = await bindRealTierTask(assembly, optionsOf(catalog));
+  assert.equal(second.status, 'unavailable', JSON.stringify(second));
+  if (second.status !== 'unavailable') return;
+  assert.equal(second.reasonCode, 'binding-unavailable');
 });

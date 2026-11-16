@@ -155,7 +155,13 @@ export function retainedDiffSource(options: RetainedDiffSourceOptions): Retained
   const prepare = async (): Promise<void> => {
     // An existing retained tree is the immutable initial copy and is never re-captured over.
     if (!existsSync(retainedRoot)) cpSync(repositoryRoot, retainedRoot, { recursive: true });
-    const manifest = await measureManifest(new WorkspaceFilesystemPort({ root: retainedRoot }), options.maxFileBytes);
+    const filesystem = new WorkspaceFilesystemPort({ root: retainedRoot });
+    // §7 requires the exact immutable base: a retention mutated since the first bind is refused here,
+    // before it can stand in for the task's initial revision.
+    if ((await filesystem.getCurrentRevisionDigest(options.maxFileBytes)) !== options.baseRevision) {
+      throw new Error('RETAINED_REVISION_MISMATCH: the retained tree is not the task initial revision');
+    }
+    const manifest = await measureManifest(filesystem, options.maxFileBytes);
     baseline = createRepositoryBaselineSource({
       root: retainedRoot,
       taskId: options.taskId,

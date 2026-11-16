@@ -9,6 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -180,6 +181,56 @@ test('each single component swapped for a mock delivery refuses that component',
     assert.deepEqual(effects, { fetch: 0, spawn: 0 });
     assert.deepEqual(entriesUnder(stateRoot), []);
   }
+});
+
+/**
+ * Honest child-process instrumentation: the CommonJS builtin is patched and re-exported, so even a
+ * module's static named import resolves to the counted function. Restore before any real spawn.
+ */
+function countingChildProcess(): { count: () => number; restore: () => void } {
+  const require = createRequire(import.meta.url);
+  const builtin = require('node:child_process') as Record<string, unknown>;
+  const saved = new Map<string, unknown>();
+  let calls = 0;
+  for (const name of ['spawnSync', 'execFileSync', 'execSync', 'spawn', 'execFile', 'exec']) {
+    const original = builtin[name];
+    if (typeof original !== 'function') continue;
+    saved.set(name, original);
+    builtin[name] = (...args: unknown[]): unknown => {
+      calls += 1;
+      return (original as (...rest: unknown[]) => unknown)(...args);
+    };
+  }
+  syncBuiltinESMExports();
+  return {
+    count: () => calls,
+    restore: () => {
+      for (const [name, original] of saved) builtin[name] = original;
+      syncBuiltinESMExports();
+    },
+  };
+}
+
+test('(STD-W4-101) assembly makes zero real child-process spawns and still defaults to the template HEAD pin', async () => {
+  const { deps } = dependencies({ revision: undefined });
+  const counter = countingChildProcess();
+  let resolved: RealTierResolution;
+  try {
+    resolved = resolveRealTierAssembly(deps);
+    createHostAssembly(deps);
+  } finally {
+    counter.restore();
+  }
+  assert.equal(counter.count(), 0, 'static assembly must not spawn any child process');
+  assert.equal(resolved.status, 'assembly-ready', JSON.stringify(resolved));
+  if (resolved.status !== 'assembly-ready') return;
+
+  // The default is the pin the printed template carries, resolved without a spawn.
+  const { runRealTierScanCli } = await import('../../../src/cli/real-tier-scan.ts');
+  const printed = await runRealTierScanCli(['--print-host-template'], { env: fixture.envOf(), repositoryRoot: fixture.REPO });
+  assert.equal(printed.exitCode, 0, printed.output);
+  const template = JSON.parse(printed.output) as { readonly revisions: Readonly<Record<string, string>> };
+  for (const [component, revision] of Object.entries(template.revisions)) assert.equal(revision, resolved.revision, component);
 });
 
 test('(T061 a) the no-argument default revision is the template HEAD pin, so the printed template is assembly-ready', async () => {
