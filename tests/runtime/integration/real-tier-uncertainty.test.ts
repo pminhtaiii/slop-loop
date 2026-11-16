@@ -23,6 +23,7 @@ import type { BaselineRecordPaths } from '../../../src/persistence/adapters/base
 import { createMaterialReplanPort } from '../../../src/persistence/adapters/material-replan-port.ts';
 import { actorPayloadDigest, authorityFor } from '../../../src/persistence/adapters/state-port-v02-admission.ts';
 import { createJournalOperationLookup, journalOperationId, journalOperationRef } from '../../../src/persistence/adapters/state-port-v02-operation-lookup.ts';
+import { StatePortStore } from '../../../src/persistence/adapters/state-port-v02-storage.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { atomicWrite, DurableStore } from '../../../src/persistence/store.ts';
 import { createRecoveryGate } from '../../../src/runtime/real-tier-recovery.ts';
@@ -130,11 +131,13 @@ async function expectRow(row: Row, expected: RecoveryDecision, repeats = 1): Pro
 async function seedTask(dir: string, ctx: AdmissionContextV02): Promise<DurableStatePortV02> {
   const store = new DurableStore(dir);
   await store.init();
-  const port = new DurableStatePortV02({
-    store,
-    initialControl: { controlVersion: ctx.expectedControlVersion, epoch: ctx.expectedEpoch, activeAuthorityRef: authorityFor(ctx) },
-  });
-  await port.transition(createTestAdmissionTaskStateV02(ctx), 0);
+  const control = { controlVersion: ctx.expectedControlVersion, epoch: ctx.expectedEpoch, activeAuthorityRef: authorityFor(ctx) };
+  const port = new DurableStatePortV02({ store, initialControl: control });
+  const task = createTestAdmissionTaskStateV02(ctx);
+  await port.transition(task, 0);
+  // `initialControl` is only a read fallback, so write the head itself; otherwise there is no hold to prove.
+  await new StatePortStore(store).writeControl(task.taskId, port.controlSeed);
+  assert.match(snapshot(dir), /control\.json:/u, 'the seeded store must hold a persisted control head');
   return port;
 }
 

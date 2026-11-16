@@ -200,3 +200,18 @@ test('the port fits EvaluationControlBindings.approval and the operator CLI reco
   assert.equal(result.exitCode, 0, result.output);
   assert.equal(recorded(), 1);
 });
+
+test('an unexpected decide failure reaches the CLI as an uncertain outcome, not a typed refusal', async t => {
+  const { service, pending } = await fixture(t);
+  const failing = { ...service, decide: async () => Promise.reject(new Error('store write acknowledgement lost')) } as typeof service;
+  const port = createConsoleApprovalPort(failing, () => taskId);
+  await assert.rejects(async () => port.decide(body({ presentationDigest: pending.presentationDigest })), /acknowledgement lost/u);
+  const unused = async (): Promise<never> => {
+    throw new Error('unused control surface');
+  };
+  const result = await runEvaluationControlCli(
+    ['decision', '--experiment', experimentId, '--presentation', pending.presentationDigest, '--version', '1', '--choice', 'approve', '--idempotency-key', 'cli-key'],
+    { service: { getExperiment: () => fail('not-found', 'UNUSED'), issueDirection: unused, continueExperiment: unused }, approval: port },
+  );
+  assert.match(result.output, /uncertain/u);
+});

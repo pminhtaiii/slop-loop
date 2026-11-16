@@ -104,6 +104,8 @@ export function createConsoleApprovalPort(service: ApprovalService, resolveTask:
         presented.set(request.experimentId, decisionRef);
         return ok(result);
       } catch (error) {
+        // An unexpected failure may follow a committed decision; let the CLI report it as uncertain.
+        if (!(error instanceof ApprovalServiceError)) throw error;
         return refusal(error);
       }
     },
