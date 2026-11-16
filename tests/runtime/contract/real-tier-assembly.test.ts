@@ -103,10 +103,7 @@ test('the assembly is labelled a prerequisite, not G-OWNERS evidence, and makes 
   assert.ok('host' in created, 'a complete set resolves through the CLI factory name');
   const serialized = JSON.stringify(created);
   assert.ok(!serialized.includes('"ready"'), 'the factory claims no prepareUC03Host readiness');
-  // The four task-bound producers and trustedExpectedContext are T061, absent here by design.
-  for (const t061 of ['guardedRead', 'hostAuthority', 'contextSource', 'repositoryPort', 'trustedExpectedContext']) {
-    assert.ok(!serialized.includes(t061), `${t061} belongs to T061`);
-  }
+  // T061 adds the four task-bound producers unbound; real-tier-task-binding.test.ts row (b) proves they refuse.
 });
 
 test('the serialized output never contains the sentinel key, the endpoint URL or the digest key', () => {

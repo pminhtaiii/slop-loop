@@ -1,19 +1,19 @@
 /**
- * T050 — task-independent real-tier component set (real-tier contract §(a) "Production assembly
- * module", §(i) metadata, host contract §1 first stage).
+ * Real-tier assembly (real-tier contract §(a), §(i); host contract §1 first stage; T050 + T061).
  *
  * `createHostAssembly()` takes no arguments because the operator CLI calls it that way
- * (`src/cli/evaluate.ts`), and returns `{ host, metadata }` for the CLI loader. It is synchronous and
- * effect-free: it loads the profile, reads the credential, pins the endpoint and model, and builds the
- * real adapters. It never fetches, spawns, writes a task or touches the filesystem.
+ * (`src/cli/evaluate.ts`), and returns `{ host, metadata[ , preflight] }` for the CLI loader. It is
+ * synchronous and effect-free: it loads the profile, reads the credential, pins the endpoint and model,
+ * and builds the real adapters. It never fetches, spawns, writes a task or touches the filesystem.
+ *
+ * The host is assembly-ready: the four task-bound producers and the three per-task host ports are
+ * unbound (full surface, `TASK_UNBOUND` on every call) and the config names no task, so
+ * `prepareUC03Host` is `ready` while nothing can act. Binding them to one task is T061
+ * (`real-tier-task-binding.ts`).
  *
  * `dependencies` is the test seam: `{ env, fetch, spawn, stateRoot, revision, components }`, each
  * defaulting to the real value. Every refusal is a `RealTierUnavailable` with a bounded reason code,
  * and never carries the endpoint URL, the host or the credential.
- *
- * It deliberately does NOT build the four task-bound producers (guarded read, host authority, context
- * source, repository port) or `config.trustedExpectedContext`, and never claims `prepareUC03Host`
- * returns `ready` — those are T061. `metadata` is inert until T060 wires it into the CLI.
  *
  * A complete set is a prerequisite, not G-OWNERS evidence.
  */
@@ -30,8 +30,11 @@ import { structuredSpawn } from '../foundation/docker-spawn.ts';
 import { validateDockerProfile } from '../foundation/docker-workspace-policy.ts';
 import type { DockerProfile } from '../foundation/docker-workspace-types.ts';
 import { loadRealTierProfile, type RealTierEnvironment, type RealTierProfile } from './real-tier-profile.ts';
-import { createRealTierOwners, type RealTierOwners } from './real-tier-owners.ts';
-import type { UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
+import { createRealTierOwners, type RealTierOwners, type RealTierOwnersOptions } from './real-tier-owners.ts';
+import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
+import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
+import type { UC03HostInputs, UC03HostProducers } from './uc03-host-bootstrap.ts';
+import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import type { OwnerDelivery } from './evaluation-composition.ts';
 
 /** Partial review profile: the pinned identity plus the two byte bounds the transport needs. */
@@ -46,6 +49,8 @@ export interface RealTierDependencies {
   /** Pinned revision every delivery declares; host.json supplies it (T060). */
   readonly revision?: string | undefined;
   readonly repositoryRoot?: string | undefined;
+  /** UC-05 direction authority for the material replan transaction; absent means it verifies nothing. */
+  readonly verifyDirection?: RealTierOwnersOptions['verifyDirection'];
   /** Test seam: a substituted delivery (for example a `mock` one) is refused, never reached. */
   readonly components?: Partial<RealTierComponents> | undefined;
 }
@@ -99,6 +104,13 @@ export interface RealTierAssembly {
   readonly executor: StructuredCommandExecutor;
   /** The canonical reviewer ingress over the same transport; its own port is `components.reviewerModelPort`. */
   readonly reviewer: RuntimeReviewer;
+  /** The four task-bound producers, unbound: full surface, real provenance, every call `TASK_UNBOUND`. */
+  readonly producers: UC03HostProducers;
+  readonly revision: string;
+  /** The three per-task host ports, unbound until a task is seeded. */
+  readonly hostPorts: RealTierHostPorts;
+  /** Task-less wiring: `trustedExpectedContext()` refuses a context that names no task (§1). */
+  readonly config: UC03GraphConfigV02;
   /** Not G-OWNERS, not an owner delivery, not real execution: a prerequisite only. */
   readonly evidenceTier: 'controlled-prerequisite';
 }
@@ -106,6 +118,100 @@ export interface RealTierAssembly {
 export type RealTierResolution = RealTierAssembly | RealTierUnavailable;
 
 const unavailable = (reasonCode: string, path = '$'): RealTierUnavailable => Object.freeze({ status: 'unavailable', reasonCode, path });
+
+/** The one refusal an unbound producer makes: named, bounded, and with no effect. */
+const TASK_UNBOUND = 'TASK_UNBOUND' as const;
+const unbound = (): never => {
+  throw new Error(TASK_UNBOUND);
+};
+
+/** The three host-built ports whose binding is per task; unbound they refuse, bound they act. */
+export interface RealTierHostPorts {
+  readonly repositoryPort: UC03GraphPortsV02['repositoryPort'];
+  readonly executionGuard: UC03GraphPortsV02['executionGuard'];
+  readonly configPort: UC03GraphPortsV02['configPort'];
+}
+
+/**
+ * The four owner components this host never takes from an owner: `baselineEvidence` is a host producer
+ * (host contract §3), and the other three are T061's task-bound producers. Listing any of them twice
+ * would deny the whole composition.
+ */
+const PRODUCER_COMPONENTS = ['guardedRead', 'baselineEvidence', 'hostAuthority', 'contextSource'] as const;
+
+/**
+ * The owner delivery list the host bootstrap composes: the T050 owner deliveries, plus a host delivery
+ * for every other non-producer component, pinned by `revisionOf`. Producers are excluded because they
+ * arrive through `producers`, and the owner's own `baselineEvidence` (a producer, §3) is dropped too.
+ */
+export function hostDeliveries(owner: RealTierOwners['deliveries'], components: RealTierComponents, ports: RealTierHostPorts, revisionOf: (component: string) => string): readonly OwnerDelivery[] {
+  const adapters: Record<string, unknown> = { ...components, ...ports };
+  const covered = new Set(owner.map(delivery => delivery.component));
+  const built = UC03_PRODUCTION_COMPONENTS_V02.filter(component => !covered.has(component) && !(PRODUCER_COMPONENTS as readonly string[]).includes(component)).map(
+    component =>
+      ({
+        component,
+        id: `host-${component}`,
+        contractVersion: REAL_TIER_DELIVERY_CONTRACT,
+        revision: revisionOf(component),
+        provenance: 'real',
+        adapter: adapters[component],
+      }) as OwnerDelivery,
+  );
+  return Object.freeze([...owner.filter(delivery => !(PRODUCER_COMPONENTS as readonly string[]).includes(delivery.component)), ...built]);
+}
+
+/**
+ * The four task-bound producers before a task exists. Each one has the complete callable surface and
+ * `provenance: 'real'`, so the production port check admits them, and every call refuses with
+ * `TASK_UNBOUND`. This is what lets `prepareUC03Host` be ready while nothing can act yet (§1).
+ */
+function unboundProducers(): UC03HostProducers {
+  return Object.freeze({
+    guardedRead: Object.freeze({
+      provenance: 'real' as const,
+      capabilityId: 'unbound-read',
+      taskId: '',
+      workspaceId: '',
+      mediateRead: async (): Promise<never> => unbound(),
+    }),
+    baselineEvidence: Object.freeze({ provenance: 'real' as const, persistBaselineEvidence: async (): Promise<never> => unbound(), loadBaselineEvidence: async (): Promise<never> => unbound() }),
+    hostAuthority: Object.freeze({ loadSnapshot: async (): Promise<never> => unbound() }),
+    contextSource: Object.freeze({ provenance: 'real' as const, observe: (): never => unbound() }),
+  }) as unknown as UC03HostProducers;
+}
+
+/** The task-bound repository port before a task exists: every method of the v0.2 surface, refusing. */
+function unboundRepositoryPort(): UC03GraphPortsV02['repositoryPort'] {
+  return Object.freeze({
+    provenance: 'real' as const,
+    listDir: async (): Promise<never> => unbound(),
+    readFile: async (): Promise<never> => unbound(),
+    searchCode: async (): Promise<never> => unbound(),
+    applyPatch: async (): Promise<never> => unbound(),
+    runCommand: async (): Promise<never> => unbound(),
+    runTests: async (): Promise<never> => unbound(),
+    inspectDiff: async (): Promise<never> => unbound(),
+  }) as unknown as UC03GraphPortsV02['repositoryPort'];
+}
+
+/** The v0.2 execution guard and config port, likewise refusing until a task is bound. */
+function unboundHostPorts(): RealTierHostPorts {
+  return Object.freeze({
+    repositoryPort: unboundRepositoryPort(),
+    executionGuard: Object.freeze({
+      provenance: 'real' as const,
+      executionGuardApiVersion: '0.2.0' as const,
+      validateAndExecute: async (): Promise<never> => unbound(),
+    }) as unknown as UC03GraphPortsV02['executionGuard'],
+    configPort: Object.freeze({ loadConfig: (): never => unbound() }),
+  });
+}
+
+/** A context that names no task, so `trustedExpectedContext()` refuses it rather than guessing one. */
+const UNBOUND_CONFIG: UC03GraphConfigV02 = Object.freeze({
+  trustedExpectedContext: Object.freeze({ taskId: '', workspaceId: '', repositoryId: '', revisionDigest: '', criteriaDigest: '', checkSetDigest: '', expectedTestFiles: Object.freeze([]) }),
+});
 
 /** The profile's image as the pinned Docker profile the controller and executor both validate. */
 function dockerProfileOf(profile: RealTierProfile): DockerProfile | RealTierUnavailable {
@@ -191,7 +297,12 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
     }),
     ...(dependencies.fetch === undefined ? {} : { fetch: dependencies.fetch }),
   });
-  const owners = createRealTierOwners({ stateRoot, revision, approvalProfileVersion: profile.approvalPolicy.profileVersion });
+  const owners = createRealTierOwners({
+    stateRoot,
+    revision,
+    approvalProfileVersion: profile.approvalPolicy.profileVersion,
+    ...(dependencies.verifyDirection === undefined ? {} : { verifyDirection: dependencies.verifyDirection }),
+  });
   // The reviewer ingress is the same transport in a distinct role; the marker is required by
   // `PORT_DECLARATIONS_V02`, and provenance still derives from the branded transport alone.
   const reviewerModelPort = Object.assign(new HostModelPortV02({ transport, statePort: owners.components.statePort }), { providerRole: 'reviewer' as const });
@@ -213,6 +324,10 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
     workspaceManager,
     executor,
     reviewer,
+    producers: unboundProducers(),
+    revision,
+    hostPorts: unboundHostPorts(),
+    config: UNBOUND_CONFIG,
     evidenceTier: 'controlled-prerequisite',
   });
 }
@@ -232,12 +347,15 @@ export function resolveRealTierAssembly(dependencies: RealTierDependencies = {})
  * The name the CLI loader requires. `metadata` and `preflight` sit beside `host` because that is where
  * T060 lifts them from (contract §(i)): the metadata is the frozen safe projection, and the preflight
  * is the operational Docker observation over the injected `spawn`, delegating to
- * `observeDockerReadiness`. Both are absent from the returned host wiring, so `createHostAssembly`
- * still makes no ready claim and leaves `prepareUC03Host` the only readiness authority.
+ * `observeDockerReadiness`.
+ *
+ * T061 completes the static host: the four producers are unbound (full surface, `TASK_UNBOUND` on every
+ * call) and the config names no task, so `prepareUC03Host` through `resolveHostAssembly` then
+ * `prepareAssembly` is `ready` with zero fetches, spawns and task writes. That is assembly-ready only.
  */
 export function createHostAssembly(dependencies: RealTierDependencies = {}):
   | {
-      readonly host: { readonly owner: readonly OwnerDelivery[] };
+      readonly host: UC03HostInputs;
       readonly metadata: RealTierMetadata;
       readonly preflight: () => ReturnType<typeof observeDockerReadiness>;
       readonly assembly: RealTierAssembly;
@@ -247,10 +365,17 @@ export function createHostAssembly(dependencies: RealTierDependencies = {}):
   if (resolved.status === 'unavailable') return resolved;
   const spawn = dependencies.spawn ?? structuredSpawn;
   const { imageId } = resolved.metadata;
-  // Assembly-ready only: the four task-bound producers and trustedExpectedContext arrive with T061,
-  // so the host carries the real owner deliveries and the built adapters, and makes no ready claim.
+  // `prepareAssembly` spreads `pins` and `identity` from the host file over these, so the placeholders
+  // here are never the ones the bootstrap validates.
+  const host: UC03HostInputs = Object.freeze({
+    owner: hostDeliveries(resolved.owners.deliveries, resolved.components, resolved.hostPorts, () => resolved.revision),
+    producers: resolved.producers,
+    config: resolved.config,
+    pins: { contractVersion: '', revisions: {} },
+    identity: {},
+  });
   return {
-    host: Object.freeze({ owner: resolved.owners.deliveries }),
+    host,
     metadata: resolved.metadata,
     preflight: () => observeDockerReadiness(spawn, imageId),
     assembly: resolved,
