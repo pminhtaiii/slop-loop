@@ -21,6 +21,7 @@ import { samePaths } from './graph-validation.ts';
 import type { UC03GraphState } from './graph-state.ts';
 import type { UC03CompletionContextRequest, UC03CompletionContextResolver, UC03RepositoryAdmission } from './graph-types.ts';
 import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
+import { cumulativeDiffIsAdmitted } from './graph-completion-paths.ts';
 import { currentPlanApprovalIsCurrent } from './post-patch-verification-authority.ts';
 import { boundReviewEnabled, loadBoundReview } from './verification-review.ts';
 import type { UC03GraphConfig } from './graph-types.ts';
@@ -128,7 +129,7 @@ export async function loadCompletionPredicateInput(args: {
     (admissionValidation.value.runnableNode === 'Patch' && admissionValidation.value.canonicalRevision !== baseline.repositorySnapshotDigest) ||
     admissionValidation.value.expectedTaskStateVersion + 2 > state.stateVersion ||
     admissionValidation.value.planBindingDigest !== currentPlanBindingDigest(task, ancestry.originalTaskState) ||
-    !samePaths(admissionValidation.value.action.targetPaths, diffInfo.changedFiles) ||
+    !(await cumulativeDiffIsAdmitted({ task, latestTargets: admissionValidation.value.action.targetPaths, changedFiles: diffInfo.changedFiles, ancestry, owner })) ||
     receiptValidation.value.outcome.repositoryOperation !== 'apply-patch' ||
     receiptValidation.value.outcome.observedResultRevisionDigest !== state.repositoryRevisionDigest
   ) {
