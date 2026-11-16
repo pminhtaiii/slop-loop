@@ -25,6 +25,7 @@ import { createDeepSeekTransport } from '../foundation/deepseek-transport.ts';
 import type { StructuredCommandExecutor } from '../foundation/docker-command-executor.ts';
 import { DockerLifecycleController, type StructuredSpawn } from '../foundation/docker-controller.ts';
 import { DockerWorkspaceManager } from '../foundation/docker-workspace-manager.ts';
+import { observeDockerReadiness } from '../foundation/docker-readiness.ts';
 import { structuredSpawn } from '../foundation/docker-spawn.ts';
 import { validateDockerProfile } from '../foundation/docker-workspace-policy.ts';
 import type { DockerProfile } from '../foundation/docker-workspace-types.ts';
@@ -134,7 +135,7 @@ function dockerProfileOf(profile: RealTierProfile): DockerProfile | RealTierUnav
 function metadataOf(profile: RealTierProfile): RealTierMetadata {
   return Object.freeze({
     profileDigest: `sha256:${profile.profileDigest}`,
-    endpointDigest: profile.endpoint.endpointDigest,
+    endpointDigest: `sha256:${profile.endpoint.endpointDigest}`,
     endpointScheme: profile.endpoint.scheme,
     insecureHttpAcknowledged: profile.endpoint.insecureHttpAcknowledged,
     model: profile.endpoint.model,
@@ -228,17 +229,32 @@ export function resolveRealTierAssembly(dependencies: RealTierDependencies = {})
 }
 
 /**
- * The name the CLI loader requires. `metadata` sits beside `host` because that is where T060 lifts
- * it from (contract §(i)); the loader's own key list is unchanged until then.
+ * The name the CLI loader requires. `metadata` and `preflight` sit beside `host` because that is where
+ * T060 lifts them from (contract §(i)): the metadata is the frozen safe projection, and the preflight
+ * is the operational Docker observation over the injected `spawn`, delegating to
+ * `observeDockerReadiness`. Both are absent from the returned host wiring, so `createHostAssembly`
+ * still makes no ready claim and leaves `prepareUC03Host` the only readiness authority.
  */
-export function createHostAssembly(
-  dependencies: RealTierDependencies = {},
-): { readonly host: { readonly owner: readonly OwnerDelivery[] }; readonly metadata: RealTierMetadata; readonly assembly: RealTierAssembly } | RealTierUnavailable {
+export function createHostAssembly(dependencies: RealTierDependencies = {}):
+  | {
+      readonly host: { readonly owner: readonly OwnerDelivery[] };
+      readonly metadata: RealTierMetadata;
+      readonly preflight: () => ReturnType<typeof observeDockerReadiness>;
+      readonly assembly: RealTierAssembly;
+    }
+  | RealTierUnavailable {
   const resolved = resolveRealTierAssembly(dependencies);
   if (resolved.status === 'unavailable') return resolved;
+  const spawn = dependencies.spawn ?? structuredSpawn;
+  const { imageId } = resolved.metadata;
   // Assembly-ready only: the four task-bound producers and trustedExpectedContext arrive with T061,
   // so the host carries the real owner deliveries and the built adapters, and makes no ready claim.
-  return { host: Object.freeze({ owner: resolved.owners.deliveries }), metadata: resolved.metadata, assembly: resolved };
+  return {
+    host: Object.freeze({ owner: resolved.owners.deliveries }),
+    metadata: resolved.metadata,
+    preflight: () => observeDockerReadiness(spawn, imageId),
+    assembly: resolved,
+  };
 }
 
 export { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
