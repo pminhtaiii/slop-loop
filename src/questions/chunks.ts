@@ -1,7 +1,8 @@
 import { createRequire } from 'node:module';
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import type { QuestionIndexedChunkV1, QuestionIndexedFileV1, QuestionRetrievalOmissionReasonV1, RepositoryBindingV1, RepositoryToolFailureV1 } from '../contracts/questions/contracts.ts';
-import { validateQuestionIndexedFile } from '../contracts/questions/validation.ts';
+import { validateQuestionIndexedChunk, validateQuestionIndexedFile } from '../contracts/questions/validation.ts';
+import { MAX_QUESTION_CHUNK_LINES, MAX_QUESTION_CHUNK_NORMALIZED_BYTES } from '../contracts/questions/validation/shared.ts';
 import { computeFileDigest } from '../foundation/docker-workspace-policy.ts';
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import type { QuestionEmbeddingInput, QuestionEmbeddingPort } from './embedding.ts';
@@ -94,7 +95,12 @@ async function guardedLines(source: QuestionChunkSource, control: QuestionReposi
     for (const line of page) lines.push(line);
     startLine = span.range.endLine + 1;
   }
-  return lines;
+  if (expired(control)) return 'budget-exhausted';
+  const nextLine = file.lineCount + 1;
+  const eof = await repository.readSpan({ path: file.path, startLine: nextLine, endLine: nextLine }, control);
+  if (expired(control)) return 'budget-exhausted';
+  if (eof.status === 'invalid' && eof.reasonCode === 'out-of-range') return lines;
+  return eof.status === 'ok' ? 'partial-scan' : omission(eof);
 }
 
 function expired(control: QuestionRepositoryOperationControl): boolean {
@@ -155,7 +161,10 @@ function units(node: SyntaxNode, region: Range): Unit[] {
     if (!current) break;
     for (const child of current.namedChildren) {
       if (!child) continue;
-      if (child.type === 'block') {
+      if (current.type === 'module') {
+        const start = range(child).startLine;
+        if (start >= region.startLine && start <= region.endLine) cuts.set(start, child);
+      } else if (child.type === 'block') {
         for (const statement of child.namedChildren) {
           if (!statement) continue;
           const start = range(statement).startLine;
@@ -166,7 +175,7 @@ function units(node: SyntaxNode, region: Range): Unit[] {
       }
     }
   }
-  const starts = [region.startLine, ...[...cuts.keys()].sort((a, b) => a - b)];
+  const starts = [...new Set([region.startLine, ...cuts.keys()])].sort((a, b) => a - b);
   return starts.map((startLine, i) => {
     const endLine = (starts[i + 1] ?? region.endLine + 1) - 1;
     const child = cuts.get(startLine);
@@ -175,10 +184,19 @@ function units(node: SyntaxNode, region: Range): Unit[] {
 }
 
 export async function buildQuestionChunks(
-  source: QuestionChunkSource,
-  embedding: Pick<QuestionEmbeddingPort, 'count' | 'profile'>,
-  control: QuestionRepositoryOperationControl,
+  input: QuestionChunkSource,
+  tokenizer: Pick<QuestionEmbeddingPort, 'count' | 'profile'>,
+  operation: QuestionRepositoryOperationControl,
 ): Promise<QuestionChunkBuild> {
+  const repository = input.repository;
+  const source: QuestionChunkSource = {
+    ...input,
+    file: { ...input.file },
+    binding: { ...input.binding },
+    repository: { readSpan: repository.readSpan.bind(repository), checkBinding: repository.checkBinding.bind(repository) },
+  };
+  const control = Object.freeze({ ...operation });
+  const embedding = { count: tokenizer.count.bind(tokenizer), profileId: tokenizer.profile.id };
   const { path, fileType, originalByteDigest, lineCount } = source.file;
   const identity = { path, fileType, originalByteDigest };
   const omissions = new Set<QuestionRetrievalOmissionReasonV1>();
@@ -190,7 +208,11 @@ export async function buildQuestionChunks(
     return { file: { ...identity, coverage: 'excluded', omissionReasons: [reason] }, chunks: [] };
   }
   if (
-    ![lineCount, source.pageLines, source.maxSourceBytes, source.maxChunks].every(n => Number.isSafeInteger(n) && n > 0) ||
+    ![source.pageLines, source.maxSourceBytes, source.maxChunks].every(n => Number.isSafeInteger(n) && n > 0) ||
+    !Number.isSafeInteger(lineCount) ||
+    lineCount < 0 ||
+    !Number.isSafeInteger(lineCount + 1) ||
+    !Number.isSafeInteger(control.deadlineEpochMs) ||
     !validateQuestionIndexedFile({ ...identity, coverage: 'complete', omissionReasons: [] }).ok
   )
     return refuse('partial-scan');
@@ -207,10 +229,10 @@ export async function buildQuestionChunks(
     const definitionId = def ? computeFileDigest(JSON.stringify([path, originalByteDigest, def.qualifiedName, def.startLine, def.endLine])) : null;
     const kind = def ? 'definition' : fileType === 'documentation' || fileType === 'configuration' ? fileType : 'module-text';
     function candidate(startLine: number, endLine: number): QuestionPreparedChunk | undefined {
-      if (expired(control) || chunks.length >= source.maxChunks || endLine - startLine >= 60) return;
+      if (expired(control) || chunks.length >= source.maxChunks || endLine - startLine >= MAX_QUESTION_CHUNK_LINES) return;
       const excerpt = lines.slice(startLine - 1, endLine).join('\n');
       const normalizedByteLength = Buffer.byteLength(excerpt);
-      if (normalizedByteLength > 4096 || normalizedByteLength === 0) return;
+      if (normalizedByteLength > MAX_QUESTION_CHUNK_NORMALIZED_BYTES || normalizedByteLength === 0) return;
       const embeddingInput = { kind: 'passage' as const, text: JSON.stringify({ path, startLine, endLine, symbol: def?.qualifiedName ?? null, excerpt }) };
       const count = embedding.count(embeddingInput, control.signal);
       if (count.status !== 'ok') {
@@ -233,7 +255,7 @@ export async function buildQuestionChunks(
           excerptDigest,
           normalizedByteLength,
           chunkId,
-          vectorId: computeFileDigest(JSON.stringify([chunkId, embedding.profile.id])),
+          vectorId: computeFileDigest(JSON.stringify([chunkId, embedding.profileId])),
           definition: def && definitionId ? { definitionId, qualifiedName: def.qualifiedName, startLine: def.startLine, endLine: def.endLine, partOrder } : null,
         },
         embeddingInput,
@@ -244,7 +266,12 @@ export async function buildQuestionChunks(
       if (chunks.length >= source.maxChunks) omissions.add('budget-exhausted');
       else {
         const { metadata } = chunk;
-        chunks.push(metadata.definition ? { ...chunk, metadata: { ...metadata, definition: { ...metadata.definition, partOrder } } } : chunk);
+        const validated = validateQuestionIndexedChunk(metadata.definition ? { ...metadata, definition: { ...metadata.definition, partOrder } } : metadata);
+        if (!validated.ok) {
+          omissions.add('partial-scan');
+          return;
+        }
+        chunks.push({ ...chunk, metadata: validated.value });
         partOrder++;
       }
     }
@@ -299,7 +326,7 @@ export async function buildQuestionChunks(
   }
 
   const python = fileType === 'python-source' || fileType === 'python-test';
-  if (python && !expired(control)) {
+  if (lineCount > 0 && python && !expired(control)) {
     const { Parser, Language } = await import('web-tree-sitter');
     await Parser.init();
     const require = createRequire(import.meta.url);
@@ -314,7 +341,11 @@ export async function buildQuestionChunks(
           omissions.add('parse-failure');
           emit({ startLine: 1, endLine: lineCount }, null, []);
         } else {
-          const found = definitions(tree.rootNode);
+          const found = definitions(tree.rootNode).filter(def => {
+            if (Buffer.byteLength(def.qualifiedName) <= 512) return true;
+            omissions.add('oversized');
+            return false;
+          });
           for (const def of found) {
             if (expired(control) || chunks.length >= source.maxChunks) {
               omissions.add('budget-exhausted');
@@ -322,7 +353,7 @@ export async function buildQuestionChunks(
             }
             emit(def, def, units(def.node, def));
           }
-          for (const gap of moduleRanges(lineCount, found)) emit(gap, null, []);
+          for (const gap of moduleRanges(lineCount, found)) emit(gap, null, units(tree.rootNode, gap));
         }
       } finally {
         tree?.delete();
@@ -330,7 +361,7 @@ export async function buildQuestionChunks(
     } finally {
       parser.delete();
     }
-  } else if (!expired(control)) {
+  } else if (lineCount > 0 && !expired(control)) {
     emit({ startLine: 1, endLine: lineCount }, null, []);
   }
   if (expired(control)) return refuse('budget-exhausted');

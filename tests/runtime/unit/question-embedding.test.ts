@@ -60,3 +60,16 @@ test('discards a late result after cancellation and refuses invalid vectors', as
     assert.deepEqual(await adapter.embed({ kind: 'query', text: 'help' }), { status: 'invalid' });
   }
 });
+
+test('finite extreme vectors still produce unit length', async () => {
+  for (const magnitude of [Number.MIN_VALUE, Number.MAX_VALUE]) {
+    const embedding = createControlledQuestionEmbedding(
+      { id: 'fixture/1', dimension: 2, maxTokens: 4 },
+      () => [1],
+      () => [magnitude, magnitude],
+    );
+    const result = await embedding.embed({ kind: 'query', text: 'input' });
+    assert.equal(result.status, 'ok');
+    assert.ok(Math.abs(Math.hypot(...result.vector) - 1) < 1e-12);
+  }
+});

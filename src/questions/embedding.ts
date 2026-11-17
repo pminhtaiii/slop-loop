@@ -61,9 +61,11 @@ function createAdapter<T>(
         if (raw.length !== pinned.dimension || Array.from(raw).some(value => !Number.isFinite(value))) {
           return { status: 'invalid' };
         }
-        const norm = Math.hypot(...raw);
-        if (!Number.isFinite(norm) || norm === 0) return { status: 'invalid' };
-        return { status: 'ok', tokens: result.tokens, vector: Object.freeze(raw.map(value => value / norm)) };
+        const scale = raw.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
+        if (scale === 0) return { status: 'invalid' };
+        const scaled = raw.map(value => value / scale);
+        const norm = Math.sqrt(scaled.reduce((sum, value) => sum + value * value, 0));
+        return { status: 'ok', tokens: result.tokens, vector: Object.freeze(scaled.map(value => value / norm)) };
       } catch {
         return { status: signal?.aborted ? 'cancelled' : 'unavailable' };
       }
