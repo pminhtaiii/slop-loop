@@ -27,8 +27,13 @@
     "test:runtime": "node scripts/ci/run-runtime-tests.mjs"
   },
   "dependencies": {
+    "@huggingface/transformers": "3.8.1",
     "@langchain/core": "1.2.17",
-    "@langchain/langgraph": "1.5.0"
+    "@langchain/langgraph": "1.5.0",
+    "@repomix/tree-sitter-wasms": "0.1.17",
+    "onnxruntime-node": "1.21.0",
+    "sqlite-vec": "0.1.9",
+    "web-tree-sitter": "0.25.10"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
