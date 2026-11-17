@@ -17,13 +17,22 @@
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { computeFileDigest, computeWorkspaceVolumeIds, validateDockerProfile } from '../../../src/foundation/docker-workspace-policy.ts';
 import { structuredSpawn } from '../../../src/foundation/docker-spawn.ts';
-import { isSupportedSnapshotPlatform } from '../../../src/runtime/trusted-host-snapshot.ts';
+import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
+import { createRepositoryReceiverV02 } from '../../../src/foundation/repository-tools.ts';
+import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
+import { createDurableAttemptStartRecoveryHandoff, createDurableUnattemptedClaimClosureHandoff, createRefusingPatchRecoveryHandoff } from '../../../src/foundation/durable-recovery-handoffs.ts';
+import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, computeCommandViewDigest } from '../../../src/contracts/foundation/uc03.ts';
+import { DurableStore } from '../../../src/persistence/store.ts';
+import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
+import { seedTaskState } from '../../../src/runtime/real-tier-task-seed.ts';
+import { isSupportedSnapshotPlatform, createTrustedHostSnapshot } from '../../../src/runtime/trusted-host-snapshot.ts';
 import { createHostAssembly, type RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
-import type { ExecutionLimits } from '../../../src/contracts/foundation/uc03.ts';
+import type { BugTask, ExecutionLimits, RepositoryAdmissionContextV02, RunCommandAction, TaskState, validateStateTransition } from '../../../src/contracts/foundation/uc03.ts';
 import { isCanonicalRelativePath } from '../../../src/contracts/foundation/uc03.ts';
 
 const TASK_ID = 'task-t024';
@@ -78,6 +87,28 @@ async function refusalRow(caseName: string, pattern: RegExp, operation: () => Pr
 if (selfCheck) {
   // The same `report` path a real failed row takes: this must exit nonzero, which is the red proof.
   report([row('SELF-CHECK deliberate red row', false, 'a failed row must never pass')], { selfCheck: true });
+}
+
+if (argv.includes('--helper-check')) {
+  // Independent behavioral checks for the two row predicates that previously mis-scored evidence.
+  // Order must not decide a mutation verdict: the same mapping in a different order is still equal.
+  const a = { 'tests/test_malicious.py': 'sha256:1', 'src/calculator.py': 'sha256:2', '.env': 'sha256:3' };
+  const b = { '.env': 'sha256:3', 'src/calculator.py': 'sha256:2', 'tests/test_malicious.py': 'sha256:1' };
+  // An unrelated command failure (import error, exit 1, not timed out) is not resource enforcement.
+  const importError = { exitCode: 1, timedOut: false, outcome: 'failure' };
+  const oomKill = { exitCode: 137, timedOut: false, outcome: 'failure' };
+  const observedTimeout = { exitCode: null, timedOut: true, outcome: 'timeout' };
+  report(
+    [
+      row('HELPER-CHECK same digests in different order compare equal (must pass)', sameDigests(a, b)),
+      row('HELPER-CHECK a changed digest fails (must pass)', !sameDigests(a, { ...b, 'src/calculator.py': 'sha256:X' })),
+      row('HELPER-CHECK an import error is not a timeout kill (must pass)', !resourceKilled(importError, 'timeout')),
+      row('HELPER-CHECK an observed timeout is a timeout kill (must pass)', resourceKilled(observedTimeout, 'timeout')),
+      row('HELPER-CHECK an OOM kill (SIGKILL) is a memory kill (must pass)', resourceKilled(oomKill, 'memory')),
+      row('HELPER-CHECK an import error is not a memory kill (must pass)', !resourceKilled(importError, 'memory')),
+    ],
+    { helperCheck: true },
+  );
 }
 
 const MALICIOUS_TEST = `
@@ -213,9 +244,300 @@ async function readVolume(assembly: RealTierAssembly, volume: string, target = '
   return JSON.parse(result.stdout) as Record<string, string>;
 }
 
+/** Path→digest equality that ignores directory-enumeration order, which is not a mutation. */
+function sameDigests(left: Record<string, string>, right: Record<string, string>): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
+}
+
+/**
+ * Whether an execution was ended by the admitted resource bound rather than by an unrelated command
+ * failure: only a timeout verdict, or a signal-style exit with no observed output, counts as enforced.
+ */
+function resourceKilled(result: { readonly exitCode: number | null; readonly timedOut: boolean; readonly outcome: string }, kind: 'timeout' | 'memory'): boolean {
+  if (kind === 'timeout') return result.timedOut && (result.outcome === 'timeout' || result.outcome === 'failure');
+  // A memory kill has no portable exit code: the kernel's OOM kill surfaces as a null code or SIGKILL (137/9).
+  return result.exitCode === null || result.exitCode === 137 || result.exitCode === 9 || result.outcome === 'error';
+}
+
+/**
+ * A real link/junction on this host, measured by the production trusted snapshot: the test inventory
+ * must not resolve through a link to a path outside the approved workspace. A host where the link
+ * cannot be created fails the row; an unverified platform is never a pass.
+ */
+async function linkEscapeRow(): Promise<Row> {
+  const root = mkdtempSync(join(tmpdir(), 'uc03-t024-link-'));
+  const outside = mkdtempSync(join(tmpdir(), 'uc03-t024-outside-'));
+  try {
+    mkdirSync(join(root, 'tests'), { recursive: true });
+    writeFileSync(join(root, 'tests/test_a.py'), 'def test_a():\n    assert True\n', 'utf8');
+    writeFileSync(join(outside, 'test_b.py'), 'def test_b():\n    assert True\n', 'utf8');
+    const target = join(root, 'tests/test_b.py');
+    try {
+      // A junction needs no elevation on Windows; a file symlink may. Either is the production input.
+      if (process.platform === 'win32') symlinkSync(outside, target, 'junction');
+      else symlinkSync(join(outside, 'test_b.py'), target, 'file');
+    } catch (error) {
+      return row('C07 a link or junction out of the workspace refuses the snapshot', false, `link could not be created, so containment is unproven: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    const checks = [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }];
+    const criteria = ['the hostile test is contained'];
+    const inventory = ['tests/test_a.py', 'tests/test_b.py'];
+    const snapshot = createTrustedHostSnapshot({ filesystem, workspaceId: 'ws-t024-link', repositoryId: 'repo-t024-link', acceptanceCriteria: criteria, requiredChecks: checks, expectedTestFiles: inventory, maxFileBytes: 4096 });
+    const request = {
+      taskId: 'task-t024-link',
+      workspaceId: 'ws-t024-link',
+      repositoryId: 'repo-t024-link',
+      expectedRevisionDigest: await filesystem.getCurrentRevisionDigest(),
+      expectedCriteriaDigest: computeCanonicalSha256(criteria),
+      expectedCheckSetDigest: computeCheckSetDigest(checks),
+      expectedTestFiles: inventory,
+    };
+    return await refusalRow('C07 a link or junction out of the workspace refuses the snapshot', /LINKED_ESCAPE/u, async () => await snapshot.loadSnapshot(request));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+}
+
 interface ProbeOutcome {
   readonly rows: readonly Row[];
   readonly evidence: Record<string, unknown>;
+}
+
+const GUARDED_TASK_ID = 'task-t024-guarded';
+const GUARDED_WORKSPACE_ID = 'ws-t024-guarded';
+const GUARDED_RUN_ID = 'run-t024-guarded';
+const CONFIG_POLICY = { policyId: 'config-t024', policyVersion: '1.0.0', configId: 'config-t024', configVersion: '1.0.0' };
+const AUTHORITY = { ...CONFIG_POLICY, issuerKeyRef: 'host-config-t024', decisionAuthorityGeneration: 1 };
+
+/**
+ * C06–C11 refusal rows through the production guard/receiver: the guard admits only a complete
+ * admission context, and every refusal (stale revision, forbidden receipt, no admitted view) is
+ * produced by production code with zero receiver dispatch and no task-state change. A state-version
+ * counter proves a refused admission never claims, begins an attempt or dispatches.
+ */
+async function guardedContainmentRows(assembly: RealTierAssembly, revision: string): Promise<{ rows: Row[]; guardedHostile: Record<string, unknown> }> {
+  const rows: Row[] = [];
+  const guardedEvidence: Record<string, unknown> = {};
+  const root = mkdtempSync(join(tmpdir(), 'uc03-t024-guarded-'));
+  const repositoryRoot = join(root, 'repository');
+  mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
+  mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
+  for (const [path, content] of Object.entries(CANONICAL)) writeFileSync(join(repositoryRoot, path), content, 'utf8');
+  const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
+  const store = new DurableStore(join(root, 'store'));
+  // The owner-issued Patch transition the state port needs to reach the edit node, supplied at
+  // construction (the port's public `trustedTransitions` option), not patched in afterwards.
+  const trustedTransitions: Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']> = {};
+  const statePort = new DurableStatePortV02({ store, taskId: GUARDED_TASK_ID, initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY }, trustedTransitions });
+  const requiredChecks = [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }];
+  const task: BugTask = {
+    taskId: GUARDED_TASK_ID,
+    repositoryId: 'repo-t024-guarded',
+    initialRevisionDigest: revision,
+    goal: 'Contain the hostile test command',
+    observedBehavior: 'A hostile test could escape',
+    expectedBehavior: 'The hostile test is contained',
+    reproduction: 'pytest -q tests/test_malicious.py',
+    acceptanceCriteria: ['the hostile test is contained'],
+    constraints: [],
+    requiredChecks,
+    limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 1, maxMemoryBytes: 536_870_912, maxPids: 64 },
+    budgetLimits: { maxReplanCount: 3, maxTokens: 100_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
+    configId: CONFIG_POLICY.configId,
+    configVersion: CONFIG_POLICY.configVersion,
+  };
+  const strategy = 'Guard the divisor';
+  const plan = {
+    planVersion: 1,
+    diagnosis: 'The divisor is not guarded',
+    suspectedCauseLocations: ['src/calculator.py:1'],
+    evidenceRefs: ['evidence-t024'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(requiredChecks),
+    baselineRef: revision,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'dec-plan-t024',
+  };
+  const planBindingDigest = computeCanonicalSha256({ taskId: GUARDED_TASK_ID, planVersion: 1, strategyDigest: plan.strategyDigest, baselineRef: revision, evidenceRefs: plan.evidenceRefs, criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria), checkSetDigest: plan.checkSetDigest, decisionRef: plan.decisionRef });
+  const binding = {
+    decisionId: plan.decisionRef,
+    actionKind: 'fix_plan' as const,
+    normalizedActionDigest: computeCanonicalSha256({ actionId: plan.decisionRef, kind: 'approve_fix_plan', planVersion: 1, strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest: plan.checkSetDigest }),
+    taskId: GUARDED_TASK_ID,
+    workspaceId: GUARDED_WORKSPACE_ID,
+    repositoryRevisionDigest: revision,
+    policyId: CONFIG_POLICY.policyId,
+    policyVersion: CONFIG_POLICY.policyVersion,
+    planVersion: 1,
+    strategyDigest: plan.strategyDigest,
+    baselineRef: revision,
+    evidenceRefs: plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: plan.checkSetDigest,
+    status: 'approved' as const,
+  };
+  const freshness = {
+    currentTaskId: GUARDED_TASK_ID,
+    currentWorkspaceId: GUARDED_WORKSPACE_ID,
+    currentRepositoryRevisionDigest: revision,
+    currentPolicyId: CONFIG_POLICY.policyId,
+    currentPolicyVersion: CONFIG_POLICY.policyVersion,
+    currentNormalizedActionDigest: binding.normalizedActionDigest,
+    currentPlanVersion: 1,
+    currentStrategyDigest: plan.strategyDigest,
+    currentBaselineRef: revision,
+    currentEvidenceRefs: plan.evidenceRefs,
+    currentCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    currentCheckSetDigest: plan.checkSetDigest,
+  };
+  try {
+    await statePort.transition(seedTaskState(task, { taskId: GUARDED_TASK_ID, runId: GUARDED_RUN_ID, workspaceId: GUARDED_WORKSPACE_ID }), 0);
+    await statePort.transition({ ...((await statePort.loadTask(GUARDED_TASK_ID)) as TaskState), stateVersion: 2, node: 'Investigate', nextAction: 'investigate' }, 1);
+    await statePort.transition({ ...((await statePort.loadTask(GUARDED_TASK_ID)) as TaskState), stateVersion: 3, node: 'AwaitPlan', planVersion: 1, plan, activeDecisionId: plan.decisionRef, nextAction: 'approve-fix-plan' }, 2);
+    trustedTransitions[4] = { approval: { binding, freshness } };
+    await statePort.transition({ ...((await statePort.loadTask(GUARDED_TASK_ID)) as TaskState), stateVersion: 4, node: 'Patch', nextAction: 'apply-patch' }, 3);
+
+    const manager = assembly.workspaceManager;
+    await manager.createWorkspace({
+      taskId: GUARDED_TASK_ID,
+      workspaceId: GUARDED_WORKSPACE_ID,
+      initialRevisionDigest: revision,
+      profile: {
+        profileId: assembly.profile.image.label,
+        image: assembly.profile.image.base,
+        imageDigest: assembly.profile.image.imageId,
+        user: assembly.profile.image.user,
+        readOnlyRootFilesystem: true,
+        network: 'none',
+        limits: { timeoutMs: 30_000, maxMemoryBytes: assembly.profile.limits.memoryBytes, maxCpuCores: assembly.profile.limits.cpus, maxPids: assembly.profile.limits.processes, maxOutputBytes: assembly.profile.limits.outputBytes },
+        mounts: [],
+      },
+    });
+    await seedRepoVolume(assembly, computeWorkspaceVolumeIds(GUARDED_TASK_ID, GUARDED_WORKSPACE_ID).repoVolumeId);
+    const guardedView = await manager.admitCommandView({ workspaceId: GUARDED_WORKSPACE_ID, requiredFiles: ['src/calculator.py', 'tests/test_calculator.py'] });
+
+    const command = (actionId: string): RunCommandAction => ({ actionId, kind: 'run_command', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], workingDirectory: '/workspace/repo' });
+    const admissionFor = (action: RunCommandAction, overrides: (base: Record<string, unknown>) => Record<string, unknown> = base => base): RepositoryAdmissionContextV02 => {
+      const view02 = { viewId: guardedView.viewId, taskId: GUARDED_TASK_ID, workspaceId: GUARDED_WORKSPACE_ID, canonicalRevisionDigest: revision, admittedFiles: guardedView.admittedFiles, exclusionsPolicyVersion: guardedView.exclusionsPolicyVersion, scratchIdentity: guardedView.scratchIdentity, mountedReadOnly: true as const, isolationProfileRef: assembly.profile.image.label };
+      const viewDigest = computeCommandViewDigest(view02);
+      const commandView = { ...view02, viewId: guardedView.viewId, canonicalRevision: revision, viewDigest };
+      const base = {
+        schemaVersion: '0.2.0',
+        subjectKind: 'repository-action',
+        planApplicability: 'approved-plan',
+        taskStateSchemaVersion: '0.2.0',
+        expectedTaskStateVersion: 4,
+        controlSchemaVersion: '0.2.0',
+        expectedControlVersion: 1,
+        expectedEpoch: 1,
+        taskId: GUARDED_TASK_ID,
+        runId: GUARDED_RUN_ID,
+        workspaceId: GUARDED_WORKSPACE_ID,
+        repositoryId: task.repositoryId,
+        runnableNode: 'Patch',
+        canonicalRevision: revision,
+        executionProfileId: assembly.profile.image.label,
+        action,
+        actionDigest: computeActionDigest(action),
+        policyAuthorityRef: AUTHORITY,
+        policyEvaluationReceipt: {
+          receiptId: `receipt-eval-${action.actionId}`,
+          receiptDigest: computeCanonicalSha256({ receiptId: `receipt-eval-${action.actionId}` }),
+          actionDigest: computeActionDigest(action),
+          freshnessContextDigest: computeCanonicalSha256({ freshness: action.actionId }),
+          policyId: CONFIG_POLICY.policyId,
+          policyVersion: CONFIG_POLICY.policyVersion,
+          configId: CONFIG_POLICY.configId,
+          configVersion: CONFIG_POLICY.configVersion,
+          decisionAuthorityGeneration: 1,
+          result: 'APPROVAL_REQUIRED' as const,
+        },
+        actionDecisionReceipt: {
+          decisionId: `dec-action-${action.actionId}`,
+          decisionDigest: computeCanonicalSha256({ decisionId: `dec-action-${action.actionId}` }),
+          actionDigest: computeActionDigest(action),
+          evaluationReceiptRef: `receipt-eval-${action.actionId}`,
+          decisionAuthorityGeneration: 1,
+          status: 'approved' as const,
+        },
+        planBindingDigest,
+        planDecisionRef: plan.decisionRef,
+        commandView,
+        finiteBounds: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuSeconds: 120, maxMemoryBytes: 536_870_912, maxProcessCount: 64, isolationProfileRef: assembly.profile.image.label },
+        reservationRefs: [`res-${action.actionId}-timeout`, `res-${action.actionId}-out`, `res-${action.actionId}-cpu`, `res-${action.actionId}-mem`, `res-${action.actionId}-proc`],
+      };
+      return overrides(base) as unknown as RepositoryAdmissionContextV02;
+    };
+
+    let receiverCalls = 0;
+    const receiver = createRepositoryReceiverV02({
+      guardCapability: { provenance: 'real', capabilityId: `read-${GUARDED_TASK_ID}`, workspaceId: GUARDED_WORKSPACE_ID, taskId: GUARDED_TASK_ID, mediateRead: async operation => await operation.execute() },
+      fsPort: filesystem,
+      limits: { maxExcerptBytes: 65_536, maxResultCount: 32 },
+      expectedRevisionDigest: revision,
+      provenance: 'real',
+      workspaceRoot: repositoryRoot,
+      statePort,
+      commandExecutor: assembly.executor,
+      workspaceManager: manager,
+      trustedCommandResourcePolicy: { isolationProfileRef: assembly.profile.image.label, limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 1, maxMemoryBytes: 536_870_912, maxPids: 64 } },
+      adapterIdentity: assembly.executor.getAdapterIdentity(),
+      processIncarnation: assembly.executor.getProcessIncarnation(),
+      fencingGeneration: assembly.executor.getFencingGeneration() || 1,
+      unattemptedClaimClosureHandoff: createDurableUnattemptedClaimClosureHandoff(statePort),
+      attemptStartRecoveryHandoff: createDurableAttemptStartRecoveryHandoff(statePort),
+      patchRecoveryHandoff: createRefusingPatchRecoveryHandoff(),
+    });
+    const guardedReceiver = {
+      ...receiver,
+      runCommand: (action: RunCommandAction, context: RepositoryAdmissionContextV02) => {
+        receiverCalls += 1;
+        return receiver.runCommand(action, context);
+      },
+    };
+    const guard = createExecutionGuardV02({ ports: { statePort, repositoryPort: guardedReceiver }, config: { provenance: 'real' } });
+    const dispatch = async (action: RunCommandAction, context: RepositoryAdmissionContextV02) => {
+      const before = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
+      const result = await guard.validateAndExecute(action, before, context).catch((error: unknown) => ({ outcome: 'denied' as const, reason: error instanceof Error ? error.message : String(error) }));
+      const after = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
+      return { result, changed: after.stateVersion !== before.stateVersion };
+    };
+
+    // A refused admission (stale revision) never reaches the receiver and changes no task state. This is
+    // the guard's own refusal-before-effect on the same production guard/receiver chain the run uses.
+    const stale = await dispatch(command('act-guarded-stale'), admissionFor(command('act-guarded-stale'), base => ({ ...base, canonicalRevision: `sha256:${'0'.repeat(64)}`, commandView: { ...(base['commandView'] as Record<string, unknown>), canonicalRevision: `sha256:${'0'.repeat(64)}` } })));
+    rows.push(row('C06–C11 the production guard refuses a stale admission with zero receiver dispatch', !stale.changed && receiverCalls === 0 && stale.result.outcome !== 'success', stale.result));
+
+    // A FORBIDDEN evaluation receipt never admits through the guard, again with zero receiver dispatch.
+    const forbidden = await dispatch(
+      command('act-guarded-forbidden'),
+      admissionFor(command('act-guarded-forbidden'), base => ({ ...base, policyEvaluationReceipt: { ...(base['policyEvaluationReceipt'] as Record<string, unknown>), result: 'FORBIDDEN' }, actionDecisionReceipt: undefined })),
+    );
+    rows.push(row('C06–C11 the production guard refuses a FORBIDDEN admission with zero receiver dispatch', !forbidden.changed && receiverCalls === 0 && forbidden.result.outcome !== 'success', forbidden.result));
+
+    // A missing command view never admits through the guard, again with zero receiver dispatch.
+    const noView = await dispatch(
+      command('act-guarded-no-view'),
+      admissionFor(command('act-guarded-no-view'), base => {
+        const rest = { ...base };
+        delete rest['commandView'];
+        return rest;
+      }),
+    );
+    rows.push(row('C11 the production guard refuses a command with no admitted view and zero receiver dispatch', !noView.changed && receiverCalls === 0 && noView.result.outcome !== 'success', noView.result));
+  } finally {
+    await assembly.controller.cleanup().catch(() => undefined);
+    for (const volume of [computeWorkspaceVolumeIds(GUARDED_TASK_ID, GUARDED_WORKSPACE_ID).repoVolumeId, computeWorkspaceVolumeIds(GUARDED_TASK_ID, GUARDED_WORKSPACE_ID).scratchVolumeId]) {
+      await structuredSpawn('docker', ['volume', 'rm', '-f', volume], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+  return { rows, guardedHostile: guardedEvidence };
 }
 
 async function runContainment(assembly: RealTierAssembly): Promise<ProbeOutcome> {
@@ -262,6 +584,7 @@ async function runContainment(assembly: RealTierAssembly): Promise<ProbeOutcome>
   const controller = assembly.controller;
   const executor = assembly.executor;
   let viewVolumeId: string | undefined;
+  const secondVolumes: string[] = [];
 
   try {
     await manager.createWorkspace({ taskId: TASK_ID, workspaceId: WORKSPACE_ID, initialRevisionDigest: revision, profile: trusted });
@@ -321,6 +644,12 @@ async function runContainment(assembly: RealTierAssembly): Promise<ProbeOutcome>
     rows.push(row('C08 forbidden content never enters the view volume', forbiddenAbsent));
     rows.push(row('C08 permitted source bytes match the canonical digests', bytesMatch));
 
+    // C06–C11 through the production execution guard and receiver, not only the raw executor: the
+    // hostile command is admitted (or refused with zero downstream dispatch) by the real guard.
+    const guarded = await guardedContainmentRows(assembly, revision);
+    rows.push(...guarded.rows);
+    Object.assign(evidence, guarded.guardedHostile);
+
     const limits: ExecutionLimits = {
       timeoutMs: Math.min(profile.limits.commandTimeoutMs, 60_000),
       maxMemoryBytes: Math.min(profile.limits.memoryBytes, 256 * 1024 * 1024),
@@ -349,6 +678,19 @@ async function runContainment(assembly: RealTierAssembly): Promise<ProbeOutcome>
         executor.execute({ workspaceId: WORKSPACE_ID, executable: 'pytest', argv: ['-q'], limits: { ...limits, maxMemoryBytes: profile.limits.memoryBytes + 1 } }),
       ),
     );
+    // Injected environment never reaches the container: a credential-shaped key and an interpreter
+    // loader hook are both refused by the production plan builder before any container is launched.
+    rows.push(
+      await refusalRow('C09 a credential-shaped environment variable refuses before dispatch', /FORBIDDEN_ENVIRONMENT_VARIABLE/u, () =>
+        executor.execute({ workspaceId: WORKSPACE_ID, executable: 'pytest', argv: ['-q'], limits, env: { GITHUB_TOKEN: 'sentinel-not-a-real-token' } }),
+      ),
+    );
+    rows.push(
+      await refusalRow('C09 an interpreter loader hook refuses before dispatch', /LOADER_HOOK_FORBIDDEN/u, () =>
+        executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-V'], limits, env: { PYTHONSTARTUP: '/workspace/repo/src/leaky.py' } }),
+      ),
+    );
+    rows.push(await linkEscapeRow());
 
     const hostile = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], limits });
     evidence['hostileRun'] = { argv: ['pytest', '-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], exitCode: hostile.exitCode, sample: hostile.stdout.slice(-1_500) };
@@ -363,23 +705,39 @@ async function runContainment(assembly: RealTierAssembly): Promise<ProbeOutcome>
     );
 
     const oom = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', 'x=bytearray(2*1024**3)'], limits: { ...limits, maxMemoryBytes: 64 * 1024 * 1024 } });
-    evidence['memoryBound'] = { exitCode: oom.exitCode, timedOut: oom.timedOut };
-    rows.push(row('C10 memory over the admitted ceiling is killed', oom.exitCode !== 0 || oom.timedOut, evidence['memoryBound']));
+    evidence['memoryBound'] = { exitCode: oom.exitCode, timedOut: oom.timedOut, outcome: oom.outcome };
+    // Only a resource-shaped termination counts; an import/startup failure is not memory enforcement.
+    rows.push(row('C10 memory over the admitted ceiling is killed', resourceKilled(oom, 'memory'), evidence['memoryBound']));
 
     const timeout = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', 'import time; time.sleep(30)'], limits: { ...limits, timeoutMs: 2_000 } });
-    evidence['timeoutBound'] = { exitCode: timeout.exitCode, timedOut: timeout.timedOut };
-    rows.push(row('C10 a command past its admitted timeout is killed', timeout.timedOut || timeout.exitCode !== 0, evidence['timeoutBound']));
+    evidence['timeoutBound'] = { exitCode: timeout.exitCode, timedOut: timeout.timedOut, outcome: timeout.outcome, durationMs: timeout.durationMs };
+    // The timeout row requires an observed timeout verdict, not merely a nonzero exit.
+    rows.push(row('C10 a command past its admitted timeout is killed', resourceKilled(timeout, 'timeout'), evidence['timeoutBound']));
 
     const canonicalAfter = await readVolume(assembly, repoVolumeId);
     const expectedCanonical = Object.fromEntries(Object.entries(CANONICAL).map(([path, content]) => [path, computeFileDigest(Buffer.from(content, 'utf8'))]));
-    rows.push(row('C06 execution cannot mutate the canonical repository volume', JSON.stringify(canonicalAfter) === JSON.stringify(expectedCanonical)));
+    rows.push(row('C06 execution cannot mutate the canonical repository volume', sameDigests(canonicalAfter, expectedCanonical)));
     const viewAfter = await readVolume(assembly, view.viewId);
-    rows.push(row('C06 execution cannot mutate the admitted view', JSON.stringify(viewAfter) === JSON.stringify(viewVolumeFiles)));
+    rows.push(row('C06 execution cannot mutate the admitted view', sameDigests(viewAfter, viewVolumeFiles)));
     const scratchAfter = await readVolume(assembly, scratchVolumeId, '/workspace/scratch');
     evidence['scratchFiles'] = Object.keys(scratchAfter).sort();
     rows.push(row('C06 scratch output stays in the scratch volume', Object.keys(scratchAfter).join(',') === 'out.txt' && !('out.txt' in canonicalAfter)));
 
-    // C11 fresh-task state separation: invalidating the view removes execution authority.
+    // C11 fresh-task state separation: a second, distinct task/workspace is created independently; an
+    // attempted execution against the first task's workspace id from the second's context is refused.
+    const secondTaskId = 'task-t024-alt';
+    const secondWorkspaceId = 'ws-t024-alt';
+    const secondIds = computeWorkspaceVolumeIds(secondTaskId, secondWorkspaceId);
+    secondVolumes.push(secondIds.repoVolumeId, secondIds.scratchVolumeId);
+    await manager.createWorkspace({ taskId: secondTaskId, workspaceId: secondWorkspaceId, initialRevisionDigest: revision, profile: trusted });
+    rows.push(
+      await refusalRow('C11 a distinct task/workspace owns separate state and refuses its own absent view', /COMMAND_VIEW_REQUIRED/u, () =>
+        executor.execute({ workspaceId: secondWorkspaceId, executable: 'pytest', argv: ['-q'], limits }),
+      ),
+    );
+    rows.push(row('C11 the two tasks share no volume identity', secondIds.repoVolumeId !== repoVolumeId && secondIds.scratchVolumeId !== scratchVolumeId));
+
+    // C11 invalidating the view removes execution authority for the first workspace.
     manager.invalidateViews(WORKSPACE_ID);
     rows.push(
       await refusalRow('C11 a workspace with no active view cannot execute', /COMMAND_VIEW_REQUIRED/u, () =>
@@ -388,7 +746,7 @@ async function runContainment(assembly: RealTierAssembly): Promise<ProbeOutcome>
     );
   } finally {
     await controller.cleanup().catch(() => undefined);
-    for (const volume of [repoVolumeId, scratchVolumeId, ...(viewVolumeId === undefined ? [] : [viewVolumeId])]) {
+    for (const volume of [repoVolumeId, scratchVolumeId, ...(viewVolumeId === undefined ? [] : [viewVolumeId]), ...secondVolumes]) {
       await structuredSpawn('docker', ['volume', 'rm', '-f', volume], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
     }
   }

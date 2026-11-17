@@ -136,8 +136,8 @@ function taskOf(revision: string): BugTask {
 }
 
 /** One temp store, one temp repository, the seeded `AwaitPlan` task and the real UC-05 service. */
-async function domain(): Promise<Domain> {
-  const root = mkdtempSync(join(tmpdir(), 'uc03-approvals-probe-'));
+async function domain(scenario: string): Promise<Domain> {
+  const root = mkdtempSync(join(tmpdir(), `uc03-approvals-probe-${scenario}-`));
   const repositoryRoot = join(root, 'repository');
   mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
   mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
@@ -473,151 +473,217 @@ async function applyPatchInContainer(assembly: RealTierAssembly, repositoryRoot:
  * patch receiver and one disposable container per approved edit. A rejected decision reaches none.
  */
 async function runApprovalRows(assembly: RealTierAssembly): Promise<{ rows: readonly Row[]; evidence: Record<string, unknown> }> {
-  const d = await domain();
   const rows: Row[] = [];
-  const argvSeen: (readonly string[])[] = [];
+  const rejected = await rejectedRow(assembly);
+  rows.push(...rejected.rows);
+  const approved = await approvedRow(assembly);
+  rows.push(...approved.rows);
+  return {
+    rows,
+    evidence: {
+      decisions: rejected.decisions + approved.decisions,
+      rejectedExitCodes: rejected.exitCodes,
+      approvedExitCodes: approved.exitCodes,
+      rejectedContainerAttempts: rejected.containerAttempts,
+      approvedContainerAttempts: approved.containerAttempts,
+      imageId: assembly.metadata.imageId,
+    },
+  };
+}
+
+/**
+ * The rejected row in its own fresh task/store: an explicit rejection, then the same guarded receiver
+ * the approved row uses. The guard refuses before the receiver, so the container counter stays zero and
+ * the source bytes are unchanged; the receiver's `patchReceiver` is the only place a byte could change.
+ */
+async function rejectedRow(assembly: RealTierAssembly): Promise<{ rows: Row[]; decisions: number; exitCodes: (number | null)[]; containerAttempts: number }> {
+  const d = await domain('rejected');
+  const rows: Row[] = [];
   const exitCodes: (number | null)[] = [];
   let decisions = 0;
+  const harness = await guardedHarness(assembly, d, exitCodes);
   try {
     await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
     await d.service.requestDecision(planBindingOf(d));
     const planView = await d.service.show(TASK_ID, PLAN_DECISION);
-    const planDecision = await d.service.decide({
-      taskId: TASK_ID,
-      decisionId: PLAN_DECISION,
-      taskVersion: planView.control.version,
-      requestVersion: 1,
-      presentationDigest: planView.presentation.presentationDigest,
-      decision: 'approve',
-      responseKey: 'approve-plan-t052-probe',
-    });
+    const planDecision = await d.service.decide({ taskId: TASK_ID, decisionId: PLAN_DECISION, taskVersion: planView.control.version, requestVersion: 1, presentationDigest: planView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-plan-t052-probe-rej' });
     assert.equal(planDecision.outcome, 'ok', JSON.stringify(planDecision));
     decisions += 1;
     const approvedPlan = await d.service.resolve(PLAN_DECISION);
-    const before = (await d.statePort.loadTask(TASK_ID)) as TaskState;
-    const patchState: TaskState = { ...before, stateVersion: before.stateVersion + 1, node: 'Patch', nextAction: 'apply-patch' };
-    d.trustedTransitions[patchState.stateVersion] = {
-      approval: { binding: approvedPlan, freshness: planFreshness(d.task, d.plan, d.revision, { actionId: PLAN_DECISION, kind: 'approve_fix_plan' }) },
-    };
-    await d.statePort.transition(patchState, before.stateVersion);
-
+    await enterPatch(d, approvedPlan, PLAN_DECISION);
     await d.source.register({ action: patchActionOf(d), facts: patchFacts(d, approvedPlan), elements: PATCH_ELEMENTS });
     const pending = await d.service.requestDecision(patchBindingOf(d));
     rows.push(row('T025 the patch action starts as a pending decision', pending.status === 'pending', pending.status));
 
-    // The rejected row: an explicit operator rejection, Amd zero containers.
     const pendingView = await d.service.show(TASK_ID, PATCH_DECISION);
-    const rejected = await d.service.decide({
-      taskId: TASK_ID,
-      decisionId: PATCH_DECISION,
-      taskVersion: pendingView.control.version,
-      requestVersion: 1,
-      presentationDigest: pendingView.presentation.presentationDigest,
-      decision: 'reject',
-      responseKey: 'reject-patch-t052-probe',
-    });
+    const rejection = await d.service.decide({ taskId: TASK_ID, decisionId: PATCH_DECISION, taskVersion: pendingView.control.version, requestVersion: 1, presentationDigest: pendingView.presentation.presentationDigest, decision: 'reject', responseKey: 'reject-patch-t052-probe' });
     decisions += 1;
-    rows.push(row('T025 rejected: the explicit rejection is recorded', rejected.outcome === 'ok', rejected.outcome));
+    rows.push(row('T025 rejected: the explicit rejection is recorded', rejection.outcome === 'ok', rejection.outcome));
     rows.push(row('T025 rejected: continuation reads the rejected decision', (await d.service.resolve(PATCH_DECISION)).status === 'rejected'));
-    rows.push(row('T025 rejected: zero container runs', exitCodes.length === 0, { runs: exitCodes.length }));
 
     // A second, conflicting decision on the same request is refused by the service, not by this probe.
-    const conflicting = await d.service.decide({
-      taskId: TASK_ID,
-      decisionId: PATCH_DECISION,
-      taskVersion: pendingView.control.version,
-      requestVersion: 1,
-      presentationDigest: pendingView.presentation.presentationDigest,
-      decision: 'approve',
-      responseKey: 'approve-late-t052-probe',
-    });
+    const conflicting = await d.service.decide({ taskId: TASK_ID, decisionId: PATCH_DECISION, taskVersion: pendingView.control.version, requestVersion: 1, presentationDigest: pendingView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-late-t052-probe' });
     rows.push(row('T025 rejected: a conflicting late approval is refused', conflicting.outcome !== 'ok', conflicting.outcome));
 
-    // The approved row: a fresh request and an explicit approval, then exactly one real container edit.
+    // The same guarded receiver operation the approved row uses: an APPROVAL_REQUIRED receipt with no
+    // approved decision must be refused before the receiver, leaving the source bytes and counter untouched.
+    const before = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
+    const refused = await harness.dispatch({ pe: admittedReceipt(receiptFor(d, 'APPROVAL_REQUIRED')) });
+    const after = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
+    rows.push(row('T025 rejected: the real guard refuses the rejected path', refused.outcome !== 'success', { outcome: refused.outcome }));
+    rows.push(row('T025 rejected: zero patches and zero container runs', harness.containerAttempts() === 0 && exitCodes.length === 0, { containerAttempts: harness.containerAttempts(), runs: exitCodes.length }));
+    rows.push(row('T025 rejected: the source bytes are unchanged by the refusal', before === after, { before, after }));
+  } finally {
+    d.cleanup();
+  }
+  return { rows, decisions, exitCodes, containerAttempts: harness.containerAttempts() };
+}
+
+/**
+ * The approved row in its own fresh task/store: an explicit approval, then the container edit is
+ * performed *inside* the receiver's `patchReceiver` (after the guard admits and the receiver begins
+ * the attempt), so no source byte changes before admission.
+ */
+async function approvedRow(assembly: RealTierAssembly): Promise<{ rows: Row[]; decisions: number; exitCodes: (number | null)[]; containerAttempts: number }> {
+  const d = await domain('approved');
+  const rows: Row[] = [];
+  const exitCodes: (number | null)[] = [];
+  let decisions = 0;
+  const harness = await guardedHarness(assembly, d, exitCodes);
+  try {
+    await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
+    await d.service.requestDecision(planBindingOf(d));
+    const planView = await d.service.show(TASK_ID, PLAN_DECISION);
+    const planDecision = await d.service.decide({ taskId: TASK_ID, decisionId: PLAN_DECISION, taskVersion: planView.control.version, requestVersion: 1, presentationDigest: planView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-plan-t052-probe-app' });
+    assert.equal(planDecision.outcome, 'ok', JSON.stringify(planDecision));
+    decisions += 1;
+    const approvedPlan = await d.service.resolve(PLAN_DECISION);
+    await enterPatch(d, approvedPlan, PLAN_DECISION);
+
     const approvedAction = patchActionOf(d);
     await d.source.register({ action: approvedAction, facts: patchFacts(d, approvedPlan), elements: PATCH_ELEMENTS });
-    const secondPending = await d.service.requestDecision({ ...patchBindingOf(d) });
-    rows.push(row('T025 approved: the replacement action is pending again', secondPending.status === 'pending', secondPending.status));
+    const pending = await d.service.requestDecision(patchBindingOf(d));
+    rows.push(row('T025 approved: the patch action starts as a pending decision', pending.status === 'pending', pending.status));
     const approvedView = await d.service.show(TASK_ID, PATCH_DECISION);
-    const approvalDecision = await d.service.decide({
-      taskId: TASK_ID,
-      decisionId: PATCH_DECISION,
-      taskVersion: approvedView.control.version,
-      requestVersion: 1,
-      presentationDigest: approvedView.presentation.presentationDigest,
-      decision: 'approve',
-      responseKey: 'approve-patch-t052-probe',
-    });
+    const approvalDecision = await d.service.decide({ taskId: TASK_ID, decisionId: PATCH_DECISION, taskVersion: approvedView.control.version, requestVersion: 1, presentationDigest: approvedView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-patch-t052-probe' });
     decisions += 1;
     rows.push(row('T025 approved: the explicit approval is recorded', approvalDecision.outcome === 'ok', approvalDecision.outcome));
     const evaluation = await d.service.evaluatePolicy(approvedAction, { ...POLICY_OPTIONS, planBindingDigest: d.planBindingDigest, planDecisionRef: PLAN_DECISION });
     const decisionReceipt = await d.service.issueActionDecision(PATCH_DECISION, evaluation.receiptId);
 
-    const filesystem = new WorkspaceFilesystemPort({ root: d.repositoryRoot });
-    const container = await applyPatchInContainer(assembly, d.repositoryRoot);
-    argvSeen.push(container.argv);
-    exitCodes.push(container.exitCode);
-    rows.push(row('T025 approved: one container run applies the patch bytes', container.exitCode === 0, { exitCode: container.exitCode, stderr: container.stderr }));
+    // The source equals its original bytes right up to the moment the guard admits and the receiver runs.
+    const before = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
+    rows.push(row('T025 approved: no source byte changes before admission', before === d.revision, { before, revision: d.revision }));
 
-    // The receiver verifies the container effect against the host measurement, then settles.
-    const manager = assembly.workspaceManager;
-    await manager.createWorkspace({
-      taskId: TASK_ID,
-      workspaceId: WORKSPACE_ID,
-      initialRevisionDigest: d.revision,
-      profile: {
-        profileId: assembly.profile.image.label,
-        image: assembly.profile.image.base,
-        imageDigest: assembly.profile.image.imageId,
-        user: assembly.profile.image.user,
-        readOnlyRootFilesystem: true,
-        network: 'none',
-        limits: { timeoutMs: 30_000, maxMemoryBytes: assembly.profile.limits.memoryBytes, maxCpuCores: assembly.profile.limits.cpus, maxPids: assembly.profile.limits.processes },
-        mounts: [],
-      },
-    });
-    const receiver = createRepositoryReceiverV02({
-      guardCapability: { provenance: 'real', capabilityId: `read-${TASK_ID}`, workspaceId: WORKSPACE_ID, taskId: TASK_ID, mediateRead: async operation => await operation.execute() },
-      fsPort: filesystem,
-      limits: { maxExcerptBytes: 65_536, maxResultCount: 32 },
-      expectedRevisionDigest: d.revision,
-      provenance: 'real',
-      workspaceRoot: d.repositoryRoot,
-      statePort: d.statePort,
-      workspaceManager: manager,
-      adapterIdentity: `probe-adapter-${TASK_ID}`,
-      processIncarnation: `probe-incarnation-${TASK_ID}`,
-      fencingGeneration: 1,
-      patchRecoveryHandoff: {
-        prepare: async () => {
-          throw new Error('Unexpected recovery for an observed patch');
-        },
-      },
-      attemptStartRecoveryHandoff: {
-        queryAttemptStart: async () => {
-          throw new Error('Unexpected attempt-start recovery');
-        },
-      },
-      unattemptedClaimClosureHandoff: {
-        closeUnattemptedClaim: async () => {
-          throw new Error('Unexpected claim closure');
-        },
-      },
-      patchReceiver: async () => {
-        const next = await filesystem.getCurrentRevisionDigest();
-        manager.setCanonicalRevision(WORKSPACE_ID, next);
-        return { applied: true, newRevisionDigest: next };
-      },
-    });
-    const guard = createExecutionGuardV02({ ports: { statePort: d.statePort, approvalPort: d.service, repositoryPort: receiver }, config: { provenance: 'real' } });
-    const state = (await d.statePort.loadTask(TASK_ID)) as TaskState;
-    const applied = await guard.validateAndExecute(approvedAction, state, admissionContext(d, state, { pe: admittedReceipt(evaluation), ad: admittedDecision(decisionReceipt) }) as never);
+    const applied = await harness.dispatch({ pe: admittedReceipt(evaluation), ad: admittedDecision(decisionReceipt) });
     rows.push(row('T025 approved: the real guard settles exactly one patch', applied.outcome === 'success', { outcome: applied.outcome, reason: (applied as { reason?: string }).reason }));
-    rows.push(row('T025 approved: exactly one container run in total', exitCodes.length === 1, { runs: exitCodes.length }));
+    rows.push(row('T025 approved: exactly one container run performs the edit', exitCodes.length === 1 && exitCodes[0] === 0, { runs: exitCodes.length, exitCode: exitCodes[0] }));
+    const after = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
+    rows.push(row('T025 approved: the edit landed only after admission', after !== before, { before, after }));
   } finally {
     d.cleanup();
   }
-  return { rows, evidence: { decisions, argvSeen, exitCodes, imageId: assembly.metadata.imageId } };
+  return { rows, decisions, exitCodes, containerAttempts: harness.containerAttempts() };
+}
+
+/** The owner's `AwaitPlan -> Patch` transition after an explicit plan approval. */
+async function enterPatch(d: Awaited<ReturnType<typeof domain>>, approvedPlan: ApprovalBinding, decisionId: string): Promise<void> {
+  const current = (await d.statePort.loadTask(TASK_ID)) as TaskState;
+  const next: TaskState = { ...current, stateVersion: current.stateVersion + 1, node: 'Patch', nextAction: 'apply-patch' };
+  d.trustedTransitions[next.stateVersion] = { approval: { binding: approvedPlan, freshness: planFreshness(d.task, d.plan, d.revision, { actionId: decisionId, kind: 'approve_fix_plan' }) } };
+  await d.statePort.transition(next, current.stateVersion);
+}
+
+/** A structurally valid policy evaluation receipt with a chosen result, for the refusal rows. */
+function receiptFor(d: Awaited<ReturnType<typeof domain>>, result: 'APPROVAL_REQUIRED' | 'ALLOWED' | 'FORBIDDEN'): PolicyEvaluationReceipt {
+  const body = {
+    receiptId: `receipt-eval-${result.toLowerCase()}-${TASK_ID}`,
+    actionDigest: computeActionDigest(patchActionOf(d)),
+    freshnessContextDigest: computeCanonicalSha256({ freshness: result }),
+    policyId: CONFIG.configId,
+    policyVersion: CONFIG.configVersion,
+    configId: CONFIG.configId,
+    configVersion: CONFIG.configVersion,
+    decisionAuthorityGeneration: 1,
+    result,
+    schemaVersion: 'uc05-approval/0.2-draft' as const,
+  };
+  return { ...body, receiptDigest: computePolicyEvaluationReceiptDigest(body) } as PolicyEvaluationReceipt;
+}
+
+/** The production guard/receiver over one domain, counting container attempts at the receiver. */
+async function guardedHarness(
+  assembly: RealTierAssembly,
+  d: Awaited<ReturnType<typeof domain>>,
+  exitCodes: (number | null)[],
+): Promise<{ dispatch(receipts: { readonly pe: unknown; readonly ad?: unknown }): Promise<{ readonly outcome: string; readonly reason?: string | undefined }>; containerAttempts: () => number }> {
+  const filesystem = new WorkspaceFilesystemPort({ root: d.repositoryRoot });
+  const manager = assembly.workspaceManager;
+  await manager.createWorkspace({
+    taskId: TASK_ID,
+    workspaceId: WORKSPACE_ID,
+    initialRevisionDigest: d.revision,
+    profile: {
+      profileId: assembly.profile.image.label,
+      image: assembly.profile.image.base,
+      imageDigest: assembly.profile.image.imageId,
+      user: assembly.profile.image.user,
+      readOnlyRootFilesystem: true,
+      network: 'none',
+      limits: { timeoutMs: 30_000, maxMemoryBytes: assembly.profile.limits.memoryBytes, maxCpuCores: assembly.profile.limits.cpus, maxPids: assembly.profile.limits.processes },
+      mounts: [],
+    },
+  });
+  let attempts = 0;
+  const receiver = createRepositoryReceiverV02({
+    guardCapability: { provenance: 'real', capabilityId: `read-${TASK_ID}`, workspaceId: WORKSPACE_ID, taskId: TASK_ID, mediateRead: async operation => await operation.execute() },
+    fsPort: filesystem,
+    limits: { maxExcerptBytes: 65_536, maxResultCount: 32 },
+    expectedRevisionDigest: d.revision,
+    provenance: 'real',
+    workspaceRoot: d.repositoryRoot,
+    statePort: d.statePort,
+    workspaceManager: manager,
+    adapterIdentity: `probe-adapter-${TASK_ID}`,
+    processIncarnation: `probe-incarnation-${TASK_ID}`,
+    fencingGeneration: 1,
+    patchRecoveryHandoff: {
+      prepare: async () => {
+        throw new Error('Unexpected recovery for an observed patch');
+      },
+    },
+    attemptStartRecoveryHandoff: {
+      queryAttemptStart: async () => {
+        throw new Error('Unexpected attempt-start recovery');
+      },
+    },
+    unattemptedClaimClosureHandoff: {
+      closeUnattemptedClaim: async () => {
+        throw new Error('Unexpected claim closure');
+      },
+    },
+    // The container edit runs here, after the guard admitted and the receiver began the attempt. The
+    // bytes never change before this closure is reached, so a later refusal leaves the tree untouched.
+    patchReceiver: async () => {
+      attempts += 1;
+      const container = await applyPatchInContainer(assembly, d.repositoryRoot);
+      exitCodes.push(container.exitCode);
+      assert.equal(container.exitCode, 0, `container edit failed: ${container.stderr}`);
+      const next = await filesystem.getCurrentRevisionDigest();
+      manager.setCanonicalRevision(WORKSPACE_ID, next);
+      return { applied: true, newRevisionDigest: next };
+    },
+  });
+  const guard = createExecutionGuardV02({ ports: { statePort: d.statePort, approvalPort: d.service, repositoryPort: receiver }, config: { provenance: 'real' } });
+  return {
+    containerAttempts: () => attempts,
+    dispatch: async receipts => {
+      const state = (await d.statePort.loadTask(TASK_ID)) as TaskState;
+      return guard
+        .validateAndExecute(patchActionOf(d), state, admissionContext(d, state, receipts) as never)
+        .catch((error: unknown) => ({ outcome: 'denied', reason: error instanceof Error ? error.message : String(error) }));
+    },
+  };
 }
 
 async function main(): Promise<void> {
