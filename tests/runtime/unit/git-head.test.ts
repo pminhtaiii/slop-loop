@@ -73,7 +73,18 @@ test('a git-legal branch name with +, @ or a dotted segment resolves; an illegal
     withTree({ 'repo/.git/HEAD': `ref: ${name}\n`, [`repo/.git/${name}`]: `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), A, name));
   }
   // Still contained: empty segments, `..`, a `.lock` suffix, a space, `~`, `^`, `[`, `@{`.
-  for (const name of ['refs/heads//double', 'refs/heads/a/../b', 'refs/heads/branch.lock', 'refs/heads/has space', 'refs/heads/a~1', 'refs/heads/a^', 'refs/heads/a@{1}', 'refs/heads/a[1', 'refs/heads/trailing.', 'refs/heads/.hidden']) {
+  for (const name of [
+    'refs/heads//double',
+    'refs/heads/a/../b',
+    'refs/heads/branch.lock',
+    'refs/heads/has space',
+    'refs/heads/a~1',
+    'refs/heads/a^',
+    'refs/heads/a@{1}',
+    'refs/heads/a[1',
+    'refs/heads/trailing.',
+    'refs/heads/.hidden',
+  ]) {
     withTree({ 'repo/.git/HEAD': `ref: ${name}\n`, [`repo/.git/${name}`]: `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), '', name));
   }
   // `:` and `\` cannot even be a path on every platform; the name is refused before any read.
