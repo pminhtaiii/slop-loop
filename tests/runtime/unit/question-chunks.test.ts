@@ -83,6 +83,22 @@ test('the chunk cap stops processing later module gaps', async () => {
   assert.equal(tokenizations, 1);
 });
 
+test('a final chunk slot consumed by the line fallback reports budget exhaustion', async () => {
+  const fixtureSource = fixture(Array.from({ length: 61 }, (_, i) => `line ${i + 1}`).join('\n'));
+  const source = { ...fixtureSource, file: { ...fixtureSource.file, fileType: 'documentation' as const }, maxChunks: 1 };
+  const embedding = createControlledQuestionEmbedding(
+    { id: 'fixture/1', dimension: 1, maxTokens: 1024 },
+    () => [1],
+    () => [1],
+  );
+  const result = await buildQuestionChunks(source, embedding, control());
+  assert.deepEqual(
+    result.chunks.map(({ metadata }) => [metadata.startLine, metadata.endLine]),
+    [[1, 60]],
+  );
+  assert.deepEqual(result.file.omissionReasons, ['budget-exhausted']);
+});
+
 test('decorators and nested definitions retain original definition linkage across logical splits', async () => {
   const longMethod = [
     '@decorate',

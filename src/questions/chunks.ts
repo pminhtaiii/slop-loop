@@ -320,6 +320,10 @@ export async function buildQuestionChunks(
           continue;
         }
         if (pending) save(pending);
+        if (expired(control) || chunks.length >= source.maxChunks) {
+          omissions.add('budget-exhausted');
+          return;
+        }
         pending = candidate(line, line);
         if (!pending && lines[line - 1]) omissions.add('oversized');
       }
@@ -337,8 +341,15 @@ export async function buildQuestionChunks(
     const parser = new Parser();
     try {
       parser.setLanguage(grammar);
-      const tree = parser.parse(lines.join('\n'));
+      let interrupted = false;
+      const tree = parser.parse(lines.join('\n'), null, {
+        progressCallback: () => {
+          interrupted ||= expired(control);
+          return interrupted;
+        },
+      });
       try {
+        if (interrupted || expired(control)) return refuse('budget-exhausted');
         if (!tree || tree.rootNode.hasError) {
           omissions.add('parse-failure');
           emit({ startLine: 1, endLine: lineCount }, null, []);
