@@ -30,20 +30,14 @@ import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/founda
 import { computeFileDigest } from '../../../src/foundation/docker-workspace-policy.ts';
 import { computeContextDigest } from '../../../src/foundation/model.ts';
 import { resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
-import { bindRealTierTask, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
+import { bindRealTierTask, executionProfileOf, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
 import { deriveTrustedContext } from '../../../src/persistence/adapters/state-port-v02-admission.ts';
+import { computeWorkspaceVolumeIds } from '../../../src/foundation/docker-workspace-policy.ts';
 import { createCommandOutcomeReceipt, normalizeCommandResult, type NormalizedCommandResultV02 } from '../../../src/foundation/repository-command-outcome.ts';
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
-import {
-  parseCampaignArgs,
-  runCampaign,
-  runCaseStage,
-  type CampaignOptions,
-  type CaseOutcome,
-  type StageRecord,
-} from './uc03-success-real-run.ts';
+import { parseCampaignArgs, runCampaign, runCaseStage, type CampaignOptions, type CaseOutcome, type StageRecord } from './uc03-success-real-run.ts';
 import { checkEvidence } from './uc03-success-real-evidence.ts';
 import { createScanFixture, type ScanFixture } from '../unit/real-tier-scan-fixtures.ts';
 import type { SnapshotGradeResult } from '../../../eval/uc03/workflow-grade.ts';
@@ -109,7 +103,13 @@ function catalogFor(task = taskOf(), extraCases: readonly string[] = []): Catalo
   const fixturePath = join(dir, 'case.json');
   writeFileSync(fixturePath, document, 'utf8');
   const catalogPath = join(dir, 'catalog.json');
-  const entryOf = (caseId: string) => ({ catalogEntryId: `entry-${caseId}`, caseId, initialRepositoryDigest: task.initialRevisionDigest.replace(/^sha256:/u, ''), fixturePath, fixtureDigest: sha256Text(document) });
+  const entryOf = (caseId: string) => ({
+    catalogEntryId: `entry-${caseId}`,
+    caseId,
+    initialRepositoryDigest: task.initialRevisionDigest.replace(/^sha256:/u, ''),
+    fixturePath,
+    fixtureDigest: sha256Text(document),
+  });
   writeFileSync(catalogPath, JSON.stringify({ catalog: [entryOf(CASE), ...extraCases.map(entryOf)] }), 'utf8');
   return { task, env: fixture.envOf({ catalog: { path: catalogPath } }) };
 }
@@ -225,7 +225,9 @@ function writeRecord(dir: string, records: readonly StageRecord[]): void {
     campaignId: 'campaign-1',
     bindings: { 'candidate-sha': REV, 'profile-digest': `sha256:${'a'.repeat(64)}`, 'endpoint-digest': `sha256:${'b'.repeat(64)}`, model: MODEL },
     stages: records.filter(entry => entry.stage !== 'case').map(entry => ({ stage: entry.stage, outcome: entry.outcome, ...(entry.reasonCode === undefined ? {} : { reasonCode: entry.reasonCode }) })),
-    caseStages: records.filter(entry => entry.stage === 'case' && entry.reasonCode !== undefined).map(entry => ({ stage: entry.stage, outcome: entry.outcome, caseId: entry.caseId, reasonCode: entry.reasonCode })),
+    caseStages: records
+      .filter(entry => entry.stage === 'case' && entry.reasonCode !== undefined)
+      .map(entry => ({ stage: entry.stage, outcome: entry.outcome, caseId: entry.caseId, reasonCode: entry.reasonCode })),
     records,
   };
   writeFileSync(join(dir, 'campaign.json'), JSON.stringify(payload, null, 2), 'utf8');
@@ -262,7 +264,16 @@ test('argv: exactly one mode, a value for every flag that needs one', () => {
   assert.deepEqual(parseCampaignArgs(['--case', 'C01', '--evidence', 'out']), { mode: 'case', caseId: 'C01', evidenceDir: 'out' });
   assert.deepEqual(parseCampaignArgs(['--resume', 'uc04-journal:claim-1', '--evidence', 'out']), { mode: 'resume', resumeRef: 'uc04-journal:claim-1', evidenceDir: 'out' });
   // A malformed invocation never defaults to a campaign.
-  for (const args of [[], ['--case'], ['--case', 'C01', '--campaign'], ['--unknown'], ['--case', 'C01', '--case', 'C02'], ['--resume', '../escape'], ['--resume', 'uc04-journal:x', '--case', 'C01'], ['--evidence', 'out']]) {
+  for (const args of [
+    [],
+    ['--case'],
+    ['--case', 'C01', '--campaign'],
+    ['--unknown'],
+    ['--case', 'C01', '--case', 'C02'],
+    ['--resume', '../escape'],
+    ['--resume', 'uc04-journal:x', '--case', 'C01'],
+    ['--evidence', 'out'],
+  ]) {
     assert.deepEqual(parseCampaignArgs(args), { refused: 'arguments' }, JSON.stringify(args));
   }
 });
@@ -280,7 +291,11 @@ test('a preflight refusal exits nonzero with zero fetches, no receipt and no cas
     [['preflight', 'fail', 'docker-unavailable']],
   );
   // A preflight refusal writes no conformance receipt (only the campaign record of the failure).
-  assert.deepEqual(readdirSync(options.evidenceDir).filter(name => name.startsWith('conformance-')), [], 'a preflight refusal writes no receipt');
+  assert.deepEqual(
+    readdirSync(options.evidenceDir).filter(name => name.startsWith('conformance-')),
+    [],
+    'a preflight refusal writes no receipt',
+  );
   assert.equal(readCampaignRecord(options.evidenceDir)['passed'], false, 'the failed campaign is still retained as a record');
   assertNoSecrets(result);
 });
@@ -343,10 +358,13 @@ test('a profile model other than the pinned identity, or a whitespace-wrapped re
   const refused = await runCampaign(wrongOptions.options);
   assert.equal(refused.exitCode, 2);
   assert.deepEqual(dispatched, [], 'a wrong profile model dispatches neither fetch nor case');
-  assert.deepEqual(refused.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [
-    ['preflight', 'pass', undefined],
-    ['conformance', 'fail', 'conformance-model-mismatch'],
-  ]);
+  assert.deepEqual(
+    refused.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]),
+    [
+      ['preflight', 'pass', undefined],
+      ['conformance', 'fail', 'conformance-model-mismatch'],
+    ],
+  );
 
   // A reply carrying the right id plus whitespace is still a different identity: exact equality only.
   const padded = new Response(JSON.stringify({ model: `${MODEL} ` }), { status: 200 });
@@ -364,10 +382,13 @@ test('a profile model other than the pinned identity, or a whitespace-wrapped re
   const paddedResult = await runCampaign(paddedOptions.options);
   assert.equal(paddedResult.exitCode, 2);
   assert.deepEqual(displaced, ['fetch'], 'a whitespace-wrapped model fetches once and no case dispatches');
-  assert.deepEqual(paddedResult.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [
-    ['preflight', 'pass', undefined],
-    ['conformance', 'fail', 'conformance-model-mismatch'],
-  ]);
+  assert.deepEqual(
+    paddedResult.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]),
+    [
+      ['preflight', 'pass', undefined],
+      ['conformance', 'fail', 'conformance-model-mismatch'],
+    ],
+  );
 });
 
 test('a campaign writes one receipt bound to the candidate, profile, endpoint and model', async () => {
@@ -417,10 +438,13 @@ test('`--case` refuses with zero fetches on a missing, malformed or stale receip
         return new Response('{}', { status: 200 });
       },
     });
-    const result = await runCampaign({ ...options, fetch: async () => {
-      effects.fetch += 1;
-      return new Response('{}', { status: 200 });
-    } });
+    const result = await runCampaign({
+      ...options,
+      fetch: async () => {
+        effects.fetch += 1;
+        return new Response('{}', { status: 200 });
+      },
+    });
     assert.equal(result.exitCode, 2, reasonCode);
     assert.equal(effects.fetch, 0, `${reasonCode}: a refused --case fetches nothing`);
     assert.deepEqual(
@@ -448,7 +472,10 @@ test('a failed campaign supersedes an earlier passing one; a further passing cam
   assert.equal((await runCampaign(failing.options)).exitCode, 2);
   const afterFailure = await gate();
   assert.equal(afterFailure.exitCode, 2, 'the newest campaign on this binding failed, so the gate closes');
-  assert.deepEqual(afterFailure.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [['receipt', 'fail', 'receipt-stale']]);
+  assert.deepEqual(
+    afterFailure.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]),
+    [['receipt', 'fail', 'receipt-stale']],
+  );
 
   assert.equal((await runCampaign(restore.options)).exitCode, 0);
   assert.equal(readdirSync(evidenceDir).filter(name => name.startsWith('conformance-')).length, 3, 'each campaign keeps its own receipt');
@@ -536,7 +563,10 @@ test('C02 binds its own fresh assembly and stays terminal at its expected clarif
     { caseIds: ['C01', 'C02'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass, clarificationHold: (id: string) => id === 'C02' },
   );
   assert.equal(seen.length, 2, 'two distinct cases bind two fresh assemblies, never one shared task');
-  assert.deepEqual(outcomes.map(entry => entry.record.caseId), ['C01', 'C02']);
+  assert.deepEqual(
+    outcomes.map(entry => entry.record.caseId),
+    ['C01', 'C02'],
+  );
   // C02 is held for its expected clarification pause, so no plan decision is ever offered to it.
   assert.equal(outcomes[1]?.evidence?.approval, undefined, 'a clarification hold is never auto-approved');
 });
@@ -566,7 +596,10 @@ test('a continuation over a blocked uncertain ref refuses with zero effects', as
   });
   assert.equal(result.exitCode, 2);
   assert.deepEqual(counters, { fetch: 0, spawn: 0 });
-  assert.deepEqual(result.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [['recovery', 'fail', 'continuation-blocked']]);
+  assert.deepEqual(
+    result.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]),
+    [['recovery', 'fail', 'continuation-blocked']],
+  );
 });
 
 /** A resume stage over a stub assembly whose recovery gate answers one fixed decision. */
@@ -576,7 +609,14 @@ function resumeWith(decision: 'resume' | 'fresh-attempt' | 'blocked'): Promise<A
   const assemble = () =>
     ({
       status: 'assembly-ready' as const,
-      metadata: { profileDigest: `sha256:${'a'.repeat(64)}`, endpointDigest: `sha256:${'b'.repeat(64)}`, endpointScheme: 'https' as const, insecureHttpAcknowledged: false, model: MODEL, imageId: IMAGE_ID },
+      metadata: {
+        profileDigest: `sha256:${'a'.repeat(64)}`,
+        endpointDigest: `sha256:${'b'.repeat(64)}`,
+        endpointScheme: 'https' as const,
+        insecureHttpAcknowledged: false,
+        model: MODEL,
+        imageId: IMAGE_ID,
+      },
       owners: { recoveryGate: { decide: async () => decision } },
     }) as unknown as RealTierAssembly;
   return runCampaign({
@@ -602,17 +642,26 @@ test('a resume admission exits 0 on a permitted resume, never 0 on a fresh-attem
   // A committed owner record permits a later continuation: the query itself is read-only and exits 0.
   const resumed = await resumeWith('resume');
   assert.equal(resumed.exitCode, 0, 'a permitted resume is a successful admission query');
-  assert.deepEqual(resumed.records.map(entry => [entry.stage, entry.outcome, entry.facts?.['decision']]), [['recovery', 'pass', 'resume']]);
+  assert.deepEqual(
+    resumed.records.map(entry => [entry.stage, entry.outcome, entry.facts?.['decision']]),
+    [['recovery', 'pass', 'resume']],
+  );
 
   // `fresh-attempt` is not replay authority, so it stays nonzero and effect-free.
   const fresh = await resumeWith('fresh-attempt');
   assert.equal(fresh.exitCode, 2, 'a fresh-attempt is not a successful resume');
-  assert.deepEqual(fresh.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [['recovery', 'not-run', 'continuation-fresh-attempt']]);
+  assert.deepEqual(
+    fresh.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]),
+    [['recovery', 'not-run', 'continuation-fresh-attempt']],
+  );
 
   // An unknown/blocked continuation stays nonzero, the T059 prerequisite.
   const blocked = await resumeWith('blocked');
   assert.equal(blocked.exitCode, 2);
-  assert.deepEqual(blocked.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [['recovery', 'fail', 'continuation-blocked']]);
+  assert.deepEqual(
+    blocked.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]),
+    [['recovery', 'fail', 'continuation-blocked']],
+  );
 });
 
 /* ------------------------------------------------------------ evidence check */
@@ -660,7 +709,11 @@ test('the checker passes a complete campaign record and fails a failed or not-ru
   const cases = PASSING_CASES.map(entry => entry.record);
   const rows: readonly (readonly [string, readonly StageRecord[], string])[] = [
     ['failed case', [...CLEAN_STAGES, { stage: 'case', outcome: 'fail', caseId: 'C01' }, ...cases.slice(1)], 'case:C01:fail'],
-    ['not-run case', [...CLEAN_STAGES, cases[0] as StageRecord, { stage: 'case', outcome: 'not-run', caseId: 'C02', reasonCode: 'grader-unavailable' }, ...cases.slice(2)], 'case:C02:not-run:grader-unavailable'],
+    [
+      'not-run case',
+      [...CLEAN_STAGES, cases[0] as StageRecord, { stage: 'case', outcome: 'not-run', caseId: 'C02', reasonCode: 'grader-unavailable' }, ...cases.slice(2)],
+      'case:C02:not-run:grader-unavailable',
+    ],
     ['failed stage', [{ stage: 'preflight', outcome: 'pass' }, { stage: 'conformance', outcome: 'fail', reasonCode: 'conformance-timeout' }, ...cases], 'conformance:fail:conformance-timeout'],
     ['missing preflight', [{ stage: 'conformance', outcome: 'pass' }, ...cases], 'preflight:missing'],
     ['missing C16', [...CLEAN_STAGES, ...cases.slice(0, 2)], 'case:missing:C16'],
@@ -704,10 +757,11 @@ test('the checker never prints a credential hidden behind JSON Unicode escapes',
   // would re-escape the backslashes, so this writes the escaped form straight to disk: the directory
   // text scan sees no needle, but JSON.parse decodes it to the real credential in `reasonCode`.
   const escaped = [...fixture.KEY].map(char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
-  const raw = JSON.stringify({ schemaVersion: 'uc03-campaign-record/1', bindings: { 'candidate-sha': REV, 'profile-digest': `sha256:${'a'.repeat(64)}`, 'endpoint-digest': `sha256:${'b'.repeat(64)}`, model: MODEL }, records: [] }).replace(
-    '"records":[]',
-    `"records":[{"stage":"case","outcome":"fail","caseId":"C01","reasonCode":"leak-${escaped}"}]`,
-  );
+  const raw = JSON.stringify({
+    schemaVersion: 'uc03-campaign-record/1',
+    bindings: { 'candidate-sha': REV, 'profile-digest': `sha256:${'a'.repeat(64)}`, 'endpoint-digest': `sha256:${'b'.repeat(64)}`, model: MODEL },
+    records: [],
+  }).replace('"records":[]', `"records":[{"stage":"case","outcome":"fail","caseId":"C01","reasonCode":"leak-${escaped}"}]`);
   writeFileSync(join(dir, 'campaign.json'), raw, 'utf8');
   const result = checkEvidence({ evidenceDir: dir, env: fixture.envOf(), repositoryRoot: tempRoot('repo') });
   // The raw bytes hide the needle from the text scan; once parsed, the decoded value is rejected rather
@@ -739,7 +793,13 @@ function providerContext(
   generation: number,
 ): ProviderAdmissionContextV02 {
   const reservationRef = `res-${providerRequestId}`;
-  const budgetRefs = [`b-tokens-${providerRequestId}`, `b-cost-${providerRequestId}`, `r-tokens-${providerRequestId}`, `r-cost-${providerRequestId}`, ...(role === 'reviewer' ? [`b-iter-${providerRequestId}`] : [])];
+  const budgetRefs = [
+    `b-tokens-${providerRequestId}`,
+    `b-cost-${providerRequestId}`,
+    `r-tokens-${providerRequestId}`,
+    `r-cost-${providerRequestId}`,
+    ...(role === 'reviewer' ? [`b-iter-${providerRequestId}`] : []),
+  ];
   const providerIdentity = {
     providerId: 'provider-deepseek',
     modelId: MODEL,
@@ -843,7 +903,9 @@ test('CR-195-A: both bound model ports admit one request and dispatch exactly on
       const body = typeof init?.body === 'string' ? init.body : '';
       dispatched.push({ role: body.includes('"role":"reviewer"') || body.length > 0 ? 'unknown' : 'unknown', body });
       // The raw payload is the messages envelope; the role is not in it, so the reply is role-agnostic.
-      return new Response(JSON.stringify({ id: 'msg-1', model: MODEL, content: [{ type: 'text', text: '{"status":"accepted","findings":[]}' }], usage: { input_tokens: 10, output_tokens: 5 } }), { status: 200 });
+      return new Response(JSON.stringify({ id: 'msg-1', model: MODEL, content: [{ type: 'text', text: '{"status":"accepted","findings":[]}' }], usage: { input_tokens: 10, output_tokens: 5 } }), {
+        status: 200,
+      });
     },
   });
   const binding = boundOrThrow(await bindRealTierTask(assembly, { caseId: CASE, ...pinsOf(assembly) }));
@@ -872,12 +934,13 @@ test('CR-195-A: both bound model ports admit one request and dispatch exactly on
     readonly claims: readonly { readonly claimId: string; readonly status: string }[];
     readonly outcomes: readonly { readonly claimId: string; readonly outcome: string }[];
   };
-  assert.deepEqual(
-    journal.claims.map(claim => claim.claimId).sort(),
-    ['claim-req-coder-1', 'claim-req-reviewer-1'],
-  );
+  assert.deepEqual(journal.claims.map(claim => claim.claimId).sort(), ['claim-req-coder-1', 'claim-req-reviewer-1']);
   assert.equal(journal.outcomes.length, 2);
-  assert.equal(journal.claims.every(claim => claim.status === 'settled'), true, 'both claims settle');
+  assert.equal(
+    journal.claims.every(claim => claim.status === 'settled'),
+    true,
+    'both claims settle',
+  );
   assert.equal(dispatched.length, 2);
   assertNoSecrets({ coder, reviewer });
 });
@@ -885,26 +948,27 @@ test('CR-195-A: both bound model ports admit one request and dispatch exactly on
 /* ----------------------------------- CR-195 (C): public state-port accounting */
 
 /** A run-command admission bound to the task's persisted control head and command view. */
-function commandContext(
-  state: TaskState,
-  task: BugTask,
-  journal: { readonly controlVersion: number; readonly epoch: number },
-  actionId: string,
-  generation: number,
-): RepositoryAdmissionContextV02 {
+function commandContext(state: TaskState, task: BugTask, journal: { readonly controlVersion: number; readonly epoch: number }, actionId: string, generation: number): RepositoryAdmissionContextV02 {
   // A pre-plan diagnostic check's action purpose must equal the admission's `diagnosticPurpose`.
   const action: RunCommandAction = { actionId, kind: 'run_command', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], workingDirectory: 'tests', purpose: 'investigate' };
   const isolationProfileRef = assembly_label();
   const actionDigest = computeActionDigest(action);
-  const policyAuthorityRef = { policyId: task.configId, policyVersion: task.configVersion, configId: task.configId, configVersion: task.configVersion, issuerKeyRef: `host-${task.configId}`, decisionAuthorityGeneration: generation };
+  const policyAuthorityRef = {
+    policyId: task.configId,
+    policyVersion: task.configVersion,
+    configId: task.configId,
+    configVersion: task.configVersion,
+    issuerKeyRef: `host-${task.configId}`,
+    decisionAuthorityGeneration: generation,
+  };
   const commandView = {
     viewId: `view-${actionId}`,
     taskId: state.taskId,
     workspaceId: state.workspaceId,
     canonicalRevision: state.repositoryRevisionDigest,
     admittedFiles: [{ path: 'tests/test_calculator.py', digest: computeCanonicalSha256('test-file') }],
-    exclusionsPolicyVersion: 'exclusions-v1',
-    scratchIdentity: 'scratch-admission-v02',
+    exclusionsPolicyVersion: '0.1.0',
+    scratchIdentity: computeWorkspaceVolumeIds(state.taskId, state.workspaceId).scratchVolumeId,
     mountedReadOnly: true as const,
     isolationProfileRef,
   };
@@ -957,7 +1021,8 @@ function commandContext(
   };
   // The production port derives its own trusted context from the admission; reusing that derivation
   // keeps this fixture from duplicating (and drifting from) the owner's own consistency rules.
-  const trusted = deriveTrustedContext(context as unknown as RepositoryAdmissionContextV02);
+  // The bound port holds the task's real profile, so the fixture must build the view it will carry.
+  const trusted = deriveTrustedContext(context as unknown as RepositoryAdmissionContextV02, executionProfileOf(task, isolationProfileRef, state));
   const admitted = validateAdmissionV02(context, trusted);
   assert.equal(admitted.ok, true, JSON.stringify(admitted));
   return admitted.value as RepositoryAdmissionContextV02;
@@ -972,13 +1037,24 @@ async function publishGeneration(binding: RealTierBoundTask, task: BugTask, gene
   // only the task-bound port names the task it publishes for, so the unbound one refuses with `conflict`.
   const owner = binding.ports.statePort as unknown as { publishAuthority(input: unknown): Promise<{ readonly status: string }> };
   const receipt = await owner.publishAuthority({
-    authorityRef: { policyId: task.configId, policyVersion: task.configVersion, configId: task.configId, configVersion: task.configVersion, issuerKeyRef: `host-${task.configId}`, decisionAuthorityGeneration: generation },
+    authorityRef: {
+      policyId: task.configId,
+      policyVersion: task.configVersion,
+      configId: task.configId,
+      configVersion: task.configVersion,
+      issuerKeyRef: `host-${task.configId}`,
+      decisionAuthorityGeneration: generation,
+    },
   });
   assert.equal(receipt.status, 'published', JSON.stringify(receipt));
 }
 
 /** One bound task, its generation-2 authority published, moved to the pre-plan Investigate node. */
-async function investigating(assembly: RealTierAssembly, binding: RealTierBoundTask, task: BugTask): Promise<{ owners: ReturnType<RealTierAssembly['owners']['taskOwners']>; state: TaskState; journal: { readonly controlVersion: number; readonly epoch: number } }> {
+async function investigating(
+  assembly: RealTierAssembly,
+  binding: RealTierBoundTask,
+  task: BugTask,
+): Promise<{ owners: ReturnType<RealTierAssembly['owners']['taskOwners']>; state: TaskState; journal: { readonly controlVersion: number; readonly epoch: number } }> {
   const owners = assembly.owners.taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId });
   await publishGeneration(binding, task, 2);
   const seeded = (await owners.statePort.loadTask(binding.ids.taskId)) as TaskState;
@@ -1013,16 +1089,22 @@ test('CR-195-C: a settled baseline command frees capacity for a same-sized verif
     });
     assert.equal(attempt.attemptId, `att-claim-${actionId}`, `${actionId}: the attempt must begin`);
     // The production builder is the receipt authority: hand-building one would test our own guess.
-    const receipt = createCommandOutcomeReceipt(claim, attempt, context, 'observed', normalizeCommandResult({
-      plan: { checkId: 'check-1' },
-      exitCode: 0,
-      stdout: 'ok',
-      stderr: '',
-      durationMs: 12,
-      timedOut: false,
-      outcome: 'success',
-      truncated: false,
-    }) as NormalizedCommandResultV02);
+    const receipt = createCommandOutcomeReceipt(
+      claim,
+      attempt,
+      context,
+      'observed',
+      normalizeCommandResult({
+        plan: { checkId: 'check-1' },
+        exitCode: 0,
+        stdout: 'ok',
+        stderr: '',
+        durationMs: 12,
+        timedOut: false,
+        outcome: 'success',
+        truncated: false,
+      }) as NormalizedCommandResultV02,
+    );
     const settled = await owners.statePort.recordOutcome(receipt);
     assert.equal(settled.outcome, 'settled', `${actionId}: the observed command must settle`);
   };
@@ -1033,7 +1115,11 @@ test('CR-195-C: a settled baseline command frees capacity for a same-sized verif
       .map(ledger => ({ scope: ledger.scope, kind: ledger.kind, consumed: ledger.consumed, reserved: ledger.reservations.reduce((sum, item) => sum + item.amount, 0) }));
 
   const before = (await owners.statePort.loadTask(binding.ids.taskId)) as TaskState;
-  assert.deepEqual(resourceRows(before).filter(row => row.reserved > 0), [], 'the seed holds no reservation');
+  assert.deepEqual(
+    resourceRows(before).filter(row => row.reserved > 0),
+    [],
+    'the seed holds no reservation',
+  );
 
   await command('act-baseline-1');
   const afterBaseline = (await owners.statePort.loadTask(binding.ids.taskId)) as TaskState;
