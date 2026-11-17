@@ -169,11 +169,15 @@ async function observe(
   const metadata = validateHostMetadata(resolved.metadata);
   if (metadata === undefined) return { ok: false, result: cliError(4, 'HOST_METADATA_INVALID', 'Host metadata was refused; values are not echoed') };
   if (configuration.requestedModel !== metadata.model) return { ok: false, result: cliError(4, 'HOST_MODEL_MISMATCH', 'The requested model does not match the pinned profile') };
-  if (resolved.preflight === undefined) return { ok: true, observed: { metadata } };
+  const preflight = resolved.preflight;
+  if (preflight === undefined) return { ok: true, observed: { metadata } };
   // A preflight that throws is the same refusal as one that reports a dead daemon, and its result is
   // untrusted host output: only the allowlisted variants are projected, never a field of the rest.
-  const preflight = await resolved.preflight().catch(() => undefined);
-  return { ok: true, observed: { metadata, operational: classifyPreflightResult(preflight) } };
+  // The `then` keeps a synchronous throw inside the same path as a rejected promise.
+  const probed = await Promise.resolve()
+    .then(() => preflight())
+    .catch(() => undefined);
+  return { ok: true, observed: { metadata, operational: classifyPreflightResult(probed) } };
 }
 
 /** Assemble the production route from the host file; an absent assembly is a gap, never a fallback. */

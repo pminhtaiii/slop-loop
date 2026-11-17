@@ -179,6 +179,7 @@ interface SubsetRepairRoute {
  */
 async function driveSubsetRepair(
   beforeCompletion?: (context: { readonly task: BugTask; readonly statePort: MemoryStatePortV02; readonly repositoryPort: FakeRepositoryPort; readonly state: TaskState }) => Promise<void>,
+  finish?: { readonly task?: BugTask | undefined; readonly config?: (() => Partial<UC03GraphConfig>) | undefined } | undefined,
 ): Promise<SubsetRepairRoute> {
   let minted: UC03TrustedCompletion | undefined;
   // A `dec-plan-`-prefixed decision keeps the two approval rounds distinguishable by prefix.
@@ -186,7 +187,8 @@ async function driveSubsetRepair(
   const route = createPendingApprovalRoute('pending', decisionRef, {}, undefined, undefined, next =>
     next.node === 'Deliver' && next.outcome === 'COMPLETED' && minted?.repositoryRevisionDigest === next.repositoryRevisionDigest ? { completion: minted } : undefined,
   );
-  const { task, statePort, repositoryPort, approvalPort } = route;
+  const { statePort, repositoryPort, approvalPort } = route;
+  const task = finish?.task ?? route.task;
   // The controlled writer keeps its records private, which a resumed Verify cannot read back; wrap
   // it so each settled baseline stays loadable, as the production owner's does.
   const stored = new Map<string, Awaited<ReturnType<NonNullable<BaselineEvidenceWriter['loadBaselineEvidence']>>>>();
@@ -286,12 +288,37 @@ async function driveSubsetRepair(
   assert.ok(stateBeforeCompletion);
   assert.equal(stateBeforeCompletion.node, 'Verify');
   await beforeCompletion?.({ task, statePort, repositoryPort, state: structuredClone(stateBeforeCompletion) });
+  // Captured before the completion attempt: the final run may settle a further patch, and the rows
+  // assert the repository saw no effect after their injected fault.
+  const patchesBeforeCompletion = repositoryPort.patches.length;
 
   repositoryPort.setCommandResult(REGRESSION_COMMAND, { exitCode: 0, stdout: '1 passed', stderr: '' });
   await approveLatest('dec-verify-');
-  const run = await runUC03Graph(task, ports, config);
-  return { run, statePort, repositoryPort, stateBeforeCompletion, patchesBeforeCompletion: repositoryPort.patches.length };
+  const run = await runUC03Graph(task, ports, { ...config, ...finish?.config?.() });
+  return { run, statePort, repositoryPort, stateBeforeCompletion, patchesBeforeCompletion };
 }
+
+test('(d) the pre-completion patch count is the one read before the final run', async () => {
+  // The final run can settle a further patch (an extra repair slot and a still-failing regression), so a
+  // count read after it would overstate what rows (b) and (c) assert.
+  const base = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`).task;
+  const widened: BugTask = { ...base, budgetLimits: { ...base.budgetLimits, maxRepairAttempts: 5 } };
+  let finalRepair: { diff: string; affectedPaths: string[]; evidenceRefs: string[]; diagnosticRefs: string[] } | undefined;
+  const { run, repositoryPort, patchesBeforeCompletion } = await driveSubsetRepair(
+    async ({ repositoryPort: repository, state }) => {
+      // Freeze the regression failing so the final Verify re-enters Repair, and bind a third repair.
+      const set = repository.setCommandResult.bind(repository);
+      repository.setCommandResult = (command, result) => set(command, command === REGRESSION_COMMAND ? { exitCode: 1, stdout: 'still failing', stderr: '' } : result);
+      const regression = widened.requiredChecks.find(check => check.purpose === 'regression');
+      const diff = await repository.inspectDiff(widened.initialRevisionDigest);
+      const evidenceId = `evidence-verif-${regression?.checkId}-${computeCanonicalSha256([state.runId, regression?.checkId, state.repositoryRevisionDigest, diff.diffDigest])}`;
+      finalRepair = { diff: REPAIR_B, affectedPaths: ['src/b.py'], evidenceRefs: [evidenceId], diagnosticRefs: ['execution-guard:success'] };
+    },
+    { task: widened, config: () => ({ repairPatch: finalRepair }) },
+  );
+  assert.equal(repositoryPort.patches.length, 3, JSON.stringify(run.reasons));
+  assert.equal(patchesBeforeCompletion, 2, 'the reported count is the one read before the completion attempt');
+});
 
 test('(a) an A+B patch followed by a B-only repair completes the route', async () => {
   const { run, statePort } = await driveSubsetRepair();

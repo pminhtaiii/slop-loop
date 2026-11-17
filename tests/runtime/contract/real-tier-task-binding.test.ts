@@ -23,10 +23,11 @@ import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/founda
 import { computeFileDigest } from '../../../src/foundation/docker-workspace-policy.ts';
 import { createHostAssembly, resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
 import { bindRealTierTask, type RealTierBindingOptions, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
+import { retainedDiffSource } from '../../../src/runtime/real-tier-task-producers.ts';
 import { seedLedgers } from '../../../src/runtime/real-tier-task-seed.ts';
 import { prepareAssembly } from '../../../src/cli/evaluate-host.ts';
 import type { HostConfiguration } from '../../../src/cli/evaluate-host.ts';
-import { providerSpecs, repositoryResourceSpecs } from '../../../src/persistence/adapters/state-port-v02-ledgers.ts';
+import { providerSpecs, repositoryResourceSpecs, stageReservation } from '../../../src/persistence/adapters/state-port-v02-ledgers.ts';
 import { trustedExpectedContext } from '../../../src/uc03/graph-validation.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
@@ -600,6 +601,84 @@ test('(l) an empty identity refuses before any write, leaving the whole store by
   await assertRefused(assembly, optionsOf(catalog, { identity: {} }), 'host-incomplete-identity');
   assert.deepEqual(entriesUnder(stateRoot), [], 'the refused bind leaves no store, approval or artifact file');
   assert.deepEqual(effects, { fetch: 0, spawn: 0 });
+});
+
+test('(n) a second task on one assembly refuses, and rebinding the same task still works', async () => {
+  // The shared approval port resolves `classify`/`resolve` by the sole bound task, so one assembly is
+  // one task (the planned runners build one assembly per task). A different task refuses with no write.
+  const catalog = fixtureOf();
+  const { assembly } = assemblyFor(catalog);
+  const first = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog)));
+
+  // A second catalog entry in the same catalog directory, naming a different task on the same repository.
+  const secondDocument = { task: taskOf({ taskId: 'task-other' }), repositoryRoot: 'repository' };
+  const secondPath = join(catalog.catalogDir, 'case-2.json');
+  writeFileSync(secondPath, JSON.stringify(secondDocument), 'utf8');
+  const entries = JSON.parse(readFileSync(catalog.catalogPath, 'utf8')) as { catalog: Record<string, unknown>[] };
+  entries.catalog.push({ ...entries.catalog[0], catalogEntryId: 'entry-C02', caseId: 'C02', fixturePath: secondPath, fixtureDigest: sha256Text(JSON.stringify(secondDocument)) });
+  writeFileSync(catalog.catalogPath, JSON.stringify(entries), 'utf8');
+
+  const before = storeFingerprint(assembly.owners.store.baseDir);
+  const second = await bindRealTierTask(assembly, optionsOf(catalog, { caseId: 'C02' }));
+  assert.equal(second.status, 'unavailable', JSON.stringify(second));
+  if (second.status !== 'unavailable') return;
+  assert.equal(second.reasonCode, 'assembly-task-bound');
+  assert.equal(storeFingerprint(assembly.owners.store.baseDir), before, 'the refused second task writes nothing');
+
+  // A rebind of the bound task reuses its persisted ids, so it stays legal.
+  const again = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog)));
+  assert.deepEqual(again.ids.taskId, first.ids.taskId);
+});
+
+test('(o) a baseline command settles its reservation and a same-sized verification command is still admitted', async () => {
+  // One command settles its whole per-command reservation, so a per-command limit as the cumulative
+  // budget would exhaust it at the baseline. The seeded limit is that limit times the command allowance.
+  const catalog = fixtureOf();
+  const { assembly } = assemblyFor(catalog);
+  const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog)));
+  const seeded = (await assembly.owners
+    .taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId })
+    .statePort.loadTask(binding.ids.taskId)) as TaskState;
+  const limits = binding.task.limits;
+  const budget = binding.task.budgetLimits;
+  const allowance = Math.max(1, binding.task.requiredChecks.length) * (1 + budget.maxRepairAttempts + budget.maxReplanCount + 1);
+  const perCommand: Readonly<Record<string, number>> = {
+    timeoutMs: limits.timeoutMs,
+    maxOutputBytes: limits.maxOutputBytes,
+    maxCpuSeconds: Math.max(1, Math.ceil((limits.maxCpuCores * limits.timeoutMs) / 1000)),
+    maxMemoryBytes: limits.maxMemoryBytes,
+    maxProcessCount: limits.maxPids,
+  };
+  for (const [kind, amount] of Object.entries(perCommand)) {
+    const ledger = (seeded.budgetLedgers ?? []).find(row => row.scope === 'task' && row.kind === kind);
+    assert.ok(ledger, `${kind} must be seeded`);
+    assert.equal(ledger.limit, amount * allowance, `${kind} carries one command allowance per bound command`);
+    const reserve = (current: typeof ledger, keyedId: string) => stageReservation(current, { reservationId: `${kind}-${keyedId}`, keyedId, amount }, 'reserve');
+    const reserved = reserve(ledger, 'baseline');
+    assert.ok(reserved, `${kind} must admit the baseline reservation`);
+    const settled = stageReservation(reserved, { reservationId: `${kind}-baseline`, keyedId: 'baseline', amount }, 'settle');
+    assert.ok(settled, `${kind} must settle the baseline reservation`);
+    assert.equal(settled.consumed, amount);
+    assert.ok(reserve(settled, 'verify'), `${kind} must still admit a same-sized verification reservation`);
+  }
+});
+
+test('(p) a capture that fails mid-measurement leaves no retained tree, and a retry still captures', async () => {
+  // A failure after the copy must discard the temporary copy: a partial retainedRoot would make the
+  // retry skip capture and measure the wrong base. A file larger than the read bound is the failure.
+  const root = tempRoot('retained');
+  const repositoryRoot = join(root, 'repository');
+  mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
+  writeFileSync(join(repositoryRoot, 'src/calculator.py'), 'x'.repeat(200), 'utf8');
+  const baseRevision = await new WorkspaceFilesystemPort({ root: repositoryRoot }).getCurrentRevisionDigest();
+  const retainedRoot = join(root, 'retained-tree');
+  const options = { retainedRoot, repositoryRoot, taskId: 'task-calc-001', workspaceId: 'ws-1', repositoryId: 'repo-calc', baseRevision, maxDiffBytes: 1_048_576 };
+  await assert.rejects(retainedDiffSource({ ...options, maxFileBytes: 10 }).prepare(), /FILE_TOO_LARGE/u);
+  assert.equal(existsSync(retainedRoot), false, 'the failed capture leaves no retained tree');
+  assert.deepEqual(readdirSync(root).sort(), ['repository'], 'and no temporary sibling');
+
+  await retainedDiffSource({ ...options, maxFileBytes: 1_048_576 }).prepare();
+  assert.equal(existsSync(retainedRoot), true, 'the retry captures the tree');
 });
 
 test('(m) a mutated retained tree refuses at rebind instead of binding ready', async () => {

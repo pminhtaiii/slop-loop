@@ -88,6 +88,8 @@ export interface RealTierOwners {
   readonly productionJournal: boolean;
   /** Per-task owner instances for T061; registers them so the delegating ports above can resolve. */
   taskOwners(binding: RealTierTaskBinding): RealTierBoundOwners;
+  /** The one task a per-process assembly may carry: `classify`/`resolve` refuse with two bound tasks. */
+  readonly boundTaskId: () => string | undefined;
 }
 
 const unbound = (): never => {
@@ -192,5 +194,6 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
     recoveryGate,
     productionJournal: isProductionJournal(statePort),
     taskOwners,
+    boundTaskId: () => (bound.size === 0 ? undefined : [...bound.keys()][0]),
   };
 }

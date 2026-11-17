@@ -35,7 +35,7 @@ interface Spy {
   production: number;
   preflight: number;
   mode: 'ok' | 'down' | 'mismatch';
-  variant: 'plain' | 'full';
+  variant: 'plain' | 'full' | 'preflight-only';
   metadataPatch: Record<string, unknown> | undefined;
   /** Replaces the real preflight result, so an assembly module can return an arbitrary value. */
   preflightPatch: unknown;
@@ -126,13 +126,16 @@ export function createHostAssembly() {
   if (SPY.variant === 'plain') return { host };
   const built = realAssembly({ env: SPY.env ?? process.env, spawn, stateRoot: SPY.stateRoot, revision: REV });
   if (built.status === 'unavailable') return built;
+  const preflight = async () => {
+    SPY.preflight += 1;
+    return SPY.preflightPatch === undefined ? built.preflight() : SPY.preflightPatch;
+  };
+  // A preflight with no metadata: the CLI cannot observe it, so the assembly must be refused whole.
+  if (SPY.variant === 'preflight-only') return { host, preflight };
   return {
     host,
     metadata: { ...built.metadata, ...(SPY.metadataPatch ?? {}) },
-    preflight: async () => {
-      SPY.preflight += 1;
-      return SPY.preflightPatch === undefined ? built.preflight() : SPY.preflightPatch;
-    },
+    preflight,
     production: () => {
       SPY.production += 1;
       return { executeCase: () => ({ blocked: null }) };
@@ -271,6 +274,35 @@ test('a thrown preflight is the same docker-unavailable refusal', async () => {
   assert.equal(result.exitCode, 4);
   assert.equal((JSON.parse(result.output) as { readonly operational?: unknown }).operational, 'docker-unavailable');
   assert.equal(result.output.includes('probe-detail-9f2'), false);
+  assert.equal(state.production, 0);
+});
+
+test('a preflight without metadata is refused whole: it could never be observed', async () => {
+  // `observe` skips the preflight when there is no metadata, so accepting this assembly would drop a
+  // probe the operator asked for. It is the same named gap as an absent assembly.
+  const state = install({ variant: 'preflight-only' });
+  const result = await runEvaluateCli(['preflight', '--host', hostFile(MODEL, assemblyModule())], options());
+  assert.equal(result.exitCode, 4, result.output);
+  assert.equal(JSON.parse(result.output).error, 'HOST_ASSEMBLY_UNAVAILABLE');
+  assert.equal(state.preflight, 0, 'the unobservable preflight is never called');
+  assert.deepEqual(state.calls, []);
+  assert.equal(state.production, 0);
+});
+
+test('a preflight that throws synchronously is the same docker-unavailable refusal', async () => {
+  const state = install();
+  const directory = mkdtempSync(join(tmpdir(), 't060-sync-throwing-'));
+  const path = join(directory, 'assembly.mjs');
+  // `throw` before any `async`: the call itself raises, so `.catch` on its result never runs.
+  writeFileSync(
+    path,
+    `import { createHostAssembly as base } from ${JSON.stringify(pathToFileURL(assemblyModule()).href)};\nexport function createHostAssembly() { const value = base(); return { ...value, preflight: () => { throw new Error('probe-detail-sync-4b7'); } }; }\n`,
+    'utf8',
+  );
+  const result = await runEvaluateCli(['preflight', '--host', hostFile(MODEL, path)], options());
+  assert.equal(result.exitCode, 4, result.output);
+  assert.equal((JSON.parse(result.output) as { readonly operational?: unknown }).operational, 'docker-unavailable');
+  assert.equal(result.output.includes('probe-detail-sync-4b7'), false);
   assert.equal(state.production, 0);
 });
 

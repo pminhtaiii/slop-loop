@@ -31,12 +31,16 @@ export function seedLedgers(task: BugTask): readonly BudgetLedger[] {
   const budget = task.budgetLimits;
   const limits = task.limits;
   const configId = task.configId;
+  // The resource rows are cumulative, and one command settles its whole per-command reservation, so the
+  // limit is the per-command limit times every command the task may run: each required check at the
+  // baseline, per repair attempt and per replan, plus one verification pass.
+  const commands = Math.max(1, task.requiredChecks.length) * (1 + budget.maxRepairAttempts + budget.maxReplanCount + 1);
   const resources = [
-    ['timeoutMs', limits.timeoutMs, 'ms'],
-    ['maxOutputBytes', limits.maxOutputBytes, 'bytes'],
-    ['maxCpuSeconds', cpuSeconds(limits), 'seconds'],
-    ['maxMemoryBytes', limits.maxMemoryBytes, 'bytes'],
-    ['maxProcessCount', limits.maxPids, 'count'],
+    ['timeoutMs', limits.timeoutMs * commands, 'ms'],
+    ['maxOutputBytes', limits.maxOutputBytes * commands, 'bytes'],
+    ['maxCpuSeconds', cpuSeconds(limits) * commands, 'seconds'],
+    ['maxMemoryBytes', limits.maxMemoryBytes * commands, 'bytes'],
+    ['maxProcessCount', limits.maxPids * commands, 'count'],
   ] as const;
   return Object.freeze([
     // replan/repair/tokens/cost: `checkReplanAccounting` requires exactly one of each, at these limits.

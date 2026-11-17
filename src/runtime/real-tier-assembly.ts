@@ -17,6 +17,7 @@
  *
  * A complete set is a prerequisite, not G-OWNERS evidence.
  */
+import { randomUUID } from 'node:crypto';
 import { DEEPSEEK_REVIEW_PROMPT } from '../foundation/deepseek-review-profile.ts';
 import { createRuntimeReviewer, type RuntimeReviewer } from '../foundation/reviewer.ts';
 import { HostModelPortV02 } from '../foundation/model-v02.ts';
@@ -247,11 +248,24 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
   });
   // The reviewer ingress is the same transport in a distinct role; the marker is required by
   // `PORT_DECLARATIONS_V02`, and provenance still derives from the branded transport alone.
-  const reviewerModelPort = Object.assign(new HostModelPortV02({ transport, statePort: owners.components.statePort }), { providerRole: 'reviewer' as const });
+  // Both ports carry an explicit trusted actor: without one every dispatch is EXECUTOR_IDENTITY_REQUIRED.
+  // One incarnation per assembly process, and the generation the seeded control head starts at.
+  // shortcut: generation 1 matches the task seed's epoch; raise it if a resumed task re-fences.
+  const incarnation = `real-tier-${randomUUID()}`;
+  const actorOf = (adapterIdentity: string) => ({ adapterIdentity, processIncarnation: incarnation, fencingGeneration: 1 });
+  const reviewerActor = actorOf('uc03-real-tier-reviewer');
+  const reviewerModelPort = Object.assign(new HostModelPortV02({ transport, statePort: owners.components.statePort, executorIdentity: reviewerActor, currentExecutorIdentity: () => reviewerActor }), {
+    providerRole: 'reviewer' as const,
+  });
   // The published revision is the owner state's own fact, keyed by the task the caller supplies, so
   // the reviewer needs no binding of its own.
   const reviewer = createRuntimeReviewer({ model: reviewerModelPort, resolveRepoDigest: async task => (await owners.components.statePort.loadTask(task.taskId))?.repositoryRevisionDigest });
-  const built: RealTierComponents = { ...owners.components, modelPort: new HostModelPortV02({ transport, statePort: owners.components.statePort }), reviewerModelPort };
+  const coderActor = actorOf('uc03-real-tier-coder');
+  const built: RealTierComponents = {
+    ...owners.components,
+    modelPort: new HostModelPortV02({ transport, statePort: owners.components.statePort, executorIdentity: coderActor, currentExecutorIdentity: () => coderActor }),
+    reviewerModelPort,
+  };
   const merged = { ...built, ...dependencies.components };
   const refused = mockSwap(merged);
   if (refused !== undefined) return refused;

@@ -6,7 +6,8 @@
  * retained copy of the catalog's repository, taken once when a task is bound, so a later edit is
  * measurable against the initial bytes rather than against themselves.
  */
-import { cpSync, existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { cpSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeFileDigest } from '../foundation/docker-workspace-policy.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
@@ -153,24 +154,34 @@ export function retainedDiffSource(options: RetainedDiffSourceOptions): Retained
     maxDiffBytes: options.maxDiffBytes,
   });
   const prepare = async (): Promise<void> => {
-    // An existing retained tree is the immutable initial copy and is never re-captured over.
-    if (!existsSync(retainedRoot)) cpSync(repositoryRoot, retainedRoot, { recursive: true });
-    const filesystem = new WorkspaceFilesystemPort({ root: retainedRoot });
-    // §7 requires the exact immutable base: a retention mutated since the first bind is refused here,
-    // before it can stand in for the task's initial revision.
-    if ((await filesystem.getCurrentRevisionDigest(options.maxFileBytes)) !== options.baseRevision) {
-      throw new Error('RETAINED_REVISION_MISMATCH: the retained tree is not the task initial revision');
+    // A first capture goes into a temporary sibling and is renamed into place, so a failure mid-copy
+    // leaves no partial tree that a retry would then skip as already retained. An existing tree is the
+    // immutable initial copy and is never re-captured over.
+    const temp = existsSync(retainedRoot) ? undefined : `${retainedRoot}.tmp-${randomUUID()}`;
+    try {
+      if (temp !== undefined) cpSync(repositoryRoot, temp, { recursive: true });
+      const filesystem = new WorkspaceFilesystemPort({ root: temp ?? retainedRoot });
+      // §7 requires the exact immutable base: a retention mutated since the first bind is refused here,
+      // before it can stand in for the task's initial revision.
+      if ((await filesystem.getCurrentRevisionDigest(options.maxFileBytes)) !== options.baseRevision) {
+        throw new Error('RETAINED_REVISION_MISMATCH: the retained tree is not the task initial revision');
+      }
+      const manifest = await measureManifest(filesystem, options.maxFileBytes);
+      if (temp !== undefined) renameSync(temp, retainedRoot);
+      baseline = createRepositoryBaselineSource({
+        root: retainedRoot,
+        taskId: options.taskId,
+        workspaceId: options.workspaceId,
+        repositoryId: options.repositoryId,
+        baseRevision: options.baseRevision,
+        manifest,
+        maxFileBytes: options.maxFileBytes,
+      });
+    } catch (error) {
+      // Only the temporary copy is discarded: an existing retained tree is never touched.
+      if (temp !== undefined) rmSync(temp, { recursive: true, force: true });
+      throw error;
     }
-    const manifest = await measureManifest(filesystem, options.maxFileBytes);
-    baseline = createRepositoryBaselineSource({
-      root: retainedRoot,
-      taskId: options.taskId,
-      workspaceId: options.workspaceId,
-      repositoryId: options.repositoryId,
-      baseRevision: options.baseRevision,
-      manifest,
-      maxFileBytes: options.maxFileBytes,
-    });
   };
   return { source, prepare };
 }

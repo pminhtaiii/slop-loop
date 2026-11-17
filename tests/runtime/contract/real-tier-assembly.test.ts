@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/foundation/docker-controller.ts';
+import type { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
 import { REAL_TIER_COMPONENTS, createHostAssembly, resolveRealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import type { RealTierDependencies, RealTierResolution } from '../../../src/runtime/real-tier-assembly.ts';
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
@@ -93,6 +94,30 @@ test('a complete real component set builds with zero fetches, zero spawns and ze
   assert.deepEqual(effects, { fetch: 0, spawn: 0 });
   assert.deepEqual(entriesUnder(stateRoot), [], 'the static stage writes no task, store or approval file');
   rmSync(stateRoot, { recursive: true, force: true });
+});
+
+test('both model ports carry a complete trusted actor, or every dispatch is EXECUTOR_IDENTITY_REQUIRED', () => {
+  // `HostModelPortV02.dispatch` refuses with EXECUTOR_IDENTITY_REQUIRED unless both the static actor and
+  // the current-fence reader are configured; the assembly is the only place that can supply them.
+  const { deps } = dependencies();
+  const resolved = resolveRealTierAssembly(deps);
+  assert.equal(resolved.status, 'assembly-ready');
+  if (resolved.status !== 'assembly-ready') return;
+  const ports: readonly [string, HostModelPortV02][] = [
+    ['coder', resolved.components.modelPort as HostModelPortV02],
+    ['reviewer', resolved.components.reviewerModelPort],
+  ];
+  for (const [role, port] of ports) {
+    const configured = port.options.executorIdentity;
+    assert.ok(configured?.adapterIdentity?.trim(), `${role} must name an adapter identity`);
+    assert.ok(configured?.processIncarnation?.trim(), `${role} must name a process incarnation`);
+    assert.ok(Number.isSafeInteger(configured?.fencingGeneration) && (configured?.fencingGeneration ?? 0) > 0, `${role} must carry a positive fence`);
+    assert.deepEqual(port.options.currentExecutorIdentity?.(), configured, `${role}'s current fence must be the configured actor`);
+  }
+  // One process incarnation per assembly, distinct adapters: the two roles never collide on one fence.
+  const [coderActor, reviewerActor] = ports.map(([, port]) => port.options.executorIdentity);
+  assert.equal(coderActor?.processIncarnation, reviewerActor?.processIncarnation);
+  assert.notEqual(coderActor?.adapterIdentity, reviewerActor?.adapterIdentity);
 });
 
 test('the assembly is labelled a prerequisite, not G-OWNERS evidence, and makes no ready claim', () => {

@@ -66,6 +66,21 @@ test('STD-W4-201: a ref that escapes the git directory is refused, never read', 
   withTree({ 'repo/.git/HEAD': 'ref: refs/../../../outside\n', outside: `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), ''));
 });
 
+test('a git-legal branch name with +, @ or a dotted segment resolves; an illegal one stays unresolved', () => {
+  // `git check-ref-format` accepts these, so the resolver must too (it is the pin the template prints).
+  for (const name of ['refs/heads/release/v1+hotfix', 'refs/heads/fix@2', 'refs/heads/feature/a.b', 'refs/tags/v1.0+meta']) {
+    withTree({ 'repo/.git/HEAD': `ref: ${name}\n`, [`repo/.git/${name}`]: `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), A, name));
+  }
+  // Still contained: empty segments, `..`, a `.lock` suffix, a space, `~`, `^`, `[`, `@{`.
+  for (const name of ['refs/heads//double', 'refs/heads/a/../b', 'refs/heads/branch.lock', 'refs/heads/has space', 'refs/heads/a~1', 'refs/heads/a^', 'refs/heads/a@{1}', 'refs/heads/a[1']) {
+    withTree({ 'repo/.git/HEAD': `ref: ${name}\n`, [`repo/.git/${name}`]: `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), '', name));
+  }
+  // `:` and `\` cannot even be a path on every platform; the name is refused before any read.
+  for (const name of ['refs/heads/a:b', 'refs/heads/back\\slash', 'refs/heads/a?', 'refs/heads/a*']) {
+    withTree({ 'repo/.git/HEAD': `ref: ${name}\n`, 'repo/.git/refs/heads/a': `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), '', name));
+  }
+});
+
 test('a symbolic-ref cycle and a non-commit value are unresolved', () => {
   withTree({ 'repo/.git/HEAD': 'ref: refs/heads/a\n', 'repo/.git/refs/heads/a': 'ref: refs/heads/b\n', 'repo/.git/refs/heads/b': 'ref: refs/heads/a\n' }, root =>
     assert.equal(gitHead(join(root, 'repo')), ''),

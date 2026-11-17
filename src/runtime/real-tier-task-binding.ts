@@ -185,6 +185,11 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   if ('status' in fixture) return fixture;
   const { task, repositoryRoot } = fixture;
 
+  // One task per assembly: the shared approval port resolves `classify`/`resolve` by the sole bound
+  // task, so a second task would break both for every task. Rebinding the same task id stays legal.
+  const boundTaskId = assembly.owners.boundTaskId();
+  if (boundTaskId !== undefined && boundTaskId !== task.taskId) return refused('assembly-task-bound', '$.task.taskId');
+
   // Every finite bound is validated here, before any effect: a zero TTL or path bound is a bad
   // binding, not a task that should stay half-built.
   const actionTtlMs = options.actionTtlMs ?? 60_000;

@@ -8,14 +8,17 @@ import { readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 const COMMIT = /^[a-f0-9]{40,64}$/u;
-// A ref name stays inside its git directory: `refs/` then plain segments, never `..` or a lock file.
-const REF = /^refs\/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*$/u;
+// A ref name stays inside its git directory: `refs/` then git-legal characters. An allowlist, because
+// git forbids space, `~^:?*[`, `\`, control characters and every Unicode punctuation edge case.
+const REF = /^refs\/[A-Za-z0-9._+@/-]+$/u;
 const MAX_SYMBOLIC_HOPS = 5;
 
 /** One text file, or undefined: a missing file is a refusal, never an exception. */
 const text = (path: string): string | undefined => (statSync(path, { throwIfNoEntry: false })?.isFile() === true ? readFileSync(path, 'utf8') : undefined);
 
-const validRef = (ref: string): boolean => REF.test(ref) && !ref.split('/').some(part => part.includes('..') || part.endsWith('.lock'));
+/** `git check-ref-format` minus the leading `refs/`: no `..`, `@{`, empty segment, or dot/`.lock` edge. */
+const validRef = (ref: string): boolean =>
+  REF.test(ref) && !ref.includes('..') && !ref.includes('@{') && !ref.split('/').some(part => part === '' || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock'));
 
 /** Git's own upward `.git` discovery, following a worktree `.git` file. */
 function gitDirOf(root: string): string | undefined {

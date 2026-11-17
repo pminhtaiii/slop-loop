@@ -198,6 +198,9 @@ async function resolveAssembly(reference: string): Promise<HostAssemblyResolutio
     if (control !== undefined && !isEvaluationControlBindings(control)) return undefined;
     if (consoleFactory !== undefined && typeof consoleFactory !== 'function') return undefined;
     if (preflight !== undefined && typeof preflight !== 'function') return undefined;
+    // A preflight the CLI would never run is a broken assembly, not a benign extra: `observe` only
+    // probes once metadata exists, so refuse the pair rather than silently drop the operator's probe.
+    if (preflight !== undefined && metadata === undefined) return undefined;
     return {
       host: host as HostAssembly,
       ...(production === undefined ? {} : { production: production as HostProduction }),
