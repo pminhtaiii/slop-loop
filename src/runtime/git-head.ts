@@ -37,14 +37,21 @@ function gitDirOf(root: string): string | undefined {
 /** A ref's value from a loose ref or a `packed-refs` line; `^` peel lines name no ref. */
 function refValue(ref: string, gitDirs: readonly string[]): string {
   for (const dir of gitDirs) {
-    const loose = text(join(dir, ref))?.trim();
-    if (loose !== undefined) return loose;
+    const loose = text(join(dir, ref));
+    if (loose !== undefined) return asciiTrim(loose);
   }
-  for (const line of gitDirs.flatMap(dir => text(join(dir, 'packed-refs'))?.split('\n') ?? [])) {
-    const [value, name] = line.trim().split(/\s+/u);
-    if (name === ref && value !== undefined) return value;
+  for (const line of gitDirs.flatMap(dir => text(join(dir, 'packed-refs'))?.split('\x0a') ?? [])) {
+    // A packed line is `<value> <name>` with exactly one space; the name may hold any git-legal byte.
+    const trimmed = asciiTrim(line);
+    const space = trimmed.indexOf(' ');
+    if (space > 0 && trimmed.slice(space + 1) === ref) return trimmed.slice(0, space);
   }
   return '';
+}
+
+/** Git trims only ASCII whitespace; JS `trim` and `\s` would also eat a git-legal U+00A0 (MW4-CR-001). */
+function asciiTrim(value: string): string {
+  return value.replace(/^[\x09\x0a\x0d ]+|[\x09\x0a\x0d ]+$/gu, '');
 }
 
 export function gitHead(root: string): string {
@@ -53,9 +60,9 @@ export function gitHead(root: string): string {
   const common = text(join(gitDir, 'commondir'))?.trim();
   // A worktree's refs live in the common directory its `commondir` file names.
   const dirs = common === undefined ? [gitDir] : [gitDir, resolve(gitDir, common)];
-  let value = text(join(gitDir, 'HEAD'))?.trim() ?? '';
+  let value = asciiTrim(text(join(gitDir, 'HEAD')) ?? '');
   for (let hop = 0; hop <= MAX_SYMBOLIC_HOPS; hop += 1) {
-    const ref = /^ref:\s*(\S+)$/u.exec(value)?.[1];
+    const ref = /^ref:[\x09 ]*([^\x00-\x20]+)$/u.exec(value)?.[1];
     if (ref === undefined) return COMMIT.test(value) ? value : '';
     if (!validRef(ref)) return '';
     value = refValue(ref, dirs);

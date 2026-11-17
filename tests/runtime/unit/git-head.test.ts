@@ -72,6 +72,12 @@ test('a git-legal branch name with +, @ or a dotted segment resolves; an illegal
   for (const name of ['refs/heads/release/v1+hotfix', 'refs/heads/fix@2', 'refs/heads/feature/a.b', 'refs/tags/v1.0+meta', 'refs/heads/fix!2', 'refs/heads/topic/foo./bar', 'refs/heads/thử-nghiệm']) {
     withTree({ 'repo/.git/HEAD': `ref: ${name}\n`, [`repo/.git/${name}`]: `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), A, name));
   }
+  // MW4-CR-001: U+00A0 is git-legal, so neither the HEAD line, a loose ref nor a packed line may treat it as whitespace.
+  const nbsp = 'refs/heads/nb\xa0sp\xa0';
+  withTree({ 'repo/.git/HEAD': `ref: ${nbsp}\n`, [`repo/.git/${nbsp}`]: `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), A, 'loose'));
+  withTree({ 'repo/.git/HEAD': `ref: ${nbsp}\n`, 'repo/.git/packed-refs': `${B} ${nbsp}\n` }, root => assert.equal(gitHead(join(root, 'repo')), B, 'packed'));
+  // MW4-CR-002: a `..` inside one segment is refused by the `..` guard alone.
+  withTree({ 'repo/.git/HEAD': 'ref: refs/heads/a..b\n', 'repo/.git/refs/heads/a..b': `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), '', 'a..b'));
   // Still contained: empty segments, `..`, a `.lock` suffix, a space, `~`, `^`, `[`, `@{`.
   for (const name of [
     'refs/heads//double',
