@@ -52,15 +52,35 @@ function fixture(source: string) {
   return { file, repository, binding, snapshotId: 'snapshot', manifestDigest, pageLines: 25, maxSourceBytes: 12000, maxChunks: 200 };
 }
 
-test('verified empty files have complete coverage and no chunk or tokenizer work', async () => {
+test('empty files with no provenance-bearing span produce no chunks or tokenizer work', async () => {
   const embedding = createControlledQuestionEmbedding(
     { id: 'fixture/1', dimension: 1, maxTokens: 1024 },
     () => assert.fail('unexpected tokenization'),
     () => [1],
   );
   const result = await buildQuestionChunks(fixture(''), embedding, control());
-  assert.equal(result.file.coverage, 'complete');
+  assert.deepEqual(result.file.omissionReasons, ['partial-scan']);
   assert.equal(result.chunks.length, 0);
+});
+
+test('the chunk cap stops processing later module gaps', async () => {
+  const content = Array.from({ length: 400 }, (_, i) => `def f${i}():\n    pass\nmiddle = ${i}`).join('\n');
+  let tokenizations = 0;
+  const embedding = createControlledQuestionEmbedding(
+    { id: 'fixture/1', dimension: 1, maxTokens: 1024 },
+    () => {
+      tokenizations++;
+      return [1];
+    },
+    () => [1],
+  );
+  const result = await buildQuestionChunks({ ...fixture(content), maxSourceBytes: 50_000, maxChunks: 1 }, embedding, control());
+  assert.deepEqual(result.file.omissionReasons, ['budget-exhausted']);
+  assert.deepEqual(
+    result.chunks.map(chunk => chunk.metadata.symbolName),
+    ['f0'],
+  );
+  assert.equal(tokenizations, 1);
 });
 
 test('decorators and nested definitions retain original definition linkage across logical splits', async () => {

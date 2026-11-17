@@ -99,7 +99,8 @@ async function guardedLines(source: QuestionChunkSource, control: QuestionReposi
   const nextLine = file.lineCount + 1;
   const eof = await repository.readSpan({ path: file.path, startLine: nextLine, endLine: nextLine }, control);
   if (expired(control)) return 'budget-exhausted';
-  if (eof.status === 'invalid' && eof.reasonCode === 'out-of-range') return lines;
+  // An EOF refusal proves extent but carries no snapshot or file digest.
+  if (eof.status === 'invalid' && eof.reasonCode === 'out-of-range') return lines.length ? lines : 'partial-scan';
   return eof.status === 'ok' ? 'partial-scan' : omission(eof);
 }
 
@@ -161,10 +162,7 @@ function units(node: SyntaxNode, region: Range): Unit[] {
     if (!current) break;
     for (const child of current.namedChildren) {
       if (!child) continue;
-      if (current.type === 'module') {
-        const start = range(child).startLine;
-        if (start >= region.startLine && start <= region.endLine) cuts.set(start, child);
-      } else if (child.type === 'block') {
+      if (child.type === 'block') {
         for (const statement of child.namedChildren) {
           if (!statement) continue;
           const start = range(statement).startLine;
@@ -175,6 +173,10 @@ function units(node: SyntaxNode, region: Range): Unit[] {
       }
     }
   }
+  return partition(region, cuts);
+}
+
+function partition(region: Range, cuts: ReadonlyMap<number, SyntaxNode>): Unit[] {
   const starts = [...new Set([region.startLine, ...cuts.keys()])].sort((a, b) => a - b);
   return starts.map((startLine, i) => {
     const endLine = (starts[i + 1] ?? region.endLine + 1) - 1;
@@ -353,7 +355,23 @@ export async function buildQuestionChunks(
             }
             emit(def, def, units(def.node, def));
           }
-          for (const gap of moduleRanges(lineCount, found)) emit(gap, null, units(tree.rootNode, gap));
+          const statements = tree.rootNode.namedChildren;
+          let statementIndex = 0;
+          for (const gap of moduleRanges(lineCount, found)) {
+            if (expired(control) || chunks.length >= source.maxChunks) {
+              omissions.add('budget-exhausted');
+              break;
+            }
+            const cuts = new Map<number, SyntaxNode>();
+            while (statementIndex < statements.length) {
+              const statement = statements[statementIndex];
+              const start = statement ? range(statement).startLine : 0;
+              if (start > gap.endLine) break;
+              if (statement && start >= gap.startLine) cuts.set(start, statement);
+              statementIndex++;
+            }
+            emit(gap, null, partition(gap, cuts));
+          }
         }
       } finally {
         tree?.delete();
