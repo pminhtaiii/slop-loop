@@ -50,6 +50,8 @@ jobs:
       # Clean build only; emitted tests run in the dependent runtime lane.
       - name: Build from source
         run: node scripts/ci/check-runtime.mjs --clean-build-only
+      - name: Check native SQLite extension and disk recovery
+        run: node --test dist/tests/runtime/integration/question-index-platform.test.js
       - name: Record artifact identity and manifest
         shell: bash
         env:
