@@ -19,6 +19,9 @@ import { computeCanonicalSha256, validateBugTask } from '../contracts/foundation
 import type { BugTask, PolicyAuthorityRefV02, TaskState } from '../contracts/foundation/uc03.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
 import type { TrustedFilesystemPort } from '../foundation/repository-types.ts';
+import { computeWorkspaceVolumeIds } from '../foundation/docker-workspace-policy.ts';
+import { ADMISSION_PROFILE_FACTS } from '../persistence/adapters/state-port-v02-admission.ts';
+import type { ExecutionProfileV02 } from '../persistence/adapters/state-port-v02-admission.ts';
 import { stateReadPolicyDigest } from '../persistence/adapters/state-port-v02-read-fence.ts';
 import { MAX_TASK_REPLANS } from '../uc03/replan-accounting.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
@@ -161,6 +164,34 @@ function policyOf(task: BugTask, options: RealTierBindingOptions): Readonly<{ po
   return options.policyIdentity ?? { policyId: task.configId, policyVersion: task.configVersion, configId: task.configId, configVersion: task.configVersion };
 }
 
+/** The exclusions version `buildDockerCommandView` stamps when the caller supplies none. */
+const EXCLUSIONS_POLICY_VERSION = '0.1.0';
+/** The patch ceilings a `BugTask` pins none of: the port's own admission constants. */
+const TASK_PATCH_BOUNDS = ADMISSION_PROFILE_FACTS.patchBounds;
+
+/**
+ * The execution profile the bound task's real view will carry, derived only from the pinned task and
+ * the owner-known workspace: the workspace's own scratch volume, the builder's exclusions version and
+ * the task's limits (CPU time the way the seed ledger converts it). Exported so the fixtures that
+ * hand a bound port an admission build the same profile rather than a second copy of its facts.
+ */
+export function executionProfileOf(task: BugTask, isolationProfileRef: string, ids: Pick<SeededTaskIds, 'taskId' | 'workspaceId'>): ExecutionProfileV02 {
+  return {
+    isolationProfileRef,
+    exclusionsPolicyVersion: EXCLUSIONS_POLICY_VERSION,
+    scratchIdentity: computeWorkspaceVolumeIds(ids.taskId, ids.workspaceId).scratchVolumeId,
+    commandBounds: {
+      timeoutMs: task.limits.timeoutMs,
+      maxOutputBytes: task.limits.maxOutputBytes,
+      maxCpuSeconds: Math.max(1, Math.ceil((task.limits.maxCpuCores * task.limits.timeoutMs) / 1000)),
+      maxMemoryBytes: task.limits.maxMemoryBytes,
+      maxProcessCount: task.limits.maxPids,
+    },
+    // A BugTask pins no patch ceiling, so the port's constants stand in.
+    patchBounds: TASK_PATCH_BOUNDS,
+  };
+}
+
 /**
  * Reads, validates, binds and seeds once. The catalog is the loaded profile's own `catalog.path`.
  *
@@ -238,7 +269,10 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   // task id, so a second bind must reuse the first bind's source rather than orphan its registry.
   const filesystem: TrustedFilesystemPort = new WorkspaceFilesystemPort({ root: repositoryRoot });
   const createContext = (): RealContextSource => createHostActionContext({ filesystem, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, ttlMs: actionTtlMs });
-  const owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, authorityRef, createContext });
+  // The profile the real view will carry: the same isolation label the resource policy and the view
+  // builder's owner measurement name, so the port admits the view the tier actually builds.
+  const executionProfile = (taskId: string, workspaceId: string): ExecutionProfileV02 => executionProfileOf(task, assembly.profile.image.label, { taskId, workspaceId });
+  const owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, authorityRef, createContext, executionProfile });
   const contextSource = owners.contextSource;
   if (existing === null) {
     try {

@@ -20,7 +20,7 @@ import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem
 import type { HostActionContext } from '../../../src/runtime/host-action-context.ts';
 import type { BugTask, FixPlan, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/foundation/docker-controller.ts';
-import { computeFileDigest } from '../../../src/foundation/docker-workspace-policy.ts';
+import { computeFileDigest, computeWorkspaceVolumeIds } from '../../../src/foundation/docker-workspace-policy.ts';
 import { createHostAssembly, resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
 import { bindRealTierTask, type RealTierBindingOptions, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
 import { retainedDiffSource } from '../../../src/runtime/real-tier-task-producers.ts';
@@ -713,4 +713,74 @@ test('(m) a mutated retained tree refuses at rebind instead of binding ready', a
   assert.equal(second.status, 'unavailable', JSON.stringify(second));
   if (second.status !== 'unavailable') return;
   assert.equal(second.reasonCode, 'binding-unavailable');
+});
+
+test('(q) the bound task port admits a real view carrying the task workspace scratch and its limits', async () => {
+  // The view the Docker builder would issue: the workspace's own scratch volume, the builder's
+  // exclusions version, and the pinned task's limits — none of them the port's synthetic constants.
+  const catalog = fixtureOf();
+  // Row (m) mutates the shared retained tree; this row's own root keeps the order of the file irrelevant.
+  const retainedRoot = join(tempRoot('retained-q'), 'artifacts');
+  const { assembly } = assemblyFor(catalog);
+  const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot })));
+  const owners = assembly.owners.taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId });
+  const seeded = (await owners.statePort.loadTask(binding.ids.taskId)) as TaskState;
+  await owners.statePort.transition({ ...seeded, node: 'Investigate', nextAction: 'propose-fix-plan', stateVersion: seeded.stateVersion + 1 }, seeded.stateVersion);
+  const state = (await owners.statePort.loadTask(binding.ids.taskId)) as TaskState;
+
+  const action = { actionId: 'act-q-1', kind: 'run_command' as const, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], workingDirectory: 'tests', purpose: 'investigate' };
+  const actionDigest = computeActionDigest(action);
+  const authority = { policyId: binding.task.configId, policyVersion: binding.task.configVersion, configId: binding.task.configId, configVersion: binding.task.configVersion, issuerKeyRef: `host-${binding.task.configId}`, decisionAuthorityGeneration: 1 };
+  const { policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration } = authority;
+  const receiptBody = { receiptId: 'pe-act-q-1', actionDigest, freshnessContextDigest: computeCanonicalSha256({ freshness: 'act-q-1' }), policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration, result: 'ALLOWED' as const };
+  const limits = binding.task.limits;
+  const commandView = {
+    viewId: `view-${binding.ids.workspaceId}-${'a'.repeat(12)}`,
+    taskId: state.taskId,
+    workspaceId: state.workspaceId,
+    canonicalRevision: state.repositoryRevisionDigest,
+    admittedFiles: [{ path: 'tests/test_calculator.py', digest: computeCanonicalSha256('test-file') }],
+    exclusionsPolicyVersion: '0.1.0',
+    scratchIdentity: computeWorkspaceVolumeIds(state.taskId, state.workspaceId).scratchVolumeId,
+    mountedReadOnly: true as const,
+    isolationProfileRef: assembly.profile.image.label,
+  };
+  const context = {
+    schemaVersion: '0.2.0',
+    subjectKind: 'repository-action',
+    planApplicability: 'pre-plan-diagnostic',
+    taskStateSchemaVersion: '0.2.0',
+    expectedTaskStateVersion: state.stateVersion,
+    controlSchemaVersion: '0.2.0',
+    expectedControlVersion: 1,
+    expectedEpoch: 1,
+    taskId: state.taskId,
+    runId: state.runId,
+    workspaceId: state.workspaceId,
+    repositoryId: state.repositoryId,
+    runnableNode: 'Investigate',
+    canonicalRevision: state.repositoryRevisionDigest,
+    executionProfileId: assembly.profile.image.label,
+    action,
+    actionDigest,
+    policyAuthorityRef: authority,
+    policyEvaluationReceipt: { ...receiptBody, receiptDigest: computeCanonicalSha256(receiptBody) },
+    commandView: { ...commandView, viewDigest: computeCanonicalSha256(commandView) },
+    finiteBounds: {
+      timeoutMs: limits.timeoutMs,
+      maxOutputBytes: limits.maxOutputBytes,
+      maxCpuSeconds: Math.max(1, Math.ceil((limits.maxCpuCores * limits.timeoutMs) / 1000)),
+      maxMemoryBytes: limits.maxMemoryBytes,
+      maxProcessCount: limits.maxPids,
+      isolationProfileRef: assembly.profile.image.label,
+    },
+    reservationRefs: ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].flatMap(kind => [`task-${kind}-act-q-1`, `run-${kind}-act-q-1`]),
+    diagnosticPurpose: 'investigate',
+    taskCriteriaDigest: computeCanonicalSha256(binding.task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(binding.task.requiredChecks),
+    checkId: 'check-1',
+    testPath: 'tests/test_calculator.py',
+  };
+  const claim = await owners.statePort.claim(context as never);
+  assert.equal(claim.claimId, 'claim-act-q-1', 'the bound task port must admit the real view it will be handed');
 });

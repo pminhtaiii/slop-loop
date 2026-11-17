@@ -22,7 +22,8 @@ import { isSafeStorageId } from '../store.ts';
 import type { StatePortStore } from './state-port-v02-storage.ts';
 import type { ControlRecordV02, FenceProofV02, RecoveryEvidenceV02, StoredAttemptV02, StoredClaimV02 } from './state-port-v02-types.ts';
 import { DEFAULT_CONTROL, NEUTRAL_CLAIM_CLOSURE_RESULT_V02, NEUTRAL_RECONCILIATION_RESULT_V02, SHA256 } from './state-port-v02-types.ts';
-import { contextMatchesTask, equal, isDiagnosticPatch, isRepairPatch, isRepositoryPatch, observedPatchTaskState, safeRef, taskMatchesAttempt } from './state-port-v02-admission.ts';
+import { contextMatchesTask, equal, isDiagnosticPatch, isRepairPatch, isRepositoryPatch, observedPatchTaskState, ownerExecutionProfile, safeRef, taskMatchesAttempt } from './state-port-v02-admission.ts';
+import type { ExecutionProfileSourceV02 } from './state-port-v02-admission.ts';
 import { observedCommandAccountingMatches, replaceLedgers, stageClaimReservations } from './state-port-v02-ledgers.ts';
 
 function reconciliationContext(
@@ -268,7 +269,7 @@ export async function reconcileUncertain(store: StatePortStore, receipt: Attempt
   });
 }
 
-export async function closeUnattemptedClaim(store: StatePortStore, receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> {
+export async function closeUnattemptedClaim(store: StatePortStore, receipt: ClaimClosureReceiptV02, executionProfile?: ExecutionProfileSourceV02): Promise<ClaimClosureResultV02> {
   let snapshot: ClaimClosureReceiptV02;
   try {
     snapshot = structuredClone(receipt);
@@ -309,7 +310,7 @@ export async function closeUnattemptedClaim(store: StatePortStore, receipt: Clai
     };
     if (!validateClaimClosureReceiptV02(snapshot, validationContext).ok) return refused;
     const task = await store.readTask(taskId);
-    if (!task || !contextMatchesTask(claim.context, task)) return refused;
+    if (!task || !contextMatchesTask(claim.context, task, ownerExecutionProfile(executionProfile, task))) return refused;
     const staged = stageClaimReservations(claim.context, task.budgetLedgers ?? [], 'release', undefined, true);
     if (!staged) return refused;
     if (!isSafeStorageId(snapshot.receiptId)) return refused;
