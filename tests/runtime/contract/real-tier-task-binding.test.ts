@@ -657,20 +657,18 @@ test('(o) a baseline command settles its reservation and a same-sized verificati
   const seeded = (await assembly.owners
     .taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId })
     .statePort.loadTask(binding.ids.taskId)) as TaskState;
-  const limits = binding.task.limits;
-  const budget = binding.task.budgetLimits;
-  const allowance = Math.max(1, binding.task.requiredChecks.length) * (1 + budget.maxRepairAttempts + budget.maxReplanCount + 1);
-  const perCommand: Readonly<Record<string, number>> = {
-    timeoutMs: limits.timeoutMs,
-    maxOutputBytes: limits.maxOutputBytes,
-    maxCpuSeconds: Math.max(1, Math.ceil((limits.maxCpuCores * limits.timeoutMs) / 1000)),
-    maxMemoryBytes: limits.maxMemoryBytes,
-    maxProcessCount: limits.maxPids,
+  // Worked by hand for this fixture (1 check; 2 repairs; 3 replans → 7 commands): [per command, cumulative].
+  const expected: Readonly<Record<string, readonly [number, number]>> = {
+    timeoutMs: [30_000, 210_000],
+    maxOutputBytes: [1_048_576, 7_340_032],
+    maxCpuSeconds: [60, 420],
+    maxMemoryBytes: [2_147_483_648, 15_032_385_536],
+    maxProcessCount: [64, 448],
   };
-  for (const [kind, amount] of Object.entries(perCommand)) {
+  for (const [kind, [amount, cumulative]] of Object.entries(expected)) {
     const ledger = (seeded.budgetLedgers ?? []).find(row => row.scope === 'task' && row.kind === kind);
     assert.ok(ledger, `${kind} must be seeded`);
-    assert.equal(ledger.limit, amount * allowance, `${kind} carries one command allowance per bound command`);
+    assert.equal(ledger.limit, cumulative, `${kind} carries one command allowance per bound command`);
     const reserve = (current: typeof ledger, keyedId: string) => stageReservation(current, { reservationId: `${kind}-${keyedId}`, keyedId, amount }, 'reserve');
     const reserved = reserve(ledger, 'baseline');
     assert.ok(reserved, `${kind} must admit the baseline reservation`);
