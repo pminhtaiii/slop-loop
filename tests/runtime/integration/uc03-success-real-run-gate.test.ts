@@ -28,7 +28,7 @@ import {
 import type { BugTask, ProviderAdmissionContextV02, RepositoryAdmissionContextV02, RunCommandAction, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/foundation/docker-controller.ts';
 import { computeFileDigest } from '../../../src/foundation/docker-workspace-policy.ts';
-import { computeContextDigest, type HostModelTransport } from '../../../src/foundation/model.ts';
+import { computeContextDigest } from '../../../src/foundation/model.ts';
 import { resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
 import { bindRealTierTask, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
 import { deriveTrustedContext } from '../../../src/persistence/adapters/state-port-v02-admission.ts';
@@ -36,9 +36,17 @@ import { createCommandOutcomeReceipt, normalizeCommandResult, type NormalizedCom
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
-import { parseCampaignArgs, runCampaign, runCampaignCases, type CampaignOptions, type StageRecord } from './uc03-success-real-run.ts';
+import {
+  parseCampaignArgs,
+  runCampaign,
+  runCaseStage,
+  type CampaignOptions,
+  type CaseOutcome,
+  type StageRecord,
+} from './uc03-success-real-run.ts';
 import { checkEvidence } from './uc03-success-real-evidence.ts';
 import { createScanFixture, type ScanFixture } from '../unit/real-tier-scan-fixtures.ts';
+import type { SnapshotGradeResult } from '../../../eval/uc03/workflow-grade.ts';
 
 const fixture: ScanFixture = createScanFixture('t059-gate-', 't059-gate-digest-key');
 const CONTRACT = 'uc03-host-composition/2';
@@ -92,7 +100,7 @@ interface Catalog {
 }
 
 /** A temp catalog with one contained repository, one digest-pinned fixture and its profile. */
-function catalogFor(task = taskOf()): Catalog {
+function catalogFor(task = taskOf(), extraCases: readonly string[] = []): Catalog {
   const dir = tempRoot('catalog');
   const repositoryDir = join(dir, 'repository');
   mkdirSync(join(repositoryDir, 'src'), { recursive: true });
@@ -101,13 +109,8 @@ function catalogFor(task = taskOf()): Catalog {
   const fixturePath = join(dir, 'case.json');
   writeFileSync(fixturePath, document, 'utf8');
   const catalogPath = join(dir, 'catalog.json');
-  writeFileSync(
-    catalogPath,
-    JSON.stringify({
-      catalog: [{ catalogEntryId: `entry-${CASE}`, caseId: CASE, initialRepositoryDigest: task.initialRevisionDigest.replace(/^sha256:/u, ''), fixturePath, fixtureDigest: sha256Text(document) }],
-    }),
-    'utf8',
-  );
+  const entryOf = (caseId: string) => ({ catalogEntryId: `entry-${caseId}`, caseId, initialRepositoryDigest: task.initialRevisionDigest.replace(/^sha256:/u, ''), fixturePath, fixtureDigest: sha256Text(document) });
+  writeFileSync(catalogPath, JSON.stringify({ catalog: [entryOf(CASE), ...extraCases.map(entryOf)] }), 'utf8');
   return { task, env: fixture.envOf({ catalog: { path: catalogPath } }) };
 }
 
@@ -154,23 +157,6 @@ function boundOrThrow(binding: Awaited<ReturnType<typeof bindRealTierTask>>): Re
   return binding as RealTierBoundTask;
 }
 
-/** One loaded assembly, its bound task, and the doubles that observe its effects. */
-async function boundFixture(): Promise<{ assembly: RealTierAssembly; binding: RealTierBoundTask; effects: Effects; task: BugTask }> {
-  const catalog = catalogFor();
-  const { assembly, effects } = resolveOrThrow(catalog);
-  const binding = boundOrThrow(await bindRealTierTask(assembly, { caseId: CASE, ...pinsOf(assembly) }));
-  return { assembly, binding, effects, task: catalog.task };
-}
-
-/**
- * The bound assembly's own branded transport. `modelPort` is the v0.2 port interface, so its option
- * bag is not part of that contract; the test reads it through one cast to build a second port over
- * the *same* transport, which keeps `provenance: 'real'` derived instead of declared.
- */
-function transportOf(assembly: RealTierAssembly): HostModelTransport {
-  return (assembly.components.modelPort as unknown as { readonly options: { readonly transport: HostModelTransport } }).options.transport;
-}
-
 function assertNoSecrets(value: unknown): void {
   const serialized = JSON.stringify(value);
   for (const needle of [fixture.KEY, fixture.HREF, '192.0.2.10', '54321', fixture.DIGEST_KEY]) assert.ok(!serialized.includes(needle), 'no record may carry a sentinel credential or endpoint');
@@ -204,9 +190,45 @@ function campaignOptions(catalog: Catalog, evidenceDir: string, overrides: Parti
   };
 }
 
+/**
+ * A validated snapshot grade for one case, and the grader seam that returns it. The campaign judge
+ * reads the receipt, never the workflow string (SPEC-W5-003).
+ */
+function gradeFor(caseId: string, grade: 'pass' | 'fail' | 'not-run'): SnapshotGradeResult {
+  return {
+    caseId: caseId as SnapshotGradeResult['caseId'],
+    criterionId: `criterion-${caseId}`,
+    grade,
+    reason: grade === 'pass' ? 'criteria-satisfied' : grade === 'fail' ? 'criteria-violation' : 'private-grading',
+    evidenceIds: [`criterion:${caseId}`, 'check:required'],
+    snapshot: { snapshotId: `snap-${caseId}`, digest: `sha256:${sha256Text(`snap-${caseId}`)}` },
+    evidenceDigest: `sha256:${sha256Text(`ev-${caseId}`)}`,
+    criteriaDigest: `sha256:${sha256Text(`crit-${caseId}`)}`,
+    limitations: [],
+  };
+}
+
+const gradePass = (_assembly: RealTierAssembly, caseId: string) => Promise.resolve(gradeFor(caseId, 'pass'));
+
+/** The full contract case rows a grader-sealed campaign produces (C01, C02 pinned; C16, C10 derived). */
+const PASSING_CASES: readonly CaseOutcome[] = Object.freeze([
+  { record: { stage: 'case', outcome: 'pass', caseId: 'C01', facts: { workflow: 'COMPLETED', grade: 'pass' } }, evidence: { grade: gradeFor('C01', 'pass') } },
+  { record: { stage: 'case', outcome: 'pass', caseId: 'C02', facts: { workflow: 'needs-info', grade: 'pass' } }, evidence: { grade: gradeFor('C02', 'pass') } },
+  { record: { stage: 'case', outcome: 'pass', caseId: 'C16', facts: { derivedFrom: 'C01', grade: 'pass' } } },
+  { record: { stage: 'case', outcome: 'pass', caseId: 'C10', facts: { derivedFrom: 'C01', claims: 1, outcomes: 0 } } },
+]);
+
 function writeRecord(dir: string, records: readonly StageRecord[]): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'campaign.json'), JSON.stringify({ records }, null, 2), 'utf8');
+  const payload = {
+    schemaVersion: 'uc03-campaign-record/1',
+    campaignId: 'campaign-1',
+    bindings: { 'candidate-sha': REV, 'profile-digest': `sha256:${'a'.repeat(64)}`, 'endpoint-digest': `sha256:${'b'.repeat(64)}`, model: MODEL },
+    stages: records.filter(entry => entry.stage !== 'case').map(entry => ({ stage: entry.stage, outcome: entry.outcome, ...(entry.reasonCode === undefined ? {} : { reasonCode: entry.reasonCode }) })),
+    caseStages: records.filter(entry => entry.stage === 'case' && entry.reasonCode !== undefined).map(entry => ({ stage: entry.stage, outcome: entry.outcome, caseId: entry.caseId, reasonCode: entry.reasonCode })),
+    records,
+  };
+  writeFileSync(join(dir, 'campaign.json'), JSON.stringify(payload, null, 2), 'utf8');
 }
 
 function onlyReceipt(dir: string): { outcome: string; binding: Record<string, string>; reasonCode?: string } {
@@ -215,10 +237,23 @@ function onlyReceipt(dir: string): { outcome: string; binding: Record<string, st
   return JSON.parse(readFileSync(join(dir, names[0] as string), 'utf8')) as { outcome: string; binding: Record<string, string>; reasonCode?: string };
 }
 
-const PASSING_CASES: readonly StageRecord[] = Object.freeze([
-  { stage: 'case', outcome: 'pass', caseId: 'C01', facts: { workflow: 'COMPLETED' } },
-  { stage: 'case', outcome: 'pass', caseId: 'C02', facts: { workflow: 'needs-info' } },
-]);
+/** The retained campaign record, parsed as the checker would see it. */
+function readCampaignRecord(dir: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(join(dir, 'campaign.json'), 'utf8')) as Record<string, unknown>;
+}
+
+test('a campaign persists a versioned record and per-attempt case artifacts', async () => {
+  const catalog = catalogFor();
+  const evidenceDir = tempRoot('evidence');
+  const result = await runCampaign(campaignOptions(catalog, evidenceDir, { runCases: async () => PASSING_CASES }).options);
+  assert.equal(result.exitCode, 0, JSON.stringify(result.records));
+  const record = readCampaignRecord(evidenceDir);
+  assert.equal(record['schemaVersion'], 'uc03-campaign-record/1');
+  assert.equal(record['passed'], true);
+  assert.equal((record['bindings'] as Record<string, string>)['model'], MODEL);
+  const verified = checkEvidence({ evidenceDir, env: fixture.envOf(), repositoryRoot: tempRoot('repo') });
+  assert.deepEqual(verified, { exitCode: 0, output: 'EVIDENCE_CLEAN 4 case(s)' });
+});
 
 /* ------------------------------------------------------------------ argv */
 
@@ -244,7 +279,9 @@ test('a preflight refusal exits nonzero with zero fetches, no receipt and no cas
     result.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]),
     [['preflight', 'fail', 'docker-unavailable']],
   );
-  assert.equal(readdirSync(options.evidenceDir).length, 0, 'a preflight refusal writes no receipt');
+  // A preflight refusal writes no conformance receipt (only the campaign record of the failure).
+  assert.deepEqual(readdirSync(options.evidenceDir).filter(name => name.startsWith('conformance-')), [], 'a preflight refusal writes no receipt');
+  assert.equal(readCampaignRecord(options.evidenceDir)['passed'], false, 'the failed campaign is still retained as a record');
   assertNoSecrets(result);
 });
 
@@ -286,6 +323,51 @@ test('each conformance failure exits nonzero after exactly one fetch and zero ca
     assert.equal(onlyReceipt(evidenceDir).outcome, 'failed', `${reasonCode}: the failed campaign still records its refusal`);
     assertNoSecrets(result);
   }
+});
+
+test('a profile model other than the pinned identity, or a whitespace-wrapped reply, is refused before any case', async () => {
+  // A profile that selects the wrong model stops before any fetch or case dispatch (SPEC-W5-011).
+  const offlineCatalog = catalogFor();
+  const wrongProfile = { ...offlineCatalog, env: fixture.envOf({ provider: { ...fixture.PROVIDER, model: 'po/deepseek-ai/deepseek-v4.1-flash-9999' } }) };
+  const dispatched: string[] = [];
+  const wrongOptions = campaignOptions(wrongProfile, tempRoot('evidence'), {
+    fetch: async () => {
+      dispatched.push('fetch');
+      return new Response('{}', { status: 200 });
+    },
+    runCases: async () => {
+      dispatched.push('case');
+      return [];
+    },
+  });
+  const refused = await runCampaign(wrongOptions.options);
+  assert.equal(refused.exitCode, 2);
+  assert.deepEqual(dispatched, [], 'a wrong profile model dispatches neither fetch nor case');
+  assert.deepEqual(refused.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [
+    ['preflight', 'pass', undefined],
+    ['conformance', 'fail', 'conformance-model-mismatch'],
+  ]);
+
+  // A reply carrying the right id plus whitespace is still a different identity: exact equality only.
+  const padded = new Response(JSON.stringify({ model: `${MODEL} ` }), { status: 200 });
+  const displaced: string[] = [];
+  const paddedOptions = campaignOptions(catalogFor(), tempRoot('evidence'), {
+    fetch: async () => {
+      displaced.push('fetch');
+      return padded;
+    },
+    runCases: async () => {
+      displaced.push('case');
+      return [];
+    },
+  });
+  const paddedResult = await runCampaign(paddedOptions.options);
+  assert.equal(paddedResult.exitCode, 2);
+  assert.deepEqual(displaced, ['fetch'], 'a whitespace-wrapped model fetches once and no case dispatches');
+  assert.deepEqual(paddedResult.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [
+    ['preflight', 'pass', undefined],
+    ['conformance', 'fail', 'conformance-model-mismatch'],
+  ]);
 });
 
 test('a campaign writes one receipt bound to the candidate, profile, endpoint and model', async () => {
@@ -388,7 +470,7 @@ test('`--case` binds to the newest conformed receipt and runs one case stage', a
     },
     runCases: async (_assembly, stageOptions) => {
       requested.push([...stageOptions.caseIds]);
-      return PASSING_CASES.filter(entry => entry.caseId === CASE);
+      return PASSING_CASES.filter(entry => entry.record.caseId === CASE);
     },
   });
   const result = await runCampaign(options);
@@ -397,26 +479,66 @@ test('`--case` binds to the newest conformed receipt and runs one case stage', a
   assert.deepEqual(requested, [[CASE]], 'exactly the requested case runs');
 });
 
-test('the real case stage drives the bound graph and records what it observed', async () => {
+test('the real case stage assembles a fresh host per case and records what it observed', async () => {
   const catalog = catalogFor();
-  const { assembly, effects } = resolveOrThrow(catalog);
+  const { assembly } = resolveOrThrow(catalog);
   const pins = pinsOf(assembly);
-  // The real stage: binding, the v0.2 graph entry and the owner journal, with no injected verdict.
-  const records = await runCampaignCases(assembly, { caseIds: [CASE], repositoryRoot: tempRoot('repo'), ...pins });
-  const [first, retry] = records;
-  // C01 pins COMPLETED; a task with no learned plan cannot reach it, so the row is an honest failure,
-  // never a fabricated pass. Zero fetches: the real graph reached the model port and was refused there.
-  assert.equal(first?.caseId, CASE);
-  assert.equal(first?.stage, 'case');
-  assert.equal(first?.outcome, 'fail', JSON.stringify(first));
-  assert.equal(first?.facts?.['workflow'], 'INCOMPLETE');
-  assert.equal(effects.fetch, 0, 'a bound graph run dispatches no transport call here');
-  // C01's second attempt is not replayed on the assembly that already claimed the task.
-  assert.deepEqual([retry?.outcome, retry?.reasonCode, retry?.facts?.['attempt']], ['not-run', 'retry-unavailable', 2]);
+  let assembled = 0;
+  const assemble = () => {
+    assembled += 1;
+    return resolveOrThrow(catalog).assembly;
+  };
+  // The real stage: a fresh assembly per case, binding, the v0.2 graph entry and the owner journal,
+  // with no injected verdict — the pinned grader supplies the outcome, never the status string.
+  const [first] = await runCaseStage(assemble, { caseIds: [CASE], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass });
+  // The workflow alone does not prove a repair; only the pinned grade is consulted for the verdict.
+  assert.equal(first?.record.caseId, CASE);
+  assert.equal(first?.record.stage, 'case');
+  assert.equal(first?.record.outcome, 'pass', `the verdict follows the pinned grade, not the workflow string: ${JSON.stringify(first?.record)}`);
+  assert.equal(first?.record.facts?.['workflow'], 'INCOMPLETE', 'the underlying workflow did not complete, and its status is retained as a fact');
+  assert.equal(first?.evidence?.grade?.grade, 'pass', 'the retained grade is retained evidence, not the workflow string');
+  assert.equal(assembled, 1, 'exactly one fresh assembly for one case');
+
+  // With no grader the case stays not-run, never a pass, even when the workflow returned something.
+  const [ungraded] = await runCaseStage(assemble, { caseIds: [CASE], repositoryRoot: tempRoot('repo'), ...pins });
+  assert.deepEqual([ungraded?.record.outcome, ungraded?.record.reasonCode], ['not-run', 'grader-unavailable']);
 
   // A case id the catalog does not carry is a bounded refusal, not an invented task.
-  const missing = await runCampaignCases(assembly, { caseIds: ['C99'], repositoryRoot: tempRoot('repo'), ...pins });
-  assert.deepEqual(missing.map(entry => [entry.outcome, entry.reasonCode]), [['not-run', 'catalog-entry-missing']]);
+  const [missing] = await runCaseStage(assemble, { caseIds: ['C99'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass });
+  assert.deepEqual([missing?.record.outcome, missing?.record.reasonCode], ['not-run', 'catalog-entry-missing']);
+});
+
+test('C16 is derived from the C01 run and C10 stays not-run without its own zero-dispatch row', async () => {
+  const catalog = catalogFor();
+  const { assembly } = resolveOrThrow(catalog);
+  const pins = pinsOf(assembly);
+  const outcomes = await runCaseStage(() => resolveOrThrow(catalog).assembly, { caseIds: ['C01', 'C16', 'C10'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass });
+  const byId = new Map(outcomes.map(entry => [entry.record.caseId, entry.record]));
+  // C16 is the C01 report: it passes only because C01 passed, and carries no payload of its own.
+  assert.equal(byId.get('C16')?.outcome, 'pass', 'C16 follows the C01 run');
+  assert.equal(byId.get('C16')?.facts?.['derivedFrom'], 'C01');
+  // C10 needs a dedicated refusal witness this stage does not produce, so it is honestly not-run.
+  assert.equal(byId.get('C10')?.outcome, 'not-run', 'C10 is not guessed into a pass');
+  assert.equal(byId.get('C10')?.reasonCode, 'c10-not-observed');
+});
+
+test('C02 binds its own fresh assembly and stays terminal at its expected clarification pause', async () => {
+  const catalog = catalogFor(undefined, ['C02']);
+  const { assembly } = resolveOrThrow(catalog);
+  const pins = pinsOf(assembly);
+  const seen: string[] = [];
+  // Each case is a distinct task on its own assembly; one assembly can never carry two.
+  const outcomes = await runCaseStage(
+    () => {
+      seen.push('assemble');
+      return resolveOrThrow(catalog).assembly;
+    },
+    { caseIds: ['C01', 'C02'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass, clarificationHold: (id: string) => id === 'C02' },
+  );
+  assert.equal(seen.length, 2, 'two distinct cases bind two fresh assemblies, never one shared task');
+  assert.deepEqual(outcomes.map(entry => entry.record.caseId), ['C01', 'C02']);
+  // C02 is held for its expected clarification pause, so no plan decision is ever offered to it.
+  assert.equal(outcomes[1]?.evidence?.approval, undefined, 'a clarification hold is never auto-approved');
 });
 
 /* ------------------------------------------------------------- continuation */
@@ -447,38 +569,156 @@ test('a continuation over a blocked uncertain ref refuses with zero effects', as
   assert.deepEqual(result.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [['recovery', 'fail', 'continuation-blocked']]);
 });
 
+/** A resume stage over a stub assembly whose recovery gate answers one fixed decision. */
+function resumeWith(decision: 'resume' | 'fresh-attempt' | 'blocked'): Promise<Awaited<ReturnType<typeof runCampaign>>> {
+  const catalog = catalogFor();
+  const counters: Effects = { fetch: 0, spawn: 0 };
+  const assemble = () =>
+    ({
+      status: 'assembly-ready' as const,
+      metadata: { profileDigest: `sha256:${'a'.repeat(64)}`, endpointDigest: `sha256:${'b'.repeat(64)}`, endpointScheme: 'https' as const, insecureHttpAcknowledged: false, model: MODEL, imageId: IMAGE_ID },
+      owners: { recoveryGate: { decide: async () => decision } },
+    }) as unknown as RealTierAssembly;
+  return runCampaign({
+    mode: 'resume',
+    resumeRef: 'uc04-journal:claim-recorded',
+    env: catalog.env,
+    repositoryRoot: tempRoot('repo'),
+    evidenceDir: tempRoot('evidence'),
+    candidateSha: REV,
+    assemble,
+    fetch: async () => {
+      counters.fetch += 1;
+      throw new Error('a resume query must not fetch');
+    },
+    spawn: async () => {
+      counters.spawn += 1;
+      throw new Error('a resume query must not spawn');
+    },
+  });
+}
+
+test('a resume admission exits 0 on a permitted resume, never 0 on a fresh-attempt or block', async () => {
+  // A committed owner record permits a later continuation: the query itself is read-only and exits 0.
+  const resumed = await resumeWith('resume');
+  assert.equal(resumed.exitCode, 0, 'a permitted resume is a successful admission query');
+  assert.deepEqual(resumed.records.map(entry => [entry.stage, entry.outcome, entry.facts?.['decision']]), [['recovery', 'pass', 'resume']]);
+
+  // `fresh-attempt` is not replay authority, so it stays nonzero and effect-free.
+  const fresh = await resumeWith('fresh-attempt');
+  assert.equal(fresh.exitCode, 2, 'a fresh-attempt is not a successful resume');
+  assert.deepEqual(fresh.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [['recovery', 'not-run', 'continuation-fresh-attempt']]);
+
+  // An unknown/blocked continuation stays nonzero, the T059 prerequisite.
+  const blocked = await resumeWith('blocked');
+  assert.equal(blocked.exitCode, 2);
+  assert.deepEqual(blocked.records.map(entry => [entry.stage, entry.outcome, entry.reasonCode]), [['recovery', 'fail', 'continuation-blocked']]);
+});
+
 /* ------------------------------------------------------------ evidence check */
 
-test('the checker fails a failed or not-run predicate and passes a clean campaign', () => {
+/** The stages a complete campaign record carries, in order, before its case rows. */
+const CLEAN_STAGES: readonly StageRecord[] = Object.freeze([
+  { stage: 'preflight', outcome: 'pass' },
+  { stage: 'conformance', outcome: 'pass' },
+]);
+const CLEAN_RECORD = [...CLEAN_STAGES, ...PASSING_CASES.map(entry => entry.record)];
+
+/**
+ * SPEC-W5-002's live pause path needs a real model that produces a plan, so it is exercised at T054.
+ * What this gate can prove with doubles: the runner never approves on its own. Without an injected
+ * decision source no approval is ever recorded; with one, it is only consulted when the graph pauses.
+ */
+test('the case stage never approves a plan on its own; a decision source is not fabricated', async () => {
+  const catalog = catalogFor();
+  const decisions: string[] = [];
+  const run = (decideApproval?: (host: RealTierAssembly, caseId: string) => Promise<'approve' | 'reject' | undefined>) =>
+    runCaseStage(() => resolveOrThrow(catalog).assembly, {
+      caseIds: ['C01'],
+      repositoryRoot: tempRoot('repo'),
+      ...pinsOf(resolveOrThrow(catalog).assembly),
+      grade: gradePass,
+      ...(decideApproval ? { decideApproval } : {}),
+    });
+  const [silent] = await run();
+  assert.equal(silent?.evidence?.approval, undefined, 'no decision source means nothing was approved');
+  // No plan pause occurs without a live model, so even a supplied source is never auto-invoked.
+  const [withSource] = await run(async (_host, caseId) => {
+    decisions.push(caseId);
+    return 'approve';
+  });
+  assert.deepEqual(decisions, [], 'a decision is never fabricated when the graph does not pause');
+  assert.equal(withSource?.evidence?.approval, undefined, 'no pause means no approval is recorded');
+});
+
+test('the checker passes a complete campaign record and fails a failed or not-run predicate', () => {
   const scan = { env: fixture.envOf(), repositoryRoot: tempRoot('repo') };
   const clean = tempRoot('clean');
-  writeRecord(clean, [...PASSING_CASES, { stage: 'preflight', outcome: 'pass' }]);
-  assert.deepEqual(checkEvidence({ evidenceDir: clean, ...scan }), { exitCode: 0, output: 'EVIDENCE_CLEAN 2 case(s)' });
+  writeRecord(clean, CLEAN_RECORD);
+  assert.deepEqual(checkEvidence({ evidenceDir: clean, ...scan }), { exitCode: 0, output: 'EVIDENCE_CLEAN 4 case(s)' });
 
+  const cases = PASSING_CASES.map(entry => entry.record);
   const rows: readonly (readonly [string, readonly StageRecord[], string])[] = [
-    ['failed case', [{ stage: 'case', outcome: 'fail', caseId: 'C01' }, PASSING_CASES[1] as StageRecord], 'case:C01:fail'],
-    ['not-run case', [PASSING_CASES[0] as StageRecord, { stage: 'case', outcome: 'not-run', caseId: 'C02', reasonCode: 'unpinned' }], 'case:C02:not-run:unpinned'],
-    ['failed stage', [{ stage: 'conformance', outcome: 'fail', reasonCode: 'conformance-timeout' }, ...PASSING_CASES], 'conformance:fail:conformance-timeout'],
-    ['missing C02', [PASSING_CASES[0] as StageRecord], 'case:missing:C02'],
+    ['failed case', [...CLEAN_STAGES, { stage: 'case', outcome: 'fail', caseId: 'C01' }, ...cases.slice(1)], 'case:C01:fail'],
+    ['not-run case', [...CLEAN_STAGES, cases[0] as StageRecord, { stage: 'case', outcome: 'not-run', caseId: 'C02', reasonCode: 'grader-unavailable' }, ...cases.slice(2)], 'case:C02:not-run:grader-unavailable'],
+    ['failed stage', [{ stage: 'preflight', outcome: 'pass' }, { stage: 'conformance', outcome: 'fail', reasonCode: 'conformance-timeout' }, ...cases], 'conformance:fail:conformance-timeout'],
+    ['missing preflight', [{ stage: 'conformance', outcome: 'pass' }, ...cases], 'preflight:missing'],
+    ['missing C16', [...CLEAN_STAGES, ...cases.slice(0, 2)], 'case:missing:C16'],
+    ['missing C10', [...CLEAN_STAGES, ...cases.slice(0, 3)], 'case:missing:C10'],
   ];
   for (const [label, records, expected] of rows) {
     const dir = tempRoot('evidence');
     writeRecord(dir, records);
     const result = checkEvidence({ evidenceDir: dir, ...scan });
     assert.equal(result.exitCode, 1, label);
-    assert.match(result.output, new RegExp(`EVIDENCE_INCOMPLETE[\\s\\S]*${expected.replaceAll(':', ':')}`, 'u'), label);
+    assert.ok(result.output.includes(expected), `${label}: expects ${expected} in ${result.output}`);
   }
+
+  // A duplicate case row is never collapsed to its last value: the earlier failure must survive.
+  const duplicate = tempRoot('duplicate');
+  writeRecord(duplicate, [...CLEAN_STAGES, { stage: 'case', outcome: 'fail', caseId: 'C01' }, ...cases]);
+  const dupResult = checkEvidence({ evidenceDir: duplicate, ...scan });
+  assert.equal(dupResult.exitCode, 1, 'a passing duplicate never hides an earlier failed attempt');
+});
+
+test('the checker rejects incomplete, unpromoted and missing-prerequisite campaigns', () => {
+  const scan = { env: fixture.envOf(), repositoryRoot: tempRoot('repo') };
+  const cases = PASSING_CASES.map(entry => entry.record);
+
+  // C01 and C02 alone, with no prerequisite stage and no C16/C10, is not a campaign.
+  const partial = tempRoot('partial');
+  writeRecord(partial, cases.slice(0, 2));
+  assert.equal(checkEvidence({ evidenceDir: partial, ...scan }).exitCode, 1, 'C01/C02 alone is incomplete, never clean');
 
   // Unusable input is exit 2, never a pass.
   assert.equal(checkEvidence({ evidenceDir: tempRoot('empty'), ...scan }).exitCode, 2);
   const invalid = tempRoot('invalid');
-  writeFileSync(join(invalid, 'campaign.json'), '{"records":[{"stage":"case","outcome":"maybe"}]}', 'utf8');
+  writeFileSync(join(invalid, 'campaign.json'), '{"schemaVersion":"uc03-campaign-record/1","records":[{"stage":"case","outcome":"maybe"}]}', 'utf8');
   assert.equal(checkEvidence({ evidenceDir: invalid, ...scan }).exitCode, 2);
+});
+
+test('the checker never prints a credential hidden behind JSON Unicode escapes', () => {
+  const dir = tempRoot('escape');
+  mkdirSync(dir, { recursive: true });
+  // The API credential, each character as a JSON \uXXXX escape in the *raw file text*. JSON.stringify
+  // would re-escape the backslashes, so this writes the escaped form straight to disk: the directory
+  // text scan sees no needle, but JSON.parse decodes it to the real credential in `reasonCode`.
+  const escaped = [...fixture.KEY].map(char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
+  const raw = JSON.stringify({ schemaVersion: 'uc03-campaign-record/1', bindings: { 'candidate-sha': REV, 'profile-digest': `sha256:${'a'.repeat(64)}`, 'endpoint-digest': `sha256:${'b'.repeat(64)}`, model: MODEL }, records: [] }).replace(
+    '"records":[]',
+    `"records":[{"stage":"case","outcome":"fail","caseId":"C01","reasonCode":"leak-${escaped}"}]`,
+  );
+  writeFileSync(join(dir, 'campaign.json'), raw, 'utf8');
+  const result = checkEvidence({ evidenceDir: dir, env: fixture.envOf(), repositoryRoot: tempRoot('repo') });
+  // The raw bytes hide the needle from the text scan; once parsed, the decoded value is rejected rather
+  // than printed, so the credential never reaches the operator output.
+  assert.notEqual(result.exitCode, 0, 'an escaped credential is a refusal, never a clean verdict');
+  assert.ok(!result.output.includes(fixture.KEY), 'the decoded credential never reaches the operator output');
 });
 
 test('the checker fails on a T057 scan leak in the evidence directory', () => {
   const dir = tempRoot('leak');
-  writeRecord(dir, PASSING_CASES);
+  writeRecord(dir, CLEAN_RECORD);
   writeFileSync(join(dir, 'retained.log'), `endpoint=${fixture.HREF}\n`, 'utf8');
   const result = checkEvidence({ evidenceDir: dir, env: fixture.envOf(), repositoryRoot: tempRoot('repo') });
   assert.equal(result.exitCode, 1);
@@ -819,111 +1059,69 @@ test('CR-195-C: a settled baseline command frees capacity for a same-sized verif
 /* ------------------------------------------------------- CR-195 (B): the fence */
 
 /**
- * CR-195-FENCE. The contract asks that a fence published after `beginAttempt` and before transport
- * make both bound ports refuse with zero fetches. It does not: the assembly's
- * `currentExecutorIdentity` is a fixed generation-1 actor (`real-tier-assembly.ts`), so its
- * `isCurrent()` re-checks compare that constant with itself and never observe a control/epoch change.
- * This row is skipped rather than failed so the suite stays green; the witness below records exactly
- * what happens instead. The assembly is out of this task's owned paths, so it is reported, not fixed.
+ * CR-195-FENCE. A control pause persisted after `beginAttempt` returns a durable attempt and before
+ * transport must make both bound production ports refuse with zero fetches (SPEC-W5-001). The fence
+ * lands inside the assembly's own `statePort.beginAttempt`, so both ports observe the real sequence;
+ * the assembly's `currentDispatchAuthority` reads the bound task's durable control head just before
+ * `executeTransport`, which is where the constant actor callbacks can no longer hide the pause.
  */
-test(
-  'CR-195-FENCE: a fence after beginAttempt must make both bound ports refuse with zero fetches',
-  { skip: 'NOT IMPLEMENTED: real-tier-assembly.ts currentExecutorIdentity is a fixed generation-1 actor, so a post-beginAttempt fence is unobserved; both ports dispatch (1 fetch each). Reported to the coordinator; the assembly is outside T059 owned paths.' },
-  async () => {
-    const { assembly, binding } = await boundFixture();
-    const { owners, state, journal } = await investigating(assembly, binding, catalogFor().task);
-    const context = providerContext(state, catalogFor().task, journal, 'coder', 'req-fenced-1', 2);
-    // Publish the UC-05 control fence the moment the attempt is durable, before any transport call.
-    const fenced = new Proxy(assembly.components.statePort, {
-      get(target, property) {
-        if (property === 'beginAttempt') {
-          return async (claimId: string, executor: never) => {
-            const attempt = await target.beginAttempt(claimId, executor);
-            await owners.statePort.setTaskControl(state.taskId, 'paused', 'fence-cr-195');
-            return attempt;
-          };
-        }
-        const value = Reflect.get(target, property, target);
-        return typeof value === 'function' ? value.bind(target) : value;
+test('CR-195-FENCE: a fence after beginAttempt makes both bound production ports refuse with zero fetches', async () => {
+  for (const role of ['coder', 'reviewer'] as const) {
+    const catalog = catalogFor();
+    const effects: Effects = { fetch: 0, spawn: 0 };
+    // A fenced dispatch must not reach the transport, so the counting fake would throw if it did.
+    const { assembly } = resolveOrThrow(catalog, {
+      fetch: async () => {
+        effects.fetch += 1;
+        throw new Error('a fenced port must not fetch');
       },
     });
-    const { HostModelPortV02 } = await import('../../../src/foundation/model-v02.ts');
-    const actor = { adapterIdentity: 'cr-195-coder', processIncarnation: 'cr-195-incarnation', fencingGeneration: 1 };
-    const port = new HostModelPortV02({ transport: transportOf(assembly), statePort: fenced as never, executorIdentity: actor, currentExecutorIdentity: () => actor });
+    const binding = boundOrThrow(await bindRealTierTask(assembly, { caseId: CASE, ...pinsOf(assembly) }));
+    const { owners, state, journal } = await investigating(assembly, binding, catalog.task);
+    const context = providerContext(state, catalog.task, journal, role, `req-fenced-${role}`, 2);
+    // The fence lands inside beginAttempt of the very port the model port dispatches through (the
+    // shared owner state port), so both bound ports observe the real beginAttempt→transport sequence.
+    const modelState = assembly.components.statePort;
+    const ownBegin = modelState.beginAttempt.bind(modelState);
+    modelState.beginAttempt = async (claimId: string, executor: never) => {
+      const attempt = await ownBegin(claimId, executor);
+      await owners.statePort.setTaskControl(state.taskId, 'paused', `fence-cr-195-${role}`);
+      return attempt;
+    };
+    const port = role === 'coder' ? binding.ports.modelPort : binding.ports.reviewerModelPort;
     const result = await port.propose(state, [], context.providerRequest, context);
-    assert.equal(result.outcome, 'denied', 'a fenced port must refuse');
-    assert.equal(result.reason, 'FENCED_EXECUTOR');
-  },
-);
-
-test('CR-195-FENCE observed: the post-beginAttempt fence is unobserved, so the port dispatches once', async () => {
-  const catalog = catalogFor();
-  const { assembly, effects } = resolveOrThrow(catalog, {
-    fetch: async () => {
-      effects.fetch += 1;
-      return new Response(JSON.stringify({ id: 'msg-1', model: MODEL, content: [{ type: 'text', text: '{"status":"ok"}' }], usage: { input_tokens: 10, output_tokens: 5 } }), { status: 200 });
-    },
-  });
-  const binding = boundOrThrow(await bindRealTierTask(assembly, { caseId: CASE, ...pinsOf(assembly) }));
-  const { owners, state, journal } = await investigating(assembly, binding, catalog.task);
-  const context = providerContext(state, catalog.task, journal, 'coder', 'req-fenced-observed', 2);
-
-  // The fence lands inside beginAttempt, i.e. after the claim and after the attempt record is durable.
-  const fenced = new Proxy(assembly.components.statePort, {
-    get(target, property) {
-      if (property === 'beginAttempt') {
-        return async (claimId: string, executor: never) => {
-          const attempt = await target.beginAttempt(claimId, executor);
-          await owners.statePort.setTaskControl(state.taskId, 'paused', 'fence-cr-195-observed');
-          return attempt;
-        };
-      }
-      const value = Reflect.get(target, property, target);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
-  const { HostModelPortV02 } = await import('../../../src/foundation/model-v02.ts');
-  const actor = { adapterIdentity: 'cr-195-observed', processIncarnation: 'cr-195-observed-incarnation', fencingGeneration: 1 };
-  const port = new HostModelPortV02({ transport: transportOf(assembly), statePort: fenced as never, executorIdentity: actor, currentExecutorIdentity: () => actor });
-  const result = await port.propose(state, [], context.providerRequest, context);
-  // The observed defect: the fence is durable (paused) yet the dispatch already happened.
-  const control = await owners.statePort.getJournalSnapshot(state.taskId);
-  assert.equal((control as { mode: string }).mode, 'paused', 'the fence is persisted before transport');
-  assert.equal(result.outcome, 'observed', 'the port dispatches despite the fence');
-  assert.equal(effects.fetch, 1, 'exactly one fetch escapes the fence');
+    assert.equal(result.outcome, 'denied', `${role}: a fenced port must refuse`);
+    assert.equal(result.reason, 'FENCED_EXECUTOR', `${role}: the refusal names the fence`);
+    assert.equal(effects.fetch, 0, `${role}: zero fetches escape the fence`);
+    const control = await owners.statePort.getJournalSnapshot(state.taskId);
+    assert.equal((control as { mode: string }).mode, 'paused', `${role}: the fence is durable before transport`);
+  }
 });
 
 test('CR-195-FENCE observed: a fence between claim and beginAttempt refuses with zero fetches', async () => {
   const catalog = catalogFor();
-  const { assembly, effects } = resolveOrThrow(catalog, {
+  const effects: Effects = { fetch: 0, spawn: 0 };
+  const { assembly } = resolveOrThrow(catalog, {
     fetch: async () => {
       effects.fetch += 1;
-      return new Response(JSON.stringify({ id: 'msg-1', model: MODEL, content: [{ type: 'text', text: '{"status":"ok"}' }], usage: { input_tokens: 10, output_tokens: 5 } }), { status: 200 });
+      throw new Error('a fenced port must not fetch');
     },
   });
   const binding = boundOrThrow(await bindRealTierTask(assembly, { caseId: CASE, ...pinsOf(assembly) }));
   const { owners, state, journal } = await investigating(assembly, binding, catalog.task);
   const context = providerContext(state, catalog.task, journal, 'coder', 'req-fenced-early', 2);
-  const { HostModelPortV02 } = await import('../../../src/foundation/model-v02.ts');
-  const actor = { adapterIdentity: 'cr-195-early', processIncarnation: 'cr-195-early-incarnation', fencingGeneration: 1 };
-
-  const early = new Proxy(assembly.components.statePort, {
-    get(target, property) {
-      if (property === 'claim') {
-        return async (admission: never) => {
-          const claim = await target.claim(admission);
-          await owners.statePort.setTaskControl(state.taskId, 'paused', 'fence-cr-195-early');
-          return claim;
-        };
-      }
-      const value = Reflect.get(target, property, target);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
-  const port2 = new HostModelPortV02({ transport: transportOf(assembly), statePort: early as never, executorIdentity: actor, currentExecutorIdentity: () => actor });
-  const fetched = effects.fetch;
-  const refused = await port2.propose(state, [], context.providerRequest, context);
+  // The distinct earlier race: the fence lands inside `claim` of the port the model port dispatches
+  // through, before any attempt exists. It is refused even earlier (ATTEMPT_DENIED), not by the
+  // final authority check.
+  const modelState = assembly.components.statePort;
+  const ownClaim = modelState.claim.bind(modelState);
+  modelState.claim = async (admission: never) => {
+    const claim = await ownClaim(admission);
+    await owners.statePort.setTaskControl(state.taskId, 'paused', 'fence-cr-195-early');
+    return claim;
+  };
+  const refused = await binding.ports.modelPort.propose(state, [], context.providerRequest, context);
   assert.equal(refused.outcome, 'denied');
   assert.equal(refused.reason, 'ATTEMPT_DENIED: Mismatched provider attempt');
-  assert.equal(effects.fetch, fetched, 'the claim-to-attempt fence admits no transport call');
+  assert.equal(effects.fetch, 0, 'the claim-to-attempt fence admits no transport call');
 });

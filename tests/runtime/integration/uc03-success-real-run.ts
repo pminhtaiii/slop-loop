@@ -23,19 +23,22 @@ import type { StructuredSpawn } from '../../../src/foundation/docker-controller.
 import { structuredSpawn } from '../../../src/foundation/docker-spawn.ts';
 import { observeDockerReadiness, type DockerReadiness } from '../../../src/foundation/docker-readiness.ts';
 import { gitHead } from '../../../src/runtime/git-head.ts';
-import { REAL_TIER_DELIVERY_CONTRACT, resolveRealTierAssembly, type RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
+import { REAL_TIER_DELIVERY_CONTRACT, resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
 import { bindRealTierTask } from '../../../src/runtime/real-tier-task-binding.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 import { runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
 import type { UC03HostInputs } from '../../../src/runtime/uc03-host-bootstrap.ts';
+import type { SnapshotGradeResult, SnapshotPredicate } from '../../../eval/uc03/workflow-grade.ts';
 
 const TEMPLATE_PROFILE_ID = 'uc03-runtime-evaluation-v1';
+/** The one model identity the T028 campaign may certify: compared by exact equality, never trimmed. */
+const PINNED_MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
 /** The T028 case plan, in contract order. */
 export const CAMPAIGN_CASES = ['C01', 'C02', 'C16', 'C10'] as const;
-/** The only case predicates this runner can judge without T054's grader payload. */
-const PINS: Readonly<Record<string, readonly string[]>> = Object.freeze({ C01: ['COMPLETED'], C02: ['needs-info'] });
+/** The C01/C02 case predicates a pinned snapshot criterion supplies; C16/C10 are derived, never pinned. */
+const PINS: Readonly<Record<string, SnapshotPredicate>> = Object.freeze({ C01: 'repair-success', C02: 'clarification' });
 
 export type CampaignMode = 'campaign' | 'case' | 'resume';
 
@@ -45,7 +48,7 @@ export interface StageRecord {
   readonly outcome: 'pass' | 'fail' | 'not-run';
   readonly reasonCode?: string | undefined;
   readonly caseId?: string | undefined;
-  readonly facts?: Readonly<Record<string, string | number>> | undefined;
+  readonly facts?: Readonly<Record<string, string | number | boolean | null>> | undefined;
 }
 
 export interface CampaignResult {
@@ -56,11 +59,40 @@ export interface CampaignResult {
   readonly campaignId: string;
 }
 
+/**
+ * One case's own evidence, host-only until projected. A graded case carries the independent receipt;
+ * the approval trace records that a decision was explicit and through the T046 port, never automatic.
+ */
+export interface CaseEvidence {
+  readonly snapshot?: Readonly<{ snapshotId: string; digest: string }> | undefined;
+  readonly evidenceDigest?: string | undefined;
+  readonly grade?: SnapshotGradeResult | undefined;
+  readonly diffDigest?: string | undefined;
+  readonly 'command-view-digest'?: string | undefined;
+  readonly usage?: Readonly<Record<string, string | number>> | undefined;
+  readonly 'owner-revisions'?: Readonly<Record<string, string>> | undefined;
+  readonly approval?: Readonly<{ decisionId: string; decided: 'approve' | 'reject' }> | undefined;
+}
+
+export interface CaseOutcome {
+  readonly record: StageRecord;
+  readonly evidence?: CaseEvidence | undefined;
+}
+
 export interface CaseStageOptions {
   readonly caseIds: readonly string[];
   readonly repositoryRoot: string;
   readonly pins: UC03HostInputs['pins'];
   readonly identity: Readonly<Record<string, string>>;
+  /** One case's evidence, from the catalog's own pinned grader material (SPEC-W5-003). */
+  readonly grade?: ((assembly: RealTierAssembly, caseId: string) => Promise<SnapshotGradeResult | undefined>) | undefined;
+  /**
+   * The explicit T046 decision source (SPEC-W5-002): it presents the pause and returns the operator's
+   * choice, or `undefined` when none was made. It never approves on its own.
+   */
+  readonly decideApproval?: ((assembly: RealTierAssembly, caseId: string) => Promise<'approve' | 'reject' | undefined>) | undefined;
+  /** A task held for an expected clarification pause stays terminal (C02). */
+  readonly clarificationHold?: ((caseId: string) => boolean) | undefined;
 }
 
 export interface CampaignOptions {
@@ -80,8 +112,14 @@ export interface CampaignOptions {
   /** Pinned delivery revision; the operator's host.json supplies it in T054. */
   readonly candidateSha?: string | undefined;
   readonly stateRoot?: string | undefined;
-  /** Case stage seam; the operator entry wires `runCampaignCases`. */
-  readonly runCases?: ((assembly: RealTierAssembly, options: CaseStageOptions) => Promise<readonly StageRecord[]>) | undefined;
+  /** Assembles one fresh host per case (SPEC-W5-004): an assembly holds one task for its life. */
+  readonly assemble?: ((dependencies: RealTierDependencies) => ReturnType<typeof resolveRealTierAssembly>) | undefined;
+  /** The catalog's pinned grader material (SPEC-W5-003); absent keeps a case not-run, never a pass. */
+  readonly grade?: CaseStageOptions['grade'];
+  /** The explicit T046 decision source (SPEC-W5-002); absent keeps a plan pause terminal. */
+  readonly decideApproval?: CaseStageOptions['decideApproval'];
+  /** Case stage seam; the operator entry wires `runCaseStage`. */
+  readonly runCases?: ((assembly: RealTierAssembly, options: CaseStageOptions) => Promise<readonly CaseOutcome[]>) | undefined;
 }
 
 /** The receipt's binding: exactly the four pinned identities the contract names. */
@@ -134,7 +172,7 @@ function hostPinsOf(assembly: RealTierAssembly): Pick<CaseStageOptions, 'pins' |
   };
 }
 
-function dependenciesOf(options: CampaignOptions, candidateSha: string): Parameters<typeof resolveRealTierAssembly>[0] {
+function dependenciesOf(options: CampaignOptions, candidateSha: string): RealTierDependencies {
   return {
     env: options.env,
     repositoryRoot: options.repositoryRoot,
@@ -152,6 +190,8 @@ function dependenciesOf(options: CampaignOptions, candidateSha: string): Paramet
  */
 async function conformanceCall(assembly: RealTierAssembly, fetchFn: typeof globalThis.fetch): Promise<StageRecord> {
   const { endpoint, credential, limits } = assembly.profile;
+  // A profile that selects any identity but the contract's pinned one stops before the case stage.
+  if (endpoint.model !== PINNED_MODEL) return stage('conformance', 'fail', 'conformance-model-mismatch');
   const body = JSON.stringify({
     model: endpoint.model,
     max_tokens: 16,
@@ -184,7 +224,8 @@ async function conformanceCall(assembly: RealTierAssembly, fetchFn: typeof globa
   }
   const returned = typeof parsed === 'object' && parsed !== null ? (parsed as { model?: unknown }).model : undefined;
   // A different identity string is the operator's to resolve, so the campaign stops rather than adapting.
-  return typeof returned === 'string' && returned.trim() === endpoint.model ? stage('conformance', 'pass') : stage('conformance', 'fail', 'conformance-model-mismatch');
+  // Exact equality: a whitespace-wrapped or otherwise near-identical id is still a different identity.
+  return returned === endpoint.model ? stage('conformance', 'pass') : stage('conformance', 'fail', 'conformance-model-mismatch');
 }
 
 function writeReceipt(evidenceDir: string, receipt: ConformanceReceipt): void {
@@ -258,93 +299,146 @@ function receiptGate(evidenceDir: string, binding: ConformanceBinding): string |
   return latest.outcome === 'conformed' ? undefined : 'receipt-stale';
 }
 
-/** `not-run` for a binding refusal or an unpinned case id; otherwise the pinned predicate decides. */
-function predicateOf(caseId: string, workflow: string): StageRecord['outcome'] {
-  const expected = PINS[caseId];
-  return expected === undefined ? 'not-run' : expected.includes(workflow) ? 'pass' : 'fail';
+/** `assembly`/`not-run` with a bounded reason, shared by every case-stage refusal. */
+const caseNotRun = (caseId: string, reasonCode: string, facts: StageRecord['facts'] = {}): CaseOutcome => ({ record: stage('case', 'not-run', reasonCode, { caseId, facts }) });
+
+/**
+ * One case attempt on its own fresh assembly, driven through the v0.2 graph entry. C01's plan pause is
+ * presented and decided explicitly through the injected T046 decision source before the same bound task
+ * continues (SPEC-W5-002, SPEC-W5-004); C02's expected clarification pause stays terminal. The case's
+ * outcome is judged by the pinned snapshot grader over its own catalogue grader material
+ * (SPEC-W5-003), never by the workflow status string alone.
+ */
+async function runCaseAttempt(
+  assembly: RealTierAssembly,
+  caseId: string,
+  attempt: number,
+  options: CaseStageOptions,
+): Promise<CaseOutcome> {
+  const binding = await bindRealTierTask(assembly, { caseId, pins: options.pins, identity: options.identity });
+  if (binding.status !== 'task-bound') return caseNotRun(caseId, binding.reasonCode, { attempt });
+  let result = await runUC03GraphV02(binding.task, binding.ports, binding.config);
+  let approval: CaseEvidence['approval'];
+  if (result.outcome === 'pending-approval' && !options.clarificationHold?.(caseId)) {
+    // Nothing approves automatically: an absent source leaves the pause recorded, not passed.
+    const decision = await options.decideApproval?.(assembly, caseId);
+    if (decision === undefined) return { record: stage('case', 'fail', 'approval-required', { caseId, facts: { attempt, workflow: result.outcome, node: result.state?.node ?? 'none' } }) };
+    approval = { decisionId: result.state?.activeDecisionId ?? '', decided: decision };
+    // A rejection ends the case on its own hold; only approval continues the bound task.
+    if (decision === 'approve') result = await runUC03GraphV02(binding.task, binding.ports, binding.config, result.state ?? undefined);
+  }
+  const owners = assembly.owners.taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId });
+  const journal = owners.statePort.getJournalSnapshot(binding.ids.taskId) as { readonly claims?: readonly unknown[]; readonly attempts?: readonly unknown[]; readonly outcomes?: readonly unknown[] };
+  const grade = PINS[caseId] === undefined ? undefined : await options.grade?.(assembly, caseId);
+  const evidence: CaseEvidence = {
+    ...(grade?.snapshot ? { snapshot: grade.snapshot } : {}),
+    ...(grade?.evidenceDigest ? { evidenceDigest: grade.evidenceDigest } : {}),
+    ...(grade ? { grade } : {}),
+    ...(approval ? { approval } : {}),
+  };
+  const facts: Record<string, string | number | boolean | null> = {
+    attempt,
+    workflow: result.outcome,
+    node: result.state?.node ?? 'none',
+    claims: journal.claims?.length ?? 0,
+    attempts: journal.attempts?.length ?? 0,
+    outcomes: journal.outcomes?.length ?? 0,
+    ...(approval ? { approval: approval.decided, decision: approval.decisionId } : {}),
+    ...(grade ? { grade: grade.grade, 'grade-reason': grade.reason, 'grader-digest': grade.criteriaDigest } : {}),
+  };
+  // A pinned predicate is the independent grade, never the status string; an unpinned id is not-run.
+  if (PINS[caseId] !== undefined && grade === undefined) return { record: stage('case', 'not-run', 'grader-unavailable', { caseId, facts }), evidence };
+  const outcome: StageRecord['outcome'] = PINS[caseId] === undefined ? 'not-run' : grade?.grade === 'pass' ? 'pass' : grade?.grade === 'fail' ? 'fail' : 'not-run';
+  return { record: stage('case', outcome, PINS[caseId] === undefined ? 'unpinned' : undefined, { caseId, facts }), evidence };
 }
 
 /**
- * The operator case stage: one bound task per case, the v0.2 graph entry, and the journal counts the
- * C10 row needs. C01 gets at most two attempts; because an assembly claims one task for its life,
- * the retry needs a fresh assembly from `retryAssembly`, and without one the second attempt is not
- * run rather than replayed on a bound assembly.
+ * The operator case stage: one fresh host assembly per case, so every case gets its own task/workspace
+ * (SPEC-W5-004). C01 and C02 run real tasks once each (a failed attempt is retained, never replayed);
+ * C16 is derived from the C01 run and C10 from its accounting (SPEC-W5-003). A derived row this stage
+ * cannot judge from the C01 observation stays `not-run`, so the campaign is honest-incomplete.
  */
-export async function runCampaignCases(assembly: RealTierAssembly, options: CaseStageOptions, retryAssembly?: () => RealTierAssembly): Promise<readonly StageRecord[]> {
-  const records: StageRecord[] = [];
+export async function runCaseStage(
+  assemble: () => ReturnType<typeof resolveRealTierAssembly>,
+  options: CaseStageOptions,
+): Promise<readonly CaseOutcome[]> {
+  const outcomes: CaseOutcome[] = [];
+  const derivedFromC01 = new Map<string, CaseOutcome>();
   for (const caseId of options.caseIds) {
     if (!SAFE_ID.test(caseId)) {
-      records.push(stage('case', 'not-run', 'case-id-invalid'));
+      outcomes.push(caseNotRun(caseId, 'case-id-invalid'));
       continue;
     }
-    const attempts = caseId === 'C01' ? 2 : 1;
-    let latest: StageRecord | undefined;
-    let retryNotice: StageRecord | undefined;
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      if (attempt > 1 && retryAssembly === undefined) {
-        retryNotice = stage('case', 'not-run', 'retry-unavailable', { caseId, facts: { attempt } });
-        break;
-      }
-      const current = attempt === 1 || retryAssembly === undefined ? assembly : retryAssembly();
-      const binding = await bindRealTierTask(current, { caseId, pins: options.pins, identity: options.identity });
-      if (binding.status !== 'task-bound') {
-        records.push(stage('case', 'not-run', binding.reasonCode, { caseId, facts: { attempt } }));
-        break;
-      }
-      const result = await runUC03GraphV02(binding.task, binding.ports, binding.config);
-      const owners = current.owners.taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId });
-      const journal = owners.statePort.getJournalSnapshot(binding.ids.taskId) as { readonly claims?: readonly unknown[]; readonly attempts?: readonly unknown[]; readonly outcomes?: readonly unknown[] };
-      latest = stage('case', predicateOf(caseId, result.outcome), undefined, {
-        caseId,
-        facts: {
-          attempt,
-          workflow: result.outcome,
-          node: result.state?.node ?? 'none',
-          claims: journal.claims?.length ?? 0,
-          attempts: journal.attempts?.length ?? 0,
-          outcomes: journal.outcomes?.length ?? 0,
-        },
-      });
-      if (latest.outcome === 'pass') break;
+    if (caseId === 'C16' || caseId === 'C10') {
+      outcomes.push(derivedFromC01.get(caseId) ?? caseNotRun(caseId, 'c01-unavailable', { derivedFrom: 'C01' }));
+      continue;
     }
-    // The observed attempt comes first; a refused retry is reported after it, never in its place.
-    if (latest !== undefined) records.push(latest);
-    if (retryNotice !== undefined) records.push(retryNotice);
+    const assembled = assemble();
+    const outcome = assembled.status === 'assembly-ready' ? await runCaseAttempt(assembled, caseId, 1, options) : caseNotRun(caseId, assembled.reasonCode, { attempt: 1 });
+    outcomes.push(outcome);
+    if (caseId !== 'C01') continue;
+    // C16: the safe report from the C01 run — its evidence digest and a bounded grade, never a payload.
+    const c01Facts = outcome.record.facts ?? {};
+    derivedFromC01.set('C16', {
+      record: stage('case', outcome.record.outcome === 'pass' ? 'pass' : 'not-run', outcome.record.outcome === 'pass' ? undefined : 'c16-c01-unavailable', {
+        caseId: 'C16',
+        facts: { derivedFrom: 'C01', grade: c01Facts['grade'] ?? 'none', 'evidence-digest': outcome.evidence?.evidenceDigest ?? 'none' },
+      }),
+      ...(outcome.evidence ? { evidence: { ...outcome.evidence } } : {}),
+    });
+    // C10 needs a dedicated zero-dispatch-on-exhaustion witness that the C01 run does not produce, so
+    // this stage reports it not-run with the observed accounting counts; it is never a guessed pass.
+    derivedFromC01.set('C10', {
+      record: stage('case', 'not-run', 'c10-not-observed', { caseId: 'C10', facts: { derivedFrom: 'C01', claims: c01Facts['claims'] ?? 0, outcomes: c01Facts['outcomes'] ?? 0 } }),
+    });
   }
-  return records;
+  return outcomes;
 }
 
 /**
  * One campaign stage sequence. It stops at the first refusing prerequisite, so a preflight or
- * conformance failure leaves zero case dispatches behind it.
+ * conformance failure leaves zero case dispatches behind it. Every terminal path writes the required
+ * sanitized campaign record and its referenced artifacts into the evidence directory (SPEC-W5-005).
  */
 export async function runCampaign(options: CampaignOptions): Promise<CampaignResult> {
   const clock = options.clock ?? Date.now;
   const candidateSha = options.candidateSha ?? gitHead(options.repositoryRoot);
   const startedAt = clock();
   const campaignId = `campaign-${startedAt}-${options.mode}-${options.caseId ?? options.resumeRef ?? 'all'}`;
-  const done = (records: readonly StageRecord[], passed: boolean): CampaignResult => ({
-    exitCode: passed ? 0 : 2,
-    records,
-    output: JSON.stringify({ campaignId, candidateSha, records }, null, 2),
-    campaignId,
-  });
+  const assemble = options.assemble ?? resolveRealTierAssembly;
+  let bindings: Readonly<Record<string, string>> = {};
+  const done = (records: readonly StageRecord[], passed: boolean, evidence: readonly CaseEvidence[] = []): CampaignResult => {
+    const attemptIds = records.filter(entry => entry.stage === 'case' && entry.caseId !== undefined).map((entry, index) => `${entry.caseId ?? 'case'}-${index + 1}`);
+    writeCampaignRecord(options.evidenceDir, { campaignId, candidateSha, mode: options.mode, passed, finishedAt: clock(), bindings, records, evidence, attemptIds });
+    return { exitCode: passed ? 0 : 2, records, output: JSON.stringify({ campaignId, candidateSha, records }, null, 2), campaignId };
+  };
 
-  const resolved = resolveRealTierAssembly(dependenciesOf(options, candidateSha));
+  const resolved = assemble(dependenciesOf(options, candidateSha));
   if (resolved.status !== 'assembly-ready') return done([stage('assembly', 'fail', resolved.reasonCode)], false);
-  const assembly = resolved;
+  bindings = {
+    'candidate-sha': candidateSha,
+    'profile-digest': resolved.metadata.profileDigest,
+    'endpoint-digest': resolved.metadata.endpointDigest,
+    model: resolved.metadata.model,
+    image: resolved.metadata.imageId,
+    scheme: resolved.metadata.endpointScheme,
+  };
 
-  // A resume consults its owner before anything else; a blocked uncertain effect performs nothing.
+  // A resume is a read-only admission query over the owner record (§(h)): `resume` permits a later
+  // continuation and exits 0; `fresh-attempt` is not replay authority and `blocked` stays nonzero.
+  // Neither branch performs any effect.
   if (options.mode === 'resume') {
-    const decision = await assembly.owners.recoveryGate.decide(options.resumeRef ?? '');
-    return decision === 'resume' ? done([stage('recovery', 'pass')], false) : done([stage('recovery', 'fail', `continuation-${decision}`)], false);
+    const decision = await resolved.owners.recoveryGate.decide(options.resumeRef ?? '');
+    if (decision === 'resume') return done([stage('recovery', 'pass', undefined, { facts: { decision } })], true);
+    if (decision === 'fresh-attempt') return done([stage('recovery', 'not-run', 'continuation-fresh-attempt', { facts: { decision } })], false);
+    return done([stage('recovery', 'fail', `continuation-${decision}`, { facts: { decision } })], false);
   }
 
   const binding: ConformanceBinding = {
     candidateSha,
-    profileDigest: assembly.metadata.profileDigest,
-    endpointDigest: assembly.metadata.endpointDigest,
-    model: assembly.metadata.model,
+    profileDigest: resolved.metadata.profileDigest,
+    endpointDigest: resolved.metadata.endpointDigest,
+    model: resolved.metadata.model,
   };
   if (options.mode === 'case') {
     const refused = receiptGate(options.evidenceDir, binding);
@@ -352,13 +446,13 @@ export async function runCampaign(options: CampaignOptions): Promise<CampaignRes
   }
 
   const spawn = options.spawn ?? structuredSpawn;
-  const preflight = options.preflight ?? (() => observeDockerReadiness(spawn, assembly.metadata.imageId));
+  const preflight = options.preflight ?? (() => observeDockerReadiness(spawn, resolved.metadata.imageId));
   const observed = await preflight();
   if (!observed.ok) return done([stage('preflight', 'fail', observed.reasonCode)], false);
 
   let conformance: StageRecord;
   if (options.mode === 'campaign') {
-    conformance = await conformanceCall(assembly, options.fetch ?? globalThis.fetch);
+    conformance = await conformanceCall(resolved, options.fetch ?? globalThis.fetch);
     writeReceipt(options.evidenceDir, {
       schemaVersion: 'uc03-conformance-receipt/1',
       campaignId,
@@ -374,9 +468,31 @@ export async function runCampaign(options: CampaignOptions): Promise<CampaignRes
 
   const caseIds = options.mode === 'campaign' ? CAMPAIGN_CASES : options.caseId === undefined ? [] : [options.caseId];
   if (caseIds.length === 0 || caseIds.some(id => !SAFE_ID.test(id))) return done([stage('preflight', 'pass'), conformance, stage('case', 'not-run', 'case-id-invalid')], false);
-  const runCases = options.runCases ?? ((host: RealTierAssembly, stageOptions: CaseStageOptions) => runCampaignCases(host, stageOptions));
-  const cases = await runCases(assembly, { caseIds, repositoryRoot: options.repositoryRoot, ...hostPinsOf(assembly) });
-  return done([stage('preflight', 'pass'), conformance, ...cases], cases.length > 0 && cases.every(entry => entry.outcome === 'pass'));
+  const pins = { repositoryRoot: options.repositoryRoot, ...hostPinsOf(resolved) };
+  // The real stage assembles a fresh host per case (SPEC-W5-004); an injected seam replaces the whole stage.
+  const stageOptions: CaseStageOptions = {
+    ...pins,
+    caseIds,
+    ...(options.grade === undefined ? {} : { grade: options.grade }),
+    ...(options.decideApproval === undefined ? {} : { decideApproval: options.decideApproval }),
+    ...(options.mode === 'campaign' ? { clarificationHold: (id: string) => id === 'C02' } : {}),
+  };
+  const runCases = options.runCases ?? ((_: RealTierAssembly, stageOpts: CaseStageOptions) => runCaseStage(() => assemble(dependenciesOf(options, candidateSha)), stageOpts));
+  const cases = await runCases(resolved, stageOptions);
+  const records = cases.map(entry => entry.record);
+  const evidence = cases.map(entry => entry.evidence).filter((entry): entry is CaseEvidence => entry !== undefined);
+  // Fail closed: every scheduled row must pass. A C16/C10 row this runner cannot observe stays
+  // not-run, so the campaign is honest-incomplete and the checker refuses it — never a pass.
+  const passed = records.length > 0 && records.every(entry => entry.outcome === 'pass');
+  return done([stage('preflight', 'pass'), conformance, ...records], passed, evidence);
+}
+
+/** One sanitized, versioned campaign record plus its per-attempt case artifacts (SPEC-W5-005). */
+function writeCampaignRecord(dir: string, input: Record<string, unknown> & { readonly attemptIds: readonly string[]; readonly records: readonly StageRecord[]; readonly evidence: readonly CaseEvidence[] }): void {
+  mkdirSync(dir, { recursive: true });
+  // The per-attempt artifacts carry each case's own evidence; the record carries only the run's facts.
+  input.evidence.forEach((evidence, index) => writeFileSync(join(dir, `case-${input.attemptIds[index] ?? index}.json`), JSON.stringify(evidence, null, 2), 'utf8'));
+  writeFileSync(join(dir, 'campaign.json'), JSON.stringify({ ...input, schemaVersion: 'uc03-campaign-record/1', attemptIds: undefined, evidence: undefined }, null, 2), 'utf8');
 }
 
 /** Flags whose value is the next argument; anything else is rejected rather than defaulted. */
