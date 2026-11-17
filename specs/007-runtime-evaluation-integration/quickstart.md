@@ -181,9 +181,9 @@ For the focused repaired source/emitted/type checks, use the exact commands in `
 
 ## Real-tier prerequisites (T040–T060) — operator steps
 
-Planned steps from the [real-tier contract](contracts/real-tier.md). Nothing below runs until T040–T050 are implemented and released after both planning review lanes pass. Each step is labelled with its tier. **T011 is a later, separately released step**: none of these commands runs `evaluate run`, and none claims G-REAL/SC-001, T017, a restart or G-OWNERS (still single-attested). **Privacy:** never paste the real endpoint host, port or URL into a tracked file, a commit message or a PR. This guide writes it as `http://<host>:<port>/v1`.
+Planned steps from the [real-tier contract](contracts/real-tier.md). Nothing below runs until T040–T050 and T061 are implemented and released after both planning review lanes pass. Each step is labelled with its tier. **T011 is a later, separately released step**: none of these commands runs `evaluate run`, and none claims G-REAL/SC-001, T017, a restart or G-OWNERS (still single-attested). **Privacy:** never paste the real endpoint host, port or URL into a tracked file, a commit message or a PR. This guide writes it as `http://<host>:<port>/v1`.
 
-### 1. Controlled tier: owner lanes, profile, endpoint, runaway stop, assembly, recovery gate, scanner, CLI preflight and campaign gate (T040–T050, T057–T060)
+### 1. Controlled tier: owner lanes, profile, endpoint, runaway stop, assembly, recovery gate, scanner, CLI preflight and campaign gate (T040–T050, T057–T061)
 
 ```powershell
 node --test tests/runtime/uc04/state-port-v02-read-fence.test.ts tests/runtime/uc04/state-port-v02-operation-lookup.test.ts tests/runtime/uc04/baseline-evidence-store.test.ts tests/runtime/uc04/approval-store-adapter.test.ts tests/runtime/uc04/state-port-v02-authority.test.ts tests/runtime/uc04/material-replan-port.test.ts

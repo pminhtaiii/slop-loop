@@ -11,7 +11,10 @@
  *    proposal from the post-review owner state, so the reviewer's settled ledgers survive the write.
  *    Witnessed by `tests/runtime/integration/uc03-host-pipeline.test.ts:1052`; reverting :180 to the
  *    pre-review snapshot fails that row.
- * 3. SPEC-R3-001 subset-repair cumulative diff — **still open**; see the blocked row at the end.
+ * 3. SPEC-R3-001 subset-repair cumulative diff — **closed** by the completion-side owner-settled
+ *    admission chain in `src/uc03/graph-completion-paths.ts`. Witnessed by the route rows in
+ *    `uc03-graph-gaps-subset-repair.test.ts`; reverting `src/uc03/graph-completion.ts:132` to
+ *    `samePaths` fails row (a) there.
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -144,11 +147,9 @@ test('replan keeps the plan baseline evidence ID and refuses a candidate that sw
 
 test(
   'subset repair: a settled repair that touches fewer paths than the cumulative diff still completes',
-  {
-    skip: 'BLOCKED outside T053 owned paths: src/uc03/graph-completion.ts:131 compares the latest admitted patch targetPaths to the cumulative inspectDiff(initialRevision).changedFiles, so an A+B patch followed by a B-only repair is refused. The fix needs graph-completion.ts, which this task does not own.',
-  },
+  { skip: 'Moved to uc03-graph-gaps-subset-repair.test.ts, which drives the route rows (a)-(c) with MemoryStatePortV02 and FakeRepositoryPort.' },
   async () => {
-    // Kept as the recorded SPEC-R3-001 witness location. Un-skip when the predicate separates the
-    // latest attempt's authorization from the cumulative diff inventory.
+    // Kept as the recorded SPEC-R3-001 witness location; the rows live in the sibling file so both
+    // stay inside the 20,000-byte ceiling.
   },
 );

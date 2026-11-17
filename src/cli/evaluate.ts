@@ -1,25 +1,36 @@
 /** Operator CLI over the uc03 workflow evaluation. Trusted binding comes from the host, never argv. */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { runEvaluation } from '../../eval/uc03/runner.ts';
 import type { RealExecutionAdmission } from '../../eval/shared-types.ts';
 import { WORKFLOW_EVALUATION_VERSION, type WorkflowDriver, type WorkflowEvaluationOptions, type WorkflowEvaluationReport } from '../../eval/uc03/types.ts';
-import { prepareUC03Host, type UC03HostInputs, type UC03HostPins, type UC03HostReadiness } from '../runtime/uc03-host-bootstrap.ts';
-import type { EvaluationConsoleFactory } from '../runtime/evaluation-console-host.ts';
-import { UC03_PRODUCTION_COMPONENTS_V02, type UC03ProductionComponentV02 } from '../uc03/graph-types-v02.ts';
-import { isEvaluationControlBindings, isEvaluationControlCommand, parseEvaluationControlArgs, runEvaluationControlCli, type EvaluationControlBindings } from './evaluate-control.ts';
+import type { UC03HostReadiness } from '../runtime/uc03-host-bootstrap.ts';
+import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
+import { isEvaluationControlCommand, parseEvaluationControlArgs, runEvaluationControlCli, type EvaluationControlBindings } from './evaluate-control.ts';
 import { runEvaluationConsoleCli } from './evaluate-console.ts';
+import {
+  cliError,
+  classifyPreflightResult,
+  loadHostConfiguration,
+  prepareAssembly,
+  resolveHostAssembly,
+  validateHostMetadata,
+  type EvaluateCliResult,
+  type HostAssembly,
+  type HostAssemblyResolution,
+  type HostConfiguration,
+  type HostMetadata,
+  type HostOperational,
+  type HostProduction,
+  type UC03HostReady,
+} from './evaluate-host.ts';
 
-export interface EvaluateCliResult {
-  readonly exitCode: number;
-  readonly output: string;
-  readonly close?: (() => Promise<void>) | undefined;
-}
-
-/** Host-supplied adapter wiring. Pins and identity come from the host-only configuration file. */
-export type HostAssembly = Omit<UC03HostInputs, 'pins' | 'identity'>;
+// The host seam stays importable from here: `uc03.ts`, the console CLI and the CLI tests all bind it
+// through this module, so the extraction to `evaluate-host.ts` is invisible to them.
+export { loadHostConfiguration, prepareAssembly, resolveHostAssembly } from './evaluate-host.ts';
+export type { EvaluateCliResult, HostAssembly, HostAssemblyResolution, HostConfiguration, HostConfigurationLoad, HostMetadata, HostProduction, UC03HostReady } from './evaluate-host.ts';
 
 /** Host-supplied authority. Digests, adapter versions, model and driver never come from argv. */
 export interface EvaluateCliOptions {
@@ -36,93 +47,6 @@ export interface EvaluateCliOptions {
   readonly production?: HostProduction | undefined;
   /** Trusted operator delivery; decisions and continuation retain existing owner authority. */
   readonly control?: EvaluationControlBindings | undefined;
-}
-
-/** A host-only configuration file. It resolves references; it never carries authority. */
-export interface HostConfiguration {
-  readonly identity: Readonly<Record<string, string>>;
-  readonly pins: UC03HostPins;
-  readonly profileDigest: string;
-  readonly configDigest: string;
-  readonly pricingDigest: string;
-  readonly requestedModel: string;
-  readonly adapterVersions: readonly string[];
-  /** Reference to an operator-supplied assembly module. A path, never a port, fact or credential. */
-  readonly assembly?: string | undefined;
-}
-
-export type HostConfigurationLoad = Readonly<{ ok: true; value: HostConfiguration }> | Readonly<{ ok: false; error: EvaluateCliResult }>;
-
-/** What the operator's assembly module contributes: the host wiring and an optional route binding. */
-export type HostAssemblyResolution = Readonly<{
-  host: HostAssembly;
-  production?: HostProduction | undefined;
-  control?: EvaluationControlBindings | undefined;
-  console?: EvaluationConsoleFactory | undefined;
-}>;
-
-/** The one name an assembly module must export. It is a factory, so the module decides its own wiring. */
-const ASSEMBLY_FACTORY = 'createHostAssembly';
-
-const HOST_KEYS = new Set(['profileId', 'profileDigest', 'configDigest', 'pricingDigest', 'requestedModel', 'adapterVersions', 'contractVersion', 'revisions', 'assembly']);
-const CREDENTIAL = /credential|secret|token|password|api[-_]?key/iu;
-const IDENTIFIER = /^[A-Za-z0-9._:/@-]{1,256}$/u;
-const REVISION = /^[a-f0-9]{40,64}$/u;
-/** A path, not a value: bounded and control-character-free, and it may contain Windows separators. */
-const REFERENCE = /^[^\u0000-\u001f]{1,1024}$/u;
-
-type HostProduction = (ready: UC03HostReady) => WorkflowDriver;
-
-/**
- * Read the operator configuration. An unknown key is how a port, a policy fact or a credential
- * would arrive, so the whole file is refused instead — and no value is ever echoed back.
- */
-export function loadHostConfiguration(filePath: string): HostConfigurationLoad {
-  const refused = (code: string): HostConfigurationLoad => ({ ok: false, error: cliError(2, code, 'Host configuration was refused; values are not echoed') });
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(resolve(filePath), 'utf8'));
-  } catch {
-    return refused('HOST_CONFIG_ERROR');
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return refused('HOST_CONFIG_ERROR');
-  const raw = parsed as Readonly<Record<string, unknown>>;
-  if (Object.keys(raw).some(key => !HOST_KEYS.has(key))) return refused('HOST_CONFIG_UNSUPPORTED_FIELD');
-  if (Object.entries(raw).some(([key, value]) => CREDENTIAL.test(key) || CREDENTIAL.test(typeof value === 'string' ? value : ''))) return refused('HOST_CONFIG_UNSAFE_FIELD');
-
-  const { profileId, profileDigest, configDigest, pricingDigest, requestedModel, adapterVersions, contractVersion, revisions, assembly } = raw;
-  const text = (value: unknown): string => (typeof value === 'string' && IDENTIFIER.test(value) ? value : '');
-  const id = text(profileId);
-  const profile = text(profileDigest);
-  const config = text(configDigest);
-  const pricing = text(pricingDigest);
-  const model = text(requestedModel);
-  const contract = text(contractVersion);
-  if ([id, profile, config, pricing, model, contract].some(value => value === '')) return refused('HOST_CONFIG_INCOMPLETE');
-  // A reference only: the path is resolved later and never echoed.
-  if (assembly !== undefined && (typeof assembly !== 'string' || !REFERENCE.test(assembly) || assembly.trim() === '')) return refused('HOST_CONFIG_INCOMPLETE');
-  if (!Array.isArray(adapterVersions) || adapterVersions.length === 0 || adapterVersions.length > 64 || adapterVersions.some(value => text(value) === '')) return refused('HOST_CONFIG_INCOMPLETE');
-  if (adapterVersions.some(value => typeof value === 'string' && CREDENTIAL.test(value))) return refused('HOST_CONFIG_UNSAFE_FIELD');
-  if (typeof revisions !== 'object' || revisions === null || Array.isArray(revisions)) return refused('HOST_CONFIG_INCOMPLETE');
-  const pinned: Record<string, string> = {};
-  for (const [component, revision] of Object.entries(revisions)) {
-    if (!UC03_PRODUCTION_COMPONENTS_V02.includes(component as UC03ProductionComponentV02) || typeof revision !== 'string' || !REVISION.test(revision)) return refused('HOST_CONFIG_INCOMPLETE');
-    pinned[component] = revision;
-  }
-
-  return {
-    ok: true,
-    value: Object.freeze({
-      identity: Object.freeze({ profileId: id, profileDigest: profile, configDigest: config, pricingDigest: pricing }),
-      pins: Object.freeze({ contractVersion: contract, revisions: Object.freeze(pinned) }),
-      profileDigest: profile,
-      configDigest: config,
-      pricingDigest: pricing,
-      requestedModel: model,
-      adapterVersions: Object.freeze(adapterVersions as readonly string[]),
-      ...(typeof assembly === 'string' ? { assembly } : {}),
-    }),
-  };
 }
 
 interface ParsedArgs {
@@ -166,10 +90,6 @@ function parseCliArgs(args: readonly string[]): ParsedArgs {
   return { command, hostPath, mode, scope, cases: cases as readonly string[] | undefined, outputPath: values.get('--output') };
 }
 
-function cliError(exitCode: number, code: string, message: string): EvaluateCliResult {
-  return { exitCode, output: JSON.stringify({ error: code, message }) };
-}
-
 function writeOutput(filePath: string, output: string): EvaluateCliResult | undefined {
   try {
     writeFileSync(resolve(filePath), `${output}\n`, 'utf8');
@@ -202,14 +122,12 @@ async function run(parsed: ParsedArgs, options: EvaluateCliOptions): Promise<Wor
   }
 }
 
-export type UC03HostReady = Extract<UC03HostReadiness, { status: 'ready' }>;
-
 /**
  * Readiness as the contract allows it: component names, reason codes and the operator identity.
  * No path, no adapter instance, no delivered value — nothing here can leak a filesystem secret or
  * claim a capability the assembly did not establish.
  */
-export function readinessReport(readiness: UC03HostReadiness): string {
+export function readinessReport(readiness: UC03HostReadiness, observed?: HostObservation | undefined): string {
   if (readiness.status === 'unavailable') {
     return JSON.stringify({
       outcome: 'unavailable',
@@ -218,67 +136,49 @@ export function readinessReport(readiness: UC03HostReadiness): string {
       ),
     });
   }
-  return JSON.stringify({ outcome: 'ready', components: [...UC03_PRODUCTION_COMPONENTS_V02], identity: readiness.identity });
+  const ready = { outcome: 'ready', components: [...UC03_PRODUCTION_COMPONENTS_V02], identity: readiness.identity };
+  if (observed === undefined) return JSON.stringify(ready);
+  // `operational` is present only once a preflight ran: a metadata-only assembly claims nothing more.
+  const { metadata, operational } = observed;
+  return JSON.stringify({ ...ready, assembly: 'ready', ...(operational === undefined ? {} : { operational }), metadata });
 }
+
+/** The §(i) members the CLI validated; `operational` is absent when the assembly ships no preflight. */
+type HostObservation = Readonly<{ metadata: HostMetadata; operational?: HostOperational | undefined }>;
+
+type Assembled =
+  | Readonly<{
+      ok: true;
+      readiness: UC03HostReady;
+      configuration: HostConfiguration;
+      production?: HostProduction | undefined;
+      observed?: HostObservation | undefined;
+    }>
+  | Readonly<{ ok: false; result: EvaluateCliResult }>;
 
 /**
- * Resolve the operator's assembly reference. Every failure — absent file, throwing import, absent
- * factory, throwing factory, non-object result — collapses to the same named prerequisite gap, so no
- * exception text, path or imported value can reach the output.
+ * §(i) checks in contract order: the metadata projection is validated as a whole, the host file's
+ * requested model must be the one the profile pinned, then the operational preflight runs. All three
+ * happen after `prepareAssembly` and before any task, provider or command effect.
  */
-async function resolveAssembly(reference: string): Promise<HostAssemblyResolution | undefined> {
-  try {
-    // Trust: the host file is operator-owned, so a module path in it is an execution capability by
-    // design; the loader keeps it a reference, never a port, fact or credential.
-    // shortcut: the reference resolves against the process CWD, as `--host` already does, so a
-    // relative path loads whatever sits there in the invocation directory; make it config-file-relative
-    // (or require absolute) if operators keep host files away from the checkout.
-    const module: unknown = await import(pathToFileURL(resolve(reference)).href);
-    const factory: unknown = typeof module === 'object' && module !== null ? Reflect.get(module, ASSEMBLY_FACTORY) : undefined;
-    if (typeof factory !== 'function') return undefined;
-    const resolved: unknown = (factory as () => unknown)();
-    if (typeof resolved !== 'object' || resolved === null) return undefined;
-    const host: unknown = Reflect.get(resolved, 'host');
-    const production: unknown = Reflect.get(resolved, 'production');
-    const control: unknown = Reflect.get(resolved, 'control');
-    const consoleFactory: unknown = Reflect.get(resolved, 'console');
-    if (typeof host !== 'object' || host === null) return undefined;
-    if (production !== undefined && typeof production !== 'function') return undefined;
-    if (control !== undefined && !isEvaluationControlBindings(control)) return undefined;
-    if (consoleFactory !== undefined && typeof consoleFactory !== 'function') return undefined;
-    return {
-      host: host as HostAssembly,
-      ...(production === undefined ? {} : { production: production as HostProduction }),
-      ...(control === undefined ? {} : { control }),
-      ...(consoleFactory === undefined ? {} : { console: consoleFactory as EvaluationConsoleFactory }),
-    };
-  } catch {
-    return undefined;
-  }
+async function observe(
+  resolved: HostAssemblyResolution,
+  configuration: HostConfiguration,
+): Promise<Readonly<{ ok: true; observed?: HostObservation | undefined }> | Readonly<{ ok: false; result: EvaluateCliResult }>> {
+  if (resolved.metadata === undefined) return { ok: true };
+  const metadata = validateHostMetadata(resolved.metadata);
+  if (metadata === undefined) return { ok: false, result: cliError(4, 'HOST_METADATA_INVALID', 'Host metadata was refused; values are not echoed') };
+  if (configuration.requestedModel !== metadata.model) return { ok: false, result: cliError(4, 'HOST_MODEL_MISMATCH', 'The requested model does not match the pinned profile') };
+  const preflight = resolved.preflight;
+  if (preflight === undefined) return { ok: true, observed: { metadata } };
+  // A preflight that throws is the same refusal as one that reports a dead daemon, and its result is
+  // untrusted host output: only the allowlisted variants are projected, never a field of the rest.
+  // The `then` keeps a synchronous throw inside the same path as a rejected promise.
+  const probed = await Promise.resolve()
+    .then(() => preflight())
+    .catch(() => undefined);
+  return { ok: true, observed: { metadata, operational: classifyPreflightResult(probed) } };
 }
-
-/**
- * The assembly the CLI will use: a caller-supplied one always wins, so an operator file reference can
- * never override the programmatic path; otherwise the file's own reference is resolved.
- */
-export async function resolveHostAssembly(configuration: HostConfiguration, supplied?: HostAssembly | undefined): Promise<HostAssemblyResolution | undefined> {
-  if (supplied !== undefined) return { host: supplied };
-  return configuration.assembly === undefined ? undefined : resolveAssembly(configuration.assembly);
-}
-
-/**
- * Run the host bootstrap over an operator-supplied assembly. Host objects and nested deliveries may
- * carry throwing getters, so only this bounded assembly/bootstrap operation is translated to a gap.
- */
-export function prepareAssembly(host: HostAssembly, configuration: HostConfiguration): UC03HostReadiness | undefined {
-  try {
-    return prepareUC03Host({ ...host, pins: configuration.pins, identity: configuration.identity });
-  } catch {
-    return undefined;
-  }
-}
-
-type Assembled = Readonly<{ ok: true; readiness: UC03HostReady; configuration: HostConfiguration; production?: HostProduction | undefined }> | Readonly<{ ok: false; result: EvaluateCliResult }>;
 
 /** Assemble the production route from the host file; an absent assembly is a gap, never a fallback. */
 async function assemble(parsed: ParsedArgs, options: EvaluateCliOptions | undefined): Promise<Assembled> {
@@ -291,8 +191,14 @@ async function assemble(parsed: ParsedArgs, options: EvaluateCliOptions | undefi
   const readiness = prepareAssembly(resolved.host, loaded.value);
   if (readiness === undefined) return { ok: false, result: cliError(4, 'HOST_ASSEMBLY_UNAVAILABLE', 'No host assembly is configured') };
   if (readiness.status !== 'ready') return { ok: false, result: { exitCode: 4, output: readinessReport(readiness) } };
+  const checked = await observe(resolved, loaded.value);
+  if (!checked.ok) return { ok: false, result: checked.result };
+  // A failed preflight is reported in the readiness shape it belongs to, and nothing is allocated.
+  if (checked.observed?.operational !== undefined && checked.observed.operational !== 'ready') {
+    return { ok: false, result: { exitCode: 4, output: readinessReport(readiness, checked.observed) } };
+  }
   const production = options?.production ?? resolved.production;
-  return { ok: true, readiness, configuration: loaded.value, ...(production === undefined ? {} : { production }) };
+  return { ok: true, readiness, configuration: loaded.value, ...(production === undefined ? {} : { production }), ...(checked.observed === undefined ? {} : { observed: checked.observed }) };
 }
 
 export async function runEvaluateCli(args: readonly string[], options?: EvaluateCliOptions): Promise<EvaluateCliResult> {
@@ -325,11 +231,12 @@ export async function runEvaluateCli(args: readonly string[], options?: Evaluate
     return cliError(2, 'INVALID_ARGUMENTS', 'Arguments are invalid');
   }
 
-  // `preflight` stops at assembly: it must reach the bootstrap with zero task, approval or provider effect.
+  // `preflight` stops at assembly and observation: zero task, approval or provider effect either way.
   if (parsed.command === 'preflight') {
     const assembled = await assemble(parsed, options);
     if (!assembled.ok) return assembled.result;
-    const output = readinessReport(assembled.readiness);
+    // `assemble` already refused a failed observation, so reaching here means operational is ready.
+    const output = readinessReport(assembled.readiness, assembled.observed);
     return (parsed.outputPath ? writeOutput(parsed.outputPath, output) : undefined) ?? { exitCode: 0, output };
   }
 

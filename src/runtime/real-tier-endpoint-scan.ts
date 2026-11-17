@@ -241,11 +241,18 @@ export function scanDirectory(dir: string, options: ScanOptions): ScanResult {
   return verdict(lines, resolved.needles.credential !== undefined);
 }
 
+// Real-tier §(d): no child process receives the provider credential, so git gets only these variables.
+const GIT_ENV_ALLOWLIST = ['PATH', 'SystemRoot', 'HOME', 'USERPROFILE', 'TEMP', 'TMP'] as const;
+
+function gitEnv(): Record<string, string> {
+  return Object.fromEntries(GIT_ENV_ALLOWLIST.flatMap(key => (process.env[key] === undefined ? [] : [[key, process.env[key]]])));
+}
+
 /** Structured-argv git bound to one working tree. */
 export function createScanGit(cwd: string): ScanGit {
   return args =>
     new Promise(resolve => {
-      execFile('git', [...args], { cwd, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout) => resolve(error ? { ok: false } : { ok: true, stdout }));
+      execFile('git', [...args], { cwd, env: gitEnv(), encoding: 'buffer', maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout) => resolve(error ? { ok: false } : { ok: true, stdout }));
     });
 }
 

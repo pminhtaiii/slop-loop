@@ -8,11 +8,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { runRealTierScanCli } from '../../../src/cli/real-tier-scan.ts';
-import { scanAll, scanDirectory, scanRange, scanStaged, type ScanGit, type ScanResult } from '../../../src/runtime/real-tier-endpoint-scan.ts';
+import { createScanGit, scanAll, scanDirectory, scanRange, scanStaged, type ScanGit, type ScanResult } from '../../../src/runtime/real-tier-endpoint-scan.ts';
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
 import { createScanFixture } from './real-tier-scan-fixtures.ts';
 
@@ -130,4 +131,29 @@ test('GUARD-SNAPSHOT: the template guard uses the profile it serialized, never a
   assert.equal(result.exitCode, 2);
   assert.equal(result.output, 'SCAN_ERROR template-needle');
   quiet(result, [privateHost, '192.0.2.10', '54321']);
+});
+
+test('SPEC-W4-201: scanner git children never inherit the provider credential', async () => {
+  const require = createRequire(import.meta.url);
+  const builtin = require('node:child_process') as Record<string, unknown>;
+  const original = builtin['execFile'] as (...args: unknown[]) => unknown;
+  const envs: unknown[] = [];
+  builtin['execFile'] = (...args: unknown[]): unknown => {
+    envs.push((args[2] as { env?: unknown }).env);
+    return original(...args);
+  };
+  syncBuiltinESMExports();
+  const saved = process.env['ANTHROPIC_API_KEY'];
+  process.env['ANTHROPIC_API_KEY'] = KEY;
+  try {
+    await createScanGit(REPO)(['--version']);
+  } finally {
+    builtin['execFile'] = original;
+    syncBuiltinESMExports();
+    if (saved === undefined) delete process.env['ANTHROPIC_API_KEY'];
+    else process.env['ANTHROPIC_API_KEY'] = saved;
+  }
+  assert.equal(envs.length, 1);
+  assert.ok(envs[0] && typeof envs[0] === 'object', 'git receives an explicit environment');
+  assert.ok(!JSON.stringify(envs[0]).includes(KEY), 'the credential is not passed to git');
 });
