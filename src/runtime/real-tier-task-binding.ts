@@ -185,11 +185,6 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   if ('status' in fixture) return fixture;
   const { task, repositoryRoot } = fixture;
 
-  // One task per assembly: the shared approval port resolves `classify`/`resolve` by the sole bound
-  // task, so a second task would break both for every task. Rebinding the same task id stays legal.
-  const boundTaskId = assembly.owners.boundTaskId();
-  if (boundTaskId !== undefined && boundTaskId !== task.taskId) return refused('assembly-task-bound', '$.task.taskId');
-
   // Every finite bound is validated here, before any effect: a zero TTL or path bound is a bad
   // binding, not a task that should stay half-built.
   const actionTtlMs = options.actionTtlMs ?? 60_000;
@@ -216,6 +211,10 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
 
   // An existing task is loaded before anything is allocated, and its persisted identity is
   // authoritative (§(g), §1): a rebind returns the same run and workspace, or it is refused.
+  // One task per assembly: the shared approval port resolves `classify`/`resolve` by the sole bound
+  // task. The claim is synchronous and precedes the first await, so concurrent binds cannot both pass;
+  // rebinding the same task id stays legal, and a claim is never released.
+  if (!assembly.owners.claimTask(task.taskId)) return refused('assembly-task-bound', '$.task.taskId');
   const existing = await assembly.owners.components.statePort.loadTask(task.taskId);
   if (existing !== null) {
     if (existing.taskContext !== undefined && computeCanonicalSha256(existing.taskContext) !== computeCanonicalSha256(task)) return refused('task-identity-mismatch', '$.task');

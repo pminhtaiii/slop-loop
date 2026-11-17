@@ -68,11 +68,12 @@ test('STD-W4-201: a ref that escapes the git directory is refused, never read', 
 
 test('a git-legal branch name with +, @ or a dotted segment resolves; an illegal one stays unresolved', () => {
   // `git check-ref-format` accepts these, so the resolver must too (it is the pin the template prints).
-  for (const name of ['refs/heads/release/v1+hotfix', 'refs/heads/fix@2', 'refs/heads/feature/a.b', 'refs/tags/v1.0+meta']) {
+  // STD-CR-002: `fix!2`, a non-ASCII name and an intermediate segment ending in a dot are git-legal too.
+  for (const name of ['refs/heads/release/v1+hotfix', 'refs/heads/fix@2', 'refs/heads/feature/a.b', 'refs/tags/v1.0+meta', 'refs/heads/fix!2', 'refs/heads/topic/foo./bar', 'refs/heads/thử-nghiệm']) {
     withTree({ 'repo/.git/HEAD': `ref: ${name}\n`, [`repo/.git/${name}`]: `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), A, name));
   }
   // Still contained: empty segments, `..`, a `.lock` suffix, a space, `~`, `^`, `[`, `@{`.
-  for (const name of ['refs/heads//double', 'refs/heads/a/../b', 'refs/heads/branch.lock', 'refs/heads/has space', 'refs/heads/a~1', 'refs/heads/a^', 'refs/heads/a@{1}', 'refs/heads/a[1']) {
+  for (const name of ['refs/heads//double', 'refs/heads/a/../b', 'refs/heads/branch.lock', 'refs/heads/has space', 'refs/heads/a~1', 'refs/heads/a^', 'refs/heads/a@{1}', 'refs/heads/a[1', 'refs/heads/trailing.', 'refs/heads/.hidden']) {
     withTree({ 'repo/.git/HEAD': `ref: ${name}\n`, [`repo/.git/${name}`]: `${A}\n` }, root => assert.equal(gitHead(join(root, 'repo')), '', name));
   }
   // `:` and `\` cannot even be a path on every platform; the name is refused before any read.

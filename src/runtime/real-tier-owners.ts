@@ -88,8 +88,8 @@ export interface RealTierOwners {
   readonly productionJournal: boolean;
   /** Per-task owner instances for T061; registers them so the delegating ports above can resolve. */
   taskOwners(binding: RealTierTaskBinding): RealTierBoundOwners;
-  /** The one task a per-process assembly may carry: `classify`/`resolve` refuse with two bound tasks. */
-  readonly boundTaskId: () => string | undefined;
+  /** Claims the one task a per-process assembly may carry (`classify`/`resolve` refuse with two); false for any other task. */
+  readonly claimTask: (taskId: string) => boolean;
 }
 
 const unbound = (): never => {
@@ -121,6 +121,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
   const journal = createJournalOperationLookup(statePort);
   const recoveryGate = createRecoveryGate({ lookupOperation: ref => journal.lookupOperation(ref), lookupWrite: ref => baselineStore.lookupWrite(ref) });
   const bound = new Map<string, RealTierBoundOwners>();
+  let claimed: string | undefined;
 
   /** One bound task, or a refusal: classify() carries no task and never guesses one. */
   const sole = (): RealTierBoundOwners => (bound.size === 1 ? ([...bound.values()][0] ?? unbound()) : unbound());
@@ -194,6 +195,6 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
     recoveryGate,
     productionJournal: isProductionJournal(statePort),
     taskOwners,
-    boundTaskId: () => (bound.size === 0 ? undefined : [...bound.keys()][0]),
+    claimTask: taskId => (claimed ??= taskId) === taskId,
   };
 }

@@ -630,6 +630,24 @@ test('(n) a second task on one assembly refuses, and rebinding the same task sti
   assert.deepEqual(again.ids.taskId, first.ids.taskId);
 });
 
+test('(n2) STD-CR-001: two concurrent binds of different tasks admit exactly one', async () => {
+  // Both calls start before either awaits; a check-then-register guard would let both seed.
+  const catalog = fixtureOf();
+  const { assembly } = assemblyFor(catalog);
+  const secondDocument = { task: taskOf({ taskId: 'task-other' }), repositoryRoot: 'repository' };
+  const secondPath = join(catalog.catalogDir, 'case-2.json');
+  writeFileSync(secondPath, JSON.stringify(secondDocument), 'utf8');
+  const entries = JSON.parse(readFileSync(catalog.catalogPath, 'utf8')) as { catalog: Record<string, unknown>[] };
+  entries.catalog.push({ ...entries.catalog[0], catalogEntryId: 'entry-C02', caseId: 'C02', fixturePath: secondPath, fixtureDigest: sha256Text(JSON.stringify(secondDocument)) });
+  writeFileSync(catalog.catalogPath, JSON.stringify(entries), 'utf8');
+
+  const [first, second] = await Promise.all([bindRealTierTask(assembly, optionsOf(catalog)), bindRealTierTask(assembly, optionsOf(catalog, { caseId: 'C02' }))]);
+  assert.equal(first.status, 'task-bound');
+  assert.equal(second.status, 'unavailable');
+  if (second.status === 'unavailable') assert.equal(second.reasonCode, 'assembly-task-bound');
+  assert.equal(await assembly.owners.components.statePort.loadTask('task-other'), null, 'the refused task is never seeded');
+});
+
 test('(o) a baseline command settles its reservation and a same-sized verification command is still admitted', async () => {
   // One command settles its whole per-command reservation, so a per-command limit as the cumulative
   // budget would exhaust it at the baseline. The seeded limit is that limit times the command allowance.
