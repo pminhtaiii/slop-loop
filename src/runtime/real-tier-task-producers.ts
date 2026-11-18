@@ -259,7 +259,7 @@ export async function buildBoundCapabilities(
     statePort: owners.statePort,
     commandExecutor: assembly.executor,
     workspaceManager: assembly.workspaceManager,
-    trustedCommandResourcePolicy: { isolationProfileRef: assembly.profile.image.label, limits: task.limits },
+    trustedCommandResourcePolicy: { isolationProfileRef: assembly.profile.image.label, limits: { ...task.limits } },
     adapterIdentity: assembly.executor.getAdapterIdentity(),
     processIncarnation: assembly.executor.getProcessIncarnation(),
     fencingGeneration: assembly.executor.getFencingGeneration() || 1,

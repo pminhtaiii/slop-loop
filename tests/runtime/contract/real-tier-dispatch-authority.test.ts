@@ -364,13 +364,15 @@ test('CR-195-FENCE: a fence after beginAttempt makes both bound production ports
     assert.equal(effects.fetch, 0, `${role}: zero fetches escape the fence`);
     const fenced = (await owners.statePort.getJournalSnapshot(state.taskId)) as {
       readonly mode: string;
-      readonly claims: readonly { readonly status: string }[];
-      readonly outcomes: readonly { readonly outcome: string }[];
+      readonly claims: readonly { readonly claimId: string; readonly status: string }[];
+      readonly outcomes: readonly { readonly claimId: string; readonly outcome: string }[];
     };
     assert.equal(fenced.mode, 'paused', `${role}: the fence is durable before transport`);
     assert.equal(fenced.outcomes.length, 1, `${role}: the fence records an outcome instead of leaving the attempt dangling`);
     assert.equal(fenced.outcomes[0]?.outcome, 'uncertain', `${role}: the recorded outcome accounts for no usage`);
-    assert.notEqual(fenced.claims[0]?.status, 'attempting', `${role}: the attempted claim is not left attempting`);
+    const claim = fenced.claims.find(claim => claim.claimId === fenced.outcomes[0]?.claimId);
+    assert.ok(claim, `${role}: the recorded outcome identifies a claim`);
+    assert.equal(claim.status, 'uncertain', `${role}: the attempted claim is uncertain`);
   }
 });
 

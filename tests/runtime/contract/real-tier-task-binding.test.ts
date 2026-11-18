@@ -614,7 +614,13 @@ test('(k3) the owner cache reuses only a matching rebind and refuses one whose s
     'an equivalent rebind reuses the cached owners',
   );
 
+  assert.equal(assembly.owners.taskOwners(ids), cached, 'identity-only lookup reuses matching owners');
+  assert.throws(() => assembly.owners.taskOwners({ ...ids, workspaceId: 'ws-other' }), /approval-operation-denied/u);
+  assert.throws(() => assembly.owners.taskOwners({ ...ids, repositoryId: 'repo-other' }), /approval-operation-denied/u);
+
   const rows: readonly (readonly [string, Partial<RealTierTaskBinding>])[] = [
+    ['another workspace', { workspaceId: 'ws-other' }],
+    ['another repository', { repositoryId: 'repo-other' }],
     ['another authority generation', { authorityRef: { ...authorityRef, decisionAuthorityGeneration: 2 } }],
     ['another policy identity', { policyIdentity: { ...policy, configVersion: '9.9.9' } }],
     ['another execution profile', { executionProfile: () => ({ ...profile(), commandBounds: { ...profile().commandBounds, maxMemoryBytes: 1 } }) }],
@@ -907,4 +913,16 @@ test('(r) the bound profile is pinned from the seeded task: mutating the returne
   // so a builder default change surfaces here as a decision instead of silently refusing real claims.
   assert.equal(DEFAULT_EXCLUSIONS_POLICY_VERSION, '0.1.0', 'bumping the builder default is a deliberate change to real claims');
   assert.equal(pinnedExecutionProfileOf(taskOf(), 'uc03-pytest:real-tier').exclusionsPolicyVersion, DEFAULT_EXCLUSIONS_POLICY_VERSION);
+});
+
+test('an uncloneable binding publishes no owners and permits a valid retry', () => {
+  const { assembly } = assemblyFor(fixtureOf());
+  const ids = { taskId: 'task-clone-retry', workspaceId: 'ws-clone-retry', repositoryId: 'repo-calc' };
+  const invalid = { policyId: 'policy', policyVersion: '1', configId: 'config', configVersion: '1', uncloneable: () => undefined };
+  assert.throws(() => assembly.owners.taskOwners({ ...ids, policyIdentity: invalid }), /clone/u);
+  const policy = { policyId: 'policy', policyVersion: '1', configId: 'config', configVersion: '1' };
+  const owners = assembly.owners.taskOwners({ ...ids, policyIdentity: policy });
+  policy.configVersion = '2';
+  assert.equal(assembly.owners.taskOwners({ ...ids, policyIdentity: { ...policy, configVersion: '1' } }), owners);
+  assert.throws(() => assembly.owners.taskOwners({ ...ids, policyIdentity: policy }), /approval-operation-denied/u);
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isAdmittedForProduction } from '../../../src/contracts/foundation/uc03/v01/ports.ts';
-import type { ProviderAdmissionContextV02 } from '../../../src/contracts/foundation/uc03.ts';
+import type { AttemptOutcomeReceiptV02, ProviderAdmissionContextV02 } from '../../../src/contracts/foundation/uc03.ts';
 import { createDeepSeekTransport } from '../../../src/foundation/deepseek-transport.ts';
 import { computeContextDigest, type HostModelTransport } from '../../../src/foundation/model.ts';
 import { HostModelPortV02, derivedModelProvenance } from '../../../src/foundation/model-v02.ts';
@@ -120,8 +120,14 @@ for (const verdict of [
     assert.deepEqual(dispatches, [], 'a non-synchronous verdict sends nothing');
   });
 
-test('a post-beginAttempt fence is recorded and releases the attempt reservations as not dispatched', async () => {
+test('a post-beginAttempt fence is recorded and keeps the attempt reservations held', async () => {
   const { state, evidence, request, admission, statePort } = admitted();
+  const receipts: AttemptOutcomeReceiptV02[] = [];
+  const recordOutcome = statePort.recordOutcome.bind(statePort);
+  statePort.recordOutcome = async receipt => {
+    receipts.push(structuredClone(receipt));
+    return recordOutcome(receipt);
+  };
   const contenders: { role: string }[] = [];
   const port = new HostModelPortV02({
     statePort,
@@ -139,6 +145,12 @@ test('a post-beginAttempt fence is recorded and releases the attempt reservation
   assert.equal(result.outcome, 'denied');
   assert.equal(result.reason, 'FENCED_EXECUTOR');
   assert.deepEqual(contenders, []);
+
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0]?.proposedEffects.accounting.disposition, 'hold');
+  assert.ok(receipts[0]);
+  assert.equal(Object.hasOwn(receipts[0], 'observedUsage'), false);
+  assert.equal(receipts[0].proposedEffects.accounting.observedUsage, undefined);
 
   // The attempted claim is not left dangling: a usage-free uncertain outcome exists to account for it.
   const journal = statePort.getJournalSnapshot();

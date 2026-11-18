@@ -75,11 +75,13 @@ export interface RealTierBoundOwners {
 }
 
 /** The security facts a cached owner set is frozen to: its port's profile and control seed, its approval profile. */
-type BoundSecurityFacts = Readonly<Record<'executionProfile' | 'authorityRef' | 'policyIdentity', unknown>>;
+type BoundSecurityFacts = Readonly<Record<'workspaceId' | 'repositoryId' | 'executionProfile' | 'authorityRef' | 'policyIdentity', unknown>>;
 
 /** The facts one binding supplies, with a function profile resolved now: the bind path passes a fresh closure each time. */
 function suppliedFactsOf(binding: RealTierTaskBinding): BoundSecurityFacts {
   return {
+    workspaceId: binding.workspaceId,
+    repositoryId: binding.repositoryId,
     executionProfile: ownerExecutionProfile(binding.executionProfile, { taskId: binding.taskId, workspaceId: binding.workspaceId }),
     authorityRef: binding.authorityRef,
     policyIdentity: binding.policyIdentity,
@@ -88,7 +90,9 @@ function suppliedFactsOf(binding: RealTierTaskBinding): BoundSecurityFacts {
 
 /** True when a binding supplies a fact its cached owners lack, or one that differs: the cached set cannot serve it. */
 function conflictsWith(cached: BoundSecurityFacts, supplied: BoundSecurityFacts): boolean {
-  return (['executionProfile', 'authorityRef', 'policyIdentity'] as const).some(key => supplied[key] !== undefined && (cached[key] === undefined || !equal(cached[key], supplied[key])));
+  return (['workspaceId', 'repositoryId', 'executionProfile', 'authorityRef', 'policyIdentity'] as const).some(
+    key => supplied[key] !== undefined && (cached[key] === undefined || !equal(cached[key], supplied[key])),
+  );
 }
 
 export interface RealTierOwnersOptions {
@@ -220,8 +224,9 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
       console: createConsoleApprovalPort(approvalService, () => binding.taskId),
       contextSource,
     };
+    const detachedFacts = structuredClone(supplied);
     bound.set(binding.taskId, owners);
-    boundFacts.set(binding.taskId, structuredClone(supplied));
+    boundFacts.set(binding.taskId, detachedFacts);
     return owners;
   };
 
