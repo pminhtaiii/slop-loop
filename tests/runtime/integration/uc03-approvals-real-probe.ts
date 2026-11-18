@@ -16,13 +16,14 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createApprovalService, type ApprovalService, type ApprovalServiceV02 } from '../../../src/approvals/service.ts';
+import { ApprovalServiceError, createApprovalService, type ApprovalService, type ApprovalServiceV02 } from '../../../src/approvals/service.ts';
 import { computePlanBindingDigest } from '../../../src/approvals/plan-binding.ts';
 import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, CONTRACT_VERSION } from '../../../src/contracts/foundation/uc03.ts';
 import type { validateStateTransition } from '../../../src/contracts/foundation/uc03.ts';
 import type { ApplyPatchAction, ApprovalBinding, BugTask, FixPlan, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { computeActionDecisionReceiptDigest, computePolicyEvaluationReceiptDigest } from '../../../src/contracts/approvals/contracts.ts';
 import type { ActionDecisionReceipt, PolicyEvaluationReceipt } from '../../../src/contracts/approvals/contracts.ts';
+import { DockerWorkspaceManager, type DockerLifecycleController } from '../../../src/foundation/docker-workspace.ts';
 import { structuredSpawn } from '../../../src/foundation/docker-spawn.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
 import { createRepositoryReceiverV02 } from '../../../src/foundation/repository-tools.ts';
@@ -78,35 +79,29 @@ function report(rows: readonly Row[], evidence: Record<string, unknown>): void {
 
 const row = (caseName: string, ok: boolean, detail?: unknown): Row => ({ case: caseName, ok, detail });
 
+interface RejectedResult {
+  readonly outcome: string;
+  readonly reason?: string | undefined;
+  readonly containerAttempts: number;
+  readonly sourceChanged: boolean;
+  readonly stateChanged: boolean;
+}
+
+/** The guard's text when an APPROVAL_REQUIRED receipt arrives with no approved action decision behind it. */
+const MISSING_DECISION = 'APPROVAL_REQUIRED requires ActionDecisionReceipt';
+
 /**
- * The rejected row's real predicate: a rejected decision must be refused before any container runs and
- * must leave the source unchanged. Scored over the actual result shape (SPEC-W5-110's behavioral
- * red witness), so removing rejection enforcement changes the verdict rather than a hard-coded value.
+ * The rejected row's predicate, scored over a result the real path produced: a rejected decision must
+ * be refused by the guard for the missing approval itself, before any container, with the source bytes
+ * and the complete task and journal unchanged. An unrelated refusal does not satisfy it.
  */
-function rejectedRefused(result: { readonly outcome: string; readonly containerAttempts: number; readonly sourceChanged: boolean }): boolean {
-  return result.outcome !== 'success' && result.containerAttempts === 0 && result.sourceChanged === false;
+function rejectedRefused(result: RejectedResult): boolean {
+  return result.outcome === 'denied' && result.reason?.includes(MISSING_DECISION) === true && result.containerAttempts === 0 && !result.sourceChanged && !result.stateChanged;
 }
 
 if (selfCheck) {
   // The same `report` path a real failed row takes: this must exit 1, which is the red proof.
   report([row('SELF-CHECK deliberate red row', false, 'a failed row must never pass')], { selfCheck: true });
-}
-
-if (argv.includes('--red-proof')) {
-  // The rejected row's real predicate, over a real result shape. The witness row is a rejection that
-  // somehow reached a container: the shipped predicate must score it false, so the witness row fails
-  // and this run exits nonzero by design. The second row shows the same predicate accepts the true
-  // clean refusal. Removing rejection enforcement flips the witness row green, so the red-proof stops
-  // failing — the behavioral change the review asked to detect.
-  const clean = { outcome: 'pending-approval', containerAttempts: 0, sourceChanged: false };
-  const reachedContainer = { outcome: 'success', containerAttempts: 1, sourceChanged: true };
-  report(
-    [
-      row('RED-PROOF WITNESS a rejection that reached a container must score false (this row must fail)', rejectedRefused(reachedContainer), reachedContainer),
-      row('RED-PROOF a rejection refused before any container scores true (must pass)', rejectedRefused(clean), clean),
-    ],
-    { redProof: true, note: 'exits nonzero by design: the witness row shows the shipped predicate rejects a container-reaching rejection' },
-  );
 }
 
 interface Domain {
@@ -124,6 +119,57 @@ interface Domain {
   readonly planBindingDigest: string;
   readonly trustedTransitions: Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>;
   cleanup(): void;
+}
+
+/** What a scenario runs on: a workspace manager, the workspace profile it registers, and the one edit. */
+interface Substrate {
+  readonly manager: DockerWorkspaceManager;
+  readonly profile: Parameters<DockerWorkspaceManager['createWorkspace']>[0]['profile'];
+  readonly edit: (repositoryRoot: string) => Promise<{ readonly exitCode: number | null; readonly stderr: string }>;
+}
+
+function realSubstrate(assembly: RealTierAssembly): Substrate {
+  return {
+    manager: assembly.workspaceManager,
+    profile: {
+      profileId: assembly.profile.image.label,
+      image: assembly.profile.image.base,
+      imageDigest: assembly.profile.image.imageId,
+      user: assembly.profile.image.user,
+      readOnlyRootFilesystem: true,
+      network: 'none',
+      limits: { timeoutMs: 30_000, maxMemoryBytes: assembly.profile.limits.memoryBytes, maxCpuCores: assembly.profile.limits.cpus, maxPids: assembly.profile.limits.processes },
+      mounts: [],
+    },
+    edit: async repositoryRoot => await applyPatchInContainer(assembly, repositoryRoot),
+  };
+}
+
+/** The Docker-free controller the `--red-proof` run registers workspaces on; it launches nothing. */
+class InertController implements DockerLifecycleController {
+  readonly provenance = 'mock' as const;
+  private readonly volumes = new Set<string>();
+  async createVolume(id: string): Promise<void> {
+    this.volumes.add(id);
+  }
+  async hasVolume(id: string): Promise<boolean> {
+    return this.volumes.has(id);
+  }
+  async removeVolume(id: string): Promise<void> {
+    this.volumes.delete(id);
+  }
+}
+
+/** The same guard, receiver and service over no daemon: the edit is the host write the container would make. */
+function inertSubstrate(): Substrate {
+  return {
+    manager: new DockerWorkspaceManager({ controller: new InertController() }),
+    profile: { profileId: 'uc03-pytest:real-tier', image: 'uc03-pytest:real-tier', imageDigest: 'sha256:' + '0'.repeat(64), user: '1000:1000', readOnlyRootFilesystem: true, network: 'none', limits: { timeoutMs: 30_000, maxMemoryBytes: 536_870_912, maxCpuCores: 1, maxPids: 64 }, mounts: [] },
+    edit: async repositoryRoot => {
+      writeFileSync(join(repositoryRoot, 'src/calculator.py'), PATCHED, 'utf8');
+      return { exitCode: 0, stderr: '' };
+    },
+  };
 }
 
 function taskOf(revision: string): BugTask {
@@ -413,6 +459,11 @@ function admittedReceipt(receipt: PolicyEvaluationReceipt): Record<string, unkno
   return { ...body, receiptDigest: computePolicyEvaluationReceiptDigest(body) };
 }
 
+/** The approved decision a service that did not enforce the rejection would have issued for this evaluation. */
+function bypassDecisionFor(evaluation: PolicyEvaluationReceipt): ActionDecisionReceipt {
+  return { decisionId: PATCH_DECISION, actionDigest: evaluation.actionDigest, evaluationReceiptRef: evaluation.receiptId, decisionAuthorityGeneration: evaluation.decisionAuthorityGeneration, status: 'approved' } as ActionDecisionReceipt;
+}
+
 function admittedDecision(receipt: ActionDecisionReceipt): Record<string, unknown> {
   const body = {
     decisionId: receipt.decisionId,
@@ -496,9 +547,10 @@ async function applyPatchInContainer(assembly: RealTierAssembly, repositoryRoot:
  */
 async function runApprovalRows(assembly: RealTierAssembly): Promise<{ rows: readonly Row[]; evidence: Record<string, unknown> }> {
   const rows: Row[] = [];
-  const rejected = await rejectedRow(assembly);
+  const substrate = realSubstrate(assembly);
+  const rejected = await rejectedScenario(substrate, 'rejected', false);
   rows.push(...rejected.rows);
-  const approved = await approvedRow(assembly);
+  const approved = await approvedRow(substrate);
   rows.push(...approved.rows);
   return {
     rows,
@@ -517,13 +569,22 @@ async function runApprovalRows(assembly: RealTierAssembly): Promise<{ rows: read
  * The rejected row in its own fresh task/store: an explicit rejection, then the same guarded receiver
  * the approved row uses. The guard refuses before the receiver, so the container counter stays zero and
  * the source bytes are unchanged; the receiver's `patchReceiver` is the only place a byte could change.
+ *
+ * `bypass` exists only for `--red-proof`: it presents the approved decision receipt a service that did
+ * not enforce the rejection would have minted, so the same predicate is scored over a result in which
+ * enforcement is absent.
  */
-async function rejectedRow(assembly: RealTierAssembly): Promise<{ rows: Row[]; decisions: number; exitCodes: (number | null)[]; containerAttempts: number }> {
-  const d = await domain('rejected');
+async function rejectedScenario(
+  substrate: Substrate,
+  scenario: string,
+  bypass: boolean,
+): Promise<{ rows: Row[]; decisions: number; exitCodes: (number | null)[]; containerAttempts: number; result: RejectedResult }> {
+  const d = await domain(scenario);
   const rows: Row[] = [];
   const exitCodes: (number | null)[] = [];
   let decisions = 0;
-  const harness = await guardedHarness(assembly, d, exitCodes);
+  const harness = await guardedHarness(substrate, d, exitCodes);
+  let result: RejectedResult = { outcome: 'not-run', containerAttempts: 0, sourceChanged: false, stateChanged: false };
   try {
     await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
     await d.service.requestDecision(planBindingOf(d));
@@ -544,21 +605,27 @@ async function rejectedRow(assembly: RealTierAssembly): Promise<{ rows: Row[]; d
     rows.push(row('T025 rejected: continuation reads the rejected decision', (await d.service.resolve(PATCH_DECISION)).status === 'rejected'));
 
     // A second, conflicting decision on the same request is refused by the service, not by this probe.
-    const conflicting = await d.service.decide({ taskId: TASK_ID, decisionId: PATCH_DECISION, taskVersion: pendingView.control.version, requestVersion: 1, presentationDigest: pendingView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-late-t052-probe' });
-    rows.push(row('T025 rejected: a conflicting late approval is refused', conflicting.outcome !== 'ok', conflicting.outcome));
+    const conflicting = await d.service
+      .decide({ taskId: TASK_ID, decisionId: PATCH_DECISION, taskVersion: pendingView.control.version, requestVersion: 1, presentationDigest: pendingView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-late-t052-probe' })
+      .then(
+        () => 'recorded',
+        (error: unknown) => (error instanceof ApprovalServiceError ? error.outcome : 'unexpected'),
+      );
+    rows.push(row('T025 rejected: a conflicting late approval is refused as a conflict', conflicting === 'conflict', conflicting));
 
     // The same guarded receiver operation the approved row uses: an APPROVAL_REQUIRED receipt with no
     // approved decision must be refused before the receiver, leaving the source bytes and counter untouched.
     const before = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
-    const refused = await harness.dispatch({ pe: admittedReceipt(receiptFor(d, 'APPROVAL_REQUIRED')) });
+    const stateBefore = await harness.fingerprint();
+    const evaluation = receiptFor(d, 'APPROVAL_REQUIRED');
+    const refused = await harness.dispatch(bypass ? { pe: admittedReceipt(evaluation), ad: admittedDecision(bypassDecisionFor(evaluation)) } : { pe: admittedReceipt(evaluation) });
     const after = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
-    // One row scores the whole rejected-path predicate over the actual dispatch result, its container
-    // counter and the measured source drift — the same predicate the --red-proof run exercises.
-    rows.push(row('T025 rejected: the real guard refuses before any container and leaves the source unchanged', rejectedRefused({ outcome: refused.outcome, containerAttempts: harness.containerAttempts(), sourceChanged: before !== after }), { outcome: refused.outcome, containerAttempts: harness.containerAttempts(), before, after }));
+    result = { outcome: refused.outcome, reason: refused.reason, containerAttempts: harness.containerAttempts(), sourceChanged: before !== after, stateChanged: stateBefore !== (await harness.fingerprint()) };
+    rows.push(row('T025 rejected: the real guard refuses for the missing approval before any container and leaves source, task and journal unchanged', rejectedRefused(result), result));
   } finally {
     d.cleanup();
   }
-  return { rows, decisions, exitCodes, containerAttempts: harness.containerAttempts() };
+  return { rows, decisions, exitCodes, containerAttempts: harness.containerAttempts(), result };
 }
 
 /**
@@ -566,12 +633,12 @@ async function rejectedRow(assembly: RealTierAssembly): Promise<{ rows: Row[]; d
  * performed *inside* the receiver's `patchReceiver` (after the guard admits and the receiver begins
  * the attempt), so no source byte changes before admission.
  */
-async function approvedRow(assembly: RealTierAssembly): Promise<{ rows: Row[]; decisions: number; exitCodes: (number | null)[]; containerAttempts: number }> {
+async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisions: number; exitCodes: (number | null)[]; containerAttempts: number }> {
   const d = await domain('approved');
   const rows: Row[] = [];
   const exitCodes: (number | null)[] = [];
   let decisions = 0;
-  const harness = await guardedHarness(assembly, d, exitCodes);
+  const harness = await guardedHarness(substrate, d, exitCodes);
   try {
     await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
     await d.service.requestDecision(planBindingOf(d));
@@ -635,27 +702,13 @@ function receiptFor(d: Awaited<ReturnType<typeof domain>>, result: 'APPROVAL_REQ
 
 /** The production guard/receiver over one domain, counting container attempts at the receiver. */
 async function guardedHarness(
-  assembly: RealTierAssembly,
+  substrate: Substrate,
   d: Awaited<ReturnType<typeof domain>>,
   exitCodes: (number | null)[],
-): Promise<{ dispatch(receipts: { readonly pe: unknown; readonly ad?: unknown }): Promise<{ readonly outcome: string; readonly reason?: string | undefined }>; containerAttempts: () => number }> {
+): Promise<{ dispatch(receipts: { readonly pe: unknown; readonly ad?: unknown }): Promise<{ readonly outcome: string; readonly reason?: string | undefined }>; containerAttempts: () => number; fingerprint: () => Promise<string> }> {
   const filesystem = new WorkspaceFilesystemPort({ root: d.repositoryRoot });
-  const manager = assembly.workspaceManager;
-  await manager.createWorkspace({
-    taskId: TASK_ID,
-    workspaceId: d.workspaceId,
-    initialRevisionDigest: d.revision,
-    profile: {
-      profileId: assembly.profile.image.label,
-      image: assembly.profile.image.base,
-      imageDigest: assembly.profile.image.imageId,
-      user: assembly.profile.image.user,
-      readOnlyRootFilesystem: true,
-      network: 'none',
-      limits: { timeoutMs: 30_000, maxMemoryBytes: assembly.profile.limits.memoryBytes, maxCpuCores: assembly.profile.limits.cpus, maxPids: assembly.profile.limits.processes },
-      mounts: [],
-    },
-  });
+  const manager = substrate.manager;
+  await manager.createWorkspace({ taskId: TASK_ID, workspaceId: d.workspaceId, initialRevisionDigest: d.revision, profile: substrate.profile });
   let attempts = 0;
   const receiver = createRepositoryReceiverV02({
     guardCapability: { provenance: 'real', capabilityId: `read-${TASK_ID}`, workspaceId: d.workspaceId, taskId: TASK_ID, mediateRead: async operation => await operation.execute() },
@@ -688,7 +741,7 @@ async function guardedHarness(
     // bytes never change before this closure is reached, so a later refusal leaves the tree untouched.
     patchReceiver: async () => {
       attempts += 1;
-      const container = await applyPatchInContainer(assembly, d.repositoryRoot);
+      const container = await substrate.edit(d.repositoryRoot);
       exitCodes.push(container.exitCode);
       assert.equal(container.exitCode, 0, `container edit failed: ${container.stderr}`);
       const next = await filesystem.getCurrentRevisionDigest();
@@ -699,6 +752,7 @@ async function guardedHarness(
   const guard = createExecutionGuardV02({ ports: { statePort: d.statePort, approvalPort: d.service, repositoryPort: receiver }, config: { provenance: 'real' } });
   return {
     containerAttempts: () => attempts,
+    fingerprint: async () => computeCanonicalSha256({ task: await d.statePort.loadTask(TASK_ID), journal: d.statePort.getJournalSnapshot(TASK_ID) }),
     dispatch: async receipts => {
       const state = (await d.statePort.loadTask(TASK_ID)) as TaskState;
       return guard
@@ -708,7 +762,27 @@ async function guardedHarness(
   };
 }
 
+/**
+ * The rejected predicate over two results the real service, guard and receiver produced, on a Docker-free
+ * substrate. The first is an ordinary rejection. The witness presents the approved decision a service that
+ * did not enforce the rejection would have issued, so the same real path lands the edit: the predicate
+ * must score that false, and this run exits nonzero by design. Removing enforcement from the guard turns
+ * the first row red too, which a hand-built result could never do.
+ */
+async function redProof(): Promise<void> {
+  const enforced = await rejectedScenario(inertSubstrate(), 'red-enforced', false);
+  const bypassed = await rejectedScenario(inertSubstrate(), 'red-bypassed', true);
+  report(
+    [
+      row('RED-PROOF a rejection through the real guard is refused for the missing approval (must pass)', rejectedRefused(enforced.result), enforced.result),
+      row('RED-PROOF WITNESS a rejection whose enforcement is bypassed lands the edit and must score false (this row must fail)', rejectedRefused(bypassed.result), bypassed.result),
+    ],
+    { redProof: true, note: 'exits nonzero by design: the witness row shows the predicate rejects a result in which the rejected edit reached the container' },
+  );
+}
+
 async function main(): Promise<void> {
+  if (argv.includes('--red-proof')) await redProof();
   const created = createHostAssembly({
     fetch: (async () => {
       throw new Error('the T052 approval probe makes no model calls');

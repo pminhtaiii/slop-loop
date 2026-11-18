@@ -26,15 +26,16 @@ import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard
 import { createRepositoryReceiverV02 } from '../../../src/foundation/repository-tools.ts';
 import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
 import { createDurableAttemptStartRecoveryHandoff, createDurableUnattemptedClaimClosureHandoff, createRefusingPatchRecoveryHandoff } from '../../../src/foundation/durable-recovery-handoffs.ts';
-import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, computeCommandViewDigest } from '../../../src/contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCheckSetDigest } from '../../../src/contracts/foundation/uc03.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { seedTaskState } from '../../../src/runtime/real-tier-task-seed.ts';
 import { executionProfileOf } from '../../../src/runtime/real-tier-execution-profile.ts';
 import { isSupportedSnapshotPlatform, createTrustedHostSnapshot } from '../../../src/runtime/trusted-host-snapshot.ts';
 import { createHostAssembly, type RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
-import type { BugTask, ExecutionLimits, RepositoryAdmissionContextV02, RunCommandAction, TaskState, validateStateTransition } from '../../../src/contracts/foundation/uc03.ts';
+import type { BugTask, ExecutionLimits, RepositoryAdmissionContextV02, RunCommandAction, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { isCanonicalRelativePath } from '../../../src/contracts/foundation/uc03.ts';
+import { createContainerTrap, type ContainerTrap, type InspectedContainer, hostileAdmission, hostileCommand, measuredAdmissionView, memoryKillWitnessed, parseInspected, REFUSAL_REASONS, refusalContexts, sigkilled, timeoutKilled } from './uc03-real-containment-evidence.ts';
 
 const TASK_ID = 'task-t024';
 const WORKSPACE_ID = 'ws-t024';
@@ -91,21 +92,27 @@ if (selfCheck) {
 }
 
 if (argv.includes('--red-proof')) {
-  // The memory predicate's behavioral red witness. The witness row is the pre-fix false positive — a
-  // generic error that the old predicate certified as memory enforcement — scored by the shipped
-  // predicate: it must come back false, so the row fails and this run exits nonzero by design. The
-  // supporting rows prove the other false positives are rejected too. Loosening the predicate back to
-  // any-error / any-null-exit flips the witness row to green and this red-proof stops failing.
+  // The memory predicate's behavioral red witness. The witness row is the pre-fix false positive: the
+  // executor command was SIGKILLed for an unrelated reason (exit 137, no OOM in its own container) while
+  // a different container did OOM. The shipped predicate must score it false, so the row fails and this
+  // run exits nonzero by design. The supporting rows show the other false positives are rejected and a
+  // genuine kill of the same container passes. Loosening the predicate to ignore which container was
+  // inspected, or to accept a bare exit 137, flips the witness row green and this stops failing.
+  const killed = { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 400 };
+  const sigkillNoOom = { name: 'ctr-executor', oomKilled: false, exitCode: 137 };
+  const otherContainerOom = { name: 'oom-witness-calibration', oomKilled: true, exitCode: 137 };
   const genericError = { exitCode: null, timedOut: false, outcome: 'error', durationMs: 30 };
-  const nullWithTimeout = { exitCode: null, timedOut: true, outcome: 'failure', durationMs: 2_100 };
   const startupFailure = { exitCode: 125, timedOut: false, outcome: 'failure', durationMs: 20 };
+  const ownOom = { name: 'ctr-executor', oomKilled: true, exitCode: 137 };
   report(
     [
-      row('RED-PROOF WITNESS a generic error must not score as a memory kill (this row must fail)', resourceKilled(genericError, 'memory'), genericError),
-      row('RED-PROOF a null exit with a timeout verdict is rejected (must pass)', !resourceKilled(nullWithTimeout, 'memory'), nullWithTimeout),
-      row('RED-PROOF a Docker startup failure is rejected (must pass)', !resourceKilled(startupFailure, 'memory'), startupFailure),
+      row('RED-PROOF WITNESS an unrelated SIGKILL beside a separate OOM container must not score as a memory kill (this row must fail)', memoryKillWitnessed(killed, 'ctr-executor', otherContainerOom, 60_000), { executed: killed, inspected: otherContainerOom }),
+      row('RED-PROOF a SIGKILL with no OOM in its own container is rejected (must pass)', !memoryKillWitnessed(killed, 'ctr-executor', sigkillNoOom, 60_000), sigkillNoOom),
+      row('RED-PROOF a generic error is rejected (must pass)', !memoryKillWitnessed(genericError, 'ctr-executor', ownOom, 60_000), genericError),
+      row('RED-PROOF a Docker startup failure is rejected (must pass)', !memoryKillWitnessed(startupFailure, 'ctr-executor', ownOom, 60_000), startupFailure),
+      row('RED-PROOF the executor container reported OOMKilled with the same exit code is accepted (must pass)', memoryKillWitnessed(killed, 'ctr-executor', ownOom, 60_000), ownOom),
     ],
-    { redProof: true, note: 'exits nonzero by design: the witness row shows the shipped predicate rejects the old false positive' },
+    { redProof: true, note: 'exits nonzero by design: the witness row shows the shipped predicate rejects a SIGKILL whose own container was not OOM-killed' },
   );
 }
 
@@ -128,14 +135,16 @@ if (argv.includes('--helper-check')) {
     [
       row('HELPER-CHECK same digests in different order compare equal (must pass)', sameDigests(a, b)),
       row('HELPER-CHECK a changed digest fails (must pass)', !sameDigests(a, { ...b, 'src/calculator.py': 'sha256:X' })),
-      row('HELPER-CHECK an import error is not a timeout kill (must pass)', !resourceKilled(importError, 'timeout')),
-      row('HELPER-CHECK an observed timeout is a timeout kill (must pass)', resourceKilled(observedTimeout, 'timeout', 2_000)),
-      row('HELPER-CHECK and OOM kill (SIGKILL) is a memory kill (must pass)', resourceKilled(oomKill, 'memory')),
-      row('HELPER-CHECK an import error is not a memory kill (must pass)', !resourceKilled(importError, 'memory')),
-      row('HELPER-CHECK a generic error is not a memory kill (must pass)', !resourceKilled(genericError, 'memory')),
-      row('HELPER-CHECK a null exit with a timeout verdict is not a memory kill (must pass)', !resourceKilled(nullWithTimeout, 'memory')),
-      row('HELPER-CHECK a Docker launch failure (125) is not a memory kill (must pass)', !resourceKilled(launchFailure, 'memory')),
-      row('HELPER-CHECK a timeout settled past its deadline is not an enforced timeout (must pass)', !resourceKilled(lateTimeout, 'timeout', 2_000)),
+      row('HELPER-CHECK an import error is not a timeout kill (must pass)', !timeoutKilled(importError)),
+      row('HELPER-CHECK an observed timeout is a timeout kill (must pass)', timeoutKilled(observedTimeout, 2_000)),
+      row('HELPER-CHECK an OOM-killed executor container is a memory kill (must pass)', memoryKillWitnessed(oomKill, 'ctr-a', { name: 'ctr-a', oomKilled: true, exitCode: 137 }, 60_000)),
+      row('HELPER-CHECK a bare SIGKILL exit is not by itself a memory kill (must pass)', sigkilled(oomKill) && !memoryKillWitnessed(oomKill, 'ctr-a', undefined, 60_000)),
+      row('HELPER-CHECK an import error is not a memory kill (must pass)', !memoryKillWitnessed(importError, 'ctr-a', { name: 'ctr-a', oomKilled: true, exitCode: 1 }, 60_000)),
+      row('HELPER-CHECK a generic error is not a memory kill (must pass)', !sigkilled(genericError)),
+      row('HELPER-CHECK a null exit with a timeout verdict is not a memory kill (must pass)', !sigkilled(nullWithTimeout)),
+      row('HELPER-CHECK a Docker launch failure (125) is not a memory kill (must pass)', !sigkilled(launchFailure)),
+      row('HELPER-CHECK a timeout settled past its deadline is not an enforced timeout (must pass)', !timeoutKilled(lateTimeout, 2_000)),
+      row('HELPER-CHECK an inspect line parses and a missing container does not (must pass)', parseInspected('ctr-a', 'true 137')?.oomKilled === true && parseInspected('ctr-a', 'Error: No such container') === undefined),
     ],
     { helperCheck: true },
   );
@@ -281,62 +290,12 @@ function sameDigests(left: Record<string, string>, right: Record<string, string>
   return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
 }
 
-/**
- * Whether an execution was ended by the admitted resource bound rather than by an unrelated command
- * failure. The production controller reports only `{ exitCode, timedOut, durationMs }`:
- * - a timeout kill is an observed timeout verdict, settled within the admitted deadline plus grace;
- * - a memory kill is a non-timeout SIGKILL (137 = 128+9), the one kill signal the controller surfaces.
- * A launch error (125), an ordinary failure (1), a generic `error` outcome or a null exit never count.
- * A Docker `OOMKilled` observation is asserted beside this predicate as the independent witness.
- */
-function resourceKilled(result: { readonly exitCode: number | null; readonly timedOut: boolean; readonly outcome: string; readonly durationMs?: number }, kind: 'timeout' | 'memory', admittedTimeoutMs?: number): boolean {
-  if (kind === 'timeout') {
-    if (!result.timedOut || result.outcome !== 'timeout') return false;
-    // The kill must be bounded by the admitted deadline plus the spawner's own 2 s SIGKILL grace, so
-    // a runaway that only settled later cannot read as an enforced timeout.
-    return admittedTimeoutMs === undefined || result.durationMs === undefined || result.durationMs <= admittedTimeoutMs + 15_000;
-  }
-  return result.timedOut === false && result.outcome === 'failure' && result.exitCode === 137;
-}
+const OOM_SCRIPT = 'x=bytearray(2*1024**3)';
 
-/**
- * The independent memory witness: the same allocation in a raw disposable container the executor does
- * not own, kept only long enough for `docker inspect` to report `OOMKilled`. Fixture plumbing, never a
- * pass on its own — the row pairs it with the executor's own exit code, so neither alone decides.
- */
-async function dockerOomKilled(assembly: RealTierAssembly, memoryBytes: number): Promise<{ oomKilled: boolean; exitCode: number | null } | { error: string }> {
-  const profile = assembly.profile;
-  const name = `oom-witness-${createHash('sha256').update(`${Date.now()}${Math.random()}`).digest('hex').slice(0, 12)}`;
-  try {
-    await structuredSpawn(
-      'docker',
-      [
-        'run',
-        '--name',
-        name,
-        '--network=none',
-        '--read-only',
-        '--cap-drop=ALL',
-        '--security-opt=no-new-privileges',
-        `--platform=${profile.image.platform}`,
-        `--user=${profile.image.user}`,
-        `--memory=${memoryBytes}`,
-        '--pull=never',
-        imageReference(assembly),
-        'python3',
-        '-c',
-        'x=bytearray(2*1024**3)',
-      ],
-      { timeoutMs: 60_000, maxOutputBytes: 64 * 1024 },
-    );
-    const inspect = await structuredSpawn('docker', ['inspect', '--format', '{{.State.OOMKilled}} {{.State.ExitCode}}', name], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
-    const [oomFlag = '', exitText = ''] = inspect.stdout.trim().split(/\s+/u);
-    return { oomKilled: oomFlag === 'true', exitCode: exitText === '' ? null : Number.parseInt(exitText, 10) };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
-  } finally {
-    await structuredSpawn('docker', ['rm', '-f', name], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
-  }
+/** Docker's own account of one container's end; absent when it cannot be inspected. */
+async function inspectContainer(name: string): Promise<InspectedContainer | undefined> {
+  const result = await structuredSpawn('docker', ['inspect', '--format', '{{.State.OOMKilled}} {{.State.ExitCode}}', name], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
+  return result.exitCode === 0 ? parseInspected(name, result.stdout) : undefined;
 }
 
 /**
@@ -392,10 +351,12 @@ const CONFIG_POLICY = { policyId: 'config-t024', policyVersion: '1.0.0', configI
 const AUTHORITY = { ...CONFIG_POLICY, issuerKeyRef: 'host-config-t024', decisionAuthorityGeneration: 1 };
 
 /**
- * C06–C11 refusal rows through the production guard/receiver: the guard admits only a complete
- * admission context, and every refusal (stale revision, forbidden receipt, no admitted view) is
- * produced by production code with zero receiver dispatch and no task-state change. A state-version
- * counter proves a refused admission never claims, begins an attempt or dispatches.
+ * C06–C11 rows through the production guard/receiver. The port is built the way the bound task's own
+ * port is (`real-tier-owners.ts`): a published authority head and the owner execution profile. The
+ * admission comes from `uc03-real-containment-evidence.ts`, which lifts the view the production builder
+ * issued and digests the whole policy receipt, so the admitted row really claims. Every refusal is
+ * asserted by the text the guard returns, with zero receiver dispatch and the complete task and journal
+ * unchanged.
  */
 async function guardedContainmentRows(assembly: RealTierAssembly, revision: string): Promise<{ rows: Row[]; guardedHostile: Record<string, unknown> }> {
   const rows: Row[] = [];
@@ -407,20 +368,9 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
   for (const [path, content] of Object.entries(CANONICAL)) writeFileSync(join(repositoryRoot, path), content, 'utf8');
   const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
   const store = new DurableStore(join(root, 'store'));
-  // The owner-issued Patch transition the state port needs to reach the edit node, supplied at
-  // construction (the port's public `trustedTransitions` option), not patched in afterwards.
-  const trustedTransitions: Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']> = {};
-  const statePort = new DurableStatePortV02({
-    store,
-    taskId: GUARDED_TASK_ID,
-    initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY },
-    trustedTransitions,
-    // The owner-held profile the bound task's port carries: the workspace's own scratch, the builder's
-    // exclusions version and the task's limits. Without it the port's synthetic constants refuse every
-    // real view, so a guard row would pass on that unrelated refusal instead of its own (STD-W5-105).
-    executionProfile: (taskId, workspaceId) => executionProfileOf(task, assembly.profile.image.label, { taskId, workspaceId }),
-  });
-  const requiredChecks = [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }];
+  const ids = { taskId: GUARDED_TASK_ID, workspaceId: GUARDED_WORKSPACE_ID };
+  const label = assembly.profile.image.label;
+  const requiredChecks = [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }];
   const task: BugTask = {
     taskId: GUARDED_TASK_ID,
     repositoryId: 'repo-t024-guarded',
@@ -437,57 +387,18 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
     configId: CONFIG_POLICY.configId,
     configVersion: CONFIG_POLICY.configVersion,
   };
-  const strategy = 'Guard the divisor';
-  const plan = {
-    planVersion: 1,
-    diagnosis: 'The divisor is not guarded',
-    suspectedCauseLocations: ['src/calculator.py:1'],
-    evidenceRefs: ['evidence-t024'],
-    strategy,
-    scopedChanges: ['src/calculator.py'],
-    checkSetDigest: computeCheckSetDigest(requiredChecks),
-    baselineRef: revision,
-    strategyDigest: computeCanonicalSha256(strategy),
-    decisionRef: 'dec-plan-t024',
-  };
-  const planBindingDigest = computeCanonicalSha256({ taskId: GUARDED_TASK_ID, planVersion: 1, strategyDigest: plan.strategyDigest, baselineRef: revision, evidenceRefs: plan.evidenceRefs, criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria), checkSetDigest: plan.checkSetDigest, decisionRef: plan.decisionRef });
-  const binding = {
-    decisionId: plan.decisionRef,
-    actionKind: 'fix_plan' as const,
-    normalizedActionDigest: computeCanonicalSha256({ actionId: plan.decisionRef, kind: 'approve_fix_plan', planVersion: 1, strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest: plan.checkSetDigest }),
+  const statePort = new DurableStatePortV02({
+    store,
     taskId: GUARDED_TASK_ID,
-    workspaceId: GUARDED_WORKSPACE_ID,
-    repositoryRevisionDigest: revision,
-    policyId: CONFIG_POLICY.policyId,
-    policyVersion: CONFIG_POLICY.policyVersion,
-    planVersion: 1,
-    strategyDigest: plan.strategyDigest,
-    baselineRef: revision,
-    evidenceRefs: plan.evidenceRefs,
-    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-    checkSetDigest: plan.checkSetDigest,
-    status: 'approved' as const,
-  };
-  const freshness = {
-    currentTaskId: GUARDED_TASK_ID,
-    currentWorkspaceId: GUARDED_WORKSPACE_ID,
-    currentRepositoryRevisionDigest: revision,
-    currentPolicyId: CONFIG_POLICY.policyId,
-    currentPolicyVersion: CONFIG_POLICY.policyVersion,
-    currentNormalizedActionDigest: binding.normalizedActionDigest,
-    currentPlanVersion: 1,
-    currentStrategyDigest: plan.strategyDigest,
-    currentBaselineRef: revision,
-    currentEvidenceRefs: plan.evidenceRefs,
-    currentCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-    currentCheckSetDigest: plan.checkSetDigest,
-  };
+    initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY },
+    // The owner-held profile the bound task's port carries: the workspace's own scratch, the builder's
+    // exclusions version and the task's limits. Without it the port's synthetic constants refuse every
+    // real view, so a guard row would pass on that unrelated refusal instead of its own.
+    executionProfile: (taskId, workspaceId) => executionProfileOf(task, label, { taskId, workspaceId }),
+  });
   try {
-    await statePort.transition(seedTaskState(task, { taskId: GUARDED_TASK_ID, runId: GUARDED_RUN_ID, workspaceId: GUARDED_WORKSPACE_ID }), 0);
-    await statePort.transition({ ...((await statePort.loadTask(GUARDED_TASK_ID)) as TaskState), stateVersion: 2, node: 'Investigate', nextAction: 'investigate' }, 1);
-    await statePort.transition({ ...((await statePort.loadTask(GUARDED_TASK_ID)) as TaskState), stateVersion: 3, node: 'AwaitPlan', planVersion: 1, plan, activeDecisionId: plan.decisionRef, nextAction: 'approve-fix-plan' }, 2);
-    trustedTransitions[4] = { approval: { binding, freshness } };
-    await statePort.transition({ ...((await statePort.loadTask(GUARDED_TASK_ID)) as TaskState), stateVersion: 4, node: 'Patch', nextAction: 'apply-patch' }, 3);
+    await statePort.transition(seedTaskState(task, { ...ids, runId: GUARDED_RUN_ID }), 0);
+    await statePort.transition({ ...((await statePort.loadTask(GUARDED_TASK_ID)) as TaskState), stateVersion: 2, node: 'Investigate', nextAction: 'propose-fix-plan' }, 1);
 
     const manager = assembly.workspaceManager;
     await manager.createWorkspace({
@@ -495,7 +406,7 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
       workspaceId: GUARDED_WORKSPACE_ID,
       initialRevisionDigest: revision,
       profile: {
-        profileId: assembly.profile.image.label,
+        profileId: label,
         image: assembly.profile.image.base,
         imageDigest: assembly.profile.image.imageId,
         user: assembly.profile.image.user,
@@ -506,60 +417,9 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
       },
     });
     await seedRepoVolume(assembly, computeWorkspaceVolumeIds(GUARDED_TASK_ID, GUARDED_WORKSPACE_ID).repoVolumeId);
-    const guardedView = await manager.admitCommandView({ workspaceId: GUARDED_WORKSPACE_ID, requiredFiles: ['src/calculator.py', 'tests/test_calculator.py'] });
-
-    const command = (actionId: string): RunCommandAction => ({ actionId, kind: 'run_command', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], workingDirectory: '/workspace/repo' });
-    const admissionFor = (action: RunCommandAction, overrides: (base: Record<string, unknown>) => Record<string, unknown> = base => base): RepositoryAdmissionContextV02 => {
-      const view02 = { viewId: guardedView.viewId, taskId: GUARDED_TASK_ID, workspaceId: GUARDED_WORKSPACE_ID, canonicalRevisionDigest: revision, admittedFiles: guardedView.admittedFiles, exclusionsPolicyVersion: guardedView.exclusionsPolicyVersion, scratchIdentity: guardedView.scratchIdentity, mountedReadOnly: true as const, isolationProfileRef: assembly.profile.image.label };
-      const viewDigest = computeCommandViewDigest(view02);
-      const commandView = { ...view02, viewId: guardedView.viewId, canonicalRevision: revision, viewDigest };
-      const base = {
-        schemaVersion: '0.2.0',
-        subjectKind: 'repository-action',
-        planApplicability: 'approved-plan',
-        taskStateSchemaVersion: '0.2.0',
-        expectedTaskStateVersion: 4,
-        controlSchemaVersion: '0.2.0',
-        expectedControlVersion: 1,
-        expectedEpoch: 1,
-        taskId: GUARDED_TASK_ID,
-        runId: GUARDED_RUN_ID,
-        workspaceId: GUARDED_WORKSPACE_ID,
-        repositoryId: task.repositoryId,
-        runnableNode: 'Patch',
-        canonicalRevision: revision,
-        executionProfileId: assembly.profile.image.label,
-        action,
-        actionDigest: computeActionDigest(action),
-        policyAuthorityRef: AUTHORITY,
-        policyEvaluationReceipt: {
-          receiptId: `receipt-eval-${action.actionId}`,
-          receiptDigest: computeCanonicalSha256({ receiptId: `receipt-eval-${action.actionId}` }),
-          actionDigest: computeActionDigest(action),
-          freshnessContextDigest: computeCanonicalSha256({ freshness: action.actionId }),
-          policyId: CONFIG_POLICY.policyId,
-          policyVersion: CONFIG_POLICY.policyVersion,
-          configId: CONFIG_POLICY.configId,
-          configVersion: CONFIG_POLICY.configVersion,
-          decisionAuthorityGeneration: 1,
-          result: 'APPROVAL_REQUIRED' as const,
-        },
-        actionDecisionReceipt: {
-          decisionId: `dec-action-${action.actionId}`,
-          decisionDigest: computeCanonicalSha256({ decisionId: `dec-action-${action.actionId}` }),
-          actionDigest: computeActionDigest(action),
-          evaluationReceiptRef: `receipt-eval-${action.actionId}`,
-          decisionAuthorityGeneration: 1,
-          status: 'approved' as const,
-        },
-        planBindingDigest,
-        planDecisionRef: plan.decisionRef,
-        commandView,
-        finiteBounds: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuSeconds: 120, maxMemoryBytes: 536_870_912, maxProcessCount: 64, isolationProfileRef: assembly.profile.image.label },
-        reservationRefs: [`res-${action.actionId}-timeout`, `res-${action.actionId}-out`, `res-${action.actionId}-cpu`, `res-${action.actionId}-mem`, `res-${action.actionId}-proc`],
-      };
-      return overrides(base) as unknown as RepositoryAdmissionContextV02;
-    };
+    const view = await measuredAdmissionView(params => manager.admitMeasuredCommandView(params), GUARDED_WORKSPACE_ID, ['src/calculator.py', 'tests/test_calculator.py'], label);
+    const state = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
+    const input = { state, view, profile: executionProfileOf(task, label, ids), authority: AUTHORITY, checks: requiredChecks };
 
     let receiverCalls = 0;
     const receiver = createRepositoryReceiverV02({
@@ -572,7 +432,7 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
       statePort,
       commandExecutor: assembly.executor,
       workspaceManager: manager,
-      trustedCommandResourcePolicy: { isolationProfileRef: assembly.profile.image.label, limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 1, maxMemoryBytes: 536_870_912, maxPids: 64 } },
+      trustedCommandResourcePolicy: { isolationProfileRef: label, limits: task.limits },
       adapterIdentity: assembly.executor.getAdapterIdentity(),
       processIncarnation: assembly.executor.getProcessIncarnation(),
       fencingGeneration: assembly.executor.getFencingGeneration() || 1,
@@ -588,84 +448,51 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
       },
     };
     const guard = createExecutionGuardV02({ ports: { statePort, repositoryPort: guardedReceiver }, config: { provenance: 'real' } });
-    /** A claim/attempt count from the durable journal: a refused admission must add neither. */
+    /** Claim and attempt counts from the durable journal, for the evidence record. */
     const journalCounts = (): { claims: number; attempts: number } => {
       const journal = statePort.getJournalSnapshot(GUARDED_TASK_ID) as { claims?: readonly unknown[]; attempts?: readonly unknown[] } | null;
       return { claims: journal?.claims?.length ?? 0, attempts: journal?.attempts?.length ?? 0 };
     };
-    const dispatch = async (action: RunCommandAction, context: RepositoryAdmissionContextV02) => {
+    /** The whole task record and journal: a refusal that rewrote either with equal content is still a change. */
+    const fingerprint = async (): Promise<string> => computeCanonicalSha256({ task: await statePort.loadTask(GUARDED_TASK_ID), journal: statePort.getJournalSnapshot(GUARDED_TASK_ID) });
+    const dispatch = async (context: RepositoryAdmissionContextV02) => {
       const before = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
-      const beforeJournal = journalCounts();
+      const beforePrint = await fingerprint();
       const beforeCalls = receiverCalls;
-      const result = await guard.validateAndExecute(action, before, context).catch((error: unknown) => ({ outcome: 'denied' as const, reason: error instanceof Error ? error.message : String(error) }));
-      const after = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
-      return { result, changed: after.stateVersion !== before.stateVersion, receiverCalls: receiverCalls - beforeCalls, journal: journalCounts(), beforeJournal };
+      const result = await guard.validateAndExecute(context.action, before, context).catch((error: unknown) => ({ outcome: 'denied' as const, reason: error instanceof Error ? error.message : String(error) }));
+      return { result, unchanged: beforePrint === (await fingerprint()), receiverCalls: receiverCalls - beforeCalls, journal: journalCounts() };
     };
-    const reasonHas = (result: { readonly reason?: string | undefined }, code: string): boolean => typeof result.reason === 'string' && result.reason.includes(code);
+    const reasonHas = (result: { readonly reason?: string | undefined }, text: string): boolean => typeof result.reason === 'string' && result.reason.includes(text);
 
-    // Each refusal is asserted by its own production reason code, so removing one guard cannot leave the
-    // row green on an unrelated refusal (STD-W5-105).
-    const stale = await dispatch(command('act-guarded-stale'), admissionFor(command('act-guarded-stale'), base => ({ ...base, canonicalRevision: `sha256:${'0'.repeat(64)}`, commandView: { ...(base['commandView'] as Record<string, unknown>), canonicalRevision: `sha256:${'0'.repeat(64)}` } })));
-    rows.push(row('C06–C11 the production guard refuses a stale admission (STATE_CONTEXT_MISMATCH) with zero receiver dispatch', reasonHas(stale.result, 'STATE_CONTEXT_MISMATCH') && stale.receiverCalls === 0 && !stale.changed, stale.result));
+    // Each refusal is asserted by the text the guard actually returns for it, so removing one guard
+    // cannot leave its row green on an unrelated refusal.
+    const refusals = refusalContexts(input);
+    const refusalRows = [
+      ['stale', 'C06–C11 the production guard refuses a stale admission (STATE_CONTEXT_MISMATCH) with zero receiver dispatch'],
+      ['forbidden', 'C06–C11 the production guard refuses a FORBIDDEN admission ("FORBIDDEN result never admits") with zero receiver dispatch'],
+      ['noView', 'C11 the production guard refuses a command with no admitted view ("commandView required") and zero receiver dispatch'],
+      ['noBounds', 'C10 the production guard refuses a command with missing bounds ("finiteBounds required") before any effect'],
+    ] as const;
+    for (const [name, title] of refusalRows) {
+      const refused = await dispatch(refusals[name]);
+      rows.push(row(title, refused.result.outcome === 'denied' && reasonHas(refused.result, REFUSAL_REASONS[name]) && refused.receiverCalls === 0 && refused.unchanged, refused.result));
+    }
 
-    const forbidden = await dispatch(
-      command('act-guarded-forbidden'),
-      admissionFor(command('act-guarded-forbidden'), base => ({ ...base, policyEvaluationReceipt: { ...(base['policyEvaluationReceipt'] as Record<string, unknown>), result: 'FORBIDDEN' }, actionDecisionReceipt: undefined })),
-    );
-    rows.push(row('C06–C11 the production guard refuses a FORBIDDEN admission (POLICY_FORBIDDEN) with zero receiver dispatch', reasonHas(forbidden.result, 'POLICY_FORBIDDEN') && forbidden.receiverCalls === 0 && !forbidden.changed, forbidden.result));
+    // A view naming an isolation profile the owner did not admit passes the guard and is refused inside
+    // the receiver's resource-policy step, before any claim or attempt exists.
+    const isolation = await dispatch(refusals.foreignIsolation);
+    rows.push(row('C06 a foreign isolation view is refused inside the receiver before any claim, attempt or executor effect', isolation.result.outcome === 'uncertain-effect' && isolation.receiverCalls === 1 && isolation.unchanged, isolation.result));
 
-    const noView = await dispatch(
-      command('act-guarded-no-view'),
-      admissionFor(command('act-guarded-no-view'), base => {
-        const rest = { ...base };
-        delete rest['commandView'];
-        return rest;
-      }),
-    );
-    rows.push(row('C11 the production guard refuses a command with no admitted view (MISSING_COMMAND_VIEW) and zero receiver dispatch', reasonHas(noView.result, 'MISSING_COMMAND_VIEW') && noView.receiverCalls === 0 && !noView.changed, noView.result));
-
-    const noBounds = await dispatch(
-      command('act-guarded-no-bounds'),
-      admissionFor(command('act-guarded-no-bounds'), base => {
-        const rest = { ...base };
-        delete rest['finiteBounds'];
-        return rest;
-      }),
-    );
-    rows.push(row('C10 the production guard refuses a command with missing bounds (MISSING_FINITE_BOUNDS) before any effect', reasonHas(noBounds.result, 'MISSING_FINITE_BOUNDS') && noBounds.receiverCalls === 0 && !noBounds.changed, noBounds.result));
-
-    // An isolation profile the owner did not admit refuses at the claim, before any claim/attempt exists,
-    // and the receiver reports it rather than settling a command.
-    const isolation = await dispatch(command('act-guarded-isolation'), admissionFor(command('act-guarded-isolation'), base => ({ ...base, commandView: { ...(base['commandView'] as Record<string, unknown>), isolationProfileRef: 'another-isolation-profile' } })));
-    rows.push(
-      row(
-        'C06 the owner profile refuses a foreign isolation view before any claim, attempt or executor effect',
-        !isolation.changed && isolation.journal.claims === isolation.beforeJournal.claims && isolation.journal.attempts === isolation.beforeJournal.attempts && isolation.result.outcome !== 'success',
-        isolation.result,
-      ),
-    );
-
-    // SPEC-W5-107: an admitted hostile command through the *same* production guard, receiver and
-    // executor. Only this row proves a valid admission is not refused by the negative rows above, and
-    // the hostile pytest must pass inside the container with the canonical view mounted read-only.
-    const positiveAction = command('act-guarded-hostile');
-    // The seeded ledgers carry one task and one run row per resource bound; `repositoryResourceSpecs`
-    // requires exactly those ten refs, in task-first, configured-kind order.
-    const resourceKinds = ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const;
-    const guardedProfile = executionProfileOf(task, assembly.profile.image.label, { taskId: GUARDED_TASK_ID, workspaceId: GUARDED_WORKSPACE_ID });
-    const positiveAdmission = admissionFor(positiveAction, base => ({
-      ...base,
-      commandView: { ...(base['commandView'] as Record<string, unknown>), exclusionsPolicyVersion: guardedProfile.exclusionsPolicyVersion, scratchIdentity: guardedProfile.scratchIdentity, viewDigest: computeCommandViewDigest({ ...(base['commandView'] as Record<string, unknown>), exclusionsPolicyVersion: guardedProfile.exclusionsPolicyVersion, scratchIdentity: guardedProfile.scratchIdentity } as never) },
-      finiteBounds: { ...guardedProfile.commandBounds, isolationProfileRef: assembly.profile.image.label },
-      reservationRefs: (['task', 'run'] as const).flatMap(scope => resourceKinds.map(kind => `${scope}-${kind}-${positiveAction.actionId}`)),
-    }));
-    const admitted = await dispatch(positiveAction, positiveAdmission);
-    const hostileResult = admitted.result as { readonly outcome: string; readonly result?: { readonly exitCode?: number | null; readonly stdout?: string; readonly plan?: { readonly executable?: string; readonly argv?: readonly string[] } } };
+    // The admitted row: the same state the refusals left untouched, a view from the production builder
+    // and a receipt digested over its whole body. It must claim, dispatch once and pass the hostile test.
+    const admitted = await dispatch(hostileAdmission({ ...input, action: hostileCommand('act-guarded-hostile') }));
+    const hostileResult = admitted.result as { readonly outcome: string; readonly result?: { readonly exitCode?: number | null; readonly stdout?: string; readonly plan?: { readonly argv?: readonly string[] } } };
     const hostileExit = hostileResult.result?.exitCode;
     guardedEvidence['guardedHostile'] = {
       outcome: admitted.result.outcome,
       exitCode: hostileExit,
       argv: hostileResult.result?.plan?.argv,
+      viewDigest: view.viewDigest,
       receiverCalls: admitted.receiverCalls,
       journal: admitted.journal,
       sample: (hostileResult.result?.stdout ?? '').slice(-1_500),
@@ -687,7 +514,7 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
   return { rows, guardedHostile: guardedEvidence };
 }
 
-async function runContainment(assembly: RealTierAssembly): Promise<ProbeOutcome> {
+async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): Promise<ProbeOutcome> {
   // The pinned Docker profile the production controller and executor validate.
   const profile = assembly.profile;
   const dockerProfile = validateDockerProfile({
@@ -852,25 +679,21 @@ async function runContainment(assembly: RealTierAssembly): Promise<ProbeOutcome>
     );
 
     const memoryBytes = 64 * 1024 * 1024;
-    const oom = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', 'x=bytearray(2*1024**3)'], limits: { ...limits, maxMemoryBytes: memoryBytes } });
-    const oomWitness = await dockerOomKilled(assembly, memoryBytes);
-    evidence['memoryBound'] = { exitCode: oom.exitCode, timedOut: oom.timedOut, outcome: oom.outcome, durationMs: oom.durationMs, witness: oomWitness };
-    // Two independent signals, both required: the controller's SIGKILL exit through the production
-    // executor, and Docker's own `OOMKilled` observation. A generic error, a null exit or a launch
-    // failure scores neither, so no infrastructure failure can read as memory enforcement.
-    rows.push(
-      row(
-        'C10 memory over the admitted ceiling is killed by the kernel OOM killer',
-        resourceKilled(oom, 'memory') && 'oomKilled' in oomWitness && oomWitness.oomKilled === true,
-        evidence['memoryBound'],
-      ),
-    );
+    // The trap keeps the one container this execution starts (it drops only `--rm`), so Docker can say
+    // why exactly that container died. A SIGKILL with no OOM there, or an OOM elsewhere, is not a pass.
+    trap.arm(OOM_SCRIPT);
+    const oom = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', OOM_SCRIPT], limits: { ...limits, maxMemoryBytes: memoryBytes } });
+    const ranName = trap.disarm();
+    const inspected = ranName === undefined ? undefined : await inspectContainer(ranName);
+    if (ranName !== undefined) await structuredSpawn('docker', ['rm', '-f', ranName], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
+    evidence['memoryBound'] = { exitCode: oom.exitCode, timedOut: oom.timedOut, outcome: oom.outcome, durationMs: oom.durationMs, container: inspected, removalDisabledForInspection: true };
+    rows.push(row('C10 memory over the admitted ceiling is OOM-killed in its own executor container, within its timeout', memoryKillWitnessed(oom, ranName, inspected, limits.timeoutMs), evidence['memoryBound']));
 
     const timeout = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', 'import time; time.sleep(30)'], limits: { ...limits, timeoutMs: 2_000 } });
     evidence['timeoutBound'] = { exitCode: timeout.exitCode, timedOut: timeout.timedOut, outcome: timeout.outcome, durationMs: timeout.durationMs };
     // The timeout row requires an observed timeout verdict bounded by the admitted deadline, not merely
     // a nonzero exit or any null code.
-    rows.push(row('C10 a command past its admitted timeout is killed within its deadline', resourceKilled(timeout, 'timeout', 2_000), evidence['timeoutBound']));
+    rows.push(row('C10 a command past its admitted timeout is killed within its deadline', timeoutKilled(timeout, 2_000), evidence['timeoutBound']));
 
     const canonicalAfter = await readVolume(assembly, repoVolumeId);
     const expectedCanonical = Object.fromEntries(Object.entries(CANONICAL).map(([path, content]) => [path, computeFileDigest(Buffer.from(content, 'utf8'))]));
@@ -918,7 +741,9 @@ function permittedViewFiles(admitted: readonly { readonly path: string }[]): Rec
 
 async function main(): Promise<void> {
   const fetchCalls = { count: 0 };
+  const trap = createContainerTrap(structuredSpawn);
   const created = createHostAssembly({
+    spawn: trap.spawn,
     fetch: (async () => {
       fetchCalls.count += 1;
       throw new Error('the T024 containment probe makes no model calls');
@@ -942,7 +767,7 @@ async function main(): Promise<void> {
 
   let outcome: ProbeOutcome;
   try {
-    outcome = await runContainment(assembly);
+    outcome = await runContainment(assembly, trap);
   } catch (error) {
     // A probe that cannot complete is not a containment pass; the message is bounded, never a stack.
     emit('fail', { failed: ['probe'], detail: error instanceof Error ? error.message.slice(0, 400) : 'probe failed' });

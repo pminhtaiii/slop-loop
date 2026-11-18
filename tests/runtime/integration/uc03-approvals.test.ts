@@ -774,21 +774,47 @@ test('C13 rejected: a rejection mints nothing and the guard dispatches no patch'
     assert.equal((await d.service.resolve(PATCH_DECISION)).status, 'rejected', 'continuation reads the rejected decision');
     await assert.rejects(d.service.issueActionDecision(PATCH_DECISION, 'receipt-eval-unused'), (error: unknown) => error instanceof ApprovalServiceError);
 
-    // The equivalent action is refused through the same bound guard dispatch. Its distinct identity means
-    // the old plan approval cannot be substituted for its decision: the guard's own checks refuse it
-    // before the receiver, so the prior approval buys zero patches and zero executor calls (SPEC-W5-110).
-    const { patches, containers, dispatch } = await gate(d);
-    const equivalentRefused = await dispatch({ pe: receiptStub(d) }, undefined, equivalent);
-    assert.equal(equivalentRefused.outcome, 'denied', JSON.stringify(equivalentRefused));
-    assert.equal(patches(), 0, 'an equivalent action cannot reuse the prior approval to land a patch');
-    assert.equal(containers(), 0, 'an equivalent action launches no container');
-
     // Attempt the rejected edit through the same guarded receiver the approved row uses: the service
     // cannot mint the decision receipt a rejection never produced, so the guard refuses before an effect.
+    const { patches, containers, dispatch } = await gate(d);
     const refused = await dispatch({ pe: receiptStub(d) });
     assert.equal(refused.outcome, 'denied', JSON.stringify(refused));
     assert.equal(patches(), 0, 'a rejected decision produces zero patches');
     assert.equal(containers(), 0, 'a rejected decision produces zero executor calls');
+  } finally {
+    d.cleanup();
+  }
+});
+
+test('C13 equivalent substitution: the approval for one action cannot authorize an equivalent action', async () => {
+  const d = await domain();
+  try {
+    // Genuine approved authority for action A, in an otherwise admissible runnable state (task in Patch).
+    await requestPatch(d);
+    const { evaluation, decision } = await approvePatch(d);
+    assert.equal(decision.status, 'approved');
+    await enterPatch(d);
+    const receipts = { pe: admittedReceipt(evaluation), ad: admittedDecision(decision) };
+
+    // B is the same edit under a new identity. A's receipts name A's digest, not B's.
+    const equivalent: ApplyPatchAction = { ...patchActionOf(d), actionId: 'act-patch-equivalent-t052' };
+    assert.notEqual(computeActionDigest(equivalent), computeActionDigest(patchActionOf(d)), 'the equivalent action is a distinct identity');
+    assert.equal(decision.actionDigest, computeActionDigest(patchActionOf(d)), 'the decision is bound to A');
+
+    // Presenting B with A's decision and evaluation through the bound guard is refused for the identity
+    // binding itself, with zero patches and zero container launches.
+    const { patches, containers, dispatch } = await gate(d);
+    const substituted = await dispatch(receipts, undefined, equivalent);
+    assert.equal(substituted.outcome, 'denied', JSON.stringify(substituted));
+    assert.match(substituted.reason ?? '', /actionDigest mismatch/u, 'the refusal is the action-identity binding, not a missing decision or a stale state');
+    assert.equal(patches(), 0, 'the equivalent action lands no patch with the original approval');
+    assert.equal(containers(), 0, 'the equivalent action launches no container');
+
+    // Positive control on the same state and the same receipts: A itself lands exactly one patch, so the
+    // refusal above is the substitution, not an unrelated reason the task could not run.
+    const applied = await dispatch(receipts);
+    assert.equal(applied.outcome, 'success', JSON.stringify(applied));
+    assert.equal(patches(), 1, 'the approved action is the only one that lands');
   } finally {
     d.cleanup();
   }
