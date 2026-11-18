@@ -19,6 +19,7 @@ import { computeCanonicalSha256, validateBugTask } from '../contracts/foundation
 import type { BugTask, PolicyAuthorityRefV02, TaskState } from '../contracts/foundation/uc03.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
 import type { TrustedFilesystemPort } from '../foundation/repository-types.ts';
+import type { ExecutionProfileV02 } from '../persistence/adapters/state-port-v02-admission.ts';
 import { stateReadPolicyDigest } from '../persistence/adapters/state-port-v02-read-fence.ts';
 import { MAX_TASK_REPLANS } from '../uc03/replan-accounting.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
@@ -32,7 +33,10 @@ import type { RealTierAssembly } from './real-tier-assembly.ts';
 import { hostDeliveries } from './real-tier-assembly.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import { buildBoundCapabilities, type BoundCapabilities } from './real-tier-task-producers.ts';
+import { boundExecutionProfileOf, pinnedExecutionProfileOf } from './real-tier-execution-profile.ts';
 import { prepareUC03Host, type UC03HostInputs, type UC03HostReadiness } from './uc03-host-bootstrap.ts';
+
+export { executionProfileOf, pinnedExecutionProfileOf, type PinnedExecutionProfileV02 } from './real-tier-execution-profile.ts';
 
 /** One catalog entry, as the T047 profile's catalog file already declares it. */
 interface RealTierCatalogEntry {
@@ -238,7 +242,12 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   // task id, so a second bind must reuse the first bind's source rather than orphan its registry.
   const filesystem: TrustedFilesystemPort = new WorkspaceFilesystemPort({ root: repositoryRoot });
   const createContext = (): RealContextSource => createHostActionContext({ filesystem, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, ttlMs: actionTtlMs });
-  const owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, authorityRef, createContext });
+  // The profile the real view will carry: the same isolation label the resource policy and the view
+  // builder's owner measurement name, so the port admits the view the tier actually builds. It is
+  // pinned from the validated task now, so a caller mutating `task` afterwards cannot move the ceiling.
+  const pinnedProfile = pinnedExecutionProfileOf(task, assembly.profile.image.label);
+  const executionProfile = (taskId: string, workspaceId: string): ExecutionProfileV02 => boundExecutionProfileOf(pinnedProfile, { taskId, workspaceId });
+  const owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, authorityRef, createContext, executionProfile });
   const contextSource = owners.contextSource;
   if (existing === null) {
     try {

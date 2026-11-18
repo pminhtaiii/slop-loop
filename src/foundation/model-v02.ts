@@ -33,12 +33,25 @@ import {
 import { deepClone, deepFreeze, validateBaseModelInputs, buildTransportPayload, executeTransport, type HostModelTransport, type HostProviderConfig } from './model.ts';
 import { isDeepSeekTransport } from './deepseek-transport.ts';
 
+/** The attempt a final authority check must still be current under, at the last moment before transport. */
+export interface DispatchAuthorityFacts {
+  readonly taskId: string;
+  readonly claimId: string;
+  readonly attempt: AttemptReceiptV02;
+  readonly context: ProviderAdmissionContextV02;
+}
+
 export interface HostModelPortV02Options {
   readonly transport: HostModelTransport;
   readonly statePort: StatePortV02;
   readonly providerConfig?: HostProviderConfig | undefined;
   readonly executorIdentity?: Partial<ExecutorIdentityV02> | undefined;
   readonly currentExecutorIdentity?: (() => Partial<ExecutorIdentityV02>) | undefined;
+  /**
+   * Read the bound task's authoritative current control immediately before transport; `false` refuses
+   * with `FENCED_EXECUTOR` and fetches nothing. A port that configures no check keeps today's behaviour.
+   */
+  readonly currentDispatchAuthority?: ((facts: DispatchAuthorityFacts) => boolean | Promise<boolean>) | undefined;
 }
 
 export interface ModelPortV02Result {
@@ -279,6 +292,16 @@ export class HostModelPortV02 implements ModelPortV02 {
     });
     if (!isCurrent()) return { outcome: 'denied', reason: 'FENCED_EXECUTOR' };
     const payload = buildTransportPayload(snapshotState, snapshotEvidence, snapshotRequest);
+
+    // The last check, after the attempt is durable and with no await between it and the transport call:
+    // a control pause/fence published in the beginAttempt→transport window still refuses here. A
+    // synchronous verdict runs to completion without yielding; only a promise-shaped one is awaited.
+    // It comes before the consumption key is claimed, so a fenced attempt does not poison a later one.
+    const checkAuthority = this.options.currentDispatchAuthority;
+    if (checkAuthority !== undefined) {
+      const verdict = checkAuthority({ taskId: attempt.taskId, claimId: claim.claimId, attempt, context: snapshotContext });
+      if (!(typeof verdict === 'boolean' ? verdict : await verdict)) return { outcome: 'denied', reason: 'FENCED_EXECUTOR' };
+    }
     if (consumedAttempts.has(consumeKey)) return { outcome: 'denied', reason: 'ALREADY_CONSUMED' };
     consumedAttempts.add(consumeKey);
 

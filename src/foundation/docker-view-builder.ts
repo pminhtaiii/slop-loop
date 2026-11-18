@@ -55,6 +55,12 @@ export interface IssuedCommandView {
   readonly measured?: MeasuredCommandViewIsolation;
 }
 
+/**
+ * The exclusions policy version a build stamps when neither the params nor the snapshot supply one.
+ * The owner-side execution profile must name this same value, so it is exported rather than copied.
+ */
+export const DEFAULT_EXCLUSIONS_POLICY_VERSION = '0.1.0';
+
 export type CommandViewOwnerBindingParams = AdmitCommandViewParams & {
   /** Absent for legacy/controlled callers; when present its facts are authoritative. */
   readonly ownerView?: OwnerCommandViewMeasurementV02 | undefined;
@@ -140,7 +146,7 @@ export async function buildDockerCommandView(params: CommandViewOwnerBindingPara
       throw new Error(`STALE_COMMAND_VIEW: Snapshot canonical revision ${snapshot.canonicalRevisionDigest} does not match workspace canonical revision ${initialRev}`);
     }
 
-    const exclusionsPolicyVersion = params.exclusionsPolicyVersion ?? snapshot.exclusionsPolicyVersion ?? '0.1.0';
+    const exclusionsPolicyVersion = params.exclusionsPolicyVersion ?? snapshot.exclusionsPolicyVersion ?? DEFAULT_EXCLUSIONS_POLICY_VERSION;
 
     if (!Array.isArray(snapshot.entries)) {
       throw new Error('INVALID_SNAPSHOT: snapshot.entries must be an array');
