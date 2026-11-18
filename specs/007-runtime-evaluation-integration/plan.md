@@ -142,7 +142,7 @@ Follow [completion](contracts/completion.md) for targeted coder/replan/loop/host
 1. Phase 14 owner lanes: T040, T041 and T042 in parallel, then T043 and T044, then T045 and T046.
 2. Phase 15 profile, image, endpoint and runaway stop: T047, T048 and T049, in parallel with Phase 14.
 3. Phase 16 assembly: T058 (uncertainty gate, after T040/T041/T044), then T050 (task-independent components), then T060 (CLI metadata and Docker preflight), then T061 (per-task binding and seeding). T057 (endpoint scanner) follows T047.
-4. Phase 17 evidence, serialized: T051 (T024), T052 (T025), T053 (T026) and T056 (T066), both controlled and able to start after T044/T040; T059 (T028 runner and gate, controlled); then T054 (T028, live calls).
+4. Phase 17 evidence, serialized: T051 (T024), T052 (T025), T053 (T026) and T056 (T066), both controlled and able to start after T044/T040; T059 (T028 runner and gate, controlled); T062 (real final-snapshot grader, after T059); then T054 (T028, live calls).
 5. Phase 18 context refresh: T055.
 6. Later and separately released: T011 (G-REAL/SC-001), T014's real half, T017, G-RESTART, merge and T039.
 
