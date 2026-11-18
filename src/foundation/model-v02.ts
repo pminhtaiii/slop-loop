@@ -76,6 +76,9 @@ export interface ProviderRecoveryEvidence {
 // Shared by reconstructed receivers in this process; UC-04 owns durable consumption.
 const consumedAttempts = new Set<string>();
 
+/** Bounded retries for the fenced-outcome write; a fence must not leave a durable attempt unaccounted. */
+const FENCED_OUTCOME_WRITES = 2;
+
 /**
  * Versioned ModelPortV02 ingress for both coder and reviewer roles (T051/T052).
  */
@@ -216,7 +219,8 @@ export class HostModelPortV02 implements ModelPortV02 {
       adapterIdentity: executorIdentity.adapterIdentity,
       processIncarnation: executorIdentity.processIncarnation,
     });
-    if (!isCurrent()) return { outcome: 'denied', reason: 'FENCED_EXECUTOR' };
+    // The attempt is durable here, so a fence past this point must be accounted, not bare-denied.
+    if (!isCurrent()) return this.fencedOutcome(snapshotContext, claim, attempt, markRetryableDenial);
     const payload = buildTransportPayload(snapshotState, snapshotEvidence, snapshotRequest);
 
     // The last check, after the attempt is durable and with no await between it and the transport call:
@@ -225,20 +229,19 @@ export class HostModelPortV02 implements ModelPortV02 {
     // It comes before the consumption key is claimed, so a fenced attempt does not poison a later one.
     const checkAuthority = this.options.currentDispatchAuthority;
     if (checkAuthority !== undefined) {
-      let verdict = false;
+      let verdict: unknown = false;
       try {
         verdict = checkAuthority({ taskId: attempt.taskId, claimId: claim.claimId, attempt, context: snapshotContext });
       } catch {
         // An unavailable authority read cannot authorize transport; account the durable attempt below.
       }
-      if (verdict !== true) {
-        // The attempt is already durable. Record a fenced, usage-free hold so the attempted claim and
-        // its reservations are accounted and `reconcileUncertain`/`proven-not-dispatched` can release
-        // them; never leave the claim attempting with no consumable record.
-        markRetryableDenial();
-        await this.recordProviderOutcome(snapshotContext, claim, attempt, buildProviderOutcomeReceipt(snapshotContext, claim, attempt, 'uncertain', { outcome: 'fenced-before-transport' }));
-        return { outcome: 'denied', reason: 'FENCED_EXECUTOR' };
-      }
+      // A thenable would yield before the send, so it never authorizes. A native rejection must still be
+      // consumed here or Node would end the process on an unhandled rejection while the attempt is durable.
+      if (verdict instanceof Promise) verdict.catch(() => undefined);
+      // The attempt is already durable. Record a fenced, usage-free hold so the attempted claim and its
+      // reservations are accounted and `reconcileUncertain`/`proven-not-dispatched` can release them;
+      // never leave the claim attempting with no consumable record.
+      if (verdict !== true) return this.fencedOutcome(snapshotContext, claim, attempt, markRetryableDenial);
     }
     if (consumedAttempts.has(consumeKey)) return { outcome: 'denied', reason: 'ALREADY_CONSUMED' };
     consumedAttempts.add(consumeKey);
@@ -263,7 +266,7 @@ export class HostModelPortV02 implements ModelPortV02 {
       accounted ? usage : undefined,
     );
     const pending = await this.recordProviderOutcome(snapshotContext, claim, attempt, receipt);
-    if (pending) return pending;
+    if (pending.result) return pending.result;
     if (transportRes.outcome === 'observed') {
       return { outcome: 'observed', result: transportRes.result, observedUsage: transportRes.observedUsage };
     }
@@ -271,12 +274,32 @@ export class HostModelPortV02 implements ModelPortV02 {
     return { outcome: 'uncertain', reason: 'PROVIDER_OUTCOME_PENDING' };
   }
 
+  /**
+   * A fence observed after the attempt is durable: record a usage-free uncertain hold so recovery can
+   * release the claim, and never drop the payload when that write fails — the caller replays it to the
+   * owner, since a retried request is refused by the still-attempting claim before it can record again.
+   */
+  private async fencedOutcome(admission: ProviderAdmissionContextV02, claim: ClaimReceiptV02, attempt: AttemptReceiptV02, markRetryableDenial: () => void): Promise<ModelPortV02Result> {
+    markRetryableDenial();
+    const receipt = buildProviderOutcomeReceipt(admission, claim, attempt, 'uncertain', { outcome: 'fenced-before-transport' });
+    // Bounded retry: a lost write must not strand a durable attempt the owner can no longer settle.
+    let pending = await this.recordProviderOutcome(admission, claim, attempt, receipt);
+    for (let write = 1; write < FENCED_OUTCOME_WRITES && !pending.durable; write++) {
+      pending = await this.recordProviderOutcome(admission, claim, attempt, receipt);
+    }
+    return { outcome: 'denied', reason: 'FENCED_EXECUTOR', ...(pending.durable ? {} : { recovery: pending.result?.recovery }) };
+  }
+
+  /**
+   * `durable` reports whether this receipt is provably persisted; `result` is the pending reply that keeps
+   * the recovery payload for an owner, and is null only for a fully settled observed outcome.
+   */
   private async recordProviderOutcome(
     admission: ProviderAdmissionContextV02,
     claim: ClaimReceiptV02,
     attempt: AttemptReceiptV02,
     receipt: ProviderRequestOutcomeReceiptV02,
-  ): Promise<ModelPortV02Result | null> {
+  ): Promise<{ readonly durable: boolean; readonly result: ModelPortV02Result | null }> {
     const validation = validateProviderRequestOutcomeReceiptV02(receipt, {
       trustedAdmission: admission,
       trustedClaim: claim,
@@ -288,18 +311,22 @@ export class HostModelPortV02 implements ModelPortV02 {
     });
     if (!validation.ok) throw new Error('INVALID_PROVIDER_OUTCOME_RECEIPT');
     const recovery = deepFreeze(deepClone({ admission, claim, attempt, receipt: validation.value }));
+    const pending: ModelPortV02Result = { outcome: 'uncertain', reason: 'PROVIDER_OUTCOME_PENDING', recovery };
     try {
       const snapshot = safeSnapshot(await this.options.statePort.recordOutcome(recovery.receipt));
       const recorded = snapshot.ok ? snapshot.value : null;
       if (recorded && typeof recorded === 'object' && !Array.isArray(recorded) && Object.keys(recorded).length === 2 && Object.hasOwn(recorded, 'receiptId') && Object.hasOwn(recorded, 'outcome')) {
-        // The detached snapshot contains only own plain-data properties.
+        // The detached snapshot contains only own plain-data properties. Every matching result proves this
+        // receipt is persisted; only a settled observed receipt may authorize a settled reply.
         const data = recorded as Record<string, unknown>;
-        if (data['receiptId'] === receipt.receiptId && data['outcome'] === 'settled' && receipt.outcome === 'observed') return null;
+        if (data['receiptId'] !== receipt.receiptId) return { durable: false, result: pending };
+        if (data['outcome'] === 'settled' && receipt.outcome === 'observed') return { durable: true, result: null };
+        return { durable: data['outcome'] === 'uncertain' || data['outcome'] === 'recorded-unsettled' || data['outcome'] === 'already-recorded' || data['outcome'] === 'settled', result: pending };
       }
     } catch {
       // A lost recording response cannot authorize dispatch or prove settlement.
     }
-    return { outcome: 'uncertain', reason: 'PROVIDER_OUTCOME_PENDING', recovery };
+    return { durable: false, result: pending };
   }
 }
 

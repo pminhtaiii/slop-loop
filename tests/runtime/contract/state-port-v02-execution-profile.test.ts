@@ -246,6 +246,59 @@ test('(d) the later gates re-read the admission under the same profile', async (
   const receipt = { ...body, receiptDigest: computeClaimClosureDigest(body) };
 
   const constantPort = new DurableStatePortV02({ store: port.store });
-  assert.deepEqual(await constantPort.closeUnattemptedClaim(receipt), { closed: false, receiptId: receipt.receiptId });
-  assert.deepEqual(await port.closeUnattemptedClaim(receipt), { closed: true, receiptId: receipt.receiptId });
+  // The reservation was held under the claim's own admission, which pinned the profile: a port without
+  // that source (or one whose source changed) must still be able to release it.
+  assert.deepEqual(await constantPort.closeUnattemptedClaim(receipt), { closed: true, receiptId: receipt.receiptId });
+});
+
+test('(f) a profile source that drifts or throws after the claim cannot strand the held reservation', async () => {
+  const recipient: ExecutorIdentityV02 = { adapterIdentity: 'adapter-owner-profile', processIncarnation: 'proc-owner-profile', fencingGeneration: 1, payloadDigest: ACTION_DIGEST };
+  const later: readonly (readonly [string, () => ExecutionProfileV02])[] = [
+    [
+      'throws',
+      () => {
+        throw new Error('source moved');
+      },
+    ],
+    ['reports a lower ceiling', () => ({ ...OWNER_PROFILE, commandBounds: { ...OWNER_PROFILE.commandBounds, maxMemoryBytes: 1 } })],
+  ];
+  for (const [label, drifted] of later) {
+    // The attempt gate still begins: admission pinned the profile, so later drift is not re-admitted.
+    const calls = { n: 0 };
+    const attemptPort = await portFor(`f-attempt-${label.replaceAll(' ', '-')}`, () => (++calls.n === 1 ? OWNER_PROFILE : drifted()));
+    const attemptClaim = await attemptPort.claim(contextOf(REAL_VIEW));
+    assert.equal(claimed(attemptClaim), `claim-${ACTION_ID}`, label);
+    assert.equal((await attemptPort.beginAttempt(attemptClaim.claimId, recipient)).attemptId, `att-${attemptClaim.claimId}`, `${label}: the attempt uses the admission-bound profile`);
+
+    // The closure gate releases the held reservation instead of orphaning it.
+    const closeCalls = { n: 0 };
+    const port = await portFor(`f-close-${label.replaceAll(' ', '-')}`, () => (++closeCalls.n === 1 ? OWNER_PROFILE : drifted()));
+    const claim = await port.claim(contextOf(REAL_VIEW));
+    assert.equal(claimed(claim), `claim-${ACTION_ID}`, label);
+    const holdRef = `pause-event-${label.replaceAll(' ', '-')}`;
+    assert.equal(await port.setTaskControl(TASK, 'paused', holdRef), true);
+    const fence = await port.fenceClaimRecipient(claim.claimId, recipient);
+    assert.ok(fence, label);
+    const body = {
+      receiptId: `closure-${label.replaceAll(' ', '-')}`,
+      claimId: claim.claimId,
+      taskId: TASK,
+      reason: holdRef,
+      fencedExecutorIdentity: fence.fencedExecutorIdentity,
+      unconsumedReservations: [...claim.reservationRefs],
+    };
+    assert.deepEqual(
+      await port.closeUnattemptedClaim({ ...body, receiptDigest: computeClaimClosureDigest(body) }),
+      { closed: true, receiptId: body.receiptId },
+      `${label}: the release path stays usable`,
+    );
+    const released = (await port.loadTask(TASK)) as TaskState;
+    const held = (released.budgetLedgers ?? []).flatMap(ledger => ledger.reservations);
+    assert.deepEqual(held, [], `${label}: no reservation is left held`);
+    assert.equal(
+      (released.budgetLedgers ?? []).reduce((sum, ledger) => sum + ledger.consumed, 0),
+      0,
+      `${label}: no usage is charged`,
+    );
+  }
 });

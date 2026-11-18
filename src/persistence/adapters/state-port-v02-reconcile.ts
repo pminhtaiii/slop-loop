@@ -320,7 +320,11 @@ export async function closeUnattemptedClaim(store: StatePortStore, receipt: Clai
     };
     if (!validateClaimClosureReceiptV02(snapshot, validationContext).ok) return refused;
     const task = await store.readTask(taskId);
-    if (!task || !contextMatchesTask(claim.context, task, ownerExecutionProfile(executionProfile, task))) return refused;
+    // Closure releases a claim reserved under its admission-bound profile; a later drift in (or throw
+    // from) the live source must never leave that claim holding reservations with no release path.
+    // Older records without a stored bound profile fall back to the source, as before.
+    const bound = claim.trustedAdmissionContext.subjectKind === 'repository-action' ? claim.trustedAdmissionContext.executionProfile : undefined;
+    if (!task || !contextMatchesTask(claim.context, task, bound ?? ownerExecutionProfile(executionProfile, task))) return refused;
     const staged = stageClaimReservations(claim.context, task.budgetLedgers ?? [], 'release', undefined, true);
     if (!staged) return refused;
     if (!isSafeStorageId(snapshot.receiptId)) return refused;

@@ -44,6 +44,7 @@ import {
 } from './state-port-v02-admission.ts';
 import type { ExecutionProfileSourceV02 } from './state-port-v02-admission.ts';
 import { providerSpecs, replaceLedgers, reviewerIterationSpecs, stageClaimReservations, stageReservation } from './state-port-v02-ledgers.ts';
+import { completeUncertainRecord } from './state-port-v02-uncertain-replay.ts';
 
 export interface ClaimOperationOptions {
   readonly store: StatePortStore;
@@ -164,7 +165,11 @@ export async function beginAttempt(store: StatePortStore, claimId: string, execu
     )
       return NEUTRAL_ATTEMPT_RECEIPT_V02;
     const task = await store.readTask(taskId);
-    if (!task || !contextMatchesTask(claimRecord.context, task, ownerExecutionProfile(executionProfile, task)) || !equal(taskSemantic(task), taskSemantic(claimRecord.taskSnapshot)))
+    // The claim's own admission bound its profile; a later drift in (or throw from) the live source
+    // must not strand a claimed task whose reservations are already held. Older records without a
+    // stored bound profile fall back to the source, as before.
+    const bound = claimRecord.trustedAdmissionContext.subjectKind === 'repository-action' ? claimRecord.trustedAdmissionContext.executionProfile : undefined;
+    if (!task || !contextMatchesTask(claimRecord.context, task, bound ?? ownerExecutionProfile(executionProfile, task)) || !equal(taskSemantic(task), taskSemantic(claimRecord.taskSnapshot)))
       return NEUTRAL_ATTEMPT_RECEIPT_V02;
 
     const repairPatch = isRepairPatch(claimRecord.context);
@@ -251,7 +256,7 @@ export async function recordOutcome(store: StatePortStore, receipt: AttemptOutco
   return store.locked(taskId, async () => {
     const control = await store.readControl(taskId, DEFAULT_CONTROL);
     const prior = await store.readOutcome(taskId, snapshot.receiptId);
-    if (prior) return equal(prior, snapshot) ? { outcome: 'already-recorded', receiptId: snapshot.receiptId } : NEUTRAL_OUTCOME_RECORD_RESULT_V02;
+    if (prior) return equal(prior, snapshot) ? completeUncertainRecord(store, taskId, snapshot) : NEUTRAL_OUTCOME_RECORD_RESULT_V02;
     const claimRecord = await store.readClaim(taskId, snapshot.claimId);
     const attempt = await store.readAttempt(taskId, snapshot.attemptId);
     if (

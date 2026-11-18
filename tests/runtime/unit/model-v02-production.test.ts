@@ -7,7 +7,7 @@ import { computeContextDigest, type HostModelTransport } from '../../../src/foun
 import { HostModelPortV02, derivedModelProvenance } from '../../../src/foundation/model-v02.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { createFixtureSourceEvidence } from '../support/uc03/port-fixtures.ts';
-import { createTestAdmissionTaskStateV02, createTestProviderAdmissionContextV02, createTestProviderRequest } from '../support/uc03/state-fixtures.ts';
+import { createTestAdmissionTaskStateV02, createTestProviderAdmissionContextV02, createTestProviderRequest, createTestUncertainReconciliationReceiptV02 } from '../support/uc03/state-fixtures.ts';
 
 // T006: provenance is derived from the injected transport, never declared on the port.
 
@@ -118,7 +118,78 @@ for (const verdict of [
     assert.equal(result.outcome, 'denied');
     assert.equal(result.reason, 'FENCED_EXECUTOR');
     assert.deepEqual(dispatches, [], 'a non-synchronous verdict sends nothing');
+    assert.equal(statePort.getJournalSnapshot().outcomes.length, 1, 'the durable attempt is accounted, not bare-denied');
   });
+
+test('a rejected authority verdict is consumed, sends nothing, and leaves no unhandled rejection', async () => {
+  const { state, evidence, request, admission, statePort } = admitted();
+  const rejections: unknown[] = [];
+  const listener = (reason: unknown) => rejections.push(reason);
+  process.on('unhandledRejection', listener);
+  try {
+    const port = new HostModelPortV02({
+      statePort,
+      transport: {
+        async execute() {
+          assert.fail('a rejected verdict must send nothing');
+        },
+      },
+      executorIdentity: ACTOR,
+      currentExecutorIdentity: () => ACTOR,
+      currentDispatchAuthority: (() => Promise.reject(new Error('authority read failed'))) as never,
+    });
+    const result = await port.propose(state, evidence, request, admission);
+    assert.equal(result.outcome, 'denied');
+    assert.equal(result.reason, 'FENCED_EXECUTOR');
+    // Let any escaped rejection surface before asserting the process saw none.
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(rejections, [], 'the rejected verdict must not become an unhandled rejection');
+
+    const journal = statePort.getJournalSnapshot();
+    assert.equal(journal.outcomes.length, 1, 'the durable attempt is accounted, not bare-denied');
+    assert.equal(journal.claims[0]?.status, 'uncertain');
+  } finally {
+    process.off('unhandledRejection', listener);
+  }
+});
+
+test('an executor fence after beginAttempt is accounted exactly like a final authority refusal', async () => {
+  const { state, evidence, request, admission, statePort } = admitted();
+  let generation = 1;
+  const ownBegin = statePort.beginAttempt.bind(statePort);
+  statePort.beginAttempt = async (claimId: string, executor: never) => {
+    const attempt = await ownBegin(claimId, executor);
+    // The fence becomes visible only once the attempt is already durable.
+    generation = 2;
+    return attempt;
+  };
+  const port = new HostModelPortV02({
+    statePort,
+    transport: {
+      async execute() {
+        assert.fail('a fenced port must send nothing');
+      },
+    },
+    executorIdentity: ACTOR,
+    currentExecutorIdentity: () => ({ ...ACTOR, fencingGeneration: generation }),
+  });
+  const first = await port.propose(state, evidence, request, admission);
+  assert.equal(first.outcome, 'denied');
+  assert.equal(first.reason, 'FENCED_EXECUTOR');
+
+  const journal = statePort.getJournalSnapshot();
+  assert.equal(journal.attempts.length, 1, 'the durable attempt is kept');
+  assert.equal(journal.outcomes.length, 1, 'the post-beginAttempt fence records an outcome, not a bare denial');
+  assert.equal(journal.outcomes[0]?.outcome, 'uncertain');
+  assert.equal(journal.claims[0]?.status, 'uncertain', 'the claim is accounted, not left attempting');
+
+  // A retried identical request re-enters the journal instead of replaying the bare denial.
+  generation = 1;
+  const second = await port.propose(state, evidence, request, admission);
+  assert.notEqual(second.reason, 'FENCED_EXECUTOR', 'the fence denial is not cached across a retry');
+  assert.equal(second.outcome, 'denied');
+});
 
 test('a post-beginAttempt fence is recorded and keeps the attempt reservations held', async () => {
   const { state, evidence, request, admission, statePort } = admitted();
@@ -160,6 +231,85 @@ test('a post-beginAttempt fence is recorded and keeps the attempt reservations h
   assert.equal(outcomes[0]?.outcome, 'uncertain');
   const claims = (journal as { readonly claims: readonly { readonly status: string }[] }).claims;
   assert.equal(claims[0]?.status, 'uncertain', 'the claim is accounted, not left attempting');
+});
+
+/* ---------------- M3: a failed fenced-outcome write keeps a replayable recovery payload ---------------- */
+
+function fencedPort(statePort: MemoryStatePortV02) {
+  return new HostModelPortV02({
+    statePort,
+    transport: {
+      async execute() {
+        assert.fail('a fenced port must send nothing');
+      },
+    },
+    executorIdentity: ACTOR,
+    currentExecutorIdentity: () => ACTOR,
+    currentDispatchAuthority: () => false,
+  });
+}
+
+test('a fenced-outcome write that fails once still accounts the attempt on the bounded retry', async () => {
+  const { state, evidence, request, admission, statePort } = admitted();
+  const record = statePort.recordOutcome.bind(statePort);
+  let writes = 0;
+  statePort.recordOutcome = async receipt => {
+    writes++;
+    if (writes === 1) throw new Error('transient write failure');
+    return record(receipt);
+  };
+  const result = await fencedPort(statePort).propose(state, evidence, request, admission);
+  assert.equal(result.outcome, 'denied');
+  assert.equal(result.reason, 'FENCED_EXECUTOR');
+  assert.equal(writes, 2, 'the write is retried once, not infinitely');
+  assert.equal(result.recovery, undefined, 'a durable hold needs no recovery payload');
+  const journal = statePort.getJournalSnapshot();
+  assert.equal(journal.outcomes.length, 1);
+  assert.equal(journal.claims[0]?.status, 'uncertain', 'the retried write completes the accounting');
+});
+
+test('a persistently failing fenced-outcome write keeps the payload and the owner can still record it', async () => {
+  const { state, evidence, request, admission, statePort } = admitted();
+  const record = statePort.recordOutcome.bind(statePort);
+  let writes = 0;
+  statePort.recordOutcome = async () => {
+    writes++;
+    throw new Error('persistent write failure');
+  };
+  const result = await fencedPort(statePort).propose(state, evidence, request, admission);
+  assert.equal(result.outcome, 'denied');
+  assert.equal(result.reason, 'FENCED_EXECUTOR');
+  assert.equal(writes, 2, 'the retry is bounded');
+  assert.ok(result.recovery, 'the failed write hands the receipt back instead of discarding it');
+  const journal = statePort.getJournalSnapshot();
+  assert.equal(journal.outcomes.length, 0, 'no outcome was persisted');
+  assert.equal(journal.claims[0]?.status, 'attempting', 'the claim is still attributable to the replayable payload');
+
+  // The owner replays the retained receipt; the fenced attempt then accounts and can be reconciled.
+  statePort.recordOutcome = record;
+  const { receipt } = result.recovery;
+  assert.equal((await statePort.recordOutcome(receipt)).outcome, 'uncertain');
+  assert.equal(statePort.getJournalSnapshot().claims[0]?.status, 'uncertain');
+
+  // The recovered uncertain attempt still reconciles to proven-not-dispatched through a fenced recipient.
+  const executor = receipt.executorIdentity;
+  assert.equal(await statePort.setTaskControl(state.taskId, 'paused', 'pause-m3-persistent-001'), true);
+  const fence = await statePort.fenceAttemptRecipient(receipt.claimId, executor);
+  assert.ok(fence, 'the accounted attempt is fenceable for recovery');
+  const task = await statePort.loadTask(state.taskId);
+  assert.ok(task);
+  const reconciliation = createTestUncertainReconciliationReceiptV02(receipt, result.recovery.claim, result.recovery.attempt, admission, {
+    disposition: 'proven-not-dispatched',
+    fencedRecipientIdentity: fence.recipientIdentity,
+    fencingGeneration: fence.fencingGeneration,
+    fencingProof: fence.proofRef,
+    adapterEvidenceRefs: fence.adapterEvidenceRefs,
+    evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
+    expectedCurrentTaskStateVersion: task.stateVersion,
+    expectedCurrentControlVersion: statePort.getJournalSnapshot().controlVersion,
+  });
+  assert.equal((await statePort.reconcileUncertain(reconciliation)).outcome, 'settled', 'owner reconciliation reaches proven-not-dispatched');
+  assert.equal(statePort.getJournalSnapshot().claims[0]?.status, 'settled');
 });
 
 test('a pre-transport fence is not cached: the same request id is answered from the journal, not a stored denial', async () => {

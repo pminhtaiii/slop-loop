@@ -26,7 +26,7 @@ import { bindRealTierTask, executionProfileOf, pinnedExecutionProfileOf, type Re
 import type { RealTierTaskBinding } from '../../../src/runtime/real-tier-owners.ts';
 import { DEFAULT_EXCLUSIONS_POLICY_VERSION } from '../../../src/foundation/docker-view-builder.ts';
 import { retainedDiffSource } from '../../../src/runtime/real-tier-task-producers.ts';
-import { seedLedgers } from '../../../src/runtime/real-tier-task-seed.ts';
+import { seedLedgers, seedTaskState } from '../../../src/runtime/real-tier-task-seed.ts';
 import { prepareAssembly } from '../../../src/cli/evaluate-host.ts';
 import type { HostConfiguration } from '../../../src/cli/evaluate-host.ts';
 import { providerSpecs, repositoryResourceSpecs, stageReservation } from '../../../src/persistence/adapters/state-port-v02-ledgers.ts';
@@ -914,6 +914,117 @@ test('(r) the bound profile is pinned from the seeded task: mutating the returne
   assert.equal(DEFAULT_EXCLUSIONS_POLICY_VERSION, '0.1.0', 'bumping the builder default is a deliberate change to real claims');
   assert.equal(pinnedExecutionProfileOf(taskOf(), 'uc03-pytest:real-tier').exclusionsPolicyVersion, DEFAULT_EXCLUSIONS_POLICY_VERSION);
 });
+
+test('the state port gets the exact profile the cache compared, not a second source call', async () => {
+  // A source that answers one ceiling first and another later would otherwise let the cache accept a
+  // rebind while the port it was built with admits only the other: the port must receive the resolved
+  // value, and a fresh equivalent callback must still reuse the cached owners.
+  const { assembly } = assemblyFor(fixtureOf());
+  const ids = { taskId: 'task-profile-once', workspaceId: 'ws-profile-once', repositoryId: 'repo-calc' };
+  const high = {
+    isolationProfileRef: 'profile-once',
+    exclusionsPolicyVersion: 'exclusions-v1',
+    scratchIdentity: 'scratch-once',
+    commandBounds: { timeoutMs: 30_000, maxOutputBytes: 65_536, maxCpuSeconds: 10, maxMemoryBytes: 536_870_912, maxProcessCount: 5 },
+    patchBounds: { maxPatchBytes: 4096, maxChangedPaths: 5 },
+  };
+  const low = { ...high, commandBounds: { ...high.commandBounds, maxMemoryBytes: 1 } };
+  let calls = 0;
+  const drifting = (): typeof high => (++calls === 1 ? high : low);
+  const authorityRef = { policyId: 'policy-once', policyVersion: '1.0.0', configId: 'config-once', configVersion: '1.0.0', issuerKeyRef: 'key-once', decisionAuthorityGeneration: 1 };
+  const owners = assembly.owners.taskOwners({ ...ids, executionProfile: drifting, authorityRef });
+  assert.equal(calls, 1, 'the binding resolves the profile once for both the cache and the port');
+
+  const seeded = seedTaskState(taskOf({ taskId: ids.taskId }), { taskId: ids.taskId, runId: 'run-profile-once', workspaceId: ids.workspaceId });
+  await owners.statePort.transition(seeded, 0);
+  const current = (await owners.statePort.loadTask(ids.taskId)) as TaskState;
+  await owners.statePort.transition({ ...current, node: 'Investigate', nextAction: 'propose-fix-plan', stateVersion: current.stateVersion + 1 }, current.stateVersion);
+
+  // The port admits the ceiling the cache recorded; a second source call would have stored the low one.
+  const admitted = await owners.statePort.claim(profileClaimContext(ids, current, authorityRef, high) as never);
+  assert.notEqual(admitted.claimId, '', 'the port serves the resolved high ceiling');
+  assert.equal(calls, 1, 'serving the claim asks the source no further time');
+
+  const fresh = assemblyFor(fixtureOf()).assembly;
+  const cached = fresh.owners.taskOwners({ ...ids, executionProfile: () => high });
+  assert.equal(fresh.owners.taskOwners({ ...ids, executionProfile: () => ({ ...high }) }).statePort, cached.statePort, 'a fresh equivalent callback reuses the cached owners');
+});
+
+/** A pre-plan diagnostic `run_command` admission carrying exactly `profile`'s command bounds. */
+function profileClaimContext(
+  ids: { readonly taskId: string; readonly workspaceId: string },
+  task: TaskState,
+  authority: {
+    readonly policyId: string;
+    readonly policyVersion: string;
+    readonly configId: string;
+    readonly configVersion: string;
+    readonly issuerKeyRef: string;
+    readonly decisionAuthorityGeneration: number;
+  },
+  profile: {
+    readonly isolationProfileRef: string;
+    readonly exclusionsPolicyVersion: string;
+    readonly scratchIdentity: string;
+    readonly commandBounds: { readonly timeoutMs: number; readonly maxOutputBytes: number; readonly maxCpuSeconds: number; readonly maxMemoryBytes: number; readonly maxProcessCount: number };
+  },
+): unknown {
+  const action = { actionId: 'act-profile-once', kind: 'run_command' as const, executable: 'pytest', argv: ['-q', 't.py'], workingDirectory: 'tests', purpose: 'investigate' };
+  const actionDigest = computeActionDigest(action);
+  const { policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration } = authority;
+  const receiptBody = {
+    receiptId: 'pe-profile-once',
+    actionDigest,
+    freshnessContextDigest: computeCanonicalSha256({ freshness: 'profile-once' }),
+    policyId,
+    policyVersion,
+    configId,
+    configVersion,
+    decisionAuthorityGeneration,
+    result: 'ALLOWED' as const,
+  };
+  const commandView = {
+    viewId: 'view-profile-once',
+    taskId: ids.taskId,
+    workspaceId: ids.workspaceId,
+    canonicalRevision: task.repositoryRevisionDigest,
+    admittedFiles: [{ path: 't.py', digest: computeCanonicalSha256('t.py') }],
+    exclusionsPolicyVersion: profile.exclusionsPolicyVersion,
+    scratchIdentity: profile.scratchIdentity,
+    mountedReadOnly: true as const,
+    isolationProfileRef: profile.isolationProfileRef,
+  };
+  const kinds = ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const;
+  return {
+    schemaVersion: '0.2.0',
+    subjectKind: 'repository-action',
+    planApplicability: 'pre-plan-diagnostic',
+    taskStateSchemaVersion: '0.2.0',
+    expectedTaskStateVersion: 2,
+    controlSchemaVersion: '0.2.0',
+    expectedControlVersion: 1,
+    expectedEpoch: 1,
+    taskId: ids.taskId,
+    runId: task.runId,
+    workspaceId: ids.workspaceId,
+    repositoryId: task.repositoryId,
+    runnableNode: 'Investigate',
+    canonicalRevision: task.repositoryRevisionDigest,
+    executionProfileId: profile.isolationProfileRef,
+    action,
+    actionDigest,
+    policyAuthorityRef: authority,
+    policyEvaluationReceipt: { ...receiptBody, receiptDigest: computeCanonicalSha256(receiptBody) },
+    commandView: { ...commandView, viewDigest: computeCanonicalSha256(commandView) },
+    finiteBounds: { ...profile.commandBounds, isolationProfileRef: profile.isolationProfileRef },
+    reservationRefs: kinds.flatMap(kind => [`task-${kind}-once`, `run-${kind}-once`]),
+    diagnosticPurpose: 'investigate',
+    taskCriteriaDigest: computeCanonicalSha256(['criterion']),
+    checkSetDigest: computeCanonicalSha256([]),
+    checkId: 'check-1',
+    testPath: 't.py',
+  };
+}
 
 test('an uncloneable binding publishes no owners and permits a valid retry', () => {
   const { assembly } = assemblyFor(fixtureOf());

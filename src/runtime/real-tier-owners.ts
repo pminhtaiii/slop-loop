@@ -21,7 +21,7 @@ import type { ApprovalPort, TaskState } from '../contracts/foundation/uc03.ts';
 import type { PolicyAuthorityRefV02 } from '../contracts/foundation/uc03.ts';
 import type { GuardedReadOwnerPort } from '../foundation/guarded-read-capability.ts';
 import { isProductionJournal } from '../foundation/production-journal-registry.ts';
-import { equal, ownerExecutionProfile, type ExecutionProfileSourceV02 } from '../persistence/adapters/state-port-v02-admission.ts';
+import { equal, ownerExecutionProfile, type ExecutionProfileSourceV02, type ExecutionProfileV02 } from '../persistence/adapters/state-port-v02-admission.ts';
 import type { OwnerDelivery } from './evaluation-composition.ts';
 import { createBaselineEvidenceAdapter } from './baseline-evidence-adapter.ts';
 import { createConsoleApprovalPort } from './console-approval-port.ts';
@@ -75,14 +75,23 @@ export interface RealTierBoundOwners {
 }
 
 /** The security facts a cached owner set is frozen to: its port's profile and control seed, its approval profile. */
-type BoundSecurityFacts = Readonly<Record<'workspaceId' | 'repositoryId' | 'executionProfile' | 'authorityRef' | 'policyIdentity', unknown>>;
+type BoundSecurityFacts = Readonly<{
+  workspaceId: string;
+  repositoryId: string;
+  executionProfile: ExecutionProfileV02 | undefined;
+  authorityRef: PolicyAuthorityRefV02 | undefined;
+  policyIdentity: RealTierTaskBinding['policyIdentity'];
+}>;
 
-/** The facts one binding supplies, with a function profile resolved now: the bind path passes a fresh closure each time. */
+/** The facts one binding supplies. A function profile is resolved once, here, and detached: the same
+ * value then serves both the cache comparison and the port, so a source that drifts between calls
+ * cannot make the cache accept a ceiling the port refuses. */
 function suppliedFactsOf(binding: RealTierTaskBinding): BoundSecurityFacts {
+  const resolved = ownerExecutionProfile(binding.executionProfile, { taskId: binding.taskId, workspaceId: binding.workspaceId });
   return {
     workspaceId: binding.workspaceId,
     repositoryId: binding.repositoryId,
-    executionProfile: ownerExecutionProfile(binding.executionProfile, { taskId: binding.taskId, workspaceId: binding.workspaceId }),
+    executionProfile: resolved === undefined ? undefined : structuredClone(resolved),
     authorityRef: binding.authorityRef,
     policyIdentity: binding.policyIdentity,
   };
@@ -196,7 +205,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
       store,
       taskId: binding.taskId,
       ...(binding.authorityRef === undefined ? {} : { initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable' as const, activeAuthorityRef: binding.authorityRef } }),
-      ...(binding.executionProfile === undefined ? {} : { executionProfile: binding.executionProfile }),
+      ...(supplied.executionProfile === undefined ? {} : { executionProfile: supplied.executionProfile }),
     });
     // The UC-05 policy identity must be the task's own, or every action fact classifies as unbound.
     const profile = Object.freeze({
