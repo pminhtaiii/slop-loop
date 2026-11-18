@@ -30,6 +30,7 @@ import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, com
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { seedTaskState } from '../../../src/runtime/real-tier-task-seed.ts';
+import { executionProfileOf } from '../../../src/runtime/real-tier-execution-profile.ts';
 import { isSupportedSnapshotPlatform, createTrustedHostSnapshot } from '../../../src/runtime/trusted-host-snapshot.ts';
 import { createHostAssembly, type RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import type { BugTask, ExecutionLimits, RepositoryAdmissionContextV02, RunCommandAction, TaskState, validateStateTransition } from '../../../src/contracts/foundation/uc03.ts';
@@ -89,23 +90,52 @@ if (selfCheck) {
   report([row('SELF-CHECK deliberate red row', false, 'a failed row must never pass')], { selfCheck: true });
 }
 
+if (argv.includes('--red-proof')) {
+  // The memory predicate's behavioral red witness. The witness row is the pre-fix false positive — a
+  // generic error that the old predicate certified as memory enforcement — scored by the shipped
+  // predicate: it must come back false, so the row fails and this run exits nonzero by design. The
+  // supporting rows prove the other false positives are rejected too. Loosening the predicate back to
+  // any-error / any-null-exit flips the witness row to green and this red-proof stops failing.
+  const genericError = { exitCode: null, timedOut: false, outcome: 'error', durationMs: 30 };
+  const nullWithTimeout = { exitCode: null, timedOut: true, outcome: 'failure', durationMs: 2_100 };
+  const startupFailure = { exitCode: 125, timedOut: false, outcome: 'failure', durationMs: 20 };
+  report(
+    [
+      row('RED-PROOF WITNESS a generic error must not score as a memory kill (this row must fail)', resourceKilled(genericError, 'memory'), genericError),
+      row('RED-PROOF a null exit with a timeout verdict is rejected (must pass)', !resourceKilled(nullWithTimeout, 'memory'), nullWithTimeout),
+      row('RED-PROOF a Docker startup failure is rejected (must pass)', !resourceKilled(startupFailure, 'memory'), startupFailure),
+    ],
+    { redProof: true, note: 'exits nonzero by design: the witness row shows the shipped predicate rejects the old false positive' },
+  );
+}
+
 if (argv.includes('--helper-check')) {
-  // Independent behavioral checks for the two row predicates that previously mis-scored evidence.
+  // Independent behavioral checks for the row predicates that previously mis-scored evidence.
   // Order must not decide a mutation verdict: the same mapping in a different order is still equal.
   const a = { 'tests/test_malicious.py': 'sha256:1', 'src/calculator.py': 'sha256:2', '.env': 'sha256:3' };
   const b = { '.env': 'sha256:3', 'src/calculator.py': 'sha256:2', 'tests/test_malicious.py': 'sha256:1' };
   // An unrelated command failure (import error, exit 1, not timed out) is not resource enforcement.
-  const importError = { exitCode: 1, timedOut: false, outcome: 'failure' };
-  const oomKill = { exitCode: 137, timedOut: false, outcome: 'failure' };
-  const observedTimeout = { exitCode: null, timedOut: true, outcome: 'timeout' };
+  const importError = { exitCode: 1, timedOut: false, outcome: 'failure', durationMs: 200 };
+  const oomKill = { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 400 };
+  const observedTimeout = { exitCode: null, timedOut: true, outcome: 'timeout', durationMs: 2_100 };
+  // The false positives SPEC-W5-108 / STD-W5-103 name: a generic error, a null exit with a timeout
+  // verdict but no timeout outcome, and a Docker launch failure (exit 125) all once scored as kills.
+  const genericError = { exitCode: null, timedOut: false, outcome: 'error', durationMs: 30 };
+  const nullWithTimeout = { exitCode: null, timedOut: true, outcome: 'failure', durationMs: 2_100 };
+  const launchFailure = { exitCode: 125, timedOut: false, outcome: 'failure', durationMs: 20 };
+  const lateTimeout = { exitCode: null, timedOut: true, outcome: 'timeout', durationMs: 120_000 };
   report(
     [
       row('HELPER-CHECK same digests in different order compare equal (must pass)', sameDigests(a, b)),
       row('HELPER-CHECK a changed digest fails (must pass)', !sameDigests(a, { ...b, 'src/calculator.py': 'sha256:X' })),
       row('HELPER-CHECK an import error is not a timeout kill (must pass)', !resourceKilled(importError, 'timeout')),
-      row('HELPER-CHECK an observed timeout is a timeout kill (must pass)', resourceKilled(observedTimeout, 'timeout')),
-      row('HELPER-CHECK an OOM kill (SIGKILL) is a memory kill (must pass)', resourceKilled(oomKill, 'memory')),
+      row('HELPER-CHECK an observed timeout is a timeout kill (must pass)', resourceKilled(observedTimeout, 'timeout', 2_000)),
+      row('HELPER-CHECK and OOM kill (SIGKILL) is a memory kill (must pass)', resourceKilled(oomKill, 'memory')),
       row('HELPER-CHECK an import error is not a memory kill (must pass)', !resourceKilled(importError, 'memory')),
+      row('HELPER-CHECK a generic error is not a memory kill (must pass)', !resourceKilled(genericError, 'memory')),
+      row('HELPER-CHECK a null exit with a timeout verdict is not a memory kill (must pass)', !resourceKilled(nullWithTimeout, 'memory')),
+      row('HELPER-CHECK a Docker launch failure (125) is not a memory kill (must pass)', !resourceKilled(launchFailure, 'memory')),
+      row('HELPER-CHECK a timeout settled past its deadline is not an enforced timeout (must pass)', !resourceKilled(lateTimeout, 'timeout', 2_000)),
     ],
     { helperCheck: true },
   );
@@ -253,12 +283,60 @@ function sameDigests(left: Record<string, string>, right: Record<string, string>
 
 /**
  * Whether an execution was ended by the admitted resource bound rather than by an unrelated command
- * failure: only a timeout verdict, or a signal-style exit with no observed output, counts as enforced.
+ * failure. The production controller reports only `{ exitCode, timedOut, durationMs }`:
+ * - a timeout kill is an observed timeout verdict, settled within the admitted deadline plus grace;
+ * - a memory kill is a non-timeout SIGKILL (137 = 128+9), the one kill signal the controller surfaces.
+ * A launch error (125), an ordinary failure (1), a generic `error` outcome or a null exit never count.
+ * A Docker `OOMKilled` observation is asserted beside this predicate as the independent witness.
  */
-function resourceKilled(result: { readonly exitCode: number | null; readonly timedOut: boolean; readonly outcome: string }, kind: 'timeout' | 'memory'): boolean {
-  if (kind === 'timeout') return result.timedOut && (result.outcome === 'timeout' || result.outcome === 'failure');
-  // A memory kill has no portable exit code: the kernel's OOM kill surfaces as a null code or SIGKILL (137/9).
-  return result.exitCode === null || result.exitCode === 137 || result.exitCode === 9 || result.outcome === 'error';
+function resourceKilled(result: { readonly exitCode: number | null; readonly timedOut: boolean; readonly outcome: string; readonly durationMs?: number }, kind: 'timeout' | 'memory', admittedTimeoutMs?: number): boolean {
+  if (kind === 'timeout') {
+    if (!result.timedOut || result.outcome !== 'timeout') return false;
+    // The kill must be bounded by the admitted deadline plus the spawner's own 2 s SIGKILL grace, so
+    // a runaway that only settled later cannot read as an enforced timeout.
+    return admittedTimeoutMs === undefined || result.durationMs === undefined || result.durationMs <= admittedTimeoutMs + 15_000;
+  }
+  return result.timedOut === false && result.outcome === 'failure' && result.exitCode === 137;
+}
+
+/**
+ * The independent memory witness: the same allocation in a raw disposable container the executor does
+ * not own, kept only long enough for `docker inspect` to report `OOMKilled`. Fixture plumbing, never a
+ * pass on its own — the row pairs it with the executor's own exit code, so neither alone decides.
+ */
+async function dockerOomKilled(assembly: RealTierAssembly, memoryBytes: number): Promise<{ oomKilled: boolean; exitCode: number | null } | { error: string }> {
+  const profile = assembly.profile;
+  const name = `oom-witness-${createHash('sha256').update(`${Date.now()}${Math.random()}`).digest('hex').slice(0, 12)}`;
+  try {
+    await structuredSpawn(
+      'docker',
+      [
+        'run',
+        '--name',
+        name,
+        '--network=none',
+        '--read-only',
+        '--cap-drop=ALL',
+        '--security-opt=no-new-privileges',
+        `--platform=${profile.image.platform}`,
+        `--user=${profile.image.user}`,
+        `--memory=${memoryBytes}`,
+        '--pull=never',
+        imageReference(assembly),
+        'python3',
+        '-c',
+        'x=bytearray(2*1024**3)',
+      ],
+      { timeoutMs: 60_000, maxOutputBytes: 64 * 1024 },
+    );
+    const inspect = await structuredSpawn('docker', ['inspect', '--format', '{{.State.OOMKilled}} {{.State.ExitCode}}', name], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
+    const [oomFlag = '', exitText = ''] = inspect.stdout.trim().split(/\s+/u);
+    return { oomKilled: oomFlag === 'true', exitCode: exitText === '' ? null : Number.parseInt(exitText, 10) };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    await structuredSpawn('docker', ['rm', '-f', name], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
+  }
 }
 
 /**
@@ -332,7 +410,16 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
   // The owner-issued Patch transition the state port needs to reach the edit node, supplied at
   // construction (the port's public `trustedTransitions` option), not patched in afterwards.
   const trustedTransitions: Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']> = {};
-  const statePort = new DurableStatePortV02({ store, taskId: GUARDED_TASK_ID, initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY }, trustedTransitions });
+  const statePort = new DurableStatePortV02({
+    store,
+    taskId: GUARDED_TASK_ID,
+    initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY },
+    trustedTransitions,
+    // The owner-held profile the bound task's port carries: the workspace's own scratch, the builder's
+    // exclusions version and the task's limits. Without it the port's synthetic constants refuse every
+    // real view, so a guard row would pass on that unrelated refusal instead of its own (STD-W5-105).
+    executionProfile: (taskId, workspaceId) => executionProfileOf(task, assembly.profile.image.label, { taskId, workspaceId }),
+  });
   const requiredChecks = [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }];
   const task: BugTask = {
     taskId: GUARDED_TASK_ID,
@@ -501,26 +588,32 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
       },
     };
     const guard = createExecutionGuardV02({ ports: { statePort, repositoryPort: guardedReceiver }, config: { provenance: 'real' } });
+    /** A claim/attempt count from the durable journal: a refused admission must add neither. */
+    const journalCounts = (): { claims: number; attempts: number } => {
+      const journal = statePort.getJournalSnapshot(GUARDED_TASK_ID) as { claims?: readonly unknown[]; attempts?: readonly unknown[] } | null;
+      return { claims: journal?.claims?.length ?? 0, attempts: journal?.attempts?.length ?? 0 };
+    };
     const dispatch = async (action: RunCommandAction, context: RepositoryAdmissionContextV02) => {
       const before = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
+      const beforeJournal = journalCounts();
+      const beforeCalls = receiverCalls;
       const result = await guard.validateAndExecute(action, before, context).catch((error: unknown) => ({ outcome: 'denied' as const, reason: error instanceof Error ? error.message : String(error) }));
       const after = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
-      return { result, changed: after.stateVersion !== before.stateVersion };
+      return { result, changed: after.stateVersion !== before.stateVersion, receiverCalls: receiverCalls - beforeCalls, journal: journalCounts(), beforeJournal };
     };
+    const reasonHas = (result: { readonly reason?: string | undefined }, code: string): boolean => typeof result.reason === 'string' && result.reason.includes(code);
 
-    // A refused admission (stale revision) never reaches the receiver and changes no task state. This is
-    // the guard's own refusal-before-effect on the same production guard/receiver chain the run uses.
+    // Each refusal is asserted by its own production reason code, so removing one guard cannot leave the
+    // row green on an unrelated refusal (STD-W5-105).
     const stale = await dispatch(command('act-guarded-stale'), admissionFor(command('act-guarded-stale'), base => ({ ...base, canonicalRevision: `sha256:${'0'.repeat(64)}`, commandView: { ...(base['commandView'] as Record<string, unknown>), canonicalRevision: `sha256:${'0'.repeat(64)}` } })));
-    rows.push(row('C06–C11 the production guard refuses a stale admission with zero receiver dispatch', !stale.changed && receiverCalls === 0 && stale.result.outcome !== 'success', stale.result));
+    rows.push(row('C06–C11 the production guard refuses a stale admission (STATE_CONTEXT_MISMATCH) with zero receiver dispatch', reasonHas(stale.result, 'STATE_CONTEXT_MISMATCH') && stale.receiverCalls === 0 && !stale.changed, stale.result));
 
-    // A FORBIDDEN evaluation receipt never admits through the guard, again with zero receiver dispatch.
     const forbidden = await dispatch(
       command('act-guarded-forbidden'),
       admissionFor(command('act-guarded-forbidden'), base => ({ ...base, policyEvaluationReceipt: { ...(base['policyEvaluationReceipt'] as Record<string, unknown>), result: 'FORBIDDEN' }, actionDecisionReceipt: undefined })),
     );
-    rows.push(row('C06–C11 the production guard refuses a FORBIDDEN admission with zero receiver dispatch', !forbidden.changed && receiverCalls === 0 && forbidden.result.outcome !== 'success', forbidden.result));
+    rows.push(row('C06–C11 the production guard refuses a FORBIDDEN admission (POLICY_FORBIDDEN) with zero receiver dispatch', reasonHas(forbidden.result, 'POLICY_FORBIDDEN') && forbidden.receiverCalls === 0 && !forbidden.changed, forbidden.result));
 
-    // A missing command view never admits through the guard, again with zero receiver dispatch.
     const noView = await dispatch(
       command('act-guarded-no-view'),
       admissionFor(command('act-guarded-no-view'), base => {
@@ -529,7 +622,61 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
         return rest;
       }),
     );
-    rows.push(row('C11 the production guard refuses a command with no admitted view and zero receiver dispatch', !noView.changed && receiverCalls === 0 && noView.result.outcome !== 'success', noView.result));
+    rows.push(row('C11 the production guard refuses a command with no admitted view (MISSING_COMMAND_VIEW) and zero receiver dispatch', reasonHas(noView.result, 'MISSING_COMMAND_VIEW') && noView.receiverCalls === 0 && !noView.changed, noView.result));
+
+    const noBounds = await dispatch(
+      command('act-guarded-no-bounds'),
+      admissionFor(command('act-guarded-no-bounds'), base => {
+        const rest = { ...base };
+        delete rest['finiteBounds'];
+        return rest;
+      }),
+    );
+    rows.push(row('C10 the production guard refuses a command with missing bounds (MISSING_FINITE_BOUNDS) before any effect', reasonHas(noBounds.result, 'MISSING_FINITE_BOUNDS') && noBounds.receiverCalls === 0 && !noBounds.changed, noBounds.result));
+
+    // An isolation profile the owner did not admit refuses at the claim, before any claim/attempt exists,
+    // and the receiver reports it rather than settling a command.
+    const isolation = await dispatch(command('act-guarded-isolation'), admissionFor(command('act-guarded-isolation'), base => ({ ...base, commandView: { ...(base['commandView'] as Record<string, unknown>), isolationProfileRef: 'another-isolation-profile' } })));
+    rows.push(
+      row(
+        'C06 the owner profile refuses a foreign isolation view before any claim, attempt or executor effect',
+        !isolation.changed && isolation.journal.claims === isolation.beforeJournal.claims && isolation.journal.attempts === isolation.beforeJournal.attempts && isolation.result.outcome !== 'success',
+        isolation.result,
+      ),
+    );
+
+    // SPEC-W5-107: an admitted hostile command through the *same* production guard, receiver and
+    // executor. Only this row proves a valid admission is not refused by the negative rows above, and
+    // the hostile pytest must pass inside the container with the canonical view mounted read-only.
+    const positiveAction = command('act-guarded-hostile');
+    // The seeded ledgers carry one task and one run row per resource bound; `repositoryResourceSpecs`
+    // requires exactly those ten refs, in task-first, configured-kind order.
+    const resourceKinds = ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const;
+    const guardedProfile = executionProfileOf(task, assembly.profile.image.label, { taskId: GUARDED_TASK_ID, workspaceId: GUARDED_WORKSPACE_ID });
+    const positiveAdmission = admissionFor(positiveAction, base => ({
+      ...base,
+      commandView: { ...(base['commandView'] as Record<string, unknown>), exclusionsPolicyVersion: guardedProfile.exclusionsPolicyVersion, scratchIdentity: guardedProfile.scratchIdentity, viewDigest: computeCommandViewDigest({ ...(base['commandView'] as Record<string, unknown>), exclusionsPolicyVersion: guardedProfile.exclusionsPolicyVersion, scratchIdentity: guardedProfile.scratchIdentity } as never) },
+      finiteBounds: { ...guardedProfile.commandBounds, isolationProfileRef: assembly.profile.image.label },
+      reservationRefs: (['task', 'run'] as const).flatMap(scope => resourceKinds.map(kind => `${scope}-${kind}-${positiveAction.actionId}`)),
+    }));
+    const admitted = await dispatch(positiveAction, positiveAdmission);
+    const hostileResult = admitted.result as { readonly outcome: string; readonly result?: { readonly exitCode?: number | null; readonly stdout?: string; readonly plan?: { readonly executable?: string; readonly argv?: readonly string[] } } };
+    const hostileExit = hostileResult.result?.exitCode;
+    guardedEvidence['guardedHostile'] = {
+      outcome: admitted.result.outcome,
+      exitCode: hostileExit,
+      argv: hostileResult.result?.plan?.argv,
+      receiverCalls: admitted.receiverCalls,
+      journal: admitted.journal,
+      sample: (hostileResult.result?.stdout ?? '').slice(-1_500),
+    };
+    rows.push(
+      row(
+        'C06–C11 an admitted hostile pytest dispatches exactly once through the production guard and receiver and exits 0',
+        admitted.result.outcome === 'success' && admitted.receiverCalls === 1 && hostileExit === 0 && admitted.journal.claims === 1 && admitted.journal.attempts === 1,
+        guardedEvidence['guardedHostile'],
+      ),
+    );
   } finally {
     await assembly.controller.cleanup().catch(() => undefined);
     for (const volume of [computeWorkspaceVolumeIds(GUARDED_TASK_ID, GUARDED_WORKSPACE_ID).repoVolumeId, computeWorkspaceVolumeIds(GUARDED_TASK_ID, GUARDED_WORKSPACE_ID).scratchVolumeId]) {
@@ -704,15 +851,26 @@ async function runContainment(assembly: RealTierAssembly): Promise<ProbeOutcome>
       ),
     );
 
-    const oom = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', 'x=bytearray(2*1024**3)'], limits: { ...limits, maxMemoryBytes: 64 * 1024 * 1024 } });
-    evidence['memoryBound'] = { exitCode: oom.exitCode, timedOut: oom.timedOut, outcome: oom.outcome };
-    // Only a resource-shaped termination counts; an import/startup failure is not memory enforcement.
-    rows.push(row('C10 memory over the admitted ceiling is killed', resourceKilled(oom, 'memory'), evidence['memoryBound']));
+    const memoryBytes = 64 * 1024 * 1024;
+    const oom = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', 'x=bytearray(2*1024**3)'], limits: { ...limits, maxMemoryBytes: memoryBytes } });
+    const oomWitness = await dockerOomKilled(assembly, memoryBytes);
+    evidence['memoryBound'] = { exitCode: oom.exitCode, timedOut: oom.timedOut, outcome: oom.outcome, durationMs: oom.durationMs, witness: oomWitness };
+    // Two independent signals, both required: the controller's SIGKILL exit through the production
+    // executor, and Docker's own `OOMKilled` observation. A generic error, a null exit or a launch
+    // failure scores neither, so no infrastructure failure can read as memory enforcement.
+    rows.push(
+      row(
+        'C10 memory over the admitted ceiling is killed by the kernel OOM killer',
+        resourceKilled(oom, 'memory') && 'oomKilled' in oomWitness && oomWitness.oomKilled === true,
+        evidence['memoryBound'],
+      ),
+    );
 
     const timeout = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', 'import time; time.sleep(30)'], limits: { ...limits, timeoutMs: 2_000 } });
     evidence['timeoutBound'] = { exitCode: timeout.exitCode, timedOut: timeout.timedOut, outcome: timeout.outcome, durationMs: timeout.durationMs };
-    // The timeout row requires an observed timeout verdict, not merely a nonzero exit.
-    rows.push(row('C10 a command past its admitted timeout is killed', resourceKilled(timeout, 'timeout'), evidence['timeoutBound']));
+    // The timeout row requires an observed timeout verdict bounded by the admitted deadline, not merely
+    // a nonzero exit or any null code.
+    rows.push(row('C10 a command past its admitted timeout is killed within its deadline', resourceKilled(timeout, 'timeout', 2_000), evidence['timeoutBound']));
 
     const canonicalAfter = await readVolume(assembly, repoVolumeId);
     const expectedCanonical = Object.fromEntries(Object.entries(CANONICAL).map(([path, content]) => [path, computeFileDigest(Buffer.from(content, 'utf8'))]));

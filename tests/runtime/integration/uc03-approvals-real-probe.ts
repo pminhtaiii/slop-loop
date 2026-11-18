@@ -78,23 +78,43 @@ function report(rows: readonly Row[], evidence: Record<string, unknown>): void {
 
 const row = (caseName: string, ok: boolean, detail?: unknown): Row => ({ case: caseName, ok, detail });
 
+/**
+ * The rejected row's real predicate: a rejected decision must be refused before any container runs and
+ * must leave the source unchanged. Scored over the actual result shape (SPEC-W5-110's behavioral
+ * red witness), so removing rejection enforcement changes the verdict rather than a hard-coded value.
+ */
+function rejectedRefused(result: { readonly outcome: string; readonly containerAttempts: number; readonly sourceChanged: boolean }): boolean {
+  return result.outcome !== 'success' && result.containerAttempts === 0 && result.sourceChanged === false;
+}
+
 if (selfCheck) {
   // The same `report` path a real failed row takes: this must exit 1, which is the red proof.
   report([row('SELF-CHECK deliberate red row', false, 'a failed row must never pass')], { selfCheck: true });
 }
 
 if (argv.includes('--red-proof')) {
-  // The rejected row's own predicate, scored against a run count that did occur and one that did not:
-  // a rejected decision that somehow reached a container must score false and exit 1.
-  report([row('T025 rejected: zero container runs (one run must fail)', [0].length === 0, { runs: 1 }), row('T025 rejected: zero container runs (no run must pass)', [].length === 0, { runs: 0 })], {
-    redProof: true,
-  });
+  // The rejected row's real predicate, over a real result shape. The witness row is a rejection that
+  // somehow reached a container: the shipped predicate must score it false, so the witness row fails
+  // and this run exits nonzero by design. The second row shows the same predicate accepts the true
+  // clean refusal. Removing rejection enforcement flips the witness row green, so the red-proof stops
+  // failing — the behavioral change the review asked to detect.
+  const clean = { outcome: 'pending-approval', containerAttempts: 0, sourceChanged: false };
+  const reachedContainer = { outcome: 'success', containerAttempts: 1, sourceChanged: true };
+  report(
+    [
+      row('RED-PROOF WITNESS a rejection that reached a container must score false (this row must fail)', rejectedRefused(reachedContainer), reachedContainer),
+      row('RED-PROOF a rejection refused before any container scores true (must pass)', rejectedRefused(clean), clean),
+    ],
+    { redProof: true, note: 'exits nonzero by design: the witness row shows the shipped predicate rejects a container-reaching rejection' },
+  );
 }
 
 interface Domain {
   readonly root: string;
   readonly repositoryRoot: string;
   readonly revision: string;
+  /** Per-scenario, so the one shared assembly's workspace manager never sees a duplicate (SPEC-W5-109). */
+  readonly workspaceId: string;
   readonly statePort: DurableStatePortV02;
   readonly service: ApprovalService & ApprovalServiceV02;
   readonly source: HostActionContext;
@@ -138,6 +158,7 @@ function taskOf(revision: string): BugTask {
 /** One temp store, one temp repository, the seeded `AwaitPlan` task and the real UC-05 service. */
 async function domain(scenario: string): Promise<Domain> {
   const root = mkdtempSync(join(tmpdir(), `uc03-approvals-probe-${scenario}-`));
+  const workspaceId = `${WORKSPACE_ID}-${scenario}`;
   const repositoryRoot = join(root, 'repository');
   mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
   mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
@@ -173,11 +194,11 @@ async function domain(scenario: string): Promise<Domain> {
   const store = new DurableStore(join(root, 'store'));
   const statePort = new DurableStatePortV02({ store, taskId: TASK_ID, initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY }, trustedTransitions });
   const approvals = new DurableApprovalStore({ storageDir: join(root, 'approvals'), durableStore: store, profile: PROFILE, provenance: 'real' });
-  const source = createHostActionContext({ filesystem, workspaceId: WORKSPACE_ID, repositoryId: REPOSITORY_ID, policyIdentity: POLICY, ttlMs: 600_000 });
+  const source = createHostActionContext({ filesystem, workspaceId, repositoryId: REPOSITORY_ID, policyIdentity: POLICY, ttlMs: 600_000 });
   const context = {
     loadForAction: async (taskId: string, actionId: string) => {
       const observed = await source.observe(taskId, actionId);
-      return { ...observed, freshness: planFreshness(task, plan, observed.facts.repositoryRevisionDigest, observed.action), runId: RUN_ID };
+      return { ...observed, freshness: planFreshness(task, plan, observed.facts.repositoryRevisionDigest, workspaceId, observed.action), runId: RUN_ID };
     },
     loadForDecision: async (decisionId: string) => context.loadForAction(TASK_ID, decisionId),
   };
@@ -196,7 +217,7 @@ async function domain(scenario: string): Promise<Domain> {
       stateVersion: 1,
       taskId: TASK_ID,
       runId: RUN_ID,
-      workspaceId: WORKSPACE_ID,
+      workspaceId,
       repositoryId: REPOSITORY_ID,
       repositoryRevisionDigest: revision,
       goal: task.goal,
@@ -224,6 +245,7 @@ async function domain(scenario: string): Promise<Domain> {
     root,
     repositoryRoot,
     revision,
+    workspaceId,
     statePort,
     service,
     source,
@@ -236,7 +258,7 @@ async function domain(scenario: string): Promise<Domain> {
   };
 }
 
-function planFreshness(task: BugTask, plan: FixPlan, revision: string, observed: { readonly actionId: string; readonly kind: string }): Record<string, unknown> {
+function planFreshness(task: BugTask, plan: FixPlan, revision: string, workspaceId: string, observed: { readonly actionId: string; readonly kind: string }): Record<string, unknown> {
   const planAction =
     observed.kind === 'approve_fix_plan'
       ? {
@@ -250,7 +272,7 @@ function planFreshness(task: BugTask, plan: FixPlan, revision: string, observed:
       : null;
   return {
     currentTaskId: TASK_ID,
-    currentWorkspaceId: WORKSPACE_ID,
+    currentWorkspaceId: workspaceId,
     currentRepositoryRevisionDigest: revision,
     currentPolicyId: POLICY.policyId,
     currentPolicyVersion: POLICY.policyVersion,
@@ -299,7 +321,7 @@ const POLICY_OPTIONS = { planApplicability: 'approved-plan' as const };
 function planFacts(d: Domain): Record<string, unknown> {
   return {
     taskId: TASK_ID,
-    workspaceId: WORKSPACE_ID,
+    workspaceId: d.workspaceId,
     repositoryId: REPOSITORY_ID,
     repositoryRevisionDigest: d.revision,
     policyIdentity: POLICY,
@@ -319,7 +341,7 @@ function planBindingOf(d: Domain): ApprovalBinding {
     actionKind: 'fix_plan',
     normalizedActionDigest: computeCanonicalSha256(PLAN_ACTION(d)),
     taskId: TASK_ID,
-    workspaceId: WORKSPACE_ID,
+    workspaceId: d.workspaceId,
     repositoryRevisionDigest: d.revision,
     policyId: POLICY.policyId,
     policyVersion: POLICY.policyVersion,
@@ -337,7 +359,7 @@ function patchFacts(d: Domain, approvedPlan: ApprovalBinding): Record<string, un
   return {
     taskId: TASK_ID,
     runId: RUN_ID,
-    workspaceId: WORKSPACE_ID,
+    workspaceId: d.workspaceId,
     repositoryId: REPOSITORY_ID,
     repositoryRevisionDigest: d.revision,
     policyIdentity: POLICY,
@@ -347,7 +369,7 @@ function patchFacts(d: Domain, approvedPlan: ApprovalBinding): Record<string, un
     safety: SAFETY,
     patch: { fileCount: 1, addedDeletedLines: 3, dependencyChange: false, deletion: false, structuralChange: false, sensitiveConfiguration: true, productionCode: true },
     command: null,
-    plan: { binding: approvedPlan, context: planFreshness(d.task, d.plan, d.revision, { actionId: PLAN_DECISION, kind: 'approve_fix_plan' }), materialChange: false, replanSlot: null },
+    plan: { binding: approvedPlan, context: planFreshness(d.task, d.plan, d.revision, d.workspaceId, { actionId: PLAN_DECISION, kind: 'approve_fix_plan' }), materialChange: false, replanSlot: null },
     taskStateVersion: 1,
     taskNode: 'AwaitPlan',
     planApplicability: 'approved-plan',
@@ -368,7 +390,7 @@ function patchBindingOf(d: Domain): ApprovalBinding {
     actionKind: 'action',
     normalizedActionDigest: computeActionDigest(patchActionOf(d)),
     taskId: TASK_ID,
-    workspaceId: WORKSPACE_ID,
+    workspaceId: d.workspaceId,
     repositoryRevisionDigest: d.revision,
     policyId: POLICY.policyId,
     policyVersion: POLICY.policyVersion,
@@ -416,7 +438,7 @@ function admissionContext(d: Domain, state: TaskState, receipts: { readonly pe: 
     expectedEpoch: 1,
     taskId: TASK_ID,
     runId: RUN_ID,
-    workspaceId: WORKSPACE_ID,
+    workspaceId: d.workspaceId,
     repositoryId: REPOSITORY_ID,
     runnableNode: state.node,
     canonicalRevision: d.revision,
@@ -530,9 +552,9 @@ async function rejectedRow(assembly: RealTierAssembly): Promise<{ rows: Row[]; d
     const before = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
     const refused = await harness.dispatch({ pe: admittedReceipt(receiptFor(d, 'APPROVAL_REQUIRED')) });
     const after = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
-    rows.push(row('T025 rejected: the real guard refuses the rejected path', refused.outcome !== 'success', { outcome: refused.outcome }));
-    rows.push(row('T025 rejected: zero patches and zero container runs', harness.containerAttempts() === 0 && exitCodes.length === 0, { containerAttempts: harness.containerAttempts(), runs: exitCodes.length }));
-    rows.push(row('T025 rejected: the source bytes are unchanged by the refusal', before === after, { before, after }));
+    // One row scores the whole rejected-path predicate over the actual dispatch result, its container
+    // counter and the measured source drift — the same predicate the --red-proof run exercises.
+    rows.push(row('T025 rejected: the real guard refuses before any container and leaves the source unchanged', rejectedRefused({ outcome: refused.outcome, containerAttempts: harness.containerAttempts(), sourceChanged: before !== after }), { outcome: refused.outcome, containerAttempts: harness.containerAttempts(), before, after }));
   } finally {
     d.cleanup();
   }
@@ -590,7 +612,7 @@ async function approvedRow(assembly: RealTierAssembly): Promise<{ rows: Row[]; d
 async function enterPatch(d: Awaited<ReturnType<typeof domain>>, approvedPlan: ApprovalBinding, decisionId: string): Promise<void> {
   const current = (await d.statePort.loadTask(TASK_ID)) as TaskState;
   const next: TaskState = { ...current, stateVersion: current.stateVersion + 1, node: 'Patch', nextAction: 'apply-patch' };
-  d.trustedTransitions[next.stateVersion] = { approval: { binding: approvedPlan, freshness: planFreshness(d.task, d.plan, d.revision, { actionId: decisionId, kind: 'approve_fix_plan' }) } };
+  d.trustedTransitions[next.stateVersion] = { approval: { binding: approvedPlan, freshness: planFreshness(d.task, d.plan, d.revision, d.workspaceId, { actionId: decisionId, kind: 'approve_fix_plan' }) } };
   await d.statePort.transition(next, current.stateVersion);
 }
 
@@ -621,7 +643,7 @@ async function guardedHarness(
   const manager = assembly.workspaceManager;
   await manager.createWorkspace({
     taskId: TASK_ID,
-    workspaceId: WORKSPACE_ID,
+    workspaceId: d.workspaceId,
     initialRevisionDigest: d.revision,
     profile: {
       profileId: assembly.profile.image.label,
@@ -636,7 +658,7 @@ async function guardedHarness(
   });
   let attempts = 0;
   const receiver = createRepositoryReceiverV02({
-    guardCapability: { provenance: 'real', capabilityId: `read-${TASK_ID}`, workspaceId: WORKSPACE_ID, taskId: TASK_ID, mediateRead: async operation => await operation.execute() },
+    guardCapability: { provenance: 'real', capabilityId: `read-${TASK_ID}`, workspaceId: d.workspaceId, taskId: TASK_ID, mediateRead: async operation => await operation.execute() },
     fsPort: filesystem,
     limits: { maxExcerptBytes: 65_536, maxResultCount: 32 },
     expectedRevisionDigest: d.revision,
@@ -670,7 +692,7 @@ async function guardedHarness(
       exitCodes.push(container.exitCode);
       assert.equal(container.exitCode, 0, `container edit failed: ${container.stderr}`);
       const next = await filesystem.getCurrentRevisionDigest();
-      manager.setCanonicalRevision(WORKSPACE_ID, next);
+      manager.setCanonicalRevision(d.workspaceId, next);
       return { applied: true, newRevisionDigest: next };
     },
   });

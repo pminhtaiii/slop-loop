@@ -19,7 +19,8 @@ import test from 'node:test';
 
 import { ApprovalServiceError, createApprovalService, type ApprovalService, type ApprovalServiceV02 } from '../../../src/approvals/service.ts';
 import { computePlanBindingDigest, evaluatePlanBinding } from '../../../src/approvals/plan-binding.ts';
-import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, CONTRACT_VERSION } from '../../../src/contracts/foundation/uc03.ts';
+import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, computeCommandViewDigest, CONTRACT_VERSION } from '../../../src/contracts/foundation/uc03.ts';
+import { computeWorkspaceVolumeIds } from '../../../src/foundation/docker-workspace-policy.ts';
 import type { validateStateTransition } from '../../../src/contracts/foundation/uc03.ts';
 import type { ActionDecisionReceipt, PolicyEvaluationReceipt } from '../../../src/contracts/approvals/contracts.ts';
 import { computeActionDecisionReceiptDigest, computePolicyEvaluationReceiptDigest } from '../../../src/contracts/approvals/contracts.ts';
@@ -518,10 +519,9 @@ function admittedDecision(receipt: ActionDecisionReceipt): Record<string, unknow
   return { ...body, decisionDigest: computeActionDecisionReceiptDigest(body) };
 }
 
-/** The owner admission context, assembled only from what the production service returned. */
-function admissionContext(d: Domain, state: TaskState, receipts: { readonly pe: unknown; readonly ad?: unknown }, decisionId = PLAN_DECISION, planBindingDigest = d.planBindingDigest): Record<string, unknown> {
-  const action = patchActionOf(d);
-  return {
+/** The owner admission context for any action: a patch carries its bounds, a command its admitted view and bounds. */
+function admissionContextFor(d: Domain, state: TaskState, receipts: { readonly pe: unknown; readonly ad?: unknown }, action: ApplyPatchAction | RunCommandAction, plan: { readonly decisionId: string; readonly bindingDigest: string }): Record<string, unknown> {
+  const common = {
     schemaVersion: '0.2.0',
     subjectKind: 'repository-action',
     planApplicability: 'approved-plan',
@@ -542,8 +542,31 @@ function admissionContext(d: Domain, state: TaskState, receipts: { readonly pe: 
     policyAuthorityRef: AUTHORITY,
     policyEvaluationReceipt: receipts.pe,
     ...(receipts.ad === undefined ? {} : { actionDecisionReceipt: receipts.ad }),
-    planBindingDigest,
-    planDecisionRef: decisionId,
+    planBindingDigest: plan.bindingDigest,
+    planDecisionRef: plan.decisionId,
+  };
+  if (action.kind === 'run_command') {
+    // The v0.1 CommandView shape (with `canonicalRevisionDigest`) is what `computeCommandViewDigest`
+    // hashes; the v0.2 admission view renames it to `canonicalRevision`, as the probe does.
+    const view01 = {
+      viewId: `view-${WORKSPACE_ID}-${'a'.repeat(12)}`,
+      taskId: TASK_ID,
+      workspaceId: WORKSPACE_ID,
+      canonicalRevisionDigest: d.revision,
+      admittedFiles: [{ path: 'tests/test_calculator.py', digest: computeCanonicalSha256('test-file') }],
+      exclusionsPolicyVersion: '0.1.0',
+      scratchIdentity: computeWorkspaceVolumeIds(TASK_ID, WORKSPACE_ID).scratchVolumeId,
+      mountedReadOnly: true as const,
+    };
+    return {
+      ...common,
+      commandView: { ...view01, canonicalRevision: d.revision, isolationProfileRef: 'uc03-pytest:real-tier', viewDigest: computeCommandViewDigest(view01) },
+      finiteBounds: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuSeconds: 120, maxMemoryBytes: 536_870_912, maxProcessCount: 64, isolationProfileRef: 'uc03-pytest:real-tier' },
+      reservationRefs: ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].flatMap(kind => [`task-${kind}-act-cmd`, `run-${kind}-act-cmd`]),
+    };
+  }
+  return {
+    ...common,
     baseRevision: d.revision,
     targetPaths: ['src/calculator.py'],
     patchDigest: computeCanonicalSha256(action.patchContent),
@@ -558,6 +581,7 @@ interface Gate {
   dispatch(
     receipts: { readonly pe: unknown; readonly ad?: unknown },
     plan?: { readonly decisionId: string; readonly bindingDigest: string },
+    action?: ApplyPatchAction | RunCommandAction,
   ): Promise<{ readonly outcome: string; readonly reason?: string | undefined }>;
   readonly patches: () => number;
   /** Every patch effect the production receiver admitted; zero proves no edit before a decision. */
@@ -643,12 +667,12 @@ async function gate(d: Domain): Promise<Gate> {
     patches: () => patches,
     effects,
     containers: () => controller.containers,
-    dispatch: async (receipts, plan = { decisionId: PLAN_DECISION, bindingDigest: d.planBindingDigest }) => {
+    dispatch: async (receipts, plan = { decisionId: PLAN_DECISION, bindingDigest: d.planBindingDigest }, action = patchActionOf(d)) => {
       const state = (await d.statePort.loadTask(TASK_ID)) as TaskState;
       // A failed admission is the real path's own refusal, so a thrown receiver/guard error is a denial
       // here; the counters prove it dispatched nothing.
       return guard
-        .validateAndExecute(patchActionOf(d), state, admissionContext(d, state, receipts, plan.decisionId, plan.bindingDigest) as never)
+        .validateAndExecute(action, state, admissionContextFor(d, state, receipts, action, plan) as never)
         .catch((error: unknown) => ({ outcome: 'denied', reason: error instanceof Error ? error.message : String(error) }));
     },
   };
@@ -750,9 +774,17 @@ test('C13 rejected: a rejection mints nothing and the guard dispatches no patch'
     assert.equal((await d.service.resolve(PATCH_DECISION)).status, 'rejected', 'continuation reads the rejected decision');
     await assert.rejects(d.service.issueActionDecision(PATCH_DECISION, 'receipt-eval-unused'), (error: unknown) => error instanceof ApprovalServiceError);
 
+    // The equivalent action is refused through the same bound guard dispatch. Its distinct identity means
+    // the old plan approval cannot be substituted for its decision: the guard's own checks refuse it
+    // before the receiver, so the prior approval buys zero patches and zero executor calls (SPEC-W5-110).
+    const { patches, containers, dispatch } = await gate(d);
+    const equivalentRefused = await dispatch({ pe: receiptStub(d) }, undefined, equivalent);
+    assert.equal(equivalentRefused.outcome, 'denied', JSON.stringify(equivalentRefused));
+    assert.equal(patches(), 0, 'an equivalent action cannot reuse the prior approval to land a patch');
+    assert.equal(containers(), 0, 'an equivalent action launches no container');
+
     // Attempt the rejected edit through the same guarded receiver the approved row uses: the service
     // cannot mint the decision receipt a rejection never produced, so the guard refuses before an effect.
-    const { patches, containers, dispatch } = await gate(d);
     const refused = await dispatch({ pe: receiptStub(d) });
     assert.equal(refused.outcome, 'denied', JSON.stringify(refused));
     assert.equal(patches(), 0, 'a rejected decision produces zero patches');
@@ -792,11 +824,13 @@ test('C13 forbidden: the production service classifies a forbidden patch and the
     );
     await assert.rejects(d.service.issueActionDecision(forbidden.actionId, evaluation.receiptId), (error: unknown) => error instanceof ApprovalServiceError);
 
-    // The guard is fail-closed even when handed that FORBIDDEN receipt: no patch and no executor call
-    // settle, which is the zero-effect claim this row must prove.
+    // The guard is fail-closed even when handed that FORBIDDEN receipt. The dispatch carries the
+    // forbidden command itself, so the receipt's action digest matches and the refusal is the
+    // FORBIDDEN policy, not a digest mismatch against a different action (SPEC-W5-110).
     const { patches, containers, dispatch } = await gate(d);
-    const refused = await dispatch({ pe: admittedReceipt(evaluation) });
+    const refused = await dispatch({ pe: admittedReceipt(evaluation) }, undefined, forbidden);
     assert.equal(refused.outcome, 'denied', JSON.stringify(refused));
+    assert.match(refused.reason ?? '', /FORBIDDEN result never admits/u, 'the refusal is the FORBIDDEN policy, not an unrelated digest mismatch');
     assert.equal(patches(), 0, 'a forbidden decision produces zero patches');
     assert.equal(containers(), 0, 'a forbidden decision produces zero executor calls');
   } finally {

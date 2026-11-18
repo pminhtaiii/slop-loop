@@ -22,7 +22,8 @@ import type { BugTask, FixPlan, TaskState } from '../../../src/contracts/foundat
 import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/foundation/docker-controller.ts';
 import { computeFileDigest, computeWorkspaceVolumeIds } from '../../../src/foundation/docker-workspace-policy.ts';
 import { createHostAssembly, resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
-import { bindRealTierTask, type RealTierBindingOptions, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
+import { bindRealTierTask, pinnedExecutionProfileOf, type RealTierBindingOptions, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
+import { DEFAULT_EXCLUSIONS_POLICY_VERSION } from '../../../src/foundation/docker-view-builder.ts';
 import { retainedDiffSource } from '../../../src/runtime/real-tier-task-producers.ts';
 import { seedLedgers } from '../../../src/runtime/real-tier-task-seed.ts';
 import { prepareAssembly } from '../../../src/cli/evaluate-host.ts';
@@ -715,37 +716,33 @@ test('(m) a mutated retained tree refuses at rebind instead of binding ready', a
   assert.equal(second.reasonCode, 'binding-unavailable');
 });
 
-test('(q) the bound task port admits a real view carrying the task workspace scratch and its limits', async () => {
-  // The view the Docker builder would issue: the workspace's own scratch volume, the builder's
-  // exclusions version, and the pinned task's limits — none of them the port's synthetic constants.
-  const catalog = fixtureOf();
-  // Row (m) mutates the shared retained tree; this row's own root keeps the order of the file irrelevant.
-  const retainedRoot = join(tempRoot('retained-q'), 'artifacts');
-  const { assembly } = assemblyFor(catalog);
-  const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot })));
-  const owners = assembly.owners.taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId });
-  const seeded = (await owners.statePort.loadTask(binding.ids.taskId)) as TaskState;
-  await owners.statePort.transition({ ...seeded, node: 'Investigate', nextAction: 'propose-fix-plan', stateVersion: seeded.stateVersion + 1 }, seeded.stateVersion);
-  const state = (await owners.statePort.loadTask(binding.ids.taskId)) as TaskState;
+interface ClaimContextOptions {
+  readonly actionId: string;
+  readonly bounds?: { readonly timeoutMs: number; readonly maxOutputBytes: number; readonly maxCpuSeconds: number; readonly maxMemoryBytes: number; readonly maxProcessCount: number };
+  readonly exclusionsPolicyVersion?: string;
+  readonly scratchIdentity?: string;
+}
 
-  const action = { actionId: 'act-q-1', kind: 'run_command' as const, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], workingDirectory: 'tests', purpose: 'investigate' };
+/** One pre-plan diagnostic `run_command` admission over the view facts the tier's own profile names. */
+function claimContextOf(binding: RealTierBoundTask, state: TaskState, assembly: RealTierAssembly, options: ClaimContextOptions): unknown {
+  const limits = binding.task.limits;
+  const action = { actionId: options.actionId, kind: 'run_command' as const, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], workingDirectory: 'tests', purpose: 'investigate' };
   const actionDigest = computeActionDigest(action);
   const authority = { policyId: binding.task.configId, policyVersion: binding.task.configVersion, configId: binding.task.configId, configVersion: binding.task.configVersion, issuerKeyRef: `host-${binding.task.configId}`, decisionAuthorityGeneration: 1 };
   const { policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration } = authority;
-  const receiptBody = { receiptId: 'pe-act-q-1', actionDigest, freshnessContextDigest: computeCanonicalSha256({ freshness: 'act-q-1' }), policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration, result: 'ALLOWED' as const };
-  const limits = binding.task.limits;
+  const receiptBody = { receiptId: `pe-${options.actionId}`, actionDigest, freshnessContextDigest: computeCanonicalSha256({ freshness: options.actionId }), policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration, result: 'ALLOWED' as const };
   const commandView = {
     viewId: `view-${binding.ids.workspaceId}-${'a'.repeat(12)}`,
     taskId: state.taskId,
     workspaceId: state.workspaceId,
     canonicalRevision: state.repositoryRevisionDigest,
     admittedFiles: [{ path: 'tests/test_calculator.py', digest: computeCanonicalSha256('test-file') }],
-    exclusionsPolicyVersion: '0.1.0',
-    scratchIdentity: computeWorkspaceVolumeIds(state.taskId, state.workspaceId).scratchVolumeId,
+    exclusionsPolicyVersion: options.exclusionsPolicyVersion ?? DEFAULT_EXCLUSIONS_POLICY_VERSION,
+    scratchIdentity: options.scratchIdentity ?? computeWorkspaceVolumeIds(state.taskId, state.workspaceId).scratchVolumeId,
     mountedReadOnly: true as const,
     isolationProfileRef: assembly.profile.image.label,
   };
-  const context = {
+  return {
     schemaVersion: '0.2.0',
     subjectKind: 'repository-action',
     planApplicability: 'pre-plan-diagnostic',
@@ -767,20 +764,71 @@ test('(q) the bound task port admits a real view carrying the task workspace scr
     policyEvaluationReceipt: { ...receiptBody, receiptDigest: computeCanonicalSha256(receiptBody) },
     commandView: { ...commandView, viewDigest: computeCanonicalSha256(commandView) },
     finiteBounds: {
-      timeoutMs: limits.timeoutMs,
-      maxOutputBytes: limits.maxOutputBytes,
-      maxCpuSeconds: Math.max(1, Math.ceil((limits.maxCpuCores * limits.timeoutMs) / 1000)),
-      maxMemoryBytes: limits.maxMemoryBytes,
-      maxProcessCount: limits.maxPids,
+      ...(options.bounds ?? {
+        timeoutMs: limits.timeoutMs,
+        maxOutputBytes: limits.maxOutputBytes,
+        maxCpuSeconds: Math.max(1, Math.ceil((limits.maxCpuCores * limits.timeoutMs) / 1000)),
+        maxMemoryBytes: limits.maxMemoryBytes,
+        maxProcessCount: limits.maxPids,
+      }),
       isolationProfileRef: assembly.profile.image.label,
     },
-    reservationRefs: ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].flatMap(kind => [`task-${kind}-act-q-1`, `run-${kind}-act-q-1`]),
+    reservationRefs: ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].flatMap(kind => [`task-${kind}-${options.actionId}`, `run-${kind}-${options.actionId}`]),
     diagnosticPurpose: 'investigate',
     taskCriteriaDigest: computeCanonicalSha256(binding.task.acceptanceCriteria),
     checkSetDigest: computeCheckSetDigest(binding.task.requiredChecks),
     checkId: 'check-1',
     testPath: 'tests/test_calculator.py',
   };
-  const claim = await owners.statePort.claim(context as never);
+}
+
+/** The same bound port, moved to the pre-plan `Investigate` node one diagnostic admission expects. */
+async function boundOwnersAtInvestigate(binding: RealTierBoundTask, assembly: RealTierAssembly): Promise<{ owners: ReturnType<RealTierAssembly['owners']['taskOwners']>; state: TaskState }> {
+  const owners = assembly.owners.taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId });
+  const seeded = (await owners.statePort.loadTask(binding.ids.taskId)) as TaskState;
+  await owners.statePort.transition({ ...seeded, node: 'Investigate', nextAction: 'propose-fix-plan', stateVersion: seeded.stateVersion + 1 }, seeded.stateVersion);
+  return { owners, state: (await owners.statePort.loadTask(binding.ids.taskId)) as TaskState };
+}
+
+test('(q) the bound task port admits a real view carrying the task workspace scratch and its limits', async () => {
+  // The view the Docker builder would issue: the workspace's own scratch volume, the builder's
+  // exclusions version, and the pinned task's limits — none of them the port's synthetic constants.
+  const catalog = fixtureOf();
+  // Row (m) mutates the shared retained tree; this row's own root keeps the order of the file irrelevant.
+  const retainedRoot = join(tempRoot('retained-q'), 'artifacts');
+  const { assembly } = assemblyFor(catalog);
+  const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot })));
+  const { owners, state } = await boundOwnersAtInvestigate(binding, assembly);
+
+  const claim = await owners.statePort.claim(claimContextOf(binding, state, assembly, { actionId: 'act-q-1' }) as never);
   assert.equal(claim.claimId, 'claim-act-q-1', 'the bound task port must admit the real view it will be handed');
+});
+
+test('(r) the bound profile is pinned from the seeded task: mutating the returned task cannot move the ceiling', async () => {
+  // One fresh assembly per scenario: the first claim holds the port, so a second claim would be
+  // refused for that reason rather than for the ceiling under test.
+  const scenarios = [
+    { label: 'a task lowered after binding cannot withdraw the pinned ceiling', mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes = 1), bound: 'above', admitted: true },
+    { label: 'a task raised after binding cannot widen the pinned ceiling', mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes *= 2), bound: 'over', admitted: false },
+  ] as const;
+  for (const scenario of scenarios) {
+    const catalog = fixtureOf();
+    const retainedRoot = join(tempRoot(`retained-r-${scenario.bound}`), 'artifacts');
+    const { assembly } = assemblyFor(catalog);
+    const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot })));
+    const { owners, state } = await boundOwnersAtInvestigate(binding, assembly);
+    const original = { ...binding.task.limits };
+    const pinnedBounds = { timeoutMs: original.timeoutMs, maxOutputBytes: original.maxOutputBytes, maxCpuSeconds: Math.max(1, Math.ceil((original.maxCpuCores * original.timeoutMs) / 1000)), maxMemoryBytes: original.maxMemoryBytes, maxProcessCount: original.maxPids };
+    // The view asks for exactly the ceiling the profile was pinned with; only a live `task.limits` read moves it.
+    const bounds = scenario.bound === 'over' ? { ...pinnedBounds, maxMemoryBytes: original.maxMemoryBytes + 1 } : pinnedBounds;
+
+    scenario.mutate(binding.task);
+    const claim = await owners.statePort.claim(claimContextOf(binding, state, assembly, { actionId: `act-r-${scenario.bound}`, bounds }) as never);
+    assert.equal(claim.claimId === `claim-act-r-${scenario.bound}`, scenario.admitted, scenario.label);
+  }
+
+  // STD-W5-107 drift guard: the owner profile imports the builder's own default (no second literal),
+  // so a builder default change surfaces here as a decision instead of silently refusing real claims.
+  assert.equal(DEFAULT_EXCLUSIONS_POLICY_VERSION, '0.1.0', 'bumping the builder default is a deliberate change to real claims');
+  assert.equal(pinnedExecutionProfileOf(taskOf(), 'uc03-pytest:real-tier').exclusionsPolicyVersion, DEFAULT_EXCLUSIONS_POLICY_VERSION);
 });
