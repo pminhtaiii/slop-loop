@@ -262,7 +262,7 @@ test('a fenced-outcome write that fails once still accounts the attempt on the b
   assert.equal(result.outcome, 'denied');
   assert.equal(result.reason, 'FENCED_EXECUTOR');
   assert.equal(writes, 2, 'the write is retried once, not infinitely');
-  assert.equal(result.recovery, undefined, 'a durable hold needs no recovery payload');
+  assert.ok(result.recovery, 'a denied result preserves the available recovery receipt');
   const journal = statePort.getJournalSnapshot();
   assert.equal(journal.outcomes.length, 1);
   assert.equal(journal.claims[0]?.status, 'uncertain', 'the retried write completes the accounting');

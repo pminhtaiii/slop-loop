@@ -50,6 +50,8 @@ export const NEUTRAL_CLAIM_CLOSURE_RESULT_V02: ClaimClosureResultV02 = Object.fr
 export type TaskControlModeV02 = 'runnable' | 'paused' | 'rejected' | 'ended' | 'recovery';
 
 export interface ControlRecordV02 {
+  /** Last uncertain outcome whose control advance was published atomically with this head. */
+  readonly lastUncertainReceiptId?: string | undefined;
   readonly controlVersion: number;
   readonly epoch: number;
   readonly mode: TaskControlModeV02;

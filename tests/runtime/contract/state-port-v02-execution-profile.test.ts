@@ -16,9 +16,11 @@ import test from 'node:test';
 import { computeActionDigest, computeCanonicalSha256, computeClaimClosureDigest } from '../../../src/contracts/foundation/uc03.ts';
 import type { BugTask, ExecutorIdentityV02, RepositoryAdmissionContextV02, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { computeWorkspaceVolumeIds } from '../../../src/foundation/docker-workspace-policy.ts';
+import { authorityFor } from '../../../src/persistence/adapters/state-port-v02-admission.ts';
 import type { ExecutionProfileSourceV02, ExecutionProfileV02 } from '../../../src/persistence/adapters/state-port-v02-admission.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
+import { createTestProviderAdmissionContextV02, createTestAdmissionTaskStateV02, createTestExecutorIdentityV02 } from '../support/uc03/state-fixtures.ts';
 import { seedTaskState } from '../../../src/runtime/real-tier-task-seed.ts';
 
 const TASK = 'task-owner-profile-001';
@@ -301,4 +303,42 @@ test('(f) a profile source that drifts or throws after the claim cannot strand t
       `${label}: no usage is charged`,
     );
   }
+});
+
+test('provider claim closure never resolves the repository execution profile', async () => {
+  const context = createTestProviderAdmissionContextV02();
+  assert.equal(context.planApplicability, 'approved-plan');
+  if (context.planApplicability !== 'approved-plan') throw new Error('expected plan-bound fixture');
+  const store = new DurableStore(mkdtempSync(join(tmpdir(), 'provider-close-profile-')));
+  await store.init();
+  let calls = 0;
+  const port = new DurableStatePortV02({
+    store,
+    initialControl: { controlVersion: context.expectedControlVersion, epoch: context.expectedEpoch, activeAuthorityRef: authorityFor(context) },
+  });
+  assert.ok(await port.transition(createTestAdmissionTaskStateV02(context), 0));
+  const claim = await port.claim(context);
+  assert.notEqual(claim.claimId, '');
+  const recipient = createTestExecutorIdentityV02({ payloadDigest: context.requestContentDigest });
+  assert.equal(await port.setTaskControl(context.taskId, 'paused', 'pause-provider'), true);
+  const fence = await port.fenceClaimRecipient(claim.claimId, recipient);
+  assert.ok(fence);
+  const body = {
+    receiptId: 'closure-provider-profile',
+    claimId: claim.claimId,
+    taskId: context.taskId,
+    reason: 'pause-provider',
+    fencedExecutorIdentity: fence.fencedExecutorIdentity,
+    unconsumedReservations: [...claim.reservationRefs],
+  };
+  const closingPort = new DurableStatePortV02({
+    store,
+    executionProfile: () => {
+      calls += 1;
+      throw new Error('repository profile must not be consulted');
+    },
+  });
+  const closed = await closingPort.closeUnattemptedClaim({ ...body, receiptDigest: computeClaimClosureDigest(body) });
+  assert.equal(closed.closed, true);
+  assert.equal(calls, 0);
 });

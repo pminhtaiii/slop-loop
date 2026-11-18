@@ -1,6 +1,6 @@
 /** Host-owned, task/run-scoped construction for the production v0.2 coder. */
 
-import type { ModelPortV02, RepositoryPortV02 } from '../contracts/foundation/uc03.ts';
+import type { ModelPortV02, RepositoryPortV02, ProviderRecoveryHandoffV02 } from '../contracts/foundation/uc03.ts';
 import type { ExecutionGuardReadCapability } from '../foundation/repository-types.ts';
 import { createCoderAgentV02 } from '../uc03/agent.ts';
 import type { CoderAgentV02, CoderBudget, CoderTurnInputV02 } from '../uc03/agent-types.ts';
@@ -8,6 +8,8 @@ import type { TrustedHostExpectedContext } from '../uc03/investigation-types.ts'
 import type { UC03GraphGenerationV02 } from '../uc03/graph-types-v02.ts';
 
 export interface HostCoderOptions {
+  /** Owner handoff for receipt replay; never repeats provider transport. */
+  readonly providerRecoveryHandoff?: ProviderRecoveryHandoffV02 | undefined;
   readonly model: ModelPortV02;
   readonly repository: RepositoryPortV02;
   readonly guardedRead: ExecutionGuardReadCapability;
@@ -65,6 +67,7 @@ export function createHostCoderGeneration(options: HostCoderOptions): UC03GraphG
       if (existing) return existing;
       const agent = createCoderAgentV02({
         model: options.model,
+        providerRecoveryHandoff: options.providerRecoveryHandoff,
         repository: options.repository,
         guardedRead: options.guardedRead,
         admissionContextForCheck: options.admissionContextForCheck,

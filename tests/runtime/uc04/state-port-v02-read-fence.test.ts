@@ -212,3 +212,18 @@ test('state read fence: no published policy authority refuses the observation', 
     rmSync(baseDir, { recursive: true, force: true });
   }
 });
+
+test('state read fence: runnable heads reject an orphaned hold digest', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc04-read-fence-orphan-'));
+  try {
+    const port = await openPort(baseDir);
+    const state = new StatePortStore(port.store);
+    assert.ok(state.readControlHead(binding.taskId));
+    await state.writeControl(binding.taskId, { ...SEEDED_CONTROL, holdEventDigest: `sha256:${'a'.repeat(64)}` });
+    assert.equal(state.readControlHead(binding.taskId), null);
+    await state.writeControl(binding.taskId, SEEDED_CONTROL);
+    assert.ok(state.readControlHead(binding.taskId));
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});

@@ -88,12 +88,13 @@ type BoundSecurityFacts = Readonly<{
  * cannot make the cache accept a ceiling the port refuses. */
 function suppliedFactsOf(binding: RealTierTaskBinding): BoundSecurityFacts {
   const resolved = ownerExecutionProfile(binding.executionProfile, { taskId: binding.taskId, workspaceId: binding.workspaceId });
+  const policyIdentity = binding.policyIdentity;
   return {
     workspaceId: binding.workspaceId,
     repositoryId: binding.repositoryId,
     executionProfile: resolved === undefined ? undefined : structuredClone(resolved),
-    authorityRef: binding.authorityRef,
-    policyIdentity: binding.policyIdentity,
+    authorityRef: binding.authorityRef === undefined ? undefined : structuredClone(binding.authorityRef),
+    policyIdentity: policyIdentity === undefined ? undefined : structuredClone(policyIdentity),
   };
 }
 
@@ -211,7 +212,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
     const profile = Object.freeze({
       ...DEFAULT_POLICY_PROFILE,
       profileVersion: options.approvalProfileVersion,
-      ...(binding.policyIdentity === undefined ? {} : { policyIdentity: binding.policyIdentity }),
+      ...(supplied.policyIdentity === undefined ? {} : { policyIdentity: supplied.policyIdentity }),
     });
     const approvalStore = new DurableApprovalStore({ storageDir: join(stateRoot, 'approvals'), durableStore: store, profile, provenance: 'real' });
     // The per-task observed-action source is what makes an approval request admissible (§3); without
@@ -233,7 +234,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
       console: createConsoleApprovalPort(approvalService, () => binding.taskId),
       contextSource,
     };
-    const detachedFacts = structuredClone(supplied);
+    const detachedFacts = supplied;
     bound.set(binding.taskId, owners);
     boundFacts.set(binding.taskId, detachedFacts);
     return owners;

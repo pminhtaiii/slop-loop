@@ -27,12 +27,15 @@ function corrupt(kind: string, messages: readonly string[]): never {
 function validateControlRecord(value: unknown): ControlRecordV02 {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new CorruptRecordError('Corrupted UC-03 control record: expected an object');
   const record = value as Record<string, unknown>;
+  if (record['lastUncertainReceiptId'] !== undefined && !isSafeStorageId(record['lastUncertainReceiptId']))
+    throw new CorruptRecordError('Corrupted UC-03 control record: invalid lastUncertainReceiptId');
   if (!CONTROL_MODES.includes(record['mode'] as TaskControlModeV02)) throw new CorruptRecordError('Corrupted UC-03 control record: invalid mode');
   if (!Number.isSafeInteger(record['controlVersion']) || !Number.isSafeInteger(record['epoch'])) {
     throw new CorruptRecordError('Corrupted UC-03 control record: controlVersion and epoch must be safe integers');
   }
   if (record['holdRef'] !== null && typeof record['holdRef'] !== 'string') throw new CorruptRecordError('Corrupted UC-03 control record: holdRef must be a string or null');
-  if (record['mode'] === 'runnable' && record['holdRef'] !== null) throw new CorruptRecordError('Corrupted UC-03 control record: runnable mode cannot retain a hold');
+  if (record['mode'] === 'runnable' && (record['holdRef'] !== null || record['holdEventDigest'] !== null))
+    throw new CorruptRecordError('Corrupted UC-03 control record: runnable mode cannot retain a hold');
   if (record['activeClaimId'] !== null && !isSafeStorageId(record['activeClaimId'])) throw new CorruptRecordError('Corrupted UC-03 control record: activeClaimId must be a safe id or null');
   if (record['holdEventDigest'] !== null && !isDigestV02(record['holdEventDigest'])) throw new CorruptRecordError('Corrupted UC-03 control record: holdEventDigest must be a digest or null');
   if (record['activeAuthorityRef'] !== null && !authorityRefV02(record['activeAuthorityRef'])) throw new CorruptRecordError('Corrupted UC-03 control record: invalid activeAuthorityRef');

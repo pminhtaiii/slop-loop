@@ -13,6 +13,7 @@ import { providerClaim, providerAttempt, sameProviderActor } from './provider-ad
 
 import {
   type ModelPortV02,
+  type ProviderRecoveryEvidence,
   type StatePortV02,
   type ProviderAdmissionContextV02,
   type ClaimReceiptV02,
@@ -66,12 +67,7 @@ export interface ModelPortV02Result {
   readonly recovery?: ProviderRecoveryEvidence | undefined;
 }
 
-export interface ProviderRecoveryEvidence {
-  readonly admission: ProviderAdmissionContextV02;
-  readonly claim: ClaimReceiptV02;
-  readonly attempt: AttemptReceiptV02;
-  readonly receipt: ProviderRequestOutcomeReceiptV02;
-}
+export type { ProviderRecoveryEvidence } from '../contracts/foundation/uc03.ts';
 
 // Shared by reconstructed receivers in this process; UC-04 owns durable consumption.
 const consumedAttempts = new Set<string>();
@@ -287,7 +283,7 @@ export class HostModelPortV02 implements ModelPortV02 {
     for (let write = 1; write < FENCED_OUTCOME_WRITES && !pending.durable; write++) {
       pending = await this.recordProviderOutcome(admission, claim, attempt, receipt);
     }
-    return { outcome: 'denied', reason: 'FENCED_EXECUTOR', ...(pending.durable ? {} : { recovery: pending.result?.recovery }) };
+    return { outcome: 'denied', reason: 'FENCED_EXECUTOR', recovery: pending.result?.recovery };
   }
 
   /**

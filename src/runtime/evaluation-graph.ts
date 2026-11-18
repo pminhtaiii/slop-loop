@@ -269,6 +269,7 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         try {
           const generation = createHostCoderGeneration({
             model: readiness.ports.modelPort,
+            providerRecoveryHandoff: recovery => readiness.ports.statePort.recordOutcome(recovery.receipt),
             repository: readiness.ports.repositoryPort,
             guardedRead: readiness.ports.guardedRead,
             admissionContextForCheck: readiness.config.trustedExpectedContext.admissionContextForCheck,

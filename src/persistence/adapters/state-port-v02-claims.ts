@@ -317,12 +317,7 @@ export async function recordOutcome(store: StatePortStore, receipt: AttemptOutco
     else if (stagedLedgers.size) await store.writeTask(taskId, replaceLedgers(task, stagedLedgers));
     await store.writeJson(store.statePath(taskId, `outcome-${snapshot.receiptId}.json`), snapshot);
     const nextAttempt: StoredAttemptV02 = { ...attempt, outcomeReceiptId: snapshot.receiptId };
-    if (snapshot.outcome === 'uncertain') {
-      await store.writeJson(attemptPath, { ...nextAttempt, status: 'uncertain' } satisfies StoredAttemptV02);
-      await store.writeClaim(taskId, { ...claimRecord, status: 'uncertain' });
-      await store.writeControl(taskId, { ...control, controlVersion: control.controlVersion + 1 });
-      return { outcome: 'uncertain', receiptId: snapshot.receiptId };
-    }
+    if (snapshot.outcome === 'uncertain') return completeUncertainRecord(store, taskId, snapshot);
     if (isUnsettled) {
       await store.writeJson(attemptPath, { ...nextAttempt, status: 'observed-unsettled' } satisfies StoredAttemptV02);
       await store.writeClaim(taskId, { ...claimRecord, status: 'observed-unsettled' });

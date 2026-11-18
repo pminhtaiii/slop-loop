@@ -277,7 +277,11 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
   );
   // The published revision is the owner state's own fact, keyed by the task the caller supplies, so
   // the reviewer needs no binding of its own.
-  const reviewer = createRuntimeReviewer({ model: reviewerModelPort, resolveRepoDigest: async task => (await owners.components.statePort.loadTask(task.taskId))?.repositoryRevisionDigest });
+  const reviewer = createRuntimeReviewer({
+    model: reviewerModelPort,
+    providerRecoveryHandoff: recovery => owners.components.statePort.recordOutcome(recovery.receipt),
+    resolveRepoDigest: async task => (await owners.components.statePort.loadTask(task.taskId))?.repositoryRevisionDigest,
+  });
   const coderActor = actorOf('uc03-real-tier-coder');
   const built: RealTierComponents = {
     ...owners.components,

@@ -21,7 +21,7 @@ import type {
   ValidationError,
   AdmittedFile,
 } from '../v01/types.ts';
-import type { RepositoryActionOutcomeReceiptV02, AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02 } from './attempt-receipts.ts';
+import type { RepositoryActionOutcomeReceiptV02, ProviderRequestOutcomeReceiptV02, AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02 } from './attempt-receipts.ts';
 import type {
   RecordVerificationApprovalRequestV02,
   RecordVerificationApprovalResultV02,
@@ -460,6 +460,16 @@ export interface RepositoryPortV02 extends PortIdentity {
   inspectDiff(baseRevisionDigest: string): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }>;
 }
 
+/** Retained by the owner to replay recordOutcome without repeating provider transport. */
+export interface ProviderRecoveryEvidence {
+  readonly admission: ProviderAdmissionContextV02;
+  readonly claim: ClaimReceiptV02;
+  readonly attempt: AttemptReceiptV02;
+  readonly receipt: ProviderRequestOutcomeReceiptV02;
+}
+
+export type ProviderRecoveryHandoffV02 = (recovery: ProviderRecoveryEvidence) => Promise<unknown>;
+
 export interface ModelPortV02 extends PortIdentity {
   propose(
     state: TaskState,
@@ -472,6 +482,7 @@ export interface ModelPortV02 extends PortIdentity {
     readonly observedUsage?: ProviderUsage | undefined;
     readonly reason?: string | undefined;
     readonly errors?: readonly ValidationError[] | undefined;
+    readonly recovery?: ProviderRecoveryEvidence | undefined;
   }>;
 }
 

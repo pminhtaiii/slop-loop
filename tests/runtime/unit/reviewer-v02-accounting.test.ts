@@ -379,3 +379,37 @@ test('production reviewer admission binds the canonical accounting ingress and r
   model.propose = async () => ({ outcome: 'denied' });
   assert.equal(usesCanonicalReviewerIngress(reviewer), false);
 });
+
+for (const handoffFails of [false, true])
+  test(`a fenced reviewer hands the pending receipt to its owner (handoff fails: ${handoffFails})`, async () => {
+    const admission = buildReviewerAdmission();
+    const statePort = createStatePort(admission);
+    const record = statePort.recordOutcome.bind(statePort);
+    statePort.recordOutcome = async () => {
+      throw new Error('initial outcome writes unavailable');
+    };
+    const actor = nextActor('fenced-reviewer');
+    const model = new HostModelPortV02({
+      statePort,
+      transport: { execute: async () => assert.fail('fenced reviewer must not dispatch') },
+      executorIdentity: actor,
+      currentExecutorIdentity: () => actor,
+      currentDispatchAuthority: () => false,
+    });
+    let handedOff = 0;
+    const reviewer = createRuntimeReviewer({
+      model,
+      resolveRepoDigest: () => REPO_DIGEST,
+      providerRecoveryHandoff: async recovery => {
+        handedOff++;
+        assert.equal(recovery.receipt.outcome, 'uncertain');
+        if (handoffFails) throw new Error('owner unavailable');
+        return record(recovery.receipt);
+      },
+    });
+    const result = await runReview(reviewer, admission);
+    assert.equal(result.status, 'invalid');
+    assert.equal(reviewer.lastFailureReason, 'PROVIDER_DENIED:FENCED_EXECUTOR');
+    assert.equal(handedOff, 1);
+    assert.equal(statePort.getJournalSnapshot().outcomes.length, handoffFails ? 0 : 1);
+  });

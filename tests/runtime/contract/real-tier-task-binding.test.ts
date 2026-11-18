@@ -1037,3 +1037,25 @@ test('an uncloneable binding publishes no owners and permits a valid retry', () 
   assert.equal(assembly.owners.taskOwners({ ...ids, policyIdentity: { ...policy, configVersion: '1' } }), owners);
   assert.throws(() => assembly.owners.taskOwners({ ...ids, policyIdentity: policy }), /approval-operation-denied/u);
 });
+
+test('policy identity is detached before context construction mutates the caller binding', () => {
+  const { assembly } = assemblyFor(fixtureOf());
+  const ids = { taskId: 'task-policy-snapshot', workspaceId: 'ws-policy-snapshot', repositoryId: 'repo-calc' };
+  const policy = { policyId: 'policy', policyVersion: '1', configId: 'config', configVersion: '1' };
+  const original = { ...policy };
+  const owners = assembly.owners.taskOwners({
+    ...ids,
+    policyIdentity: policy,
+    createContext: () => {
+      policy.configVersion = '2';
+      return {
+        provenance: 'real',
+        observe: () => {
+          throw new Error('unused context');
+        },
+      };
+    },
+  });
+  assert.equal(assembly.owners.taskOwners({ ...ids, policyIdentity: original }), owners);
+  assert.throws(() => assembly.owners.taskOwners({ ...ids, policyIdentity: policy }), /approval-operation-denied/u);
+});

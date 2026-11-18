@@ -15,6 +15,7 @@ import {
   type CheckResult,
   type FixPlan,
   type ModelPortV02,
+  type ProviderRecoveryEvidence,
   type ProviderAdmissionContextV02,
   type ProviderRequest,
   type RepositoryAdmissionContextV02,
@@ -22,6 +23,7 @@ import {
   type TaskState,
 } from '../../../src/contracts/foundation/uc03.ts';
 import type { ExecutionGuardReadCapability, GuardedReadOperation } from '../../../src/foundation/repository-types.ts';
+import { buildProviderOutcomeReceipt } from '../../../src/foundation/model-v02.ts';
 import { computeContextDigest, validateBaseModelInputs } from '../../../src/foundation/model.ts';
 import { createCoderAgentV02, type CoderAgentV02Options } from '../../../src/uc03/agent.ts';
 import { coderContextDigest, generate } from '../../../src/uc03/graph-nodes.ts';
@@ -30,7 +32,7 @@ import type { UC03GraphConfig } from '../../../src/uc03/graph-types.ts';
 import type { CoderBudget, UC03CoderAdmission } from '../../../src/uc03/agent-types.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { createFixtureBugTask, createFixtureCheckDefinition, createFixtureProviderAdmissionContextV02, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
-import { createTestProviderAdmissionTrustedContextV02 } from '../support/uc03/state-fixtures.ts';
+import { createTestClaimReceiptV02, createTestAttemptReceiptV02, createTestProviderAdmissionTrustedContextV02 } from '../support/uc03/state-fixtures.ts';
 
 const BUDGET: CoderBudget = { maxModelCalls: 3, maxActiveMs: 60_000, maxRepairs: 1, maxReplans: 1 };
 const PLAN = JSON.stringify({
@@ -644,3 +646,35 @@ test('graph generation refuses to reuse an owner request within an inspect loop'
   assert.equal(model.calls.length, 1);
   assert.deepEqual(spy.calls, []);
 });
+
+for (const outcome of ['denied', 'uncertain'] as const)
+  for (const handoffFails of [false, true]) {
+    test(`coder forwards ${outcome} recovery evidence to the owner (handoff fails: ${handoffFails})`, async () => {
+      const { task, state, repository, admission } = setup();
+      const claim = createTestClaimReceiptV02();
+      const attempt = createTestAttemptReceiptV02();
+      const recovery: ProviderRecoveryEvidence = {
+        admission: admission.context,
+        claim,
+        attempt,
+        receipt: buildProviderOutcomeReceipt(admission.context, claim, attempt, 'uncertain', { outcome: 'fenced-before-transport' }),
+      };
+      const received: ProviderRecoveryEvidence[] = [];
+      const agent = createCoderAgentV02({
+        model: new RecordingModelPort(async () => ({ outcome, reason: 'FENCED_EXECUTOR', recovery })),
+        repository,
+        budget: BUDGET,
+        providerRecoveryHandoff: async evidence => {
+          received.push(evidence);
+          if (handoffFails) throw new Error('owner unavailable');
+        },
+      });
+      const result = await agent.turn({ task, state, purpose: 'propose-plan', evidence: [], admission });
+      assert.equal(result.outcome, outcome === 'denied' ? 'invalid' : 'unavailable');
+      assert.ok(result.outcome === 'invalid' || result.outcome === 'unavailable');
+      assert.equal(result.reason, outcome === 'denied' ? 'MODEL_DENIED' : 'MODEL_UNCERTAIN:FENCED_EXECUTOR');
+      assert.equal(received.length, 1);
+      assert.equal(received[0], recovery);
+      assert.equal(received[0]?.receipt, recovery.receipt);
+    });
+  }

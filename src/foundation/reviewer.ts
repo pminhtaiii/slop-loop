@@ -1,6 +1,7 @@
 /** Read-only reviewer; canonical model ingress owns dispatch and accounting. */
 
 import {
+  type ProviderRecoveryHandoffV02,
   computeCanonicalSha256,
   computeCheckSetDigest,
   computeRequestContentDigest,
@@ -32,6 +33,8 @@ const CONTEXT_PATH = 'review/context.json';
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
 
 export interface RuntimeReviewerOptions {
+  /** Owner handoff for receipt replay; never repeats provider transport. */
+  readonly providerRecoveryHandoff?: ProviderRecoveryHandoffV02 | undefined;
   /** Canonical v0.2 model boundary; it owns the durable claim, attempt and outcome accounting. */
   readonly model: ModelPortV02;
   /** Host-measured current post-patch revision; never derived from diff text. */
@@ -359,6 +362,13 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
       const snapshotRequest = deepClone(request);
 
       const executed = await model.propose(snapshot.state, snapshot.evidence, snapshotRequest, admission);
+      if ((executed.outcome === 'uncertain' || executed.outcome === 'denied') && executed.recovery) {
+        try {
+          await options.providerRecoveryHandoff?.(executed.recovery);
+        } catch {
+          // An owner replay failure cannot change the provider's original refusal or authorize retry.
+        }
+      }
       if (executed.observedUsage !== undefined) lastObservedUsage = executed.observedUsage;
       if (executed.outcome === 'uncertain' || executed.outcome === 'denied') return invalid(`PROVIDER_${executed.outcome.toUpperCase()}:${executed.reason ?? 'UNKNOWN'}`);
       if (executed.outcome === 'invalid') return invalid(`PROVIDER_INVALID:${executed.errors?.[0]?.code ?? 'UNKNOWN'}`);

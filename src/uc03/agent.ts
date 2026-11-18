@@ -7,6 +7,7 @@
  */
 
 import {
+  type ProviderRecoveryHandoffV02,
   computeCanonicalSha256,
   computeRequestContentDigest,
   validateCheckResult,
@@ -182,6 +183,8 @@ export function createCoderAgent(options: CoderAgentOptions): CoderAgent {
 }
 
 export interface CoderAgentV02Options {
+  /** Owner handoff for receipt replay; never repeats provider transport. */
+  readonly providerRecoveryHandoff?: ProviderRecoveryHandoffV02 | undefined;
   readonly model: ModelPortV02;
   readonly repository: RepositoryPortV02;
   readonly budget: CoderBudget;
@@ -275,6 +278,13 @@ export function createCoderAgentV02(options: CoderAgentV02Options): CoderAgentV0
         return invalid('MODEL_ERROR');
       }
       counters.activeMs += elapsed(started);
+      if ((result?.outcome === 'uncertain' || result?.outcome === 'denied') && result.recovery) {
+        try {
+          await options.providerRecoveryHandoff?.(result.recovery);
+        } catch {
+          // An owner replay failure cannot change the provider's original refusal or authorize retry.
+        }
+      }
       if (result?.outcome === 'uncertain') {
         // Never replayed: the provider may have settled the reservation already.
         return { outcome: 'unavailable', reason: `MODEL_UNCERTAIN:${result.reason ?? 'UNKNOWN'}`, counters: snapshot() };
