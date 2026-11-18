@@ -15,7 +15,6 @@ import { createInterface } from 'node:readline';
 
 import type { SafePresentation } from '../../../src/contracts/approvals/contracts.ts';
 import type { ConsoleApprovalPort } from '../../../src/runtime/console-server.ts';
-import type { RealTierBoundOwners } from '../../../src/runtime/real-tier-owners.ts';
 
 /** The prompt/decision seam, so the gate can drive this without a terminal. */
 export interface OperatorIo {
@@ -55,11 +54,6 @@ export function stdioOperator(): OperatorIo {
       return new Promise(resolve => waiting.push(resolve));
     },
   };
-}
-
-/** The console port the bound owners already built for this task. */
-export function decisionTarget(owners: RealTierBoundOwners): DecisionTarget {
-  return { taskId: '', console: owners.console };
 }
 
 /** The response key a decision body needs; derived from the decision id, so a retry replays it. */

@@ -37,12 +37,14 @@ import { createCommandOutcomeReceipt, normalizeCommandResult, type NormalizedCom
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
-import { parseCampaignArgs, runCampaign, runCaseStage, type CampaignOptions, type CaseOutcome, type StageRecord } from './uc03-success-real-run.ts';
+import { parseCampaignArgs, runCampaign, type CampaignOptions } from './uc03-success-real-run.ts';
+import { runCaseStage } from './uc03-success-real-run-cases.ts';
 import type { DecisionTarget } from './uc03-success-real-operator.ts';
 import { checkEvidence } from './uc03-success-real-evidence.ts';
-import { writeCampaign, type PendingArtifact } from './uc03-success-real-record.ts';
+import { allowedProviderResponse } from './uc03-success-real-c10.ts';
+import type { StageRecord } from './uc03-success-real-record.ts';
+import { PASSING_ROWS, STAGES, gradeFor, passingCases, writeRecord } from './uc03-success-real-fixture.ts';
 import { createScanFixture, type ScanFixture } from '../unit/real-tier-scan-fixtures.ts';
-import type { SnapshotGradeResult } from '../../../eval/uc03/workflow-grade.ts';
 
 const fixture: ScanFixture = createScanFixture('t059-gate-', 't059-gate-digest-key');
 const CONTRACT = 'uc03-host-composition/2';
@@ -192,114 +194,11 @@ function campaignOptions(catalog: Catalog, evidenceDir: string, overrides: Parti
   };
 }
 
-/**
- * A validated snapshot grade for one case, and the grader seam that returns it. The campaign judge
- * reads the receipt, never the workflow string (SPEC-W5-003).
- */
-function gradeFor(caseId: string, grade: 'pass' | 'fail' | 'not-run'): SnapshotGradeResult {
-  return {
-    caseId: caseId as SnapshotGradeResult['caseId'],
-    criterionId: `criterion-${caseId}`,
-    grade,
-    reason: grade === 'pass' ? 'criteria-satisfied' : grade === 'fail' ? 'criteria-violation' : 'private-grading',
-    evidenceIds: [`criterion:${caseId}`, 'check:required'],
-    snapshot: { snapshotId: `snap-${caseId}`, digest: `sha256:${sha256Text(`snap-${caseId}`)}` },
-    evidenceDigest: `sha256:${sha256Text(`ev-${caseId}`)}`,
-    criteriaDigest: `sha256:${sha256Text(`crit-${caseId}`)}`,
-    limitations: [],
-  };
-}
-
+/** The grader seam that returns a validated grade. The campaign judge reads the receipt, never the workflow string (SPEC-W5-003). */
 const gradePass = (_assembly: RealTierAssembly, caseId: string) => Promise.resolve(gradeFor(caseId, 'pass'));
 
-/** The full contract case rows a grader-sealed campaign produces, each with the artifact behind it. */
-const PASSING_CASES: readonly CaseOutcome[] = Object.freeze([
-  passingOutcome({ stage: 'case', outcome: 'pass', caseId: 'C01', facts: { workflow: 'COMPLETED', grade: 'pass' } }),
-  passingOutcome({ stage: 'case', outcome: 'pass', caseId: 'C02', facts: { workflow: 'needs-info', grade: 'pass' } }),
-  passingOutcome({ stage: 'case', outcome: 'pass', caseId: 'C16', facts: { derivedFrom: 'C01' } }),
-  passingOutcome({ stage: 'case', outcome: 'pass', caseId: 'C10', facts: { refusals: 1 } }),
-]);
-
-/** One passing case row plus the artifact the checker will resolve for it. */
-function passingOutcome(row: StageRecord): CaseOutcome {
-  const [artifact] = artifactsFor([row]);
-  if (artifact === undefined) throw new Error('TEST_FIXTURE_ARTIFACT_MISSING');
-  const [, , kind, body] = artifact;
-  return kind === 'evidence' ? { record: row, artifact: body as never } : { record: row, derived: { kind, body } };
-}
-
-/** A v2 campaign record with its real artifacts, so the checker can validate the evidence behind it. */
-function writeRecord(dir: string, records: readonly StageRecord[]): void {
-  writeCampaign(
-    dir,
-    {
-      campaignId: 'campaign-1',
-      candidateSha: REV,
-      mode: 'campaign',
-      passed: records.every(entry => entry.outcome === 'pass'),
-      startedAt: 1,
-      finishedAt: 2,
-      bindings: { 'candidate-sha': REV, 'profile-digest': `sha256:${'a'.repeat(64)}`, 'endpoint-digest': `sha256:${'b'.repeat(64)}`, model: MODEL },
-      records,
-    },
-    artifactsFor(records),
-  );
-}
-
-/** The artifacts a record's case rows need: a graded receipt for C01/C02, a report for C16, a witness for C10. */
-function artifactsFor(records: readonly StageRecord[]): readonly PendingArtifact[] {
-  const artifacts: PendingArtifact[] = [];
-  for (const row of records.filter(entry => entry.stage === 'case' && entry.caseId !== undefined)) {
-    const caseId = row.caseId as string;
-    const identity = { taskId: `task-${caseId}`, runId: `run-${caseId}`, workspaceId: `ws-${caseId}` };
-    if (caseId === 'C01' || caseId === 'C02') {
-      artifacts.push([
-        caseId,
-        1,
-        'evidence',
-        { schema: 'uc03-case-evidence/1', campaignId: 'campaign-1', caseId, attempt: 1, identity, evidence: { grade: gradeFor(caseId, row.outcome === 'pass' ? 'pass' : 'fail') }, accounting: { claims: 1, attempts: 1, outcomes: 1 } },
-      ]);
-    }
-    if (caseId === 'C16') {
-      artifacts.push([
-        'C16',
-        1,
-        'c16',
-        {
-          schema: 'uc03-c16-report/1',
-          campaignId: 'campaign-1',
-          caseId: 'C16',
-          attempt: 1,
-          derivedFrom: 'C01',
-          sourceArtifact: 'evidence-C01-1.json',
-          verdict: row.outcome === 'pass' ? 'pass' : 'fail',
-          report: { present: true, outcome: 'COMPLETED', isComplete: true, diffDigest: `sha256:${'c'.repeat(64)}`, evidenceRefs: ['ev-1'], changedFiles: ['src/calculator.py'], bytes: 512, reportDigest: `sha256:${'d'.repeat(64)}` },
-        },
-      ]);
-    }
-    if (caseId === 'C10') {
-      artifacts.push([
-        'C10',
-        1,
-        'c10',
-        {
-          schema: 'uc03-c10-witness/1',
-          campaignId: 'campaign-1',
-          caseId: 'C10',
-          attempt: 1,
-          identity,
-          provider: { providerId: 'provider-deepseek', modelId: MODEL, configId: 'config-v1', configVersion: '1.0.0' },
-          limits: { totalModelCalls: 2, perRunInputTokens: 400000, perRunOutputTokens: 80000, budgetRefs: [] },
-          dispatch: { fetchesBefore: 0, fetchesAfter: 2, refusals: 1, reason: 'RUN_USAGE_LIMIT_REACHED' },
-          journal: { claimsBefore: 0, claimsAfter: 3, outcomesBefore: 0, outcomesAfter: 2 },
-          commandViewDigest: null,
-          disclosure: 'test fixture',
-        },
-      ]);
-    }
-  }
-  return artifacts;
-}
+/** The stage seam of a campaign whose four cases all pass, each with the artifact bound to this campaign. */
+const passingStage: NonNullable<CampaignOptions['runCases']> = async (_assembly, stage) => passingCases(stage.campaignId, stage.binding);
 
 function onlyReceipt(dir: string): { outcome: string; binding: Record<string, string>; reasonCode?: string } {
   const names = readdirSync(dir).filter(name => name.startsWith('conformance-'));
@@ -322,7 +221,7 @@ function campaignDirOf(dir: string): string {
 test('a campaign persists a versioned record and per-attempt case artifacts', async () => {
   const catalog = catalogFor();
   const evidenceDir = tempRoot('evidence');
-  const result = await runCampaign(campaignOptions(catalog, evidenceDir, { runCases: async () => PASSING_CASES }).options);
+  const result = await runCampaign(campaignOptions(catalog, evidenceDir, { runCases: passingStage }).options);
   assert.equal(result.exitCode, 0, JSON.stringify(result.records));
   const dir = campaignDirOf(evidenceDir);
   const record = readCampaignRecord(dir);
@@ -473,7 +372,7 @@ test('a campaign writes one receipt bound to the candidate, profile, endpoint an
   const evidenceDir = tempRoot('evidence');
   const { options, effects } = campaignOptions(catalog, evidenceDir, {
     clock: () => 1_700_000_000_000,
-    runCases: async () => PASSING_CASES,
+    runCases: passingStage,
   });
   const result = await runCampaign(options);
   assert.equal(result.exitCode, 0, JSON.stringify(result.records));
@@ -534,11 +433,11 @@ test('`--case` refuses with zero fetches on a missing, malformed or stale receip
 test('a failed campaign supersedes an earlier passing one; a further passing campaign restores it', async () => {
   const catalog = catalogFor();
   const evidenceDir = tempRoot('evidence');
-  const passing = campaignOptions(catalog, evidenceDir, { clock: () => 1_700_000_000_000, runCases: async () => PASSING_CASES });
+  const passing = campaignOptions(catalog, evidenceDir, { clock: () => 1_700_000_000_000, runCases: passingStage });
   const failing = campaignOptions(catalog, evidenceDir, { clock: () => 1_700_000_100_000, fetch: async () => new Response('{}', { status: 500 }) });
-  const restore = campaignOptions(catalog, evidenceDir, { clock: () => 1_700_000_200_000, runCases: async () => PASSING_CASES });
+  const restore = campaignOptions(catalog, evidenceDir, { clock: () => 1_700_000_200_000, runCases: passingStage });
   const gate = async () => {
-    const { options } = campaignOptions(catalog, evidenceDir, { mode: 'case', caseId: CASE, fetch: async () => new Response('{}', { status: 200 }), runCases: async () => PASSING_CASES });
+    const { options } = campaignOptions(catalog, evidenceDir, { mode: 'case', caseId: CASE, fetch: async () => new Response('{}', { status: 200 }), runCases: passingStage });
     return runCampaign(options);
   };
 
@@ -561,7 +460,7 @@ test('a failed campaign supersedes an earlier passing one; a further passing cam
 test('`--case` binds to the newest conformed receipt and runs one case stage', async () => {
   const catalog = catalogFor();
   const evidenceDir = tempRoot('evidence');
-  await runCampaign(campaignOptions(catalog, evidenceDir, { runCases: async () => PASSING_CASES }).options);
+  await runCampaign(campaignOptions(catalog, evidenceDir, { runCases: passingStage }).options);
 
   const requested: string[][] = [];
   const { options, effects } = campaignOptions(catalog, evidenceDir, {
@@ -573,7 +472,7 @@ test('`--case` binds to the newest conformed receipt and runs one case stage', a
     },
     runCases: async (_assembly, stageOptions) => {
       requested.push([...stageOptions.caseIds]);
-      return PASSING_CASES.filter(entry => entry.record.caseId === CASE);
+      return (await passingStage(_assembly, stageOptions)).filter(entry => entry.record.caseId === CASE);
     },
   });
   const result = await runCampaign(options);
@@ -625,12 +524,24 @@ test('C16 is judged from the C01 report on its own content, and C10 is never inf
   assert.equal(byId.get('C16')?.reasonCode, 'c16-report-unprovenanced', 'an unprovenanced report is unsafe');
   assert.equal((c16?.derived?.body as { verdict: string }).verdict, 'fail', 'the artifact carries the predicate verdict');
   // C10 runs its own witness even when it is the only scheduled case, and never derives from C01.
-  const witnessFetches = 0;
-  const withoutWitness = await runCaseStage(() => resolveOrThrow(catalog).assembly, { caseIds: ['C10'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass, fetches: () => witnessFetches });
-  assert.equal(withoutWitness[0]?.record.caseId, 'C10');
-  assert.notEqual(withoutWitness[0]?.record.facts?.['derivedFrom'], 'C01', 'C10 is never inferred from C01');
-  assert.equal(withoutWitness[0]?.record.facts?.['refusals'], 1, 'C10 observes its own refusal');
-  assert.equal(withoutWitness[0]?.derived?.kind, 'c10', 'C10 carries its own witness artifact');
+  let dispatched = 0;
+  // The task's token ledger must admit the over-limit reservation, so the limiter is what refuses it.
+  const roomy = catalogFor(taskOf({ budgetLimits: { maxReplanCount: 3, maxTokens: 2_000_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 } }));
+  const witness = (fetchImpl: () => Response, withCounter = true, source = roomy) =>
+    runCaseStage(() => resolveOrThrow(source, { fetch: async () => (dispatched++, fetchImpl()) }).assembly, { caseIds: ['C10'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass, ...(withCounter ? { fetches: () => dispatched } : {}) });
+  const [passed] = await witness(() => allowedProviderResponse(MODEL));
+  assert.equal(passed?.record.caseId, 'C10');
+  assert.notEqual(passed?.record.facts?.['derivedFrom'], 'C01', 'C10 is never inferred from C01');
+  assert.deepEqual([passed?.record.outcome, passed?.record.facts?.['allowed-fetches'], passed?.record.facts?.['refused-fetches'], passed?.record.facts?.['refusal-reason']], ['pass', 1, 0, 'RUN_USAGE_LIMIT_REACHED'], JSON.stringify(passed?.record));
+  assert.equal(passed?.derived?.kind, 'c10', 'C10 carries its own witness artifact');
+  // A failing allowed call is a failed witness, not a refusal; without a counter nothing can be disproved.
+  const [failedAllowed] = await witness(() => new Response('{}', { status: 503 }));
+  assert.deepEqual([failedAllowed?.record.outcome, failedAllowed?.record.reasonCode], ['fail', 'c10-allowed-not-observed']);
+  // A task ledger below the run limit would refuse the request as a budget claim, so nothing is observed.
+  const [tight] = await witness(() => allowedProviderResponse(MODEL), true, catalog);
+  assert.deepEqual([tight?.record.outcome, tight?.record.reasonCode], ['not-run', 'c10-task-budget-below-run-limit']);
+  const [uncounted] = await witness(() => allowedProviderResponse(MODEL), false);
+  assert.deepEqual([uncounted?.record.outcome, uncounted?.record.reasonCode], ['not-run', 'c10-fetch-counter-unavailable']);
 });
 
 test('C02 binds its own fresh assembly and stays terminal at its expected clarification pause', async () => {
@@ -750,12 +661,7 @@ test('a resume admission exits 0 on a permitted resume, never 0 on a fresh-attem
 
 /* ------------------------------------------------------------ evidence check */
 
-/** The stages a complete campaign record carries, in order, before its case rows. */
-const CLEAN_STAGES: readonly StageRecord[] = Object.freeze([
-  { stage: 'preflight', outcome: 'pass' },
-  { stage: 'conformance', outcome: 'pass' },
-]);
-const CLEAN_RECORD = [...CLEAN_STAGES, ...PASSING_CASES.map(entry => entry.record)];
+const CLEAN_RECORD: readonly StageRecord[] = [...STAGES, ...PASSING_ROWS];
 
 /**
  * SPEC-W5-002's live pause path needs a real model that produces a plan, so it is exercised at T054.
@@ -790,18 +696,18 @@ test('the checker passes a complete campaign record and fails a failed or not-ru
   writeRecord(clean, CLEAN_RECORD);
   assert.deepEqual(checkEvidence({ evidenceDir: clean, ...scan }), { exitCode: 0, output: 'EVIDENCE_CLEAN 4 case(s)' });
 
-  const cases = PASSING_CASES.map(entry => entry.record);
+  const cases = PASSING_ROWS;
   const rows: readonly (readonly [string, readonly StageRecord[], string])[] = [
-    ['failed case', [...CLEAN_STAGES, { stage: 'case', outcome: 'fail', caseId: 'C01' }, ...cases.slice(1)], 'case:C01:fail'],
+    ['failed case', [...STAGES, { stage: 'case', outcome: 'fail', caseId: 'C01' }, ...cases.slice(1)], 'case:C01:fail'],
     [
       'not-run case',
-      [...CLEAN_STAGES, cases[0] as StageRecord, { stage: 'case', outcome: 'not-run', caseId: 'C02', reasonCode: 'grader-unavailable' }, ...cases.slice(2)],
+      [...STAGES, cases[0] as StageRecord, { stage: 'case', outcome: 'not-run', caseId: 'C02', reasonCode: 'grader-unavailable' }, ...cases.slice(2)],
       'case:C02:not-run:grader-unavailable',
     ],
     ['failed stage', [{ stage: 'preflight', outcome: 'pass' }, { stage: 'conformance', outcome: 'fail', reasonCode: 'conformance-timeout' }, ...cases], 'conformance:fail:conformance-timeout'],
     ['missing preflight', [{ stage: 'conformance', outcome: 'pass' }, ...cases], 'preflight:missing'],
-    ['missing C16', [...CLEAN_STAGES, ...cases.slice(0, 2)], 'case:missing:C16'],
-    ['missing C10', [...CLEAN_STAGES, ...cases.slice(0, 3)], 'case:missing:C10'],
+    ['missing C16', [...STAGES, ...cases.slice(0, 2)], 'case:missing:C16'],
+    ['missing C10', [...STAGES, ...cases.slice(0, 3)], 'case:missing:C10'],
   ];
   for (const [label, records, expected] of rows) {
     const dir = tempRoot('evidence');
@@ -813,14 +719,14 @@ test('the checker passes a complete campaign record and fails a failed or not-ru
 
   // A duplicate case row is never collapsed to its last value: the earlier failure must survive.
   const duplicate = tempRoot('duplicate');
-  writeRecord(duplicate, [...CLEAN_STAGES, { stage: 'case', outcome: 'fail', caseId: 'C01' }, ...cases]);
+  writeRecord(duplicate, [...STAGES, { stage: 'case', outcome: 'fail', caseId: 'C01' }, ...cases]);
   const dupResult = checkEvidence({ evidenceDir: duplicate, ...scan });
   assert.equal(dupResult.exitCode, 1, 'a passing duplicate never hides an earlier failed attempt');
 });
 
 test('the checker rejects incomplete, unpromoted and missing-prerequisite campaigns', () => {
   const scan = { env: fixture.envOf(), repositoryRoot: tempRoot('repo') };
-  const cases = PASSING_CASES.map(entry => entry.record);
+  const cases = PASSING_ROWS;
 
   // C01 and C02 alone, with no prerequisite stage and no C16/C10, is not a campaign.
   const partial = tempRoot('partial');

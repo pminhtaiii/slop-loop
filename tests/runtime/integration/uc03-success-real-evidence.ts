@@ -3,39 +3,48 @@
  *
  * A passing label is not evidence. This checker reads the campaign record the runner wrote, resolves
  * every artifact it references, recomputes each artifact's digest, and judges the content behind each
- * case row: C01/C02 need a graded receipt bound to the same case and snapshot as the row, C16 needs a
- * safe report judged from the C01 run, and C10 needs its own zero-dispatch witness. A missing,
- * misattributed, digest-mismatched or failed artifact refuses (SPEC-W5-106).
+ * case row. Every artifact must be bound to this campaign: its campaign id, case, attempt, pinned
+ * binding and final snapshot digest must agree with the record, the conformance receipt and the
+ * artifacts it derives from (SPEC-W5-206). C10 is judged by the one predicate the runner applies.
  *
- * Missing or duplicate case ids are refused too (STD-W5-102): a campaign has exactly one row per
- * scheduled case, and an attempt id is unique for its case. The T057 directory scan runs first over
- * the whole evidence directory, so a leaked needle is reported before any judgement is made.
+ * `--evidence` accepts the campaign directory itself or its parent (the T054 directory the quickstart
+ * names), in which case the newest `--campaign` directory is judged. Missing or duplicate case ids are
+ * refused (STD-W5-102). The T057 directory scan runs first, so a leaked needle is reported before any
+ * judgement. Output carries bounded codes only; no decoded path or value is ever echoed (STD-W5-209).
  */
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { needleGuard, resolveScanProfile, scanDirectory, type ScanOptions, type ScanResult } from '../../../src/runtime/real-tier-endpoint-scan.ts';
 
+import { judgeC10, parseC10 } from './uc03-success-real-c10.ts';
+import { PINNED_MODEL } from './uc03-success-real-provider.ts';
 import {
   CASE_EVIDENCE_SCHEMA,
   C16_REPORT_SCHEMA,
-  C10_WITNESS_SCHEMA,
+  RECORD_SCHEMA,
   REASON_CODE,
   SAFE_ID,
   SHA256,
+  bindingOf,
   digestOf,
+  parseReceipt,
   readArtifact,
+  receiptName,
+  sameBinding,
+  type ArtifactBinding,
   type CampaignRecord,
   type CaseArtifact,
   type StageRecord,
 } from './uc03-success-real-record.ts';
 
 const RECORD = 'campaign.json';
-const RECORD_SCHEMA = 'uc03-campaign-record/2';
+/** The directory names a `--campaign` invocation creates; the parent form judges the newest. */
+const CAMPAIGN_DIR = /^campaign-(\d+)-campaign-all(?:-(\d+))?$/u;
 
 export interface EvidenceCheckOptions {
-  /** The retained campaign directory: `campaign.json` and the artifacts it references. */
+  /** The campaign directory, or the evidence directory holding campaign directories. */
   readonly evidenceDir: string;
   readonly env: ScanOptions['env'];
   readonly repositoryRoot: string;
@@ -51,149 +60,191 @@ export interface EvidenceCheckResult {
 const REQUIRED_STAGES = ['preflight', 'conformance'] as const;
 const REQUIRED_CASES = ['C01', 'C02', 'C16', 'C10'] as const;
 /** The binding keys every campaign record must carry, so a partial record is not a campaign. */
-const BINDING_KEYS = ['candidate-sha', 'profile-digest', 'endpoint-digest', 'model'] as const;
+const BINDING_KEYS = ['candidate-sha', 'profile-digest', 'endpoint-digest', 'model', 'image', 'scheme'] as const;
+
+type Raw = Record<string, unknown>;
+const isRaw = (value: unknown): value is Raw => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isDigest = (value: unknown): value is string => typeof value === 'string' && SHA256.test(value);
+const isId = (value: unknown): value is string => typeof value === 'string' && SAFE_ID.test(value);
 
 function isStageRecord(value: unknown): value is StageRecord {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Record<string, unknown>;
-  if (typeof record['stage'] !== 'string' || !['assembly', 'preflight', 'conformance', 'receipt', 'recovery', 'case'].includes(record['stage'])) return false;
-  if (record['outcome'] !== 'pass' && record['outcome'] !== 'fail' && record['outcome'] !== 'not-run') return false;
-  if (record['caseId'] !== undefined && (typeof record['caseId'] !== 'string' || !SAFE_ID.test(record['caseId']))) return false;
+  if (!isRaw(value)) return false;
+  if (typeof value['stage'] !== 'string' || !['assembly', 'preflight', 'conformance', 'receipt', 'recovery', 'case'].includes(value['stage'])) return false;
+  if (value['outcome'] !== 'pass' && value['outcome'] !== 'fail' && value['outcome'] !== 'not-run') return false;
+  if (value['caseId'] !== undefined && !isId(value['caseId'])) return false;
   // An unvalidated reason code is untrusted text that would otherwise reach the operator output.
-  if (record['reasonCode'] !== undefined && (typeof record['reasonCode'] !== 'string' || !REASON_CODE.test(record['reasonCode']))) return false;
-  return true;
+  return value['reasonCode'] === undefined || (typeof value['reasonCode'] === 'string' && REASON_CODE.test(value['reasonCode']));
 }
 
 function isArtifact(value: unknown): value is CaseArtifact {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return typeof record['caseId'] === 'string' && SAFE_ID.test(record['caseId']) && typeof record['attempt'] === 'number' && Number.isSafeInteger(record['attempt']) && record['attempt'] >= 1 && (record['kind'] === 'evidence' || record['kind'] === 'c16' || record['kind'] === 'c10') && typeof record['path'] === 'string' && typeof record['digest'] === 'string' && SHA256.test(record['digest']);
+  return isRaw(value) && isId(value['caseId']) && typeof value['attempt'] === 'number' && Number.isSafeInteger(value['attempt']) && value['attempt'] >= 1 && (value['kind'] === 'evidence' || value['kind'] === 'c16' || value['kind'] === 'c10') && typeof value['path'] === 'string' && isDigest(value['digest']);
 }
 
-/** A retained record is parsed as untrusted input: an unknown shape is unusable, never a pass. */
-function parseRecord(text: string): CampaignRecord | undefined {
-  let parsed: unknown;
+/** Parses retained JSON as untrusted input; an unparsable file is `undefined`, never a pass. */
+function parseJson(text: string): unknown {
   try {
-    parsed = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
     return undefined;
   }
-  if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const record = parsed as Record<string, unknown>;
-  if (record['schemaVersion'] !== RECORD_SCHEMA) return undefined;
+}
+
+function parseRecord(text: string): CampaignRecord | undefined {
+  const record = parseJson(text);
+  if (!isRaw(record) || record['schemaVersion'] !== RECORD_SCHEMA || !isId(record['campaignId'])) return undefined;
   const bindings = record['bindings'];
-  if (typeof bindings !== 'object' || bindings === null || Array.isArray(bindings)) return undefined;
-  const bindingRecord = bindings as Record<string, unknown>;
-  if (!BINDING_KEYS.every(key => typeof bindingRecord[key] === 'string' && (bindingRecord[key] as string).trim() !== '')) return undefined;
+  if (!isRaw(bindings) || !BINDING_KEYS.every(key => typeof bindings[key] === 'string' && (bindings[key] as string).trim() !== '')) return undefined;
   const records = record['records'];
-  if (!Array.isArray(records) || records.length === 0 || !records.every(isStageRecord)) return undefined;
   const caseArtifacts = record['caseArtifacts'];
-  if (!Array.isArray(caseArtifacts) || !caseArtifacts.every(isArtifact)) return undefined;
+  if (!Array.isArray(records) || records.length === 0 || !records.every(isStageRecord) || !Array.isArray(caseArtifacts) || !caseArtifacts.every(isArtifact)) return undefined;
   return {
     schemaVersion: RECORD_SCHEMA,
-    campaignId: typeof record['campaignId'] === 'string' ? record['campaignId'] : '',
+    campaignId: record['campaignId'],
     candidateSha: typeof record['candidateSha'] === 'string' ? record['candidateSha'] : '',
     mode: record['mode'] === 'campaign' || record['mode'] === 'case' || record['mode'] === 'resume' ? record['mode'] : 'campaign',
     passed: record['passed'] === true,
     startedAt: typeof record['startedAt'] === 'number' ? record['startedAt'] : 0,
     finishedAt: typeof record['finishedAt'] === 'number' ? record['finishedAt'] : 0,
-    bindings: bindingRecord as Readonly<Record<string, string>>,
+    bindings: bindings as Readonly<Record<string, string>>,
     records: records as readonly StageRecord[],
     caseArtifacts: caseArtifacts as readonly CaseArtifact[],
   };
 }
 
-/** One case row's artifact, as the tuple it is keyed by; a row with none is a failure. */
-interface ResolvedArtifact {
-  readonly artifact: CaseArtifact;
-  readonly body: Record<string, unknown> | undefined;
+/** The campaign directory: the given one, or the newest `--campaign` directory under it. */
+function campaignDirOf(root: string): string | undefined {
+  if (existsSync(join(root, RECORD))) return root;
+  if (!existsSync(root)) return undefined;
+  const newest = readdirSync(root)
+    .flatMap(name => {
+      const match = CAMPAIGN_DIR.exec(name);
+      return match === null ? [] : [{ name, at: Number(match[1]), n: Number(match[2] ?? 1) }];
+    })
+    .sort((left, right) => left.at - right.at || left.n - right.n)
+    .at(-1);
+  return newest !== undefined && existsSync(join(root, newest.name, RECORD)) ? join(root, newest.name) : undefined;
 }
 
-/** Reads and digest-checks every artifact the record references; a mismatch is named, never ignored. */
-function resolveArtifacts(dir: string, artifacts: readonly CaseArtifact[]): readonly (ResolvedArtifact | string)[] {
-  return artifacts.map(artifact => {
+/** Record-level problems: the campaign shape, the binding values and the conformance receipt it rests on. */
+function recordProblems(campaign: CampaignRecord, dir: string): readonly string[] {
+  const { bindings } = campaign;
+  const problems: string[] = [];
+  if (campaign.mode !== 'campaign') problems.push('record:not-a-campaign');
+  if (bindings['candidate-sha'] !== campaign.candidateSha || !/^[0-9a-f]{40}$/u.test(campaign.candidateSha)) problems.push('record:candidate-invalid');
+  if (!isDigest(bindings['profile-digest']) || !isDigest(bindings['endpoint-digest'])) problems.push('record:binding-digest-invalid');
+  if (bindings['model'] !== PINNED_MODEL) problems.push('record:model-not-pinned');
+  const path = [join(dir, receiptName(campaign.campaignId)), join(dirname(dir), receiptName(campaign.campaignId))].find(existsSync);
+  const receipt = path === undefined ? undefined : parseReceipt(parseJson(readFileSync(path, 'utf8')));
+  if (path === undefined) problems.push('receipt:missing');
+  else if (receipt === undefined) problems.push('receipt:malformed');
+  else if (receipt.campaignId !== campaign.campaignId) problems.push('receipt:campaign-mismatch');
+  else if (receipt.outcome !== 'conformed') problems.push('receipt:not-conformed');
+  else if (!sameBinding(receipt.binding, bindingOf(bindings))) problems.push('receipt:binding-mismatch');
+  return problems;
+}
+
+/** Everything a case judgement compares an artifact against. */
+interface Context {
+  readonly campaign: CampaignRecord;
+  readonly binding: ArtifactBinding;
+  readonly artifacts: readonly CaseArtifact[];
+  readonly bodies: ReadonlyMap<string, Raw>;
+}
+
+/** Reads and digest-checks every referenced artifact; a failure is named by its index, never its path. */
+function resolveArtifacts(dir: string, artifacts: readonly CaseArtifact[]): { readonly bodies: ReadonlyMap<string, Raw>; readonly broken: readonly string[] } {
+  const bodies = new Map<string, Raw>();
+  const broken: string[] = [];
+  artifacts.forEach((artifact, index) => {
     const text = readArtifact(dir, artifact);
-    if (text === undefined) return `artifact-misnamed:${artifact.path}`;
-    if (digestOf(text) !== artifact.digest) return `artifact-digest-mismatch:${artifact.path}`;
-    const parsed: unknown = JSON.parse(text);
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? { artifact, body: parsed as Record<string, unknown> } : `artifact-invalid:${artifact.path}`;
+    if (text === undefined) broken.push(`artifact[${index}]:unreadable`);
+    else if (digestOf(text) !== artifact.digest) broken.push(`artifact[${index}]:digest-mismatch`);
+    else {
+      const body = parseJson(text);
+      if (isRaw(body)) bodies.set(artifact.path, body);
+      else broken.push(`artifact[${index}]:invalid`);
+    }
   });
+  return { bodies, broken };
 }
 
-/** The evidence behind a case row: its own artifact must exist, be bound to it, and agree with the row. */
-function judgedCase(caseId: string, row: StageRecord, artifacts: readonly CaseArtifact[], bodies: ReadonlyMap<string, Record<string, unknown> | undefined>): string | undefined {
-  const own = artifacts.filter(artifact => artifact.caseId === caseId && (artifact.kind === 'evidence' || artifact.kind === (caseId === 'C16' ? 'c16' : caseId === 'C10' ? 'c10' : 'evidence')));
+const ownOf = (ctx: Context, caseId: string) => ctx.artifacts.filter(artifact => artifact.caseId === caseId && artifact.kind === (caseId === 'C16' ? 'c16' : caseId === 'C10' ? 'c10' : 'evidence'));
+
+/** The evidence behind a case row: its own artifact must exist, be bound to this campaign, and agree with the row. */
+function judgedCase(ctx: Context, caseId: string, row: StageRecord): string | undefined {
+  const own = ownOf(ctx, caseId);
   if (own.length !== 1) return own.length === 0 ? `case:${caseId}:missing-artifact` : `case:${caseId}:duplicate-artifact`;
-  const body = bodies.get((own[0] as CaseArtifact).path);
+  const ref = own[0] as CaseArtifact;
+  const body = ctx.bodies.get(ref.path);
   if (body === undefined) return `case:${caseId}:artifact-unreadable`;
   if (body['caseId'] !== caseId) return `case:${caseId}:artifact-misattributed`;
-  if (body['campaignId'] === '') return `case:${caseId}:artifact-unbound`;
-  if (caseId === 'C01' || caseId === 'C02') return judgedGraded(caseId, row, body);
-  if (caseId === 'C16') return judgedC16(row, body, artifacts);
-  return judgedC10(row, body);
+  if (body['campaignId'] !== ctx.campaign.campaignId) return `case:${caseId}:artifact-campaign`;
+  if (body['attempt'] !== ref.attempt) return `case:${caseId}:artifact-attempt`;
+  if (!sameBinding(body['binding'], ctx.binding)) return `case:${caseId}:artifact-binding`;
+  const failure = caseId === 'C16' ? judgedC16(ctx, row, body, ref) : caseId === 'C10' ? judgedC10(body) : judgedGraded(caseId, row, body);
+  return failure === undefined ? undefined : `case:${caseId}:${failure}`;
 }
 
-/** C01/C02: a graded receipt whose case, snapshot and digest the row itself names. */
-function judgedGraded(caseId: string, row: StageRecord, body: Record<string, unknown>): string | undefined {
-  if (body['schema'] !== CASE_EVIDENCE_SCHEMA) return `case:${caseId}:artifact-schema`;
+const identityOk = (body: Raw): boolean => isRaw(body['identity']) && isId(body['identity']['taskId']) && isId(body['identity']['runId']) && isId(body['identity']['workspaceId']);
+
+/** C01/C02: a graded receipt whose snapshot, evidence and criteria the artifact and its row both name. */
+function judgedGraded(caseId: string, row: StageRecord, body: Raw): string | undefined {
+  if (body['schema'] !== CASE_EVIDENCE_SCHEMA) return 'artifact-schema';
+  if (!identityOk(body)) return 'identity-missing';
   const evidence = body['evidence'];
-  if (typeof evidence !== 'object' || evidence === null) return `case:${caseId}:evidence-missing`;
-  const record = evidence as Record<string, unknown>;
-  const grade = record['grade'];
-  if (typeof grade !== 'object' || grade === null) return `case:${caseId}:grade-missing`;
-  const graded = grade as Record<string, unknown>;
-  if (graded['caseId'] !== caseId) return `case:${caseId}:grade-case-mismatch`;
-  if (row.outcome === 'pass' && graded['grade'] !== 'pass') return `case:${caseId}:label-unsubstantiated`;
+  if (!isRaw(evidence)) return 'evidence-missing';
+  const grade = evidence['grade'];
+  if (!isRaw(grade)) return 'grade-missing';
+  if (grade['caseId'] !== caseId) return 'grade-case-mismatch';
+  if (grade['grade'] !== 'pass') return 'label-unsubstantiated';
   // The row's own facts must agree with the receipt it cites, so a copied pass cannot travel alone.
-  if (row.facts?.['grade'] !== graded['grade']) return `case:${caseId}:label-mismatch`;
-  const identity = body['identity'];
-  if (typeof identity !== 'object' || identity === null || typeof (identity as Record<string, unknown>)['taskId'] !== 'string') return `case:${caseId}:identity-missing`;
+  if (row.facts?.['grade'] !== grade['grade']) return 'label-mismatch';
+  const snapshot = grade['snapshot'];
+  if (!isRaw(snapshot) || !isId(snapshot['snapshotId']) || !isDigest(snapshot['digest']) || !isDigest(grade['evidenceDigest']) || !isDigest(grade['criteriaDigest']) || typeof grade['criterionId'] !== 'string' || grade['criterionId'] === '') return 'grade-unbound';
+  const kept = evidence['snapshot'];
+  if (!isRaw(kept) || kept['snapshotId'] !== snapshot['snapshotId'] || kept['digest'] !== snapshot['digest'] || evidence['evidenceDigest'] !== grade['evidenceDigest']) return 'snapshot-mismatch';
+  if (body['finalSnapshotDigest'] !== snapshot['digest']) return 'final-snapshot-mismatch';
+  if (row.facts?.['grader-digest'] !== grade['criteriaDigest']) return 'criteria-mismatch';
+  const accounting = body['accounting'];
+  if (!isRaw(accounting) || !['claims', 'attempts', 'outcomes'].every(key => Number.isSafeInteger(accounting[key]))) return 'accounting-missing';
+  if (!isRaw(evidence['ownerRevisions']) || typeof evidence['ownerRevisions']['repository'] !== 'string') return 'owner-revisions-missing';
+  if (caseId !== 'C01') return undefined;
+  const approval = evidence['approval'];
+  if (!isRaw(approval) || approval['decided'] !== 'approve' || typeof approval['decisionId'] !== 'string' || approval['decisionId'] === '') return 'approval-missing';
+  if (!isDigest(evidence['diffDigest']) || !isDigest(evidence['reportDigest'])) return 'diff-missing';
+  const usage = evidence['usage'];
+  if (!isRaw(usage) || typeof usage['tokens'] !== 'number' || typeof usage['cost'] !== 'number' || (usage['costLabel'] !== 'estimate-unverified' && usage['costLabel'] !== 'unknown')) return 'usage-unlabelled';
   return undefined;
 }
 
-/** C16: a safe report judged from the C01 run, present, bounded and carrying provenance. */
-function judgedC16(row: StageRecord, body: Record<string, unknown>, artifacts: readonly CaseArtifact[]): string | undefined {
-  if (body['schema'] !== C16_REPORT_SCHEMA || body['derivedFrom'] !== 'C01') return 'case:C16:artifact-schema';
-  // The report must name the C01 artifact it was derived from, and that artifact must exist.
-  const source = body['sourceArtifact'];
-  if (typeof source !== 'string' || !artifacts.some(artifact => artifact.path === source && artifact.caseId === 'C01')) return 'case:C16:report-source-missing';
-  const report = body['report'];
-  if (typeof report !== 'object' || report === null) return 'case:C16:report-missing';
-  const view = report as Record<string, unknown>;
+/** C16: a safe report derived from the retained C01 artifact, present, bounded and carrying provenance. */
+function judgedC16(ctx: Context, row: StageRecord, body: Raw, ref: CaseArtifact): string | undefined {
+  if (body['schema'] !== C16_REPORT_SCHEMA || body['derivedFrom'] !== 'C01') return 'artifact-schema';
+  const source = ownOf(ctx, 'C01')[0];
+  const c01 = source === undefined ? undefined : ctx.bodies.get(source.path);
+  if (source === undefined || c01 === undefined || body['sourceArtifact'] !== source.path) return 'report-source-missing';
+  if (body['sourceDigest'] !== source.digest || ref.attempt !== source.attempt) return 'report-source-mismatch';
+  if (!isDigest(body['finalSnapshotDigest']) || body['finalSnapshotDigest'] !== c01['finalSnapshotDigest']) return 'final-snapshot-mismatch';
   // The row's verdict must be the report predicate's own: a pass can never outrun its report.
-  if (row.outcome === 'pass' && body['verdict'] !== 'pass') return 'case:C16:report-unsafe';
-  if (row.outcome === 'pass' && view['present'] !== true) return 'case:C16:report-absent';
-  if (row.outcome !== 'pass') return undefined;
-  if (typeof view['diffDigest'] !== 'string' && view['isComplete'] === true) return 'case:C16:report-incomplete';
-  const refs = view['evidenceRefs'];
-  if (!Array.isArray(refs) || refs.length === 0) return 'case:C16:report-unprovenanced';
-  if (typeof view['reportDigest'] !== 'string' || !SHA256.test(view['reportDigest'])) return 'case:C16:report-undigested';
-  if (typeof view['bytes'] !== 'number' || view['bytes'] <= 0) return 'case:C16:report-empty';
-  return undefined;
+  if (body['verdict'] !== 'pass') return 'report-unsafe';
+  const view = body['report'];
+  if (!isRaw(view)) return 'report-missing';
+  if (view['present'] !== true) return 'report-absent';
+  if (view['isComplete'] === true && !isDigest(view['diffDigest'])) return 'report-incomplete';
+  if (!Array.isArray(view['evidenceRefs']) || view['evidenceRefs'].length === 0) return 'report-unprovenanced';
+  if (!isDigest(view['reportDigest'])) return 'report-undigested';
+  if (typeof view['bytes'] !== 'number' || view['bytes'] <= 0) return 'report-empty';
+  const kept = isRaw(c01['evidence']) ? c01['evidence'] : {};
+  if (view['reportDigest'] !== kept['reportDigest'] || (view['diffDigest'] !== null && view['diffDigest'] !== kept['diffDigest'])) return 'report-source-mismatch';
+  return row.facts?.['report-digest'] === view['reportDigest'] ? undefined : 'label-mismatch';
 }
 
-/** C10: its own witness, with exactly one refusal and no extra fetch for that refused call. */
-function judgedC10(row: StageRecord, body: Record<string, unknown>): string | undefined {
-  if (body['schema'] !== C10_WITNESS_SCHEMA) return 'case:C10:artifact-schema';
-  const dispatch = body['dispatch'];
-  if (typeof dispatch !== 'object' || dispatch === null) return 'case:C10:witness-missing';
-  const witness = dispatch as Record<string, unknown>;
-  if (row.outcome !== 'pass') return undefined;
-  if (witness['refusals'] !== 1) return 'case:C10:no-refusal';
-  if (typeof witness['reason'] !== 'string') return 'case:C10:reason-missing';
-  if (typeof witness['fetchesBefore'] !== 'number' || typeof witness['fetchesAfter'] !== 'number') return 'case:C10:dispatch-unobserved';
-  const limits = body['limits'];
-  if (typeof limits !== 'object' || limits === null) return 'case:C10:limits-missing';
-  const ceiling = (limits as Record<string, unknown>)['totalModelCalls'];
-  if (typeof ceiling !== 'number') return 'case:C10:limits-missing';
-  // Each allowed call dispatches once; the refused call adds nothing above the ceiling.
-  if (witness['fetchesAfter'] - witness['fetchesBefore'] !== ceiling) return 'case:C10:refusal-dispatched';
-  const journal = body['journal'];
-  if (typeof journal !== 'object' || journal === null) return 'case:C10:journal-missing';
-  const claims = journal as Record<string, unknown>;
-  if (typeof claims['claimsAfter'] !== 'number' || (claims['claimsAfter'] as number) <= (claims['claimsBefore'] as number)) return 'case:C10:no-reservation';
-  if (typeof claims['outcomesAfter'] !== 'number' || (claims['outcomesAfter'] as number) <= (claims['outcomesBefore'] as number)) return 'case:C10:no-settlement';
-  return undefined;
+/** C10: the one predicate the runner applies, over a witness bound to this campaign. */
+function judgedC10(body: Raw): string | undefined {
+  const witness = parseC10(body);
+  if (witness === undefined) return 'artifact-schema';
+  if (!identityOk(body)) return 'identity-missing';
+  return judgeC10(witness);
 }
 
 /**
@@ -202,28 +253,17 @@ function judgedC10(row: StageRecord, body: Record<string, unknown>): string | un
  * overwrites an earlier one, and every mandatory stage and case must be present exactly once.
  */
 export function checkEvidence(options: EvidenceCheckOptions): EvidenceCheckResult {
-  const dir = resolve(options.evidenceDir);
-  const scan: ScanResult = scanDirectory(dir, { env: options.env, repositoryRoot: options.repositoryRoot });
+  const root = resolve(options.evidenceDir);
+  const scan: ScanResult = scanDirectory(root, { env: options.env, repositoryRoot: options.repositoryRoot });
   if (scan.exitCode !== 0) {
     // The scanner's own report already names only a location, so it is forwarded unchanged.
     return { exitCode: scan.exitCode === 1 ? 1 : 2, output: `EVIDENCE_SCAN_FAILED\n${scan.output}` };
   }
-
-  let text: string;
-  try {
-    text = readFileSync(join(dir, RECORD), 'utf8');
-  } catch {
-    return { exitCode: 2, output: 'EVIDENCE_RECORD_MISSING' };
-  }
-  const campaign = parseRecord(text);
+  const dir = campaignDirOf(root);
+  if (dir === undefined) return { exitCode: 2, output: 'EVIDENCE_RECORD_MISSING' };
+  const campaign = parseRecord(readFileSync(join(dir, RECORD), 'utf8'));
   if (campaign === undefined) return { exitCode: 2, output: 'EVIDENCE_RECORD_INVALID' };
   const { records } = campaign;
-
-  // A reason code is decoded by JSON.parse before it is judged, so a needle hidden as Unicode escapes
-  // evades the raw-text scan. Re-scan every decoded code against the same needle set before echoing any.
-  const resolved = resolveScanProfile(options.env, options.repositoryRoot);
-  const leaks = resolved.ok && records.some(entry => entry.reasonCode !== undefined && needleGuard(entry.reasonCode, resolved.profile, options.env) !== undefined);
-  if (leaks) return { exitCode: 2, output: 'EVIDENCE_RECORD_INVALID' };
 
   // Every non-case stage row and every earlier attempt is judged in place, never through a last-value map.
   const failed = records.filter(entry => entry.outcome !== 'pass');
@@ -236,25 +276,31 @@ export function checkEvidence(options: EvidenceCheckOptions): EvidenceCheckResul
   for (const row of caseRows) if (row.caseId !== undefined) caseCounts.set(row.caseId, (caseCounts.get(row.caseId) ?? 0) + 1);
   const duplicated = [...caseCounts.entries()].filter(([, count]) => count > 1).map(([caseId]) => caseId);
   const missingCases = REQUIRED_CASES.filter(caseId => !caseCounts.has(caseId));
-  if (failed.length > 0 || missingStages.length > 0 || missingCases.length > 0 || unlabelled.length > 0 || duplicated.length > 0) {
-    const lines = [
-      ...failed.map(entry => (entry.stage === 'case' ? `case:${entry.caseId ?? 'unknown'}:${entry.outcome}` : `${entry.stage}:${entry.outcome}`) + (entry.reasonCode === undefined ? '' : `:${entry.reasonCode}`)),
-      ...missingStages.map(stage => `${stage}:missing`),
-      ...missingCases.map(caseId => `case:missing:${caseId}`),
-      ...unlabelled.map(() => 'case:unlabelled'),
-      ...duplicated.map(caseId => `case:${caseId}:duplicate`),
-    ];
-    return { exitCode: 1, output: ['EVIDENCE_INCOMPLETE', ...lines].join('\n') };
+  const lines: string[] = [
+    ...failed.map(entry => (entry.stage === 'case' ? `case:${entry.caseId ?? 'unknown'}:${entry.outcome}` : `${entry.stage}:${entry.outcome}`) + (entry.reasonCode === undefined ? '' : `:${entry.reasonCode}`)),
+    ...missingStages.map(stage => `${stage}:missing`),
+    ...missingCases.map(caseId => `case:missing:${caseId}`),
+    ...unlabelled.map(() => 'case:unlabelled'),
+    ...duplicated.map(caseId => `case:${caseId}:duplicate`),
+  ];
+  if (lines.length === 0) {
+    // Each case row must be backed by its own artifact, bound to this campaign; a pass label alone is never enough.
+    const { bodies, broken } = resolveArtifacts(dir, campaign.caseArtifacts);
+    const ctx: Context = { campaign, binding: bindingOf(campaign.bindings), artifacts: campaign.caseArtifacts, bodies };
+    lines.push(
+      ...recordProblems(campaign, dir),
+      ...broken,
+      ...(campaign.caseArtifacts.some(artifact => !(REQUIRED_CASES as readonly string[]).includes(artifact.caseId)) ? ['artifact:unexpected-case'] : []),
+      ...(broken.length > 0 ? [] : REQUIRED_CASES.map(caseId => judgedCase(ctx, caseId, caseRows.find(row => row.caseId === caseId) as StageRecord)).filter((entry): entry is string => entry !== undefined)),
+    );
   }
-
-  // Each passing case row must be backed by its own artifact; a pass label alone is never enough.
-  const artifacts = resolveArtifacts(dir, campaign.caseArtifacts);
-  const broken = artifacts.filter((entry): entry is string => typeof entry === 'string');
-  if (broken.length > 0) return { exitCode: 1, output: ['EVIDENCE_INCOMPLETE', ...broken].join('\n') };
-  const bodies = new Map<string, Record<string, unknown> | undefined>((artifacts as ResolvedArtifact[]).map(entry => [entry.artifact.path, entry.body]));
-  const unsubstantiated = REQUIRED_CASES.map(caseId => judgedCase(caseId, caseRows.find(row => row.caseId === caseId) as StageRecord, campaign.caseArtifacts, bodies)).filter((entry): entry is string => entry !== undefined);
-  if (unsubstantiated.length > 0) return { exitCode: 1, output: ['EVIDENCE_INCOMPLETE', ...unsubstantiated].join('\n') };
-  return { exitCode: 0, output: `EVIDENCE_CLEAN ${caseCounts.size} case(s)` };
+  if (lines.length === 0) return { exitCode: 0, output: `EVIDENCE_CLEAN ${caseCounts.size} case(s)` };
+  const output = ['EVIDENCE_INCOMPLETE', ...lines].join('\n');
+  // Decoded record text reaches this output only through ids and reason codes, which JSON escapes can
+  // hide from the raw-text scan: re-scan the final output against the same needle set before echoing it.
+  const profile = resolveScanProfile(options.env, options.repositoryRoot);
+  if (profile.ok && needleGuard(output, profile.profile, options.env) !== undefined) return { exitCode: 2, output: 'EVIDENCE_RECORD_INVALID' };
+  return { exitCode: 1, output };
 }
 
 function isDirectExecution(): boolean {

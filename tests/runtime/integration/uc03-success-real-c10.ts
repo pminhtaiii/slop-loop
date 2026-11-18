@@ -2,19 +2,22 @@
  * The C10 zero-dispatch witness (real-tier contract §(e)–(f) T028; UC-03 T028 C10).
  *
  * C10 asks for the real coder-provider accounting behaviour, not a repair verdict: a call over the
- * per-run ceiling makes no dispatch, while the durable pre-network reservation and observed-usage
+ * per-run limit makes no dispatch, while the durable pre-network reservation and observed-usage
  * settlement are recorded. This module drives the *bound* production model port — never a
- * reconstruction of its transport — and reports only what the owner journal and the injected fetch
- * counter observed (SPEC-W5-104).
+ * reconstruction of its transport — and reports only what the owner journal, the fetch counter and
+ * the real transport's own verdict observed (SPEC-W5-104, SPEC-W5-203).
  *
- * Two calls on one run: a small allowed call that reserves before dispatch and settles its observed
- * usage, then a call whose admitted input ceiling exceeds the whole per-run token budget. The task's
- * own token ledger is sized to admit that reservation, so the only refusal left is the transport's
- * run limiter, which refuses after admission and before `fetch`.
+ * The bound port reports every post-claim refusal as `PROVIDER_OUTCOME_PENDING`, so the port's verdict
+ * cannot name the limiter. The witness therefore observes the real transport's `execute` result for
+ * each request (restored afterwards): a limiter refusal is the transport's own `RUN_USAGE_LIMIT_REACHED`
+ * denial, recorded together with the claims already durable when the transport was entered.
+ *
+ * `judgeC10` is the one predicate the runner and the checker both apply, so they cannot disagree.
  */
 import type { BugTask, ModelPortV02, ProviderAdmissionContextV02, TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import type { HostModelTransport, HostModelTransportPayload } from '../../../src/foundation/model.ts';
 
-import { C10_WITNESS_SCHEMA, type AttemptIdentity, type C10WitnessBody } from './uc03-success-real-record.ts';
+import { C10_WITNESS_SCHEMA, SAFE_ID, type ArtifactBinding, type AttemptIdentity, type C10CallFacts, type C10WitnessBody } from './uc03-success-real-record.ts';
 import { providerContext } from './uc03-success-real-provider.ts';
 
 /** The run ceiling the profile pins; the oversized call exceeds its token half. */
@@ -30,18 +33,27 @@ export interface ControlHead {
   readonly epoch: number;
 }
 
-/** What the witness needs: the bound port, the counters it observes, and the identity it is bound to. */
+/** The owner journal as the witness reads it: claim ids and the outcome kind of each receipt. */
+export interface JournalView {
+  readonly claims: readonly string[];
+  readonly outcomes: readonly Readonly<{ receiptId: string; outcome: string }>[];
+}
+
+/** What the witness needs: the bound port and transport, the counters it observes, and the identity it is bound to. */
 export interface C10WitnessInput {
   readonly port: Pick<ModelPortV02, 'propose'>;
+  /** The transport the bound port dispatches through; only its result is observed. */
+  readonly transport: HostModelTransport;
   /** Total fetches observed so far; the witness compares before and after each call. */
   readonly fetches: () => number;
-  /** Journal counts and control head, as the owner reports them at the moment asked. */
-  readonly journal: () => Readonly<{ claims: number; attempts: number; outcomes: number }>;
+  readonly journal: () => JournalView;
   readonly control: () => ControlHead;
   readonly task: BugTask;
   /** The task state per call: the owner advances it, so it is re-read rather than cached. */
   readonly state: () => Promise<TaskState>;
   readonly identity: AttemptIdentity;
+  readonly campaignId: string;
+  readonly binding: ArtifactBinding;
   readonly ceiling: RunCeiling;
   readonly generation: number;
   readonly commandViewDigest: string | null;
@@ -80,64 +92,174 @@ export function allowedProviderResponse(modelId: string): Response {
   });
 }
 
-/** A call that binds to the current head with a stable id, so each claim is independent. */
-async function callAt(input: C10WitnessInput, id: string, bounds: Bounds): Promise<{ context: ProviderAdmissionContextV02; state: TaskState }> {
+/** The journal the owner reports, reduced to the ids and outcome kinds the witness compares. */
+export function journalViewOf(snapshot: unknown): JournalView {
+  const journal = (typeof snapshot === 'object' && snapshot !== null ? snapshot : {}) as { readonly claims?: readonly { readonly claimId?: unknown }[]; readonly outcomes?: readonly { readonly receiptId?: unknown; readonly outcome?: unknown }[] };
+  return {
+    claims: (journal.claims ?? []).map(claim => String(claim.claimId)),
+    outcomes: (journal.outcomes ?? []).map(entry => ({ receiptId: String(entry.receiptId), outcome: String(entry.outcome) })),
+  };
+}
+
+/** The refusal reason a transport reports, reduced to its leading bounded code. */
+function boundedReason(reason: unknown): string | null {
+  const [head] = (typeof reason === 'string' ? reason : '').split(':');
+  return head && /^[A-Z][A-Z0-9_]{0,63}$/u.test(head) ? head : null;
+}
+
+type Sighting = NonNullable<C10CallFacts['transport']>;
+
+/**
+ * Observes the real transport's verdict per provider request id. The wrapper forwards every call
+ * unchanged and records the verdict, the claims durable when the transport was entered and the fetch
+ * count at that moment; `restore` puts the original back.
+ */
+function observeTransport(transport: HostModelTransport, journal: () => JournalView, fetches: () => number): { readonly seen: ReadonlyMap<string, Sighting>; readonly restore: () => void } {
+  const seen = new Map<string, Sighting>();
+  const original = transport.execute;
+  const target = transport as { execute: HostModelTransport['execute'] };
+  target.execute = async (payload: HostModelTransportPayload) => {
+    const claimsAtTransport = journal().claims.length;
+    const fetchesAtTransport = fetches();
+    const result = await original.call(transport, payload);
+    const verdict = typeof result === 'object' && result !== null ? (result as { outcome?: unknown; reason?: unknown }) : {};
+    // A transport result without an `outcome` is the observed proposal shape.
+    seen.set(payload.request.providerRequestId, {
+      outcome: typeof verdict.outcome === 'string' ? verdict.outcome : 'observed',
+      reasonCode: boundedReason(verdict.reason),
+      claimsAtTransport,
+      fetchesAtTransport,
+    });
+    return result;
+  };
+  return { seen, restore: () => void (target.execute = original) };
+}
+
+/** One call: the admission, the port's verdict and every counter around it. */
+async function observeCall(input: C10WitnessInput, seen: ReadonlyMap<string, Sighting>, requestId: string, bounds: Bounds): Promise<C10CallFacts> {
   const state = await input.state();
-  return { context: providerContext(state, input.task, input.control(), 'coder', id, input.generation, bounds), state };
+  const context: ProviderAdmissionContextV02 = providerContext(state, input.task, input.control(), 'coder', requestId, input.generation, bounds);
+  const journalBefore = input.journal();
+  const fetchesBefore = input.fetches();
+  const result = await input.port.propose(state, [], context.providerRequest, context);
+  const fetchesAfter = input.fetches();
+  const journalAfter = input.journal();
+  const knownOutcomes = new Set(journalBefore.outcomes.map(entry => entry.receiptId));
+  const usage = result.outcome === 'observed' ? result.observedUsage : undefined;
+  return {
+    requestId,
+    declared: { maxInputTokens: bounds.maxInputTokens, maxOutputTokens: bounds.maxOutputTokens },
+    fetchesBefore,
+    fetchesAfter,
+    portOutcome: result.outcome,
+    transport: seen.get(requestId) ?? null,
+    claims: { before: journalBefore.claims.length, after: journalAfter.claims.length },
+    outcomes: {
+      before: journalBefore.outcomes.length,
+      after: journalAfter.outcomes.length,
+      recorded: journalAfter.outcomes.filter(entry => !knownOutcomes.has(entry.receiptId)).map(entry => entry.outcome),
+    },
+    observedUsage: usage === undefined ? null : { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens },
+  };
 }
 
 /**
- * Runs the witness and returns the artifact body. It asserts nothing: every fact is returned and the
- * caller judges. `refusals` counts calls whose outcome was not `observed`.
+ * Runs the witness and returns the artifact body. It asserts nothing: every fact is returned and
+ * `judgeC10` judges. The allowed call settles observed usage; the oversized call must be refused by
+ * the run limiter before `fetch`.
  */
 export async function runC10Witness(input: C10WitnessInput): Promise<C10WitnessBody> {
-  const journalBefore = input.journal();
-  const fetchesBefore = input.fetches();
-
-  // (1) The allowed call: the claim reserves before dispatch, then the observed usage settles it.
-  const allowed = await callAt(input, 'c10-allowed', ALLOWED);
-  await input.port.propose(allowed.state, [], allowed.context.providerRequest, allowed.context);
-  const fetchesAtCeiling = input.fetches();
-
-  // (2) The oversized call: the run limiter refuses it after admission and before `fetch`.
-  const over = await callAt(input, 'c10-oversized', oversized(input.ceiling));
-  const refused = await input.port.propose(over.state, [], over.context.providerRequest, over.context);
-  const fetchesAfter = input.fetches();
-  const journalAfter = input.journal();
-
+  const observer = observeTransport(input.transport, input.journal, input.fetches);
+  let allowed: C10CallFacts;
+  let refused: C10CallFacts;
+  try {
+    allowed = await observeCall(input, observer.seen, 'c10-allowed', ALLOWED);
+    refused = await observeCall(input, observer.seen, 'c10-oversized', oversized(input.ceiling));
+  } finally {
+    observer.restore();
+  }
   return Object.freeze({
     schema: C10_WITNESS_SCHEMA,
-    campaignId: '',
+    campaignId: input.campaignId,
     caseId: 'C10',
     attempt: 1,
+    binding: input.binding,
+    finalSnapshotDigest: null,
     identity: input.identity,
-    provider: Object.freeze({ providerId: 'provider-deepseek', modelId: over.context.providerRequest.modelId, configId: input.task.configId, configVersion: input.task.configVersion }),
+    provider: Object.freeze({ providerId: 'provider-deepseek', modelId: input.binding.model, configId: input.task.configId, configVersion: input.task.configVersion }),
     limits: Object.freeze({
       totalModelCalls: input.ceiling.totalModelCalls,
       perRunInputTokens: input.ceiling.perRunInputTokens,
       perRunOutputTokens: input.ceiling.perRunOutputTokens,
-      budgetRefs: Object.freeze([...over.context.budgetRefs]),
+      budgetRefs: Object.freeze([]),
     }),
-    dispatch: Object.freeze({
-      fetchesBefore,
-      fetchesAfter,
-      refusals: refused.outcome === 'observed' ? 0 : 1,
-      reason: refused.outcome === 'observed' ? null : boundedReason(refused),
-    }),
-    journal: Object.freeze({
-      claimsBefore: journalBefore.claims,
-      claimsAfter: journalAfter.claims,
-      outcomesBefore: journalBefore.outcomes,
-      outcomesAfter: journalAfter.outcomes,
-    }),
+    calls: Object.freeze({ allowed, refused }),
     commandViewDigest: input.commandViewDigest,
-    disclosure: `the allowed call dispatched ${fetchesAtCeiling - fetchesBefore} fetch(es); the over-ceiling call added ${fetchesAfter - fetchesAtCeiling}.`,
+    disclosure: `the allowed call dispatched ${allowed.fetchesAfter - allowed.fetchesBefore} fetch(es); the over-limit call dispatched ${refused.fetchesAfter - refused.fetchesBefore}.`,
   });
 }
 
-/** The refusal reason the model port reports, reduced to its leading bounded code. */
-function boundedReason(result: { readonly reason?: unknown }): string | null {
-  const reason = typeof result.reason === 'string' ? result.reason : '';
-  const [head] = reason.split(':');
-  return head && /^[A-Z][A-Z0-9_]{0,63}$/u.test(head) ? head : null;
+/** The reservation the owner must have made durable before the transport was entered. */
+const durableBeforeTransport = (call: C10CallFacts): boolean => call.claims.after - call.claims.before === 1 && call.transport !== null && call.transport.claimsAtTransport === call.claims.after;
+
+/**
+ * The C10 predicate (real-tier §(f)): the allowed call reserved before the network, dispatched once
+ * and settled observed usage; the call over the per-run limit was refused by the limiter itself with
+ * zero dispatch for that call. Returns the first failing reason code, or `undefined` for a pass.
+ */
+export function judgeC10(body: C10WitnessBody): string | undefined {
+  const { allowed, refused } = body.calls;
+  if (allowed.requestId === refused.requestId) return 'c10-requests-not-distinct';
+  if (allowed.portOutcome !== 'observed' || allowed.transport?.outcome !== 'observed') return 'c10-allowed-not-observed';
+  if (allowed.fetchesAfter - allowed.fetchesBefore !== 1) return 'c10-allowed-dispatch-count';
+  if (!durableBeforeTransport(allowed)) return 'c10-allowed-no-reservation';
+  if (allowed.observedUsage === null) return 'c10-allowed-usage-unobserved';
+  if (allowed.outcomes.recorded.length !== 1 || allowed.outcomes.recorded[0] !== 'observed') return 'c10-allowed-not-settled';
+  if (refused.declared.maxInputTokens <= body.limits.perRunInputTokens) return 'c10-refused-not-over-limit';
+  if (refused.fetchesAfter !== refused.fetchesBefore) return 'c10-refused-dispatched';
+  if (refused.portOutcome === 'observed') return 'c10-refused-observed';
+  if (refused.transport === null || refused.transport.outcome !== 'denied' || refused.transport.reasonCode !== 'RUN_USAGE_LIMIT_REACHED') return 'c10-refusal-not-limiter';
+  if (refused.transport.fetchesAtTransport !== refused.fetchesBefore) return 'c10-refused-dispatched';
+  if (!durableBeforeTransport(refused)) return 'c10-refused-no-reservation';
+  if (refused.outcomes.recorded.includes('observed')) return 'c10-refused-settled-observed';
+  return undefined;
+}
+
+type Raw = Record<string, unknown>;
+const isRaw = (value: unknown): value is Raw => typeof value === 'object' && value !== null && !Array.isArray(value);
+const count = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+function parseCall(value: unknown): C10CallFacts | undefined {
+  if (!isRaw(value) || typeof value['requestId'] !== 'string' || !SAFE_ID.test(value['requestId']) || typeof value['portOutcome'] !== 'string') return undefined;
+  const { declared, claims, outcomes, transport, observedUsage } = value;
+  if (!isRaw(declared) || !count(declared['maxInputTokens']) || !count(declared['maxOutputTokens'])) return undefined;
+  if (!count(value['fetchesBefore']) || !count(value['fetchesAfter'])) return undefined;
+  if (!isRaw(claims) || !count(claims['before']) || !count(claims['after'])) return undefined;
+  if (!isRaw(outcomes) || !count(outcomes['before']) || !count(outcomes['after']) || !Array.isArray(outcomes['recorded']) || !outcomes['recorded'].every(kind => typeof kind === 'string')) return undefined;
+  if (transport !== null && (!isRaw(transport) || typeof transport['outcome'] !== 'string' || !(transport['reasonCode'] === null || typeof transport['reasonCode'] === 'string') || !count(transport['claimsAtTransport']) || !count(transport['fetchesAtTransport']))) return undefined;
+  if (observedUsage !== null && (!isRaw(observedUsage) || !count(observedUsage['inputTokens']) || !count(observedUsage['outputTokens']))) return undefined;
+  return value as unknown as C10CallFacts;
+}
+
+/** A retained witness is untrusted input: an unknown shape is `undefined`, never judged. */
+export function parseC10(value: unknown): C10WitnessBody | undefined {
+  if (!isRaw(value) || value['schema'] !== C10_WITNESS_SCHEMA) return undefined;
+  const { limits, calls } = value;
+  if (!isRaw(limits) || !count(limits['totalModelCalls']) || !count(limits['perRunInputTokens']) || !count(limits['perRunOutputTokens'])) return undefined;
+  if (!isRaw(calls)) return undefined;
+  const allowed = parseCall(calls['allowed']);
+  const refused = parseCall(calls['refused']);
+  return allowed === undefined || refused === undefined ? undefined : (value as unknown as C10WitnessBody);
+}
+
+/**
+ * Publishes the run authority the bound provider's claims bind to, through the owner's own public
+ * control path. The seeded head carries generation 1 on the task-bound port only; the shared port the
+ * model ports use reads the persisted head, so the witness raises it to `generation` first.
+ */
+export async function publishRunAuthority(owner: { publishAuthority(input: unknown): Promise<unknown> }, task: BugTask, generation: number): Promise<boolean> {
+  const receipt = await owner.publishAuthority({
+    authorityRef: { policyId: task.configId, policyVersion: task.configVersion, configId: task.configId, configVersion: task.configVersion, issuerKeyRef: `host-${task.configId}`, decisionAuthorityGeneration: generation },
+  });
+  return typeof receipt === 'object' && receipt !== null && (receipt as { status?: unknown }).status === 'published';
 }
