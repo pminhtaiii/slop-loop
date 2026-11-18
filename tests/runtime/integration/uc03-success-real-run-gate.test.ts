@@ -38,7 +38,9 @@ import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { parseCampaignArgs, runCampaign, runCaseStage, type CampaignOptions, type CaseOutcome, type StageRecord } from './uc03-success-real-run.ts';
+import type { DecisionTarget } from './uc03-success-real-operator.ts';
 import { checkEvidence } from './uc03-success-real-evidence.ts';
+import { writeCampaign, type PendingArtifact } from './uc03-success-real-record.ts';
 import { createScanFixture, type ScanFixture } from '../unit/real-tier-scan-fixtures.ts';
 import type { SnapshotGradeResult } from '../../../eval/uc03/workflow-grade.ts';
 
@@ -210,27 +212,93 @@ function gradeFor(caseId: string, grade: 'pass' | 'fail' | 'not-run'): SnapshotG
 
 const gradePass = (_assembly: RealTierAssembly, caseId: string) => Promise.resolve(gradeFor(caseId, 'pass'));
 
-/** The full contract case rows a grader-sealed campaign produces (C01, C02 pinned; C16, C10 derived). */
+/** The full contract case rows a grader-sealed campaign produces, each with the artifact behind it. */
 const PASSING_CASES: readonly CaseOutcome[] = Object.freeze([
-  { record: { stage: 'case', outcome: 'pass', caseId: 'C01', facts: { workflow: 'COMPLETED', grade: 'pass' } }, evidence: { grade: gradeFor('C01', 'pass') } },
-  { record: { stage: 'case', outcome: 'pass', caseId: 'C02', facts: { workflow: 'needs-info', grade: 'pass' } }, evidence: { grade: gradeFor('C02', 'pass') } },
-  { record: { stage: 'case', outcome: 'pass', caseId: 'C16', facts: { derivedFrom: 'C01', grade: 'pass' } } },
-  { record: { stage: 'case', outcome: 'pass', caseId: 'C10', facts: { derivedFrom: 'C01', claims: 1, outcomes: 0 } } },
+  passingOutcome({ stage: 'case', outcome: 'pass', caseId: 'C01', facts: { workflow: 'COMPLETED', grade: 'pass' } }),
+  passingOutcome({ stage: 'case', outcome: 'pass', caseId: 'C02', facts: { workflow: 'needs-info', grade: 'pass' } }),
+  passingOutcome({ stage: 'case', outcome: 'pass', caseId: 'C16', facts: { derivedFrom: 'C01' } }),
+  passingOutcome({ stage: 'case', outcome: 'pass', caseId: 'C10', facts: { refusals: 1 } }),
 ]);
 
+/** One passing case row plus the artifact the checker will resolve for it. */
+function passingOutcome(row: StageRecord): CaseOutcome {
+  const [artifact] = artifactsFor([row]);
+  if (artifact === undefined) throw new Error('TEST_FIXTURE_ARTIFACT_MISSING');
+  const [, , kind, body] = artifact;
+  return kind === 'evidence' ? { record: row, artifact: body as never } : { record: row, derived: { kind, body } };
+}
+
+/** A v2 campaign record with its real artifacts, so the checker can validate the evidence behind it. */
 function writeRecord(dir: string, records: readonly StageRecord[]): void {
-  mkdirSync(dir, { recursive: true });
-  const payload = {
-    schemaVersion: 'uc03-campaign-record/1',
-    campaignId: 'campaign-1',
-    bindings: { 'candidate-sha': REV, 'profile-digest': `sha256:${'a'.repeat(64)}`, 'endpoint-digest': `sha256:${'b'.repeat(64)}`, model: MODEL },
-    stages: records.filter(entry => entry.stage !== 'case').map(entry => ({ stage: entry.stage, outcome: entry.outcome, ...(entry.reasonCode === undefined ? {} : { reasonCode: entry.reasonCode }) })),
-    caseStages: records
-      .filter(entry => entry.stage === 'case' && entry.reasonCode !== undefined)
-      .map(entry => ({ stage: entry.stage, outcome: entry.outcome, caseId: entry.caseId, reasonCode: entry.reasonCode })),
-    records,
-  };
-  writeFileSync(join(dir, 'campaign.json'), JSON.stringify(payload, null, 2), 'utf8');
+  writeCampaign(
+    dir,
+    {
+      campaignId: 'campaign-1',
+      candidateSha: REV,
+      mode: 'campaign',
+      passed: records.every(entry => entry.outcome === 'pass'),
+      startedAt: 1,
+      finishedAt: 2,
+      bindings: { 'candidate-sha': REV, 'profile-digest': `sha256:${'a'.repeat(64)}`, 'endpoint-digest': `sha256:${'b'.repeat(64)}`, model: MODEL },
+      records,
+    },
+    artifactsFor(records),
+  );
+}
+
+/** The artifacts a record's case rows need: a graded receipt for C01/C02, a report for C16, a witness for C10. */
+function artifactsFor(records: readonly StageRecord[]): readonly PendingArtifact[] {
+  const artifacts: PendingArtifact[] = [];
+  for (const row of records.filter(entry => entry.stage === 'case' && entry.caseId !== undefined)) {
+    const caseId = row.caseId as string;
+    const identity = { taskId: `task-${caseId}`, runId: `run-${caseId}`, workspaceId: `ws-${caseId}` };
+    if (caseId === 'C01' || caseId === 'C02') {
+      artifacts.push([
+        caseId,
+        1,
+        'evidence',
+        { schema: 'uc03-case-evidence/1', campaignId: 'campaign-1', caseId, attempt: 1, identity, evidence: { grade: gradeFor(caseId, row.outcome === 'pass' ? 'pass' : 'fail') }, accounting: { claims: 1, attempts: 1, outcomes: 1 } },
+      ]);
+    }
+    if (caseId === 'C16') {
+      artifacts.push([
+        'C16',
+        1,
+        'c16',
+        {
+          schema: 'uc03-c16-report/1',
+          campaignId: 'campaign-1',
+          caseId: 'C16',
+          attempt: 1,
+          derivedFrom: 'C01',
+          sourceArtifact: 'evidence-C01-1.json',
+          verdict: row.outcome === 'pass' ? 'pass' : 'fail',
+          report: { present: true, outcome: 'COMPLETED', isComplete: true, diffDigest: `sha256:${'c'.repeat(64)}`, evidenceRefs: ['ev-1'], changedFiles: ['src/calculator.py'], bytes: 512, reportDigest: `sha256:${'d'.repeat(64)}` },
+        },
+      ]);
+    }
+    if (caseId === 'C10') {
+      artifacts.push([
+        'C10',
+        1,
+        'c10',
+        {
+          schema: 'uc03-c10-witness/1',
+          campaignId: 'campaign-1',
+          caseId: 'C10',
+          attempt: 1,
+          identity,
+          provider: { providerId: 'provider-deepseek', modelId: MODEL, configId: 'config-v1', configVersion: '1.0.0' },
+          limits: { totalModelCalls: 2, perRunInputTokens: 400000, perRunOutputTokens: 80000, budgetRefs: [] },
+          dispatch: { fetchesBefore: 0, fetchesAfter: 2, refusals: 1, reason: 'RUN_USAGE_LIMIT_REACHED' },
+          journal: { claimsBefore: 0, claimsAfter: 3, outcomesBefore: 0, outcomesAfter: 2 },
+          commandViewDigest: null,
+          disclosure: 'test fixture',
+        },
+      ]);
+    }
+  }
+  return artifacts;
 }
 
 function onlyReceipt(dir: string): { outcome: string; binding: Record<string, string>; reasonCode?: string } {
@@ -244,16 +312,24 @@ function readCampaignRecord(dir: string): Record<string, unknown> {
   return JSON.parse(readFileSync(join(dir, 'campaign.json'), 'utf8')) as Record<string, unknown>;
 }
 
+/** Each `--campaign` writes its own subdirectory, so the newest one holds this run's record. */
+function campaignDirOf(dir: string): string {
+  const subdirs = readdirSync(dir).filter(name => name.startsWith('campaign-'));
+  assert.equal(subdirs.length >= 1, true, 'a campaign writes a per-campaign directory');
+  return join(dir, subdirs.sort().at(-1) as string);
+}
+
 test('a campaign persists a versioned record and per-attempt case artifacts', async () => {
   const catalog = catalogFor();
   const evidenceDir = tempRoot('evidence');
   const result = await runCampaign(campaignOptions(catalog, evidenceDir, { runCases: async () => PASSING_CASES }).options);
   assert.equal(result.exitCode, 0, JSON.stringify(result.records));
-  const record = readCampaignRecord(evidenceDir);
-  assert.equal(record['schemaVersion'], 'uc03-campaign-record/1');
+  const dir = campaignDirOf(evidenceDir);
+  const record = readCampaignRecord(dir);
+  assert.equal(record['schemaVersion'], 'uc03-campaign-record/2');
   assert.equal(record['passed'], true);
   assert.equal((record['bindings'] as Record<string, string>)['model'], MODEL);
-  const verified = checkEvidence({ evidenceDir, env: fixture.envOf(), repositoryRoot: tempRoot('repo') });
+  const verified = checkEvidence({ evidenceDir: dir, env: fixture.envOf(), repositoryRoot: tempRoot('repo') });
   assert.deepEqual(verified, { exitCode: 0, output: 'EVIDENCE_CLEAN 4 case(s)' });
 });
 
@@ -296,7 +372,7 @@ test('a preflight refusal exits nonzero with zero fetches, no receipt and no cas
     [],
     'a preflight refusal writes no receipt',
   );
-  assert.equal(readCampaignRecord(options.evidenceDir)['passed'], false, 'the failed campaign is still retained as a record');
+  assert.equal(readCampaignRecord(campaignDirOf(options.evidenceDir))['passed'], false, 'the failed campaign is still retained as a record');
   assertNoSecrets(result);
 });
 
@@ -535,18 +611,26 @@ test('the real case stage assembles a fresh host per case and records what it ob
   assert.deepEqual([missing?.record.outcome, missing?.record.reasonCode], ['not-run', 'catalog-entry-missing']);
 });
 
-test('C16 is derived from the C01 run and C10 stays not-run without its own zero-dispatch row', async () => {
+test('C16 is judged from the C01 report on its own content, and C10 is never inferred from C01', async () => {
   const catalog = catalogFor();
   const { assembly } = resolveOrThrow(catalog);
   const pins = pinsOf(assembly);
-  const outcomes = await runCaseStage(() => resolveOrThrow(catalog).assembly, { caseIds: ['C01', 'C16', 'C10'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass });
+  // C01 graded pass, yet this route's report cites no evidence: C16 is judged unsafe on the report's
+  // own content and fails, never a pass carried over from the C01 grade (SPEC-W5-103).
+  const outcomes = await runCaseStage(() => resolveOrThrow(catalog).assembly, { caseIds: ['C01', 'C16'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass });
   const byId = new Map(outcomes.map(entry => [entry.record.caseId, entry.record]));
-  // C16 is the C01 report: it passes only because C01 passed, and carries no payload of its own.
-  assert.equal(byId.get('C16')?.outcome, 'pass', 'C16 follows the C01 run');
-  assert.equal(byId.get('C16')?.facts?.['derivedFrom'], 'C01');
-  // C10 needs a dedicated refusal witness this stage does not produce, so it is honestly not-run.
-  assert.equal(byId.get('C10')?.outcome, 'not-run', 'C10 is not guessed into a pass');
-  assert.equal(byId.get('C10')?.reasonCode, 'c10-not-observed');
+  const c16 = outcomes.find(entry => entry.record.caseId === 'C16');
+  assert.equal(byId.get('C01')?.outcome, 'pass', 'C01 passes on its pinned grade');
+  assert.equal(byId.get('C16')?.outcome, 'fail', 'C16 follows the report it was given, not the repair grade');
+  assert.equal(byId.get('C16')?.reasonCode, 'c16-report-unprovenanced', 'an unprovenanced report is unsafe');
+  assert.equal((c16?.derived?.body as { verdict: string }).verdict, 'fail', 'the artifact carries the predicate verdict');
+  // C10 runs its own witness even when it is the only scheduled case, and never derives from C01.
+  const witnessFetches = 0;
+  const withoutWitness = await runCaseStage(() => resolveOrThrow(catalog).assembly, { caseIds: ['C10'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass, fetches: () => witnessFetches });
+  assert.equal(withoutWitness[0]?.record.caseId, 'C10');
+  assert.notEqual(withoutWitness[0]?.record.facts?.['derivedFrom'], 'C01', 'C10 is never inferred from C01');
+  assert.equal(withoutWitness[0]?.record.facts?.['refusals'], 1, 'C10 observes its own refusal');
+  assert.equal(withoutWitness[0]?.derived?.kind, 'c10', 'C10 carries its own witness artifact');
 });
 
 test('C02 binds its own fresh assembly and stays terminal at its expected clarification pause', async () => {
@@ -681,7 +765,7 @@ const CLEAN_RECORD = [...CLEAN_STAGES, ...PASSING_CASES.map(entry => entry.recor
 test('the case stage never approves a plan on its own; a decision source is not fabricated', async () => {
   const catalog = catalogFor();
   const decisions: string[] = [];
-  const run = (decideApproval?: (host: RealTierAssembly, caseId: string) => Promise<'approve' | 'reject' | undefined>) =>
+  const run = (decideApproval?: (caseId: string, target: DecisionTarget) => Promise<'approve' | 'reject' | undefined>) =>
     runCaseStage(() => resolveOrThrow(catalog).assembly, {
       caseIds: ['C01'],
       repositoryRoot: tempRoot('repo'),
@@ -692,7 +776,7 @@ test('the case stage never approves a plan on its own; a decision source is not 
   const [silent] = await run();
   assert.equal(silent?.evidence?.approval, undefined, 'no decision source means nothing was approved');
   // No plan pause occurs without a live model, so even a supplied source is never auto-invoked.
-  const [withSource] = await run(async (_host, caseId) => {
+  const [withSource] = await run(async caseId => {
     decisions.push(caseId);
     return 'approve';
   });

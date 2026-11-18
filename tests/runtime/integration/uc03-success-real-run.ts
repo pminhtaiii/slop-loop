@@ -19,37 +19,31 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { StructuredSpawn } from '../../../src/foundation/docker-controller.ts';
 import { structuredSpawn } from '../../../src/foundation/docker-spawn.ts';
+import type { StructuredSpawn } from '../../../src/foundation/docker-controller.ts';
 import { observeDockerReadiness, type DockerReadiness } from '../../../src/foundation/docker-readiness.ts';
 import { gitHead } from '../../../src/runtime/git-head.ts';
 import { REAL_TIER_DELIVERY_CONTRACT, resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
-import { bindRealTierTask } from '../../../src/runtime/real-tier-task-binding.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
-import { runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
-import type { UC03HostInputs } from '../../../src/runtime/uc03-host-bootstrap.ts';
-import type { SnapshotGradeResult, SnapshotPredicate } from '../../../eval/uc03/workflow-grade.ts';
+
+import { artifactsOf, runCaseStage as defaultCaseStage, type CaseOutcome, type CaseStageOptions } from './uc03-success-real-run-cases.ts';
+import { SAFE_ID, type PendingArtifact, type StageRecord, writeCampaign } from './uc03-success-real-record.ts';
+import { createOperatorDecisionSource, stdioOperator, type OperatorIo } from './uc03-success-real-operator.ts';
+import { resolvePinnedGrader, type GraderCapability } from './uc03-success-real-grader.ts';
+
+export type { CaseOutcome, CaseStageOptions } from './uc03-success-real-run-cases.ts';
+export { runCaseStage } from './uc03-success-real-run-cases.ts';
+export type { CaseEvidence, StageRecord } from './uc03-success-real-record.ts';
 
 const TEMPLATE_PROFILE_ID = 'uc03-runtime-evaluation-v1';
 /** The one model identity the T028 campaign may certify: compared by exact equality, never trimmed. */
 const PINNED_MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
 /** The T028 case plan, in contract order. */
 export const CAMPAIGN_CASES = ['C01', 'C02', 'C16', 'C10'] as const;
-/** The C01/C02 case predicates a pinned snapshot criterion supplies; C16/C10 are derived, never pinned. */
-const PINS: Readonly<Record<string, SnapshotPredicate>> = Object.freeze({ C01: 'repair-success', C02: 'clarification' });
 
 export type CampaignMode = 'campaign' | 'case' | 'resume';
-
-/** One stage. `pass`/`fail` are judged facts; `not-run` is never a pass. */
-export interface StageRecord {
-  readonly stage: 'assembly' | 'preflight' | 'conformance' | 'receipt' | 'recovery' | 'case';
-  readonly outcome: 'pass' | 'fail' | 'not-run';
-  readonly reasonCode?: string | undefined;
-  readonly caseId?: string | undefined;
-  readonly facts?: Readonly<Record<string, string | number | boolean | null>> | undefined;
-}
 
 export interface CampaignResult {
   /** 0 only when every stage passed; 2 for a prerequisite refusal or a failed stage. */
@@ -60,41 +54,9 @@ export interface CampaignResult {
 }
 
 /**
- * One case's own evidence, host-only until projected. A graded case carries the independent receipt;
- * the approval trace records that a decision was explicit and through the T046 port, never automatic.
+ * The campaign seam: what the run stage accepts. The case evidence types and the case stage itself
+ * live in their own modules; this keeps the operator entry and the gate driving the same surface.
  */
-export interface CaseEvidence {
-  readonly snapshot?: Readonly<{ snapshotId: string; digest: string }> | undefined;
-  readonly evidenceDigest?: string | undefined;
-  readonly grade?: SnapshotGradeResult | undefined;
-  readonly diffDigest?: string | undefined;
-  readonly 'command-view-digest'?: string | undefined;
-  readonly usage?: Readonly<Record<string, string | number>> | undefined;
-  readonly 'owner-revisions'?: Readonly<Record<string, string>> | undefined;
-  readonly approval?: Readonly<{ decisionId: string; decided: 'approve' | 'reject' }> | undefined;
-}
-
-export interface CaseOutcome {
-  readonly record: StageRecord;
-  readonly evidence?: CaseEvidence | undefined;
-}
-
-export interface CaseStageOptions {
-  readonly caseIds: readonly string[];
-  readonly repositoryRoot: string;
-  readonly pins: UC03HostInputs['pins'];
-  readonly identity: Readonly<Record<string, string>>;
-  /** One case's evidence, from the catalog's own pinned grader material (SPEC-W5-003). */
-  readonly grade?: ((assembly: RealTierAssembly, caseId: string) => Promise<SnapshotGradeResult | undefined>) | undefined;
-  /**
-   * The explicit T046 decision source (SPEC-W5-002): it presents the pause and returns the operator's
-   * choice, or `undefined` when none was made. It never approves on its own.
-   */
-  readonly decideApproval?: ((assembly: RealTierAssembly, caseId: string) => Promise<'approve' | 'reject' | undefined>) | undefined;
-  /** A task held for an expected clarification pause stays terminal (C02). */
-  readonly clarificationHold?: ((caseId: string) => boolean) | undefined;
-}
-
 export interface CampaignOptions {
   readonly mode: CampaignMode;
   /** Required for `case`; refused when absent. */
@@ -103,6 +65,7 @@ export interface CampaignOptions {
   readonly resumeRef?: string | undefined;
   readonly env: RealTierEnvironment;
   readonly repositoryRoot: string;
+  /** The campaign directory. A `campaign` run creates a fresh subdirectory here (SPEC-W5-105). */
   readonly evidenceDir: string;
   readonly fetch?: typeof globalThis.fetch | undefined;
   readonly spawn?: StructuredSpawn | undefined;
@@ -118,7 +81,13 @@ export interface CampaignOptions {
   readonly grade?: CaseStageOptions['grade'];
   /** The explicit T046 decision source (SPEC-W5-002); absent keeps a plan pause terminal. */
   readonly decideApproval?: CaseStageOptions['decideApproval'];
-  /** Case stage seam; the operator entry wires `runCaseStage`. */
+  /** The case stage's fetch counter, so the C10 witness can prove the refusal made no dispatch. */
+  readonly fetches?: (() => number) | undefined;
+  /** The operator's stdin/stdout, so a real campaign can present and record an explicit decision. */
+  readonly operators?: OperatorIo | undefined;
+  /** The two live grader capabilities no pinned input can carry; absent keeps C01/C02 not-run. */
+  readonly graderCapability?: GraderCapability | undefined;
+  /** Case stage seam; the operator entry wires the default stage. */
   readonly runCases?: ((assembly: RealTierAssembly, options: CaseStageOptions) => Promise<readonly CaseOutcome[]>) | undefined;
 }
 
@@ -140,7 +109,6 @@ export interface ConformanceReceipt {
 }
 
 const RECEIPT = /^conformance-[A-Za-z0-9._-]+\.json$/u;
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 /** An owner operation ref, in the canonical safe-reference shape (`uc04-journal:<id>` and friends). */
 const OPERATION_REF = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$/u;
 
@@ -299,102 +267,6 @@ function receiptGate(evidenceDir: string, binding: ConformanceBinding): string |
   return latest.outcome === 'conformed' ? undefined : 'receipt-stale';
 }
 
-/** `assembly`/`not-run` with a bounded reason, shared by every case-stage refusal. */
-const caseNotRun = (caseId: string, reasonCode: string, facts: StageRecord['facts'] = {}): CaseOutcome => ({ record: stage('case', 'not-run', reasonCode, { caseId, facts }) });
-
-/**
- * One case attempt on its own fresh assembly, driven through the v0.2 graph entry. C01's plan pause is
- * presented and decided explicitly through the injected T046 decision source before the same bound task
- * continues (SPEC-W5-002, SPEC-W5-004); C02's expected clarification pause stays terminal. The case's
- * outcome is judged by the pinned snapshot grader over its own catalogue grader material
- * (SPEC-W5-003), never by the workflow status string alone.
- */
-async function runCaseAttempt(
-  assembly: RealTierAssembly,
-  caseId: string,
-  attempt: number,
-  options: CaseStageOptions,
-): Promise<CaseOutcome> {
-  const binding = await bindRealTierTask(assembly, { caseId, pins: options.pins, identity: options.identity });
-  if (binding.status !== 'task-bound') return caseNotRun(caseId, binding.reasonCode, { attempt });
-  let result = await runUC03GraphV02(binding.task, binding.ports, binding.config);
-  let approval: CaseEvidence['approval'];
-  if (result.outcome === 'pending-approval' && !options.clarificationHold?.(caseId)) {
-    // Nothing approves automatically: an absent source leaves the pause recorded, not passed.
-    const decision = await options.decideApproval?.(assembly, caseId);
-    if (decision === undefined) return { record: stage('case', 'fail', 'approval-required', { caseId, facts: { attempt, workflow: result.outcome, node: result.state?.node ?? 'none' } }) };
-    approval = { decisionId: result.state?.activeDecisionId ?? '', decided: decision };
-    // A rejection ends the case on its own hold; only approval continues the bound task.
-    if (decision === 'approve') result = await runUC03GraphV02(binding.task, binding.ports, binding.config, result.state ?? undefined);
-  }
-  const owners = assembly.owners.taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId });
-  const journal = owners.statePort.getJournalSnapshot(binding.ids.taskId) as { readonly claims?: readonly unknown[]; readonly attempts?: readonly unknown[]; readonly outcomes?: readonly unknown[] };
-  const grade = PINS[caseId] === undefined ? undefined : await options.grade?.(assembly, caseId);
-  const evidence: CaseEvidence = {
-    ...(grade?.snapshot ? { snapshot: grade.snapshot } : {}),
-    ...(grade?.evidenceDigest ? { evidenceDigest: grade.evidenceDigest } : {}),
-    ...(grade ? { grade } : {}),
-    ...(approval ? { approval } : {}),
-  };
-  const facts: Record<string, string | number | boolean | null> = {
-    attempt,
-    workflow: result.outcome,
-    node: result.state?.node ?? 'none',
-    claims: journal.claims?.length ?? 0,
-    attempts: journal.attempts?.length ?? 0,
-    outcomes: journal.outcomes?.length ?? 0,
-    ...(approval ? { approval: approval.decided, decision: approval.decisionId } : {}),
-    ...(grade ? { grade: grade.grade, 'grade-reason': grade.reason, 'grader-digest': grade.criteriaDigest } : {}),
-  };
-  // A pinned predicate is the independent grade, never the status string; an unpinned id is not-run.
-  if (PINS[caseId] !== undefined && grade === undefined) return { record: stage('case', 'not-run', 'grader-unavailable', { caseId, facts }), evidence };
-  const outcome: StageRecord['outcome'] = PINS[caseId] === undefined ? 'not-run' : grade?.grade === 'pass' ? 'pass' : grade?.grade === 'fail' ? 'fail' : 'not-run';
-  return { record: stage('case', outcome, PINS[caseId] === undefined ? 'unpinned' : undefined, { caseId, facts }), evidence };
-}
-
-/**
- * The operator case stage: one fresh host assembly per case, so every case gets its own task/workspace
- * (SPEC-W5-004). C01 and C02 run real tasks once each (a failed attempt is retained, never replayed);
- * C16 is derived from the C01 run and C10 from its accounting (SPEC-W5-003). A derived row this stage
- * cannot judge from the C01 observation stays `not-run`, so the campaign is honest-incomplete.
- */
-export async function runCaseStage(
-  assemble: () => ReturnType<typeof resolveRealTierAssembly>,
-  options: CaseStageOptions,
-): Promise<readonly CaseOutcome[]> {
-  const outcomes: CaseOutcome[] = [];
-  const derivedFromC01 = new Map<string, CaseOutcome>();
-  for (const caseId of options.caseIds) {
-    if (!SAFE_ID.test(caseId)) {
-      outcomes.push(caseNotRun(caseId, 'case-id-invalid'));
-      continue;
-    }
-    if (caseId === 'C16' || caseId === 'C10') {
-      outcomes.push(derivedFromC01.get(caseId) ?? caseNotRun(caseId, 'c01-unavailable', { derivedFrom: 'C01' }));
-      continue;
-    }
-    const assembled = assemble();
-    const outcome = assembled.status === 'assembly-ready' ? await runCaseAttempt(assembled, caseId, 1, options) : caseNotRun(caseId, assembled.reasonCode, { attempt: 1 });
-    outcomes.push(outcome);
-    if (caseId !== 'C01') continue;
-    // C16: the safe report from the C01 run — its evidence digest and a bounded grade, never a payload.
-    const c01Facts = outcome.record.facts ?? {};
-    derivedFromC01.set('C16', {
-      record: stage('case', outcome.record.outcome === 'pass' ? 'pass' : 'not-run', outcome.record.outcome === 'pass' ? undefined : 'c16-c01-unavailable', {
-        caseId: 'C16',
-        facts: { derivedFrom: 'C01', grade: c01Facts['grade'] ?? 'none', 'evidence-digest': outcome.evidence?.evidenceDigest ?? 'none' },
-      }),
-      ...(outcome.evidence ? { evidence: { ...outcome.evidence } } : {}),
-    });
-    // C10 needs a dedicated zero-dispatch-on-exhaustion witness that the C01 run does not produce, so
-    // this stage reports it not-run with the observed accounting counts; it is never a guessed pass.
-    derivedFromC01.set('C10', {
-      record: stage('case', 'not-run', 'c10-not-observed', { caseId: 'C10', facts: { derivedFrom: 'C01', claims: c01Facts['claims'] ?? 0, outcomes: c01Facts['outcomes'] ?? 0 } }),
-    });
-  }
-  return outcomes;
-}
-
 /**
  * One campaign stage sequence. It stops at the first refusing prerequisite, so a preflight or
  * conformance failure leaves zero case dispatches behind it. Every terminal path writes the required
@@ -405,12 +277,18 @@ export async function runCampaign(options: CampaignOptions): Promise<CampaignRes
   const candidateSha = options.candidateSha ?? gitHead(options.repositoryRoot);
   const startedAt = clock();
   const campaignId = `campaign-${startedAt}-${options.mode}-${options.caseId ?? options.resumeRef ?? 'all'}`;
+  // Every campaign keeps its own directory, so a later run never overwrites an earlier observation
+  // (SPEC-W5-105). A `case` run binds to the latest receipt, which stays in the directory it was found.
+  const dir = options.mode === 'campaign' ? join(options.evidenceDir, campaignId) : options.evidenceDir;
   const assemble = options.assemble ?? resolveRealTierAssembly;
   let bindings: Readonly<Record<string, string>> = {};
-  const done = (records: readonly StageRecord[], passed: boolean, evidence: readonly CaseEvidence[] = []): CampaignResult => {
-    const attemptIds = records.filter(entry => entry.stage === 'case' && entry.caseId !== undefined).map((entry, index) => `${entry.caseId ?? 'case'}-${index + 1}`);
-    writeCampaignRecord(options.evidenceDir, { campaignId, candidateSha, mode: options.mode, passed, finishedAt: clock(), bindings, records, evidence, attemptIds });
-    return { exitCode: passed ? 0 : 2, records, output: JSON.stringify({ campaignId, candidateSha, records }, null, 2), campaignId };
+  const done = (records: readonly StageRecord[], passed: boolean, artifacts: readonly PendingArtifact[] = []): CampaignResult => {
+    const record = writeCampaign(
+      dir,
+      { campaignId, candidateSha, mode: options.mode, passed, startedAt, finishedAt: clock(), bindings, records },
+      artifacts,
+    );
+    return { exitCode: passed ? 0 : 2, records, output: JSON.stringify({ campaignId, candidateSha, records, caseArtifacts: record.caseArtifacts }, null, 2), campaignId };
   };
 
   const resolved = assemble(dependenciesOf(options, candidateSha));
@@ -469,30 +347,51 @@ export async function runCampaign(options: CampaignOptions): Promise<CampaignRes
   const caseIds = options.mode === 'campaign' ? CAMPAIGN_CASES : options.caseId === undefined ? [] : [options.caseId];
   if (caseIds.length === 0 || caseIds.some(id => !SAFE_ID.test(id))) return done([stage('preflight', 'pass'), conformance, stage('case', 'not-run', 'case-id-invalid')], false);
   const pins = { repositoryRoot: options.repositoryRoot, ...hostPinsOf(resolved) };
+  // The operator entry wires the real decision source and grader; an injected seam replaces either.
+  const decideApproval = options.decideApproval ?? (options.operators === undefined ? undefined : createOperatorDecisionSource(options.operators));
+  const grader = options.grade === undefined ? pinnedGraderOf(options, resolved) : { grade: options.grade, facts: {} };
+  const grade = grader.grade;
+  // A grader this runner cannot build is a retained fact, not just a console line: the evidence
+  // reader must see which pinned input was missing (SPEC-W5-102).
+  const graderFacts = grader.facts;
   // The real stage assembles a fresh host per case (SPEC-W5-004); an injected seam replaces the whole stage.
   const stageOptions: CaseStageOptions = {
     ...pins,
     caseIds,
-    ...(options.grade === undefined ? {} : { grade: options.grade }),
-    ...(options.decideApproval === undefined ? {} : { decideApproval: options.decideApproval }),
+    campaignId,
+    ...(grade === undefined ? {} : { grade }),
+    ...(decideApproval === undefined ? {} : { decideApproval }),
     ...(options.mode === 'campaign' ? { clarificationHold: (id: string) => id === 'C02' } : {}),
+    ...(options.fetches === undefined ? {} : { fetches: options.fetches }),
   };
-  const runCases = options.runCases ?? ((_: RealTierAssembly, stageOpts: CaseStageOptions) => runCaseStage(() => assemble(dependenciesOf(options, candidateSha)), stageOpts));
+  const runCases = options.runCases ?? ((_: RealTierAssembly, stageOpts: CaseStageOptions) => defaultCaseStage(() => assemble(dependenciesOf(options, candidateSha)), stageOpts));
   const cases = await runCases(resolved, stageOptions);
   const records = cases.map(entry => entry.record);
-  const evidence = cases.map(entry => entry.evidence).filter((entry): entry is CaseEvidence => entry !== undefined);
+  const artifacts = artifactsOf(cases);
   // Fail closed: every scheduled row must pass. A C16/C10 row this runner cannot observe stays
   // not-run, so the campaign is honest-incomplete and the checker refuses it — never a pass.
   const passed = records.length > 0 && records.every(entry => entry.outcome === 'pass');
-  return done([stage('preflight', 'pass'), conformance, ...records], passed, evidence);
+  return done([stage('preflight', 'pass', undefined, { facts: graderFacts }), conformance, ...records], passed, artifacts);
 }
 
-/** One sanitized, versioned campaign record plus its per-attempt case artifacts (SPEC-W5-005). */
-function writeCampaignRecord(dir: string, input: Record<string, unknown> & { readonly attemptIds: readonly string[]; readonly records: readonly StageRecord[]; readonly evidence: readonly CaseEvidence[] }): void {
-  mkdirSync(dir, { recursive: true });
-  // The per-attempt artifacts carry each case's own evidence; the record carries only the run's facts.
-  input.evidence.forEach((evidence, index) => writeFileSync(join(dir, `case-${input.attemptIds[index] ?? index}.json`), JSON.stringify(evidence, null, 2), 'utf8'));
-  writeFileSync(join(dir, 'campaign.json'), JSON.stringify({ ...input, schemaVersion: 'uc03-campaign-record/1', attemptIds: undefined, evidence: undefined }, null, 2), 'utf8');
+/**
+ * The pinned grader and the facts that explain it. A ready grader yields the seam with no facts; an
+ * unavailable one yields no seam and the bounded reason plus the exact missing inputs, which the
+ * campaign record then carries so the refusal is visible to an evidence reader (SPEC-W5-102). No
+ * grade is ever invented.
+ */
+function pinnedGraderOf(options: CampaignOptions, assembly: RealTierAssembly): { grade: CaseStageOptions['grade']; facts: Readonly<Record<string, string>> } {
+  const resolution = resolvePinnedGrader(assembly, 'C01', options.graderCapability);
+  if (resolution.status === 'ready') {
+    // C02 is a different case with its own pinned criterion; resolve each from the same material.
+    const c02 = resolvePinnedGrader(assembly, 'C02', options.graderCapability);
+    return {
+      grade: async (_assembly: RealTierAssembly, caseId: string) => (caseId === 'C01' ? resolution.grade(caseId) : c02.status === 'ready' ? c02.grade(caseId) : undefined),
+      facts: {},
+    };
+  }
+  options.operators?.write(`T054: grader unavailable (${resolution.reasonCode}); missing: ${resolution.missing.join(', ')}.`);
+  return { grade: undefined, facts: { 'grader-status': 'unavailable', 'grader-reason': resolution.reasonCode, 'grader-missing': resolution.missing.join(',') } };
 }
 
 /** Flags whose value is the next argument; anything else is rejected rather than defaulted. */
@@ -548,7 +447,23 @@ if (isDirectExecution()) {
     process.stdout.write(`CAMPAIGN_REFUSED ${parsed.refused}\n`);
     process.exitCode = 2;
   } else {
-    void runCampaign({ ...parsed, env: process.env, repositoryRoot: process.cwd() }).then(result => {
+    // The operator entry wires the real one-everything: stdin decisions, the real fetch, and a
+    // dispatch counter the C10 witness reads. The grader's two live capabilities are not wired here
+    // because no production isolation authority or grader executor exists outside the controlled
+    // tests; absent them, `pinnedGraderOf` prints the missing inputs and C01/C02 stay not-run.
+    let fetches = 0;
+    const countedFetch: typeof globalThis.fetch = async (...args) => {
+      fetches += 1;
+      return globalThis.fetch(...args);
+    };
+    void runCampaign({
+      ...parsed,
+      env: process.env,
+      repositoryRoot: process.cwd(),
+      fetch: countedFetch,
+      fetches: () => fetches,
+      operators: stdioOperator(),
+    }).then(result => {
       process.stdout.write(`${result.output}\n`);
       process.exitCode = result.exitCode;
     });
