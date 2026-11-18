@@ -40,7 +40,9 @@ const task: BugTask = {
   reproduction: 'python -m pytest -q tests/test_calculator.py',
   acceptanceCriteria: ['divide(1, 0) raises CalculationError'],
   constraints: [],
-  requiredChecks: [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }],
+  requiredChecks: [
+    { checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 },
+  ],
   limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 2, maxMemoryBytes: 2_147_483_648, maxPids: 64 },
   budgetLimits: { maxReplanCount: 3, maxTokens: 100_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
   configId: 'config-v1',
@@ -63,7 +65,14 @@ const CONSTANT_VIEW = {
   bounds: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuSeconds: 120, maxMemoryBytes: 536_870_912, maxProcessCount: 64 },
 } as const;
 
-const AUTHORITY = { policyId: task.configId, policyVersion: task.configVersion, configId: task.configId, configVersion: task.configVersion, issuerKeyRef: 'host-config-v1', decisionAuthorityGeneration: 1 };
+const AUTHORITY = {
+  policyId: task.configId,
+  policyVersion: task.configVersion,
+  configId: task.configId,
+  configVersion: task.configVersion,
+  issuerKeyRef: 'host-config-v1',
+  decisionAuthorityGeneration: 1,
+};
 
 interface ViewFacts {
   readonly exclusionsPolicyVersion: string;
@@ -182,6 +191,32 @@ test('(c) without a source the port keeps its own constants', async () => {
   assert.equal(claimed(await constantPort.claim(contextOf(CONSTANT_VIEW))), `claim-${ACTION_ID}`, 'the constant-matching fixture is still admitted');
 });
 
+test('(e) the claim resolves the profile once: a source that throws or drifts afterwards leaves no orphaned reservation', async () => {
+  // The profile is resolved before the first reservation write and reused for the stored trusted
+  // context. A second call would otherwise validate under one ceiling, store another (a claim the next
+  // read calls corrupt) or throw after the reservations were written, blocking a retry forever.
+  const sources: readonly (readonly [string, (calls: { n: number }) => ExecutionProfileV02])[] = [
+    [
+      'throws on the second call',
+      () => {
+        throw new Error('source moved');
+      },
+    ],
+    ['reports a lower ceiling on the second call', () => ({ ...OWNER_PROFILE, commandBounds: { ...OWNER_PROFILE.commandBounds, maxMemoryBytes: 1 } })],
+  ];
+  for (const [label, later] of sources) {
+    const calls = { n: 0 };
+    const port = await portFor('e', () => (++calls.n === 1 ? OWNER_PROFILE : later(calls)));
+    const receipt = await port.claim(contextOf(REAL_VIEW));
+    assert.equal(claimed(receipt), `claim-${ACTION_ID}`, label);
+    assert.equal(calls.n, 1, `${label}: the source is asked once`);
+    // The stored claim still validates, and the same context replays the same receipt rather than
+    // re-reserving: the reservations are held by a live claim, not left behind by a failed write.
+    assert.equal((await port.readClaimState(`claim-${ACTION_ID}`))?.status, 'claimed', label);
+    assert.equal(claimed(await port.claim(contextOf(REAL_VIEW))), `claim-${ACTION_ID}`, `${label}: replay is idempotent`);
+  }
+});
+
 test('(d) the later gates re-read the admission under the same profile', async () => {
   const recipient: ExecutorIdentityV02 = { adapterIdentity: 'adapter-owner-profile', processIncarnation: 'proc-owner-profile', fencingGeneration: 1, payloadDigest: ACTION_DIGEST };
 
@@ -200,7 +235,14 @@ test('(d) the later gates re-read the admission under the same profile', async (
   const fence = await port.fenceClaimRecipient(claim.claimId, recipient);
   assert.notEqual(fence, null);
   if (fence === null) return;
-  const body = { receiptId: 'closure-act-diag-1', claimId: claim.claimId, taskId: TASK, reason: holdRef, fencedExecutorIdentity: fence.fencedExecutorIdentity, unconsumedReservations: [...claim.reservationRefs] };
+  const body = {
+    receiptId: 'closure-act-diag-1',
+    claimId: claim.claimId,
+    taskId: TASK,
+    reason: holdRef,
+    fencedExecutorIdentity: fence.fencedExecutorIdentity,
+    unconsumedReservations: [...claim.reservationRefs],
+  };
   const receipt = { ...body, receiptDigest: computeClaimClosureDigest(body) };
 
   const constantPort = new DurableStatePortV02({ store: port.store });

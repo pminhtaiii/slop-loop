@@ -247,7 +247,14 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   // pinned from the validated task now, so a caller mutating `task` afterwards cannot move the ceiling.
   const pinnedProfile = pinnedExecutionProfileOf(task, assembly.profile.image.label);
   const executionProfile = (taskId: string, workspaceId: string): ExecutionProfileV02 => boundExecutionProfileOf(pinnedProfile, { taskId, workspaceId });
-  const owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, authorityRef, createContext, executionProfile });
+  // The owners' cache refuses a rebind whose profile, authority or policy identity differs from the set
+  // it already built; that refusal is bounded here rather than escaping as a rejection before the seed.
+  let owners: ReturnType<RealTierAssembly['owners']['taskOwners']>;
+  try {
+    owners = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, authorityRef, createContext, executionProfile });
+  } catch {
+    return refused('binding-unavailable', '$');
+  }
   const contextSource = owners.contextSource;
   if (existing === null) {
     try {

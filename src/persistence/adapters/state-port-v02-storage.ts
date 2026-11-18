@@ -3,6 +3,7 @@
  * reads/writes, the per-task lock, and the per-record accessors.
  */
 import { readdir, readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fenceProofV02, journalClaimV02 } from '../../approvals/control-v02.ts';
 import { validateAdmissionV02, validateAttemptReceiptV02, validateTaskState } from '../../contracts/foundation/uc03.ts';
@@ -79,6 +80,26 @@ export class StatePortStore {
     // Only a missing file seeds the fallback; a present control head must validate or fail closed.
     const data = await this.readText(this.statePath(taskId, 'control.json'));
     return data === null ? fallback : validateControlRecord(JSON.parse(data) as unknown);
+  }
+
+  /**
+   * The current control head alone, for a synchronous pre-transport authority check. Reads one file and
+   * no historical records, so an unrelated corrupt outcome cannot refuse a dispatch. Anything missing,
+   * unreadable or malformed is `null`: the caller fails closed, never widening authority.
+   */
+  readControlHead(taskId: string): ControlRecordV02 | null {
+    if (!isSafeStorageId(taskId)) return null;
+    let data: string;
+    try {
+      data = readFileSync(this.statePath(taskId, 'control.json'), 'utf8');
+    } catch {
+      return null;
+    }
+    try {
+      return validateControlRecord(JSON.parse(data) as unknown);
+    } catch {
+      return null;
+    }
   }
 
   async readTask(taskId: string): Promise<TaskState | null> {

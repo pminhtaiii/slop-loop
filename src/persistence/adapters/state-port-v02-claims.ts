@@ -84,8 +84,11 @@ export async function claim(options: ClaimOperationOptions, context: AdmissionCo
       }
     }
     const task = await store.readTask(taskId);
-    if (!task || !contextMatchesTask(snapshot, task, ownerExecutionProfile(options.executionProfile, task)) || control.controlVersion !== snapshot.expectedControlVersion || control.epoch !== snapshot.expectedEpoch)
-      return NEUTRAL_CLAIM_RECEIPT_V02;
+    if (!task || control.controlVersion !== snapshot.expectedControlVersion || control.epoch !== snapshot.expectedEpoch) return NEUTRAL_CLAIM_RECEIPT_V02;
+    // Resolved once and reused below: a source that changes or throws on a second call would otherwise
+    // validate under one ceiling, store another, and orphan the reservations written between them.
+    const profile = structuredClone(ownerExecutionProfile(options.executionProfile, task));
+    if (!contextMatchesTask(snapshot, task, profile)) return NEUTRAL_CLAIM_RECEIPT_V02;
     const authorityRef = authorityFor(snapshot);
     if (!control.activeAuthorityRef || !equal(control.activeAuthorityRef, authorityRef)) return NEUTRAL_CLAIM_RECEIPT_V02;
 
@@ -126,7 +129,7 @@ export async function claim(options: ClaimOperationOptions, context: AdmissionCo
       context: snapshot,
       taskSnapshot: structuredClone(task),
       authorityRef,
-      trustedAdmissionContext: deriveTrustedContext(snapshot, ownerExecutionProfile(options.executionProfile, task)),
+      trustedAdmissionContext: deriveTrustedContext(snapshot, profile),
       status: 'claimed',
     });
     await store.writeControl(taskId, { ...control, controlVersion: postClaimControlVersion, activeClaimId: claimId });

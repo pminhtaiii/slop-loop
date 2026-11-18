@@ -252,17 +252,18 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
   const incarnation = `real-tier-${randomUUID()}`;
   const actorOf = (adapterIdentity: string) => ({ adapterIdentity, processIncarnation: incarnation, fencingGeneration: 1 });
   /**
-   * Last pre-transport check (SPEC-W5-001): match the task's durable control head to the attempt's begin
-   * facts, so a pause after `beginAttempt` (epoch unchanged) is refused, since actors are constant.
-   * Missing/drifted heads fail closed; synchronous so transport follows without yielding.
+   * Last pre-transport check (SPEC-W5-001): the durable control head must still match the attempt's begin
+   * facts, so a pause after `beginAttempt` (epoch unchanged) is refused. Missing/drifted head is `false`.
+   *
+   * shortcut: a pause ordered between this synchronous read and transport start still escapes; closing
+   * that window needs the owner lock to serialize transport start too.
    */
-  const ownerState = owners.components.statePort as { readonly getJournalSnapshot?: (taskId: string) => unknown };
+  const ownerState = owners.components.statePort as { readonly readControlHead?: (taskId: string) => unknown };
   const currentDispatchAuthority = (facts: DispatchAuthorityFacts): boolean => {
-    const journal = ownerState.getJournalSnapshot?.(facts.taskId);
-    if (typeof journal !== 'object' || journal === null) return false;
-    const control = journal as { readonly mode?: unknown; readonly controlVersion?: unknown; readonly epoch?: unknown; readonly activeAuthorityRef?: unknown; readonly activeClaimId?: unknown };
+    const control = ownerState.readControlHead?.(facts.taskId) as Partial<Record<'mode' | 'controlVersion' | 'epoch' | 'activeAuthorityRef' | 'activeClaimId', unknown>> | undefined;
+    if (typeof control !== 'object' || control === null) return false;
     return (
-      control.mode === 'runnable' &&
+      Object.is(control.mode, 'runnable') &&
       control.controlVersion === facts.attempt.postBeginControlVersion &&
       control.epoch === facts.attempt.epoch &&
       control.activeClaimId === facts.claimId &&

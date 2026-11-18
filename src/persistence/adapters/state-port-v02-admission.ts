@@ -239,7 +239,13 @@ export function safeRef(ref: SafeReferenceV02): boolean {
 
 /** Re-checks a stored task against the admission it claims to serve. */
 export function contextMatchesTask(context: AdmissionContextV02, task: TaskState, executionProfile?: ExecutionProfileV02): boolean {
-  if (!admissionValid(context, executionProfile) || task.taskId !== context.taskId || task.runId !== context.runId || task.stateVersion !== context.expectedTaskStateVersion || task.node !== context.runnableNode)
+  if (
+    !admissionValid(context, executionProfile) ||
+    task.taskId !== context.taskId ||
+    task.runId !== context.runId ||
+    task.stateVersion !== context.expectedTaskStateVersion ||
+    task.node !== context.runnableNode
+  )
     return false;
   if (
     context.subjectKind === 'repository-action' &&

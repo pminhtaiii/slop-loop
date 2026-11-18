@@ -22,7 +22,8 @@ import type { BugTask, FixPlan, TaskState } from '../../../src/contracts/foundat
 import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/foundation/docker-controller.ts';
 import { computeFileDigest, computeWorkspaceVolumeIds } from '../../../src/foundation/docker-workspace-policy.ts';
 import { createHostAssembly, resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
-import { bindRealTierTask, pinnedExecutionProfileOf, type RealTierBindingOptions, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
+import { bindRealTierTask, executionProfileOf, pinnedExecutionProfileOf, type RealTierBindingOptions, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
+import type { RealTierTaskBinding } from '../../../src/runtime/real-tier-owners.ts';
 import { DEFAULT_EXCLUSIONS_POLICY_VERSION } from '../../../src/foundation/docker-view-builder.ts';
 import { retainedDiffSource } from '../../../src/runtime/real-tier-task-producers.ts';
 import { seedLedgers } from '../../../src/runtime/real-tier-task-seed.ts';
@@ -595,6 +596,48 @@ test('(k2) after two binds, the second returned source is the one the cached app
   await approvalScenario(second, owners.approvalService);
 });
 
+test('(k3) the owner cache reuses only a matching rebind and refuses one whose security facts differ', async () => {
+  // The cached owner set freezes its port's profile and control seed and its approval profile. A later
+  // taskOwners call must not silently keep the first call's facts, and must keep working for the
+  // ordinary rebind, which passes a fresh profile closure resolving to the same values every time.
+  const catalog = fixtureOf();
+  const { assembly } = assemblyFor(catalog);
+  const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog)));
+  const ids = { taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId };
+  const policy = { policyId: binding.task.configId, policyVersion: binding.task.configVersion, configId: binding.task.configId, configVersion: binding.task.configVersion };
+  const authorityRef = { ...policy, issuerKeyRef: `host-${binding.task.configId}`, decisionAuthorityGeneration: 1 };
+  const profile = (): ReturnType<typeof executionProfileOf> => executionProfileOf(binding.task, assembly.profile.image.label, binding.ids);
+  const cached = assembly.owners.taskOwners({ ...ids, policyIdentity: policy, authorityRef, executionProfile: profile });
+  assert.equal(
+    cached.statePort,
+    assembly.owners.taskOwners({ ...ids, policyIdentity: { ...policy }, authorityRef: { ...authorityRef }, executionProfile: profile }).statePort,
+    'an equivalent rebind reuses the cached owners',
+  );
+
+  const rows: readonly (readonly [string, Partial<RealTierTaskBinding>])[] = [
+    ['another authority generation', { authorityRef: { ...authorityRef, decisionAuthorityGeneration: 2 } }],
+    ['another policy identity', { policyIdentity: { ...policy, configVersion: '9.9.9' } }],
+    ['another execution profile', { executionProfile: () => ({ ...profile(), commandBounds: { ...profile().commandBounds, maxMemoryBytes: 1 } }) }],
+  ];
+  for (const [label, override] of rows) {
+    assert.throws(() => assembly.owners.taskOwners({ ...ids, policyIdentity: policy, authorityRef, executionProfile: profile, ...override }), /approval-operation-denied/u, label);
+  }
+
+  // The reachable failure the finding named: a first direct call that omits the profile leaves the
+  // synthetic constants cached, so a later call supplying one is refused rather than quietly reusing them.
+  const fresh = assemblyFor(fixtureOf()).assembly;
+  const bare = { taskId: 'task-unprofiled-1', workspaceId: 'ws-unprofiled-1', repositoryId: 'repo-calc' };
+  fresh.owners.taskOwners(bare);
+  assert.throws(() => fresh.owners.taskOwners({ ...bare, executionProfile: profile }), /approval-operation-denied/u);
+
+  // Through the bind path, a differing policy identity is a bounded refusal before any seed or rebind.
+  const changedPolicy = await bindRealTierTask(assembly, optionsOf(catalog, { policyIdentity: { ...policy, configVersion: '9.9.9' } }));
+  assert.equal(changedPolicy.status, 'unavailable');
+  if (changedPolicy.status !== 'unavailable') return;
+  assert.equal(changedPolicy.reasonCode, 'binding-unavailable');
+  assert.equal((await assembly.owners.components.statePort.loadTask(binding.ids.taskId))?.stateVersion, 1, 'the seeded task is unchanged');
+});
+
 test('(l) an empty identity refuses before any write, leaving the whole store byte-identical', async () => {
   // The identity is pre-checkable, so it is validated before the seed and before the retention (STD-W4-003).
   const catalog = fixtureOf();
@@ -728,9 +771,26 @@ function claimContextOf(binding: RealTierBoundTask, state: TaskState, assembly: 
   const limits = binding.task.limits;
   const action = { actionId: options.actionId, kind: 'run_command' as const, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], workingDirectory: 'tests', purpose: 'investigate' };
   const actionDigest = computeActionDigest(action);
-  const authority = { policyId: binding.task.configId, policyVersion: binding.task.configVersion, configId: binding.task.configId, configVersion: binding.task.configVersion, issuerKeyRef: `host-${binding.task.configId}`, decisionAuthorityGeneration: 1 };
+  const authority = {
+    policyId: binding.task.configId,
+    policyVersion: binding.task.configVersion,
+    configId: binding.task.configId,
+    configVersion: binding.task.configVersion,
+    issuerKeyRef: `host-${binding.task.configId}`,
+    decisionAuthorityGeneration: 1,
+  };
   const { policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration } = authority;
-  const receiptBody = { receiptId: `pe-${options.actionId}`, actionDigest, freshnessContextDigest: computeCanonicalSha256({ freshness: options.actionId }), policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration, result: 'ALLOWED' as const };
+  const receiptBody = {
+    receiptId: `pe-${options.actionId}`,
+    actionDigest,
+    freshnessContextDigest: computeCanonicalSha256({ freshness: options.actionId }),
+    policyId,
+    policyVersion,
+    configId,
+    configVersion,
+    decisionAuthorityGeneration,
+    result: 'ALLOWED' as const,
+  };
   const commandView = {
     viewId: `view-${binding.ids.workspaceId}-${'a'.repeat(12)}`,
     taskId: state.taskId,
@@ -808,8 +868,18 @@ test('(r) the bound profile is pinned from the seeded task: mutating the returne
   // One fresh assembly per scenario: the first claim holds the port, so a second claim would be
   // refused for that reason rather than for the ceiling under test.
   const scenarios = [
-    { label: 'a task lowered after binding cannot withdraw the pinned ceiling', mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes = 1), bound: 'above', admitted: true },
-    { label: 'a task raised after binding cannot widen the pinned ceiling', mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes *= 2), bound: 'over', admitted: false },
+    {
+      label: 'a task lowered after binding cannot withdraw the pinned ceiling',
+      mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes = 1),
+      bound: 'above',
+      admitted: true,
+    },
+    {
+      label: 'a task raised after binding cannot widen the pinned ceiling',
+      mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes *= 2),
+      bound: 'over',
+      admitted: false,
+    },
   ] as const;
   for (const scenario of scenarios) {
     const catalog = fixtureOf();
@@ -818,7 +888,13 @@ test('(r) the bound profile is pinned from the seeded task: mutating the returne
     const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot })));
     const { owners, state } = await boundOwnersAtInvestigate(binding, assembly);
     const original = { ...binding.task.limits };
-    const pinnedBounds = { timeoutMs: original.timeoutMs, maxOutputBytes: original.maxOutputBytes, maxCpuSeconds: Math.max(1, Math.ceil((original.maxCpuCores * original.timeoutMs) / 1000)), maxMemoryBytes: original.maxMemoryBytes, maxProcessCount: original.maxPids };
+    const pinnedBounds = {
+      timeoutMs: original.timeoutMs,
+      maxOutputBytes: original.maxOutputBytes,
+      maxCpuSeconds: Math.max(1, Math.ceil((original.maxCpuCores * original.timeoutMs) / 1000)),
+      maxMemoryBytes: original.maxMemoryBytes,
+      maxProcessCount: original.maxPids,
+    };
     // The view asks for exactly the ceiling the profile was pinned with; only a live `task.limits` read moves it.
     const bounds = scenario.bound === 'over' ? { ...pinnedBounds, maxMemoryBytes: original.maxMemoryBytes + 1 } : pinnedBounds;
 

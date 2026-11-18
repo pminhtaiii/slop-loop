@@ -21,7 +21,7 @@ import type { ApprovalPort, TaskState } from '../contracts/foundation/uc03.ts';
 import type { PolicyAuthorityRefV02 } from '../contracts/foundation/uc03.ts';
 import type { GuardedReadOwnerPort } from '../foundation/guarded-read-capability.ts';
 import { isProductionJournal } from '../foundation/production-journal-registry.ts';
-import type { ExecutionProfileSourceV02 } from '../persistence/adapters/state-port-v02-admission.ts';
+import { equal, ownerExecutionProfile, type ExecutionProfileSourceV02 } from '../persistence/adapters/state-port-v02-admission.ts';
 import type { OwnerDelivery } from './evaluation-composition.ts';
 import { createBaselineEvidenceAdapter } from './baseline-evidence-adapter.ts';
 import { createConsoleApprovalPort } from './console-approval-port.ts';
@@ -72,6 +72,23 @@ export interface RealTierBoundOwners {
   readonly console: ConsoleApprovalPort;
   /** The one observed-action source this task's approval service observes; reused on every rebind. */
   readonly contextSource: RealContextSource;
+}
+
+/** The security facts a cached owner set is frozen to: its port's profile and control seed, its approval profile. */
+type BoundSecurityFacts = Readonly<Record<'executionProfile' | 'authorityRef' | 'policyIdentity', unknown>>;
+
+/** The facts one binding supplies, with a function profile resolved now: the bind path passes a fresh closure each time. */
+function suppliedFactsOf(binding: RealTierTaskBinding): BoundSecurityFacts {
+  return {
+    executionProfile: ownerExecutionProfile(binding.executionProfile, { taskId: binding.taskId, workspaceId: binding.workspaceId }),
+    authorityRef: binding.authorityRef,
+    policyIdentity: binding.policyIdentity,
+  };
+}
+
+/** True when a binding supplies a fact its cached owners lack, or one that differs: the cached set cannot serve it. */
+function conflictsWith(cached: BoundSecurityFacts, supplied: BoundSecurityFacts): boolean {
+  return (['executionProfile', 'authorityRef', 'policyIdentity'] as const).some(key => supplied[key] !== undefined && (cached[key] === undefined || !equal(cached[key], supplied[key])));
 }
 
 export interface RealTierOwnersOptions {
@@ -127,6 +144,11 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
   const journal = createJournalOperationLookup(statePort);
   const recoveryGate = createRecoveryGate({ lookupOperation: ref => journal.lookupOperation(ref), lookupWrite: ref => baselineStore.lookupWrite(ref) });
   const bound = new Map<string, RealTierBoundOwners>();
+  // The security facts each cached owner set was built from. A cache hit is reused only when the new
+  // binding agrees on every fact it supplies, because the port's profile, control seed and approval
+  // profile are frozen at construction; a silent reuse would keep the first binding's facts. The
+  // profile is compared by its resolved value: the bind path supplies a fresh closure each time.
+  const boundFacts = new Map<string, BoundSecurityFacts>();
   let claimed: string | undefined;
 
   /** One bound task, or a refusal: classify() carries no task and never guesses one. */
@@ -156,7 +178,14 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
    */
   const taskOwners = (binding: RealTierTaskBinding): RealTierBoundOwners => {
     const existing = bound.get(binding.taskId);
-    if (existing) return existing;
+    const supplied = suppliedFactsOf(binding);
+    // A rebind of the same task may reuse the cached owners, but only when they already carry every
+    // fact this binding supplies. Otherwise the refusal is a refusal, not a silently weakened port.
+    if (existing) {
+      const cached = boundFacts.get(binding.taskId);
+      if (!cached || conflictsWith(cached, supplied)) throw new ApprovalServiceError('unavailable');
+      return existing;
+    }
     // A bound task's read fence needs a persisted, authority-bearing control head. The seed is how a
     // new task gets one without a claim; an existing head stays authoritative.
     const taskStatePort = new DurableStatePortV02({
@@ -192,6 +221,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
       contextSource,
     };
     bound.set(binding.taskId, owners);
+    boundFacts.set(binding.taskId, structuredClone(supplied));
     return owners;
   };
 

@@ -247,12 +247,9 @@ function providerContext(
 
 test('CR-195-A: both bound model ports admit one request and dispatch exactly once each', async () => {
   const catalog = catalogFor();
-  const dispatched: { role: string; body: string }[] = [];
   const { assembly, effects } = resolveOrThrow(catalog, {
-    fetch: async (_url, init) => {
+    fetch: async () => {
       effects.fetch += 1;
-      const body = typeof init?.body === 'string' ? init.body : '';
-      dispatched.push({ role: body.includes('"role":"reviewer"') || body.length > 0 ? 'unknown' : 'unknown', body });
       // The raw payload is the messages envelope; the role is not in it, so the reply is role-agnostic.
       return new Response(JSON.stringify({ id: 'msg-1', model: MODEL, content: [{ type: 'text', text: '{"status":"accepted","findings":[]}' }], usage: { input_tokens: 10, output_tokens: 5 } }), {
         status: 200,
@@ -292,7 +289,6 @@ test('CR-195-A: both bound model ports admit one request and dispatch exactly on
     true,
     'both claims settle',
   );
-  assert.equal(dispatched.length, 2);
   assertNoSecrets({ coder, reviewer });
 });
 
@@ -333,8 +329,10 @@ async function investigating(
  * CR-195-FENCE. A control pause persisted after `beginAttempt` returns a durable attempt and before
  * transport must make both bound production ports refuse with zero fetches (SPEC-W5-001). The fence
  * lands inside the assembly's own `statePort.beginAttempt`, so both ports observe the real sequence;
- * the assembly's `currentDispatchAuthority` reads the bound task's durable control head just before
- * `executeTransport`, which is where the constant actor callbacks can no longer hide the pause.
+ * the assembly's `currentDispatchAuthority` reads the bound task's control head synchronously just
+ * before `executeTransport`, which is where the constant actor callbacks can no longer hide the pause.
+ * The attempt is already durable, so the refusal also records a usage-free uncertain outcome: the
+ * claim is accounted (not left attempting) and its reservations are releasable through recovery.
  */
 test('CR-195-FENCE: a fence after beginAttempt makes both bound production ports refuse with zero fetches', async () => {
   for (const role of ['coder', 'reviewer'] as const) {
@@ -351,7 +349,7 @@ test('CR-195-FENCE: a fence after beginAttempt makes both bound production ports
     const { owners, state, journal } = await investigating(assembly, binding, catalog.task);
     const context = providerContext(state, catalog.task, journal, role, `req-fenced-${role}`, 2);
     // The fence lands inside beginAttempt of the very port the model port dispatches through (the
-    // shared owner state port), so both bound ports observe the real beginAttemptâ†’transport sequence.
+    // shared owner state port), so both bound ports observe the real beginAttempt→transport sequence.
     const modelState = assembly.components.statePort;
     const ownBegin = modelState.beginAttempt.bind(modelState);
     modelState.beginAttempt = async (claimId: string, executor: never) => {
@@ -364,8 +362,15 @@ test('CR-195-FENCE: a fence after beginAttempt makes both bound production ports
     assert.equal(result.outcome, 'denied', `${role}: a fenced port must refuse`);
     assert.equal(result.reason, 'FENCED_EXECUTOR', `${role}: the refusal names the fence`);
     assert.equal(effects.fetch, 0, `${role}: zero fetches escape the fence`);
-    const control = await owners.statePort.getJournalSnapshot(state.taskId);
-    assert.equal((control as { mode: string }).mode, 'paused', `${role}: the fence is durable before transport`);
+    const fenced = (await owners.statePort.getJournalSnapshot(state.taskId)) as {
+      readonly mode: string;
+      readonly claims: readonly { readonly status: string }[];
+      readonly outcomes: readonly { readonly outcome: string }[];
+    };
+    assert.equal(fenced.mode, 'paused', `${role}: the fence is durable before transport`);
+    assert.equal(fenced.outcomes.length, 1, `${role}: the fence records an outcome instead of leaving the attempt dangling`);
+    assert.equal(fenced.outcomes[0]?.outcome, 'uncertain', `${role}: the recorded outcome accounts for no usage`);
+    assert.notEqual(fenced.claims[0]?.status, 'attempting', `${role}: the attempted claim is not left attempting`);
   }
 });
 
@@ -395,4 +400,32 @@ test('CR-195-FENCE observed: a fence between claim and beginAttempt refuses with
   assert.equal(refused.outcome, 'denied');
   assert.equal(refused.reason, 'ATTEMPT_DENIED: Mismatched provider attempt');
   assert.equal(effects.fetch, 0, 'the claim-to-attempt fence admits no transport call');
+});
+
+test('CR-195-CONTROL: the pre-transport check reads the control head, not unrelated journal history', async () => {
+  const catalog = catalogFor();
+  let sends = 0;
+  const { assembly } = resolveOrThrow(catalog, {
+    fetch: async () => {
+      sends += 1;
+      return new Response(JSON.stringify({ id: 'msg-1', model: MODEL, content: [{ type: 'text', text: '{"status":"accepted","findings":[]}' }], usage: { input_tokens: 10, output_tokens: 5 } }), {
+        status: 200,
+      });
+    },
+  });
+  const binding = boundOrThrow(await bindRealTierTask(assembly, { caseId: CASE, ...pinsOf(assembly) }));
+  const { owners, state, journal } = await investigating(assembly, binding, catalog.task);
+  const context = providerContext(state, catalog.task, journal, 'coder', 'req-control-head', 2);
+
+  // An old, unrelated outcome file becomes unreadable. The full journal snapshot would throw here; the
+  // typed control read must not, because dispatch authority never depended on that record.
+  const store = (assembly.owners.components.statePort as unknown as { store: { readonly claimDir: string } }).store;
+  const stateDir = join(store.claimDir, state.taskId, 'v02');
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(join(stateDir, 'outcome-legacy-broken.json'), '{ not json', 'utf8');
+  assert.throws(() => (owners.statePort.getJournalSnapshot(state.taskId) as { readonly outcomes: unknown[] }).outcomes, 'fixture proves the snapshot scans history');
+
+  const result = await binding.ports.modelPort.propose(state, [], context.providerRequest, context);
+  assert.equal(result.outcome, 'observed', JSON.stringify(result));
+  assert.equal(sends, 1, 'dispatch succeeded despite the unrelated corrupt outcome');
 });
