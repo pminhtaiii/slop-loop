@@ -138,7 +138,7 @@ function contextOf(view: ViewFacts): RepositoryAdmissionContextV02 {
     checkSetDigest: computeCanonicalSha256(task.requiredChecks),
     checkId: 'check-1',
     testPath: 'tests/test_calculator.py',
-  } as unknown as RepositoryAdmissionContextV02;
+  };
 }
 
 /** One seeded task, moved to the pre-plan Investigate node a diagnostic admission expects. */

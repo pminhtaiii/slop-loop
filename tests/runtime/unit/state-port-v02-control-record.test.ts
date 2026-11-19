@@ -91,3 +91,34 @@ test('durable control record: a valid paused hold is read back unchanged', async
     assert.deepEqual(await state.readControl(taskId, DEFAULT_CONTROL), held);
   });
 });
+
+for (const [field, values] of Object.entries({
+  holdEventDigest: [undefined, 42, {}, 'invalid-digest'],
+  activeAuthorityRef: [undefined, 42, [], {}, { policyId: 'policy' }],
+})) {
+  for (const value of values) {
+    test(`control head refuses malformed ${field}: ${JSON.stringify(value)}`, async () => {
+      await withState({ ...DEFAULT_CONTROL, [field]: value }, async state => {
+        assert.equal(state.readControlHead(taskId), null);
+        await assert.rejects(state.readControl(taskId, DEFAULT_CONTROL), /Corrupted UC-03 control record/);
+      });
+    });
+  }
+}
+
+test('control head accepts nullable fields and valid authority and digest values', async () => {
+  for (const control of [
+    DEFAULT_CONTROL,
+    {
+      ...DEFAULT_CONTROL,
+      mode: 'paused',
+      holdRef: 'hold-valid',
+      holdEventDigest: `sha256:${'a'.repeat(64)}`,
+      activeAuthorityRef: { policyId: 'policy', policyVersion: '1', configId: 'config', configVersion: '1', issuerKeyRef: 'issuer', decisionAuthorityGeneration: 1 },
+    },
+  ]) {
+    await withState(control, async state => {
+      assert.deepEqual(state.readControlHead(taskId), control);
+    });
+  }
+});

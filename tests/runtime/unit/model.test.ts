@@ -1528,7 +1528,7 @@ test('HostModelPortV02 awaits admission with current fence and detached actor re
   };
   assert.equal((await s.port.propose(s.state, s.evidence, s.request, s.context)).outcome, 'denied');
   assert.equal(s.transport.callCount, 0);
-  assert.equal(s.statePort.getJournalSnapshot().claims[0]?.status, 'attempting');
+  assert.equal(s.statePort.getJournalSnapshot().claims[0]?.status, 'uncertain');
 });
 
 test('HostModelPortV02 serializes concurrent retries and rejects reconstructed and restarted actors', async () => {
