@@ -55,11 +55,33 @@ export function isRepositoryPatch(context: AdmissionContextV02): boolean {
   return isRepairPatch(context) || isDiagnosticPatch(context);
 }
 
+/** The owner-held execution profile: the trusted half of a repository admission's execution facts. */
+export type ExecutionProfileV02 = RepositoryAdmissionTrustedContextV02['executionProfile'];
+
+/** A fixed owner profile, or one derived only from the task and workspace the owner itself read. */
+export type ExecutionProfileSourceV02 = ExecutionProfileV02 | ((taskId: string, workspaceId: string) => ExecutionProfileV02);
+
+/** The port's own profile facts, applied only when the owner supplies no profile. */
+export const ADMISSION_PROFILE_FACTS: Omit<ExecutionProfileV02, 'isolationProfileRef'> = Object.freeze({
+  exclusionsPolicyVersion: 'exclusions-v1',
+  scratchIdentity: 'scratch-admission-v02',
+  commandBounds: Object.freeze({ timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuSeconds: 120, maxMemoryBytes: 536_870_912, maxProcessCount: 64 }),
+  patchBounds: Object.freeze({ maxPatchBytes: 4096, maxChangedPaths: 5 }),
+});
+
+/**
+ * The owner profile for one stored task. A function source is called with the task's own ids, so the
+ * source never sees the submitted context's view or action.
+ */
+export function ownerExecutionProfile(source: ExecutionProfileSourceV02 | undefined, task: Pick<TaskState, 'taskId' | 'workspaceId'>): ExecutionProfileV02 | undefined {
+  return typeof source === 'function' ? source(task.taskId, task.workspaceId) : source;
+}
+
 /** Trusted context derived from the admission itself; see the shortcut note on validateAdmission. */
-export function deriveTrustedContext(context: RepositoryAdmissionContextV02): RepositoryAdmissionTrustedContextV02;
+export function deriveTrustedContext(context: RepositoryAdmissionContextV02, executionProfile?: ExecutionProfileV02): RepositoryAdmissionTrustedContextV02;
 export function deriveTrustedContext(context: ProviderAdmissionContextV02): ProviderAdmissionTrustedContextV02;
-export function deriveTrustedContext(context: AdmissionContextV02): AdmissionTrustedContextV02;
-export function deriveTrustedContext(context: AdmissionContextV02): AdmissionTrustedContextV02 {
+export function deriveTrustedContext(context: AdmissionContextV02, executionProfile?: ExecutionProfileV02): AdmissionTrustedContextV02;
+export function deriveTrustedContext(context: AdmissionContextV02, executionProfile?: ExecutionProfileV02): AdmissionTrustedContextV02 {
   if (context.subjectKind === 'provider-request') {
     const request = context.providerRequest;
     return {
@@ -119,12 +141,9 @@ export function deriveTrustedContext(context: AdmissionContextV02): AdmissionTru
       : {}),
     freshnessContextDigest: context.policyEvaluationReceipt.freshnessContextDigest,
     ...(context.action.kind === 'run_command' && context.commandView ? { commandViewDigest: context.commandView.viewDigest } : {}),
-    executionProfile: {
+    executionProfile: executionProfile ?? {
       isolationProfileRef: context.executionProfileId,
-      exclusionsPolicyVersion: 'exclusions-v1',
-      scratchIdentity: 'scratch-admission-v02',
-      commandBounds: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuSeconds: 120, maxMemoryBytes: 536_870_912, maxProcessCount: 64 },
-      patchBounds: { maxPatchBytes: 4096, maxChangedPaths: 5 },
+      ...ADMISSION_PROFILE_FACTS,
     },
     allowedDiagnosticChecks:
       context.planApplicability === 'pre-plan-diagnostic' &&
@@ -152,9 +171,9 @@ export function deriveTrustedContext(context: AdmissionContextV02): AdmissionTru
 // shortcut: the trusted admission is derived from the caller's own context, so this re-establishes
 // structural integrity, not independent owner trust. Swap in an owner-issued trusted context when
 // production gains one; the validators stay unchanged.
-export function admissionValid(context: AdmissionContextV02): boolean {
+export function admissionValid(context: AdmissionContextV02, executionProfile?: ExecutionProfileV02): boolean {
   try {
-    return validateAdmissionV02(context, deriveTrustedContext(context)).ok;
+    return validateAdmissionV02(context, deriveTrustedContext(context, executionProfile)).ok;
   } catch {
     return false;
   }
@@ -219,8 +238,14 @@ export function safeRef(ref: SafeReferenceV02): boolean {
 }
 
 /** Re-checks a stored task against the admission it claims to serve. */
-export function contextMatchesTask(context: AdmissionContextV02, task: TaskState): boolean {
-  if (!admissionValid(context) || task.taskId !== context.taskId || task.runId !== context.runId || task.stateVersion !== context.expectedTaskStateVersion || task.node !== context.runnableNode)
+export function contextMatchesTask(context: AdmissionContextV02, task: TaskState, executionProfile?: ExecutionProfileV02): boolean {
+  if (
+    !admissionValid(context, executionProfile) ||
+    task.taskId !== context.taskId ||
+    task.runId !== context.runId ||
+    task.stateVersion !== context.expectedTaskStateVersion ||
+    task.node !== context.runnableNode
+  )
     return false;
   if (
     context.subjectKind === 'repository-action' &&
