@@ -252,7 +252,8 @@ function taskStateOf(task: BugTask, plan: FixPlan, revision: string): TaskState 
   };
 }
 
-const PLAN_ACTION = (d: Domain): { actionId: string; kind: 'approve_fix_plan'; planVersion: number; strategyDigest: string; diagnosisEvidenceRefs: readonly string[]; checkSetDigest: string } => planActionOf(d.plan);
+const PLAN_ACTION = (d: Domain): { actionId: string; kind: 'approve_fix_plan'; planVersion: number; strategyDigest: string; diagnosisEvidenceRefs: readonly string[]; checkSetDigest: string } =>
+  planActionOf(d.plan);
 
 /** The plan action a decision id names: the same shape for the original plan and its revision. */
 function planActionOf(plan: FixPlan, decisionId = PLAN_DECISION) {
@@ -520,7 +521,13 @@ function admittedDecision(receipt: ActionDecisionReceipt): Record<string, unknow
 }
 
 /** The owner admission context for any action: a patch carries its bounds, a command its admitted view and bounds. */
-function admissionContextFor(d: Domain, state: TaskState, receipts: { readonly pe: unknown; readonly ad?: unknown }, action: ApplyPatchAction | RunCommandAction, plan: { readonly decisionId: string; readonly bindingDigest: string }): Record<string, unknown> {
+function admissionContextFor(
+  d: Domain,
+  state: TaskState,
+  receipts: { readonly pe: unknown; readonly ad?: unknown },
+  action: ApplyPatchAction | RunCommandAction,
+  plan: { readonly decisionId: string; readonly bindingDigest: string },
+): Record<string, unknown> {
   const common = {
     schemaVersion: '0.2.0',
     subjectKind: 'repository-action',
@@ -836,7 +843,13 @@ test('C13 forbidden: the production service classifies a forbidden patch and the
         patch: null,
         command: { executableRef: 'pytest', resolvedExecutable: 'pytest', workingDirectoryRef: 'repository-root', workingDirectory: '/workspace/repo', constrainedCapability: null },
       },
-      elements: { action: 'Run a forbidden command', necessity: 'Prove FORBIDDEN is production-classified', targets: ['tests/test_calculator.py'], consequences: 'Runs pytest', verificationStatus: 'Not executed' },
+      elements: {
+        action: 'Run a forbidden command',
+        necessity: 'Prove FORBIDDEN is production-classified',
+        targets: ['tests/test_calculator.py'],
+        consequences: 'Runs pytest',
+        verificationStatus: 'Not executed',
+      },
     });
     assert.equal(await d.service.classify(forbidden), 'FORBIDDEN', 'production policy classifies the shell-chained command as FORBIDDEN');
     // Production policy itself returns the FORBIDDEN verdict as a receipt; nothing is fabricated here.
@@ -956,7 +969,11 @@ test('C13 revised: a revised plan needs a fresh decision and cannot reuse the ol
 
     // A fresh decision authorizes the revised plan; it is not the old one re-used.
     const revisedProposalBinding = { ...planBindingOfPlan(r, revisedPlan, revisedDecisionId), status: 'approved' as const };
-    await r.source.register({ action: planActionOf(revisedPlan, revisedDecisionId), facts: planFactsOf(r, revisedPlan, revisedDecisionId, { binding: revisedProposalBinding, context: planFreshnessOf(r, revisedPlan, revisedDecisionId) }), elements: PLAN_ELEMENTS });
+    await r.source.register({
+      action: planActionOf(revisedPlan, revisedDecisionId),
+      facts: planFactsOf(r, revisedPlan, revisedDecisionId, { binding: revisedProposalBinding, context: planFreshnessOf(r, revisedPlan, revisedDecisionId) }),
+      elements: PLAN_ELEMENTS,
+    });
     const revisedPending = await r.service.requestDecision(planBindingOfPlan(r, revisedPlan, revisedDecisionId));
     assert.equal(revisedPending.status, 'pending', 'the revised plan starts pending again');
     const revisedView = await r.service.show(TASK_ID, revisedDecisionId);

@@ -203,7 +203,9 @@ async function conformanceCall(assembly: RealTierAssembly, fetchFn: typeof globa
 function readReceipts(evidenceDir: string): ConformanceReceipt[] | 'malformed' {
   if (!existsSync(evidenceDir)) return [];
   const receipts: ConformanceReceipt[] = [];
-  for (const name of readdirSync(evidenceDir).filter(entry => RECEIPT.test(entry)).sort()) {
+  for (const name of readdirSync(evidenceDir)
+    .filter(entry => RECEIPT.test(entry))
+    .sort()) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(join(evidenceDir, name), 'utf8'));
@@ -260,12 +262,14 @@ export async function runCampaign(options: CampaignOptions): Promise<CampaignRes
   };
   let bindings: Readonly<Record<string, string>> = {};
   const done = (records: readonly StageRecord[], passed: boolean, artifacts: readonly PendingArtifact[] = []): CampaignResult => {
-    const record = writeCampaign(
-      dir,
-      { campaignId, candidateSha, mode: options.mode, passed, startedAt, finishedAt: clock(), bindings, records },
-      artifacts,
-    );
-    return { exitCode: passed ? 0 : 2, records, output: JSON.stringify({ campaignId, candidateSha, evidenceDir: dir, records, caseArtifacts: record.caseArtifacts }, null, 2), campaignId, evidenceDir: dir };
+    const record = writeCampaign(dir, { campaignId, candidateSha, mode: options.mode, passed, startedAt, finishedAt: clock(), bindings, records }, artifacts);
+    return {
+      exitCode: passed ? 0 : 2,
+      records,
+      output: JSON.stringify({ campaignId, candidateSha, evidenceDir: dir, records, caseArtifacts: record.caseArtifacts }, null, 2),
+      campaignId,
+      evidenceDir: dir,
+    };
   };
 
   const resolved = assemble(dependenciesOf(options, candidateSha, countedFetch));

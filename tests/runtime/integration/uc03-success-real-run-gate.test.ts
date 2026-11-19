@@ -548,11 +548,21 @@ test('C16 is judged from the C01 report on its own content, and C10 is never inf
   // The task's token ledger must admit the over-limit reservation, so the limiter is what refuses it.
   const roomy = catalogFor(taskOf({ budgetLimits: { maxReplanCount: 3, maxTokens: 2_000_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 } }));
   const witness = (fetchImpl: () => Response, withCounter = true, source = roomy) =>
-    runCaseStage(() => resolveOrThrow(source, { fetch: async () => (dispatched++, fetchImpl()) }).assembly, { caseIds: ['C10'], repositoryRoot: tempRoot('repo'), ...pins, grade: gradePass, ...(withCounter ? { fetches: () => dispatched } : {}) });
+    runCaseStage(() => resolveOrThrow(source, { fetch: async () => (dispatched++, fetchImpl()) }).assembly, {
+      caseIds: ['C10'],
+      repositoryRoot: tempRoot('repo'),
+      ...pins,
+      grade: gradePass,
+      ...(withCounter ? { fetches: () => dispatched } : {}),
+    });
   const [passed] = await witness(() => allowedProviderResponse(MODEL));
   assert.equal(passed?.record.caseId, 'C10');
   assert.notEqual(passed?.record.facts?.['derivedFrom'], 'C01', 'C10 is never inferred from C01');
-  assert.deepEqual([passed?.record.outcome, passed?.record.facts?.['allowed-fetches'], passed?.record.facts?.['refused-fetches'], passed?.record.facts?.['refusal-reason']], ['pass', 1, 0, 'RUN_USAGE_LIMIT_REACHED'], JSON.stringify(passed?.record));
+  assert.deepEqual(
+    [passed?.record.outcome, passed?.record.facts?.['allowed-fetches'], passed?.record.facts?.['refused-fetches'], passed?.record.facts?.['refusal-reason']],
+    ['pass', 1, 0, 'RUN_USAGE_LIMIT_REACHED'],
+    JSON.stringify(passed?.record),
+  );
   assert.equal(passed?.derived?.kind, 'c10', 'C10 carries its own witness artifact');
   // A failing allowed call is a failed witness, not a refusal; without a counter nothing can be disproved.
   const [failedAllowed] = await witness(() => new Response('{}', { status: 503 }));

@@ -79,8 +79,7 @@ interface CatalogEntry {
 }
 
 export type GraderResolution =
-  | Readonly<{ status: 'ready'; grade: (request: CaseGradeRequest) => Promise<GradeOutcome> }>
-  | Readonly<{ status: 'unavailable'; reasonCode: string; missing: readonly string[] }>;
+  Readonly<{ status: 'ready'; grade: (request: CaseGradeRequest) => Promise<GradeOutcome> }> | Readonly<{ status: 'unavailable'; reasonCode: string; missing: readonly string[] }>;
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
@@ -114,7 +113,8 @@ function loadJson(path: string): LoadedJson {
 function entryOf(catalogPath: string, caseId: string): Readonly<{ status: 'ok'; entry: CatalogEntry }> | Readonly<{ status: 'unavailable'; reasonCode: string; missing: readonly string[] }> {
   const loaded = loadJson(catalogPath);
   if (loaded.status === 'unreadable') return { status: 'unavailable', reasonCode: 'grader-catalog-unavailable', missing: ['catalog'] };
-  if (loaded.status === 'malformed' || !isRecord(loaded.value) || !Array.isArray(loaded.value['catalog'])) return { status: 'unavailable', reasonCode: 'grader-catalog-malformed', missing: ['catalog'] };
+  if (loaded.status === 'malformed' || !isRecord(loaded.value) || !Array.isArray(loaded.value['catalog']))
+    return { status: 'unavailable', reasonCode: 'grader-catalog-malformed', missing: ['catalog'] };
   const entries = loaded.value['catalog'] as readonly unknown[];
   const entry = entries.find(candidate => isRecord(candidate) && candidate['caseId'] === caseId);
   if (!isRecord(entry) || !isRecord(entry['grader'])) return { status: 'unavailable', reasonCode: 'grader-catalog-entry-missing', missing: ['catalog.grader.path', 'catalog.grader.digest'] };
@@ -280,6 +280,12 @@ export function resolvePinnedGrader(assembly: RealTierAssembly, caseId: string, 
   if (capability === undefined) missing.push('grader.isolationAuthority', 'grader.executor', 'grader.finalTree');
   if (missing.length > 0 || capability === undefined) return { status: 'unavailable', reasonCode: capability === undefined ? 'grader-capability-unavailable' : 'grader-material-incomplete', missing };
   const observed = observeAdmissions(capability.isolationAuthority);
-  const grader = createSnapshotGrader({ criteria: pinned.criteria, profile: pinned.profile, graderPayload: pinned.graderPayload, isolationAuthority: observed.authority, executor: capability.executor });
+  const grader = createSnapshotGrader({
+    criteria: pinned.criteria,
+    profile: pinned.profile,
+    graderPayload: pinned.graderPayload,
+    isolationAuthority: observed.authority,
+    executor: capability.executor,
+  });
   return { status: 'ready', grade: request => gradeCase(grader, capability, observed.admissions, catalog.entry.graderDigest, request) };
 }

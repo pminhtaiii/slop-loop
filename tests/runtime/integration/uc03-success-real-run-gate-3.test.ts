@@ -59,7 +59,9 @@ function taskOf(): BugTask {
     reproduction: 'python -m pytest -q tests/test_calculator.py',
     acceptanceCriteria: ['divide(1, 0) raises CalculationError'],
     constraints: [],
-    requiredChecks: [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }],
+    requiredChecks: [
+      { checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 },
+    ],
     limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 2, maxMemoryBytes: 2_147_483_648, maxPids: 64 },
     // The over-limit C10 reservation must fit the task's own token ledger, so only the limiter can refuse it.
     budgetLimits: { maxReplanCount: 3, maxTokens: 2_000_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
@@ -85,7 +87,11 @@ function catalogEnv(): RealTierEnvironment {
         { criterionId: 'criterion-C02', caseId: 'C02', predicate: 'clarification', hiddenCheckId: null },
       ],
     },
-    profile: { profileId: 'gate3-grader', digest: `sha256:${sha256Text('gate3-profile')}`, bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 } },
+    profile: {
+      profileId: 'gate3-grader',
+      digest: `sha256:${sha256Text('gate3-profile')}`,
+      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+    },
     graderPayload: null,
   });
   const graderPath = join(dir, 'grader.json');
@@ -150,7 +156,17 @@ function capability(seen: Seen, state: { drift: boolean; facts: boolean; hidden:
       executorId: 'gate3-hidden-check',
       execute: request => {
         seen.executions.push(request);
-        return { checkId: request.checkId, finalSnapshot: request.finalSnapshot, profile: request.profile, executorId: request.executorId, status: state.hidden, actualOutcome: 'COMPLETED', durationMs: 1, cpuMs: 1, outputBytes: 1 };
+        return {
+          checkId: request.checkId,
+          finalSnapshot: request.finalSnapshot,
+          profile: request.profile,
+          executorId: request.executorId,
+          status: state.hidden,
+          actualOutcome: 'COMPLETED',
+          durationMs: 1,
+          cpuMs: 1,
+          outputBytes: 1,
+        };
       },
     },
     // The evidence the run measured, derived from the same final state the tree was frozen for.
@@ -159,7 +175,14 @@ function capability(seen: Seen, state: { drift: boolean; facts: boolean; hidden:
       if (!state.facts) return undefined;
       const final = input.result.executionEvidence?.finalState;
       if (final === undefined || final === null) return undefined;
-      const binding: FinalTreeBinding = { taskId: final.taskId, runId: final.runId, workspaceId: final.workspaceId, repositoryId: final.repositoryId, initialRevisionDigest: input.task.initialRevisionDigest, finalRevisionDigest: final.repositoryRevisionDigest };
+      const binding: FinalTreeBinding = {
+        taskId: final.taskId,
+        runId: final.runId,
+        workspaceId: final.workspaceId,
+        repositoryId: final.repositoryId,
+        initialRevisionDigest: input.task.initialRevisionDigest,
+        finalRevisionDigest: final.repositoryRevisionDigest,
+      };
       const parsed = parseWorkflowFinalTree(await finalTree.freezeFinalTree(binding), binding);
       if (parsed === undefined) return undefined;
       const diff = input.result.finalReport?.diff.diffDigest ?? null;
@@ -209,16 +232,20 @@ function graphDouble(): NonNullable<Parameters<typeof runCaseStage>[1]['runGraph
         };
         const viewDigest = computeCommandViewDigest(commandView);
         const validView = { ...commandView, viewDigest };
-        writeFileSync(claimFile, JSON.stringify({
-          context: {
-            subjectKind: 'repository-action',
-            commandView: validView,
-            action: { actionId: 'action-cmd-c01' },
-          },
-          receipt: {
-            claimId: 'claim-cmd-c01',
-          },
-        }), 'utf8');
+        writeFileSync(
+          claimFile,
+          JSON.stringify({
+            context: {
+              subjectKind: 'repository-action',
+              commandView: validView,
+              action: { actionId: 'action-cmd-c01' },
+            },
+            receipt: {
+              claimId: 'claim-cmd-c01',
+            },
+          }),
+          'utf8',
+        );
       }
       const state = { ...loaded, node: 'Deliver', outcome: 'COMPLETED', repositoryRevisionDigest: FINAL_REVISION } as unknown as TaskState;
       return { outcome: 'COMPLETED', state, finalReport, reasons: [], milestones: [], executionEvidence: { finalState: state } } as unknown as UC03WorkflowResult;
@@ -278,7 +305,12 @@ const campaign = (): Promise<Run> => (shared ??= doubledCampaign());
 test('a full doubled campaign is judged pass by the runner and accepted by the checker', async () => {
   const run = await campaign();
   assert.equal(run.exitCode, 0);
-  assert.deepEqual(readdirSync(run.dir).filter(name => !name.startsWith('conformance-')).sort(), ['c10-C10-1.json', 'c16-C16-1.json', 'campaign.json', 'evidence-C01-1.json', 'evidence-C02-1.json']);
+  assert.deepEqual(
+    readdirSync(run.dir)
+      .filter(name => !name.startsWith('conformance-'))
+      .sort(),
+    ['c10-C10-1.json', 'c16-C16-1.json', 'campaign.json', 'evidence-C01-1.json', 'evidence-C02-1.json'],
+  );
   // The directory the runner reports, and the evidence directory the quickstart passes, are both accepted.
   assert.deepEqual(checkEvidence({ evidenceDir: run.dir, ...scanOf() }), { exitCode: 0, output: 'EVIDENCE_CLEAN 4 case(s)' });
   assert.deepEqual(checkEvidence({ evidenceDir: run.root, ...scanOf() }), { exitCode: 0, output: 'EVIDENCE_CLEAN 4 case(s)' });
@@ -377,7 +409,14 @@ test('a grade is not-run, never a pass, when the run cannot supply or hold its s
   ];
   for (const [label, state, outcome, reasonCode] of rows) {
     const seen: Seen = { admissions: [], executions: [], derived: [] };
-    const assemble = () => resolveRealTierAssembly({ env, revision: REV, stateRoot: tempRoot('state'), spawn: async () => ({ exitCode: 0, stdout: '', stderr: '', timedOut: false }), fetch: async () => allowedProviderResponse(PINNED_MODEL) });
+    const assemble = () =>
+      resolveRealTierAssembly({
+        env,
+        revision: REV,
+        stateRoot: tempRoot('state'),
+        spawn: async () => ({ exitCode: 0, stdout: '', stderr: '', timedOut: false }),
+        fetch: async () => allowedProviderResponse(PINNED_MODEL),
+      });
     const first = assemble();
     assert.equal(first.status, 'assembly-ready');
     const assembly = first as RealTierAssembly;

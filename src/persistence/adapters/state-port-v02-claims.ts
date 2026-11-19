@@ -84,7 +84,12 @@ export async function claim(options: ClaimOperationOptions, context: AdmissionCo
       }
     }
     const task = await store.readTask(taskId);
-    if (!task || !contextMatchesTask(snapshot, task, ownerExecutionProfile(options.executionProfile, task)) || control.controlVersion !== snapshot.expectedControlVersion || control.epoch !== snapshot.expectedEpoch)
+    if (
+      !task ||
+      !contextMatchesTask(snapshot, task, ownerExecutionProfile(options.executionProfile, task)) ||
+      control.controlVersion !== snapshot.expectedControlVersion ||
+      control.epoch !== snapshot.expectedEpoch
+    )
       return NEUTRAL_CLAIM_RECEIPT_V02;
     const authorityRef = authorityFor(snapshot);
     if (!control.activeAuthorityRef || !equal(control.activeAuthorityRef, authorityRef)) return NEUTRAL_CLAIM_RECEIPT_V02;

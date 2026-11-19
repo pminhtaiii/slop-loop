@@ -35,7 +35,21 @@ import { isSupportedSnapshotPlatform, createTrustedHostSnapshot } from '../../..
 import { createHostAssembly, type RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import type { BugTask, ExecutionLimits, RepositoryAdmissionContextV02, RunCommandAction, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { isCanonicalRelativePath } from '../../../src/contracts/foundation/uc03.ts';
-import { createContainerTrap, type ContainerTrap, type InspectedContainer, hostileAdmission, hostileCommand, measuredAdmissionView, memoryKillWitnessed, parseInspected, REFUSAL_REASONS, refusalContexts, runDiagnosticWithCleanup, sigkilled, timeoutKilled } from './uc03-real-containment-evidence.ts';
+import {
+  createContainerTrap,
+  type ContainerTrap,
+  type InspectedContainer,
+  hostileAdmission,
+  hostileCommand,
+  measuredAdmissionView,
+  memoryKillWitnessed,
+  parseInspected,
+  REFUSAL_REASONS,
+  refusalContexts,
+  runDiagnosticWithCleanup,
+  sigkilled,
+  timeoutKilled,
+} from './uc03-real-containment-evidence.ts';
 
 const TASK_ID = 'task-t024';
 const WORKSPACE_ID = 'ws-t024';
@@ -106,7 +120,11 @@ if (argv.includes('--red-proof')) {
   const ownOom = { name: 'ctr-executor', oomKilled: true, exitCode: 137 };
   report(
     [
-      row('RED-PROOF WITNESS an unrelated SIGKILL beside a separate OOM container must not score as a memory kill (this row must fail)', memoryKillWitnessed(killed, 'ctr-executor', otherContainerOom, 60_000), { executed: killed, inspected: otherContainerOom }),
+      row(
+        'RED-PROOF WITNESS an unrelated SIGKILL beside a separate OOM container must not score as a memory kill (this row must fail)',
+        memoryKillWitnessed(killed, 'ctr-executor', otherContainerOom, 60_000),
+        { executed: killed, inspected: otherContainerOom },
+      ),
       row('RED-PROOF a SIGKILL with no OOM in its own container is rejected (must pass)', !memoryKillWitnessed(killed, 'ctr-executor', sigkillNoOom, 60_000), sigkillNoOom),
       row('RED-PROOF a generic error is rejected (must pass)', !memoryKillWitnessed(genericError, 'ctr-executor', ownOom, 60_000), genericError),
       row('RED-PROOF a Docker startup failure is rejected (must pass)', !memoryKillWitnessed(startupFailure, 'ctr-executor', ownOom, 60_000), startupFailure),
@@ -144,7 +162,10 @@ if (argv.includes('--helper-check')) {
       row('HELPER-CHECK a null exit with a timeout verdict is not a memory kill (must pass)', !sigkilled(nullWithTimeout)),
       row('HELPER-CHECK a Docker launch failure (125) is not a memory kill (must pass)', !sigkilled(launchFailure)),
       row('HELPER-CHECK a timeout settled past its deadline is not an enforced timeout (must pass)', !timeoutKilled(lateTimeout, 2_000)),
-      row('HELPER-CHECK an inspect line parses and a missing container does not (must pass)', parseInspected('ctr-a', 'true 137')?.oomKilled === true && parseInspected('ctr-a', 'Error: No such container') === undefined),
+      row(
+        'HELPER-CHECK an inspect line parses and a missing container does not (must pass)',
+        parseInspected('ctr-a', 'true 137')?.oomKilled === true && parseInspected('ctr-a', 'Error: No such container') === undefined,
+      ),
     ],
     { helperCheck: true },
   );
@@ -316,13 +337,25 @@ async function linkEscapeRow(): Promise<Row> {
       if (process.platform === 'win32') symlinkSync(outside, target, 'junction');
       else symlinkSync(join(outside, 'test_b.py'), target, 'file');
     } catch (error) {
-      return row('C07 a link or junction out of the workspace refuses the snapshot', false, `link could not be created, so containment is unproven: ${error instanceof Error ? error.message : String(error)}`);
+      return row(
+        'C07 a link or junction out of the workspace refuses the snapshot',
+        false,
+        `link could not be created, so containment is unproven: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     const filesystem = new WorkspaceFilesystemPort({ root });
     const checks = [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }];
     const criteria = ['the hostile test is contained'];
     const inventory = ['tests/test_a.py', 'tests/test_b.py'];
-    const snapshot = createTrustedHostSnapshot({ filesystem, workspaceId: 'ws-t024-link', repositoryId: 'repo-t024-link', acceptanceCriteria: criteria, requiredChecks: checks, expectedTestFiles: inventory, maxFileBytes: 4096 });
+    const snapshot = createTrustedHostSnapshot({
+      filesystem,
+      workspaceId: 'ws-t024-link',
+      repositoryId: 'repo-t024-link',
+      acceptanceCriteria: criteria,
+      requiredChecks: checks,
+      expectedTestFiles: inventory,
+      maxFileBytes: 4096,
+    });
     const request = {
       taskId: 'task-t024-link',
       workspaceId: 'ws-t024-link',
@@ -370,7 +403,17 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
   const store = new DurableStore(join(root, 'store'));
   const ids = { taskId: GUARDED_TASK_ID, workspaceId: GUARDED_WORKSPACE_ID };
   const label = assembly.profile.image.label;
-  const requiredChecks = [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }];
+  const requiredChecks = [
+    {
+      checkId: 'check-1',
+      executable: 'pytest',
+      argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'],
+      purpose: 'reproduction' as const,
+      workingDirectory: 'tests',
+      timeoutMs: 30_000,
+      maxOutputBytes: 1_048_576,
+    },
+  ];
   const task: BugTask = {
     taskId: GUARDED_TASK_ID,
     repositoryId: 'repo-t024-guarded',
@@ -412,7 +455,13 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
         user: assembly.profile.image.user,
         readOnlyRootFilesystem: true,
         network: 'none',
-        limits: { timeoutMs: 30_000, maxMemoryBytes: assembly.profile.limits.memoryBytes, maxCpuCores: assembly.profile.limits.cpus, maxPids: assembly.profile.limits.processes, maxOutputBytes: assembly.profile.limits.outputBytes },
+        limits: {
+          timeoutMs: 30_000,
+          maxMemoryBytes: assembly.profile.limits.memoryBytes,
+          maxCpuCores: assembly.profile.limits.cpus,
+          maxPids: assembly.profile.limits.processes,
+          maxOutputBytes: assembly.profile.limits.outputBytes,
+        },
         mounts: [],
       },
     });
@@ -423,7 +472,13 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
 
     let receiverCalls = 0;
     const receiver = createRepositoryReceiverV02({
-      guardCapability: { provenance: 'real', capabilityId: `read-${GUARDED_TASK_ID}`, workspaceId: GUARDED_WORKSPACE_ID, taskId: GUARDED_TASK_ID, mediateRead: async operation => await operation.execute() },
+      guardCapability: {
+        provenance: 'real',
+        capabilityId: `read-${GUARDED_TASK_ID}`,
+        workspaceId: GUARDED_WORKSPACE_ID,
+        taskId: GUARDED_TASK_ID,
+        mediateRead: async operation => await operation.execute(),
+      },
       fsPort: filesystem,
       limits: { maxExcerptBytes: 65_536, maxResultCount: 32 },
       expectedRevisionDigest: revision,
@@ -459,7 +514,9 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
       const before = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
       const beforePrint = await fingerprint();
       const beforeCalls = receiverCalls;
-      const result = await guard.validateAndExecute(context.action, before, context).catch((error: unknown) => ({ outcome: 'denied' as const, reason: error instanceof Error ? error.message : String(error) }));
+      const result = await guard
+        .validateAndExecute(context.action, before, context)
+        .catch((error: unknown) => ({ outcome: 'denied' as const, reason: error instanceof Error ? error.message : String(error) }));
       return { result, unchanged: beforePrint === (await fingerprint()), receiverCalls: receiverCalls - beforeCalls, journal: journalCounts() };
     };
     const reasonHas = (result: { readonly reason?: string | undefined }, text: string): boolean => typeof result.reason === 'string' && result.reason.includes(text);
@@ -481,12 +538,21 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
     // A view naming an isolation profile the owner did not admit passes the guard and is refused inside
     // the receiver's resource-policy step, before any claim or attempt exists.
     const isolation = await dispatch(refusals.foreignIsolation);
-    rows.push(row('C06 a foreign isolation view is refused inside the receiver before any claim, attempt or executor effect', isolation.result.outcome === 'uncertain-effect' && isolation.receiverCalls === 1 && isolation.unchanged, isolation.result));
+    rows.push(
+      row(
+        'C06 a foreign isolation view is refused inside the receiver before any claim, attempt or executor effect',
+        isolation.result.outcome === 'uncertain-effect' && isolation.receiverCalls === 1 && isolation.unchanged,
+        isolation.result,
+      ),
+    );
 
     // The admitted row: the same state the refusals left untouched, a view from the production builder
     // and a receipt digested over its whole body. It must claim, dispatch once and pass the hostile test.
     const admitted = await dispatch(hostileAdmission({ ...input, action: hostileCommand('act-guarded-hostile') }));
-    const hostileResult = admitted.result as { readonly outcome: string; readonly result?: { readonly exitCode?: number | null; readonly stdout?: string; readonly plan?: { readonly argv?: readonly string[] } } };
+    const hostileResult = admitted.result as {
+      readonly outcome: string;
+      readonly result?: { readonly exitCode?: number | null; readonly stdout?: string; readonly plan?: { readonly argv?: readonly string[] } };
+    };
     const hostileExit = hostileResult.result?.exitCode;
     guardedEvidence['guardedHostile'] = {
       outcome: admitted.result.outcome,
@@ -690,7 +756,13 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
     });
     const { outcome: oom, ranName, inspected } = diagnostic;
     evidence['memoryBound'] = { exitCode: oom.exitCode, timedOut: oom.timedOut, outcome: oom.outcome, durationMs: oom.durationMs, container: inspected, removalDisabledForInspection: true };
-    rows.push(row('C10 memory over the admitted ceiling is OOM-killed in its own executor container, within its timeout', memoryKillWitnessed(oom, ranName, inspected, limits.timeoutMs), evidence['memoryBound']));
+    rows.push(
+      row(
+        'C10 memory over the admitted ceiling is OOM-killed in its own executor container, within its timeout',
+        memoryKillWitnessed(oom, ranName, inspected, limits.timeoutMs),
+        evidence['memoryBound'],
+      ),
+    );
 
     const timeout = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', 'import time; time.sleep(30)'], limits: { ...limits, timeoutMs: 2_000 } });
     evidence['timeoutBound'] = { exitCode: timeout.exitCode, timedOut: timeout.timedOut, outcome: timeout.outcome, durationMs: timeout.durationMs };

@@ -40,7 +40,9 @@ const task: BugTask = {
   reproduction: 'python -m pytest -q tests/test_calculator.py',
   acceptanceCriteria: ['divide(1, 0) raises CalculationError'],
   constraints: [],
-  requiredChecks: [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }],
+  requiredChecks: [
+    { checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 },
+  ],
   limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 2, maxMemoryBytes: 2_147_483_648, maxPids: 64 },
   budgetLimits: { maxReplanCount: 3, maxTokens: 100_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
   configId: 'config-v1',
@@ -63,7 +65,14 @@ const CONSTANT_VIEW = {
   bounds: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuSeconds: 120, maxMemoryBytes: 536_870_912, maxProcessCount: 64 },
 } as const;
 
-const AUTHORITY = { policyId: task.configId, policyVersion: task.configVersion, configId: task.configId, configVersion: task.configVersion, issuerKeyRef: 'host-config-v1', decisionAuthorityGeneration: 1 };
+const AUTHORITY = {
+  policyId: task.configId,
+  policyVersion: task.configVersion,
+  configId: task.configId,
+  configVersion: task.configVersion,
+  issuerKeyRef: 'host-config-v1',
+  decisionAuthorityGeneration: 1,
+};
 
 interface ViewFacts {
   readonly exclusionsPolicyVersion: string;
@@ -200,7 +209,14 @@ test('(d) the later gates re-read the admission under the same profile', async (
   const fence = await port.fenceClaimRecipient(claim.claimId, recipient);
   assert.notEqual(fence, null);
   if (fence === null) return;
-  const body = { receiptId: 'closure-act-diag-1', claimId: claim.claimId, taskId: TASK, reason: holdRef, fencedExecutorIdentity: fence.fencedExecutorIdentity, unconsumedReservations: [...claim.reservationRefs] };
+  const body = {
+    receiptId: 'closure-act-diag-1',
+    claimId: claim.claimId,
+    taskId: TASK,
+    reason: holdRef,
+    fencedExecutorIdentity: fence.fencedExecutorIdentity,
+    unconsumedReservations: [...claim.reservationRefs],
+  };
   const receipt = { ...body, receiptDigest: computeClaimClosureDigest(body) };
 
   const constantPort = new DurableStatePortV02({ store: port.store });

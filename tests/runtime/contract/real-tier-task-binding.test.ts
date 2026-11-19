@@ -728,9 +728,26 @@ function claimContextOf(binding: RealTierBoundTask, state: TaskState, assembly: 
   const limits = binding.task.limits;
   const action = { actionId: options.actionId, kind: 'run_command' as const, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], workingDirectory: 'tests', purpose: 'investigate' };
   const actionDigest = computeActionDigest(action);
-  const authority = { policyId: binding.task.configId, policyVersion: binding.task.configVersion, configId: binding.task.configId, configVersion: binding.task.configVersion, issuerKeyRef: `host-${binding.task.configId}`, decisionAuthorityGeneration: 1 };
+  const authority = {
+    policyId: binding.task.configId,
+    policyVersion: binding.task.configVersion,
+    configId: binding.task.configId,
+    configVersion: binding.task.configVersion,
+    issuerKeyRef: `host-${binding.task.configId}`,
+    decisionAuthorityGeneration: 1,
+  };
   const { policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration } = authority;
-  const receiptBody = { receiptId: `pe-${options.actionId}`, actionDigest, freshnessContextDigest: computeCanonicalSha256({ freshness: options.actionId }), policyId, policyVersion, configId, configVersion, decisionAuthorityGeneration, result: 'ALLOWED' as const };
+  const receiptBody = {
+    receiptId: `pe-${options.actionId}`,
+    actionDigest,
+    freshnessContextDigest: computeCanonicalSha256({ freshness: options.actionId }),
+    policyId,
+    policyVersion,
+    configId,
+    configVersion,
+    decisionAuthorityGeneration,
+    result: 'ALLOWED' as const,
+  };
   const commandView = {
     viewId: `view-${binding.ids.workspaceId}-${'a'.repeat(12)}`,
     taskId: state.taskId,
@@ -808,8 +825,18 @@ test('(r) the bound profile is pinned from the seeded task: mutating the returne
   // One fresh assembly per scenario: the first claim holds the port, so a second claim would be
   // refused for that reason rather than for the ceiling under test.
   const scenarios = [
-    { label: 'a task lowered after binding cannot withdraw the pinned ceiling', mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes = 1), bound: 'above', admitted: true },
-    { label: 'a task raised after binding cannot widen the pinned ceiling', mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes *= 2), bound: 'over', admitted: false },
+    {
+      label: 'a task lowered after binding cannot withdraw the pinned ceiling',
+      mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes = 1),
+      bound: 'above',
+      admitted: true,
+    },
+    {
+      label: 'a task raised after binding cannot widen the pinned ceiling',
+      mutate: (task: BugTask) => ((task.limits as { maxMemoryBytes: number }).maxMemoryBytes *= 2),
+      bound: 'over',
+      admitted: false,
+    },
   ] as const;
   for (const scenario of scenarios) {
     const catalog = fixtureOf();
@@ -818,7 +845,13 @@ test('(r) the bound profile is pinned from the seeded task: mutating the returne
     const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot })));
     const { owners, state } = await boundOwnersAtInvestigate(binding, assembly);
     const original = { ...binding.task.limits };
-    const pinnedBounds = { timeoutMs: original.timeoutMs, maxOutputBytes: original.maxOutputBytes, maxCpuSeconds: Math.max(1, Math.ceil((original.maxCpuCores * original.timeoutMs) / 1000)), maxMemoryBytes: original.maxMemoryBytes, maxProcessCount: original.maxPids };
+    const pinnedBounds = {
+      timeoutMs: original.timeoutMs,
+      maxOutputBytes: original.maxOutputBytes,
+      maxCpuSeconds: Math.max(1, Math.ceil((original.maxCpuCores * original.timeoutMs) / 1000)),
+      maxMemoryBytes: original.maxMemoryBytes,
+      maxProcessCount: original.maxPids,
+    };
     // The view asks for exactly the ceiling the profile was pinned with; only a live `task.limits` read moves it.
     const bounds = scenario.bound === 'over' ? { ...pinnedBounds, maxMemoryBytes: original.maxMemoryBytes + 1 } : pinnedBounds;
 

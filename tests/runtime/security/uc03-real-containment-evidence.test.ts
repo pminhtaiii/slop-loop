@@ -113,7 +113,9 @@ async function harness(): Promise<Harness> {
     reproduction: 'python -m pytest -q tests/test_calculator.py',
     acceptanceCriteria: ['divide(1, 0) raises CalculationError'],
     constraints: [],
-    requiredChecks: [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }],
+    requiredChecks: [
+      { checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 },
+    ],
     limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 2, maxMemoryBytes: 2_147_483_648, maxPids: 64 },
     budgetLimits: { maxReplanCount: 3, maxTokens: 100_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
     configId: 'config-v1',
@@ -160,7 +162,13 @@ async function harness(): Promise<Harness> {
   const resolved = resolveRealTierAssembly(dependencies);
   assert.equal(resolved.status, 'assembly-ready');
   const assembly = resolved as RealTierAssembly;
-  const bound = await bindRealTierTask(assembly, { caseId: 'C01', pins: PINS, identity: IDENTITY, readTextFile: undefined, retainedRoot: join(mkdtempSync(join(tmpdir(), 't051-evidence-retained-')), 'artifacts') });
+  const bound = await bindRealTierTask(assembly, {
+    caseId: 'C01',
+    pins: PINS,
+    identity: IDENTITY,
+    readTextFile: undefined,
+    retainedRoot: join(mkdtempSync(join(tmpdir(), 't051-evidence-retained-')), 'artifacts'),
+  });
   assert.equal(bound.status, 'task-bound', JSON.stringify(bound));
   if (bound.status !== 'task-bound') throw new Error('unreachable');
 
@@ -194,7 +202,14 @@ async function harness(): Promise<Harness> {
   const profile = executionProfileOf(bound.task, label, { taskId: state.taskId, workspaceId: state.workspaceId });
   const view = await measuredAdmissionView(admit, state.workspaceId, REQUIRED_FILES, label);
   const published = (await admit({ workspaceId: state.workspaceId, requiredFiles: REQUIRED_FILES })).view;
-  const authority = { policyId: bound.task.configId, policyVersion: bound.task.configVersion, configId: bound.task.configId, configVersion: bound.task.configVersion, issuerKeyRef: `host-${bound.task.configId}`, decisionAuthorityGeneration: 1 };
+  const authority = {
+    policyId: bound.task.configId,
+    policyVersion: bound.task.configVersion,
+    configId: bound.task.configId,
+    configVersion: bound.task.configVersion,
+    issuerKeyRef: `host-${bound.task.configId}`,
+    decisionAuthorityGeneration: 1,
+  };
   return {
     assembly,
     owners,
@@ -240,7 +255,9 @@ test('the probe hostile admission is CLAIMED by the bound task port through the 
     const before = await snapshotOf();
     const callsBefore = receiverCalls;
     claim.receipt = undefined;
-    const result = await guard.validateAndExecute(context.action, (await port.loadTask(h.state.taskId)) as TaskState, context).catch((error: unknown) => ({ outcome: 'denied' as const, reason: String(error) }));
+    const result = await guard
+      .validateAndExecute(context.action, (await port.loadTask(h.state.taskId)) as TaskState, context)
+      .catch((error: unknown) => ({ outcome: 'denied' as const, reason: String(error) }));
     return { result, receiverCalls: receiverCalls - callsBefore, claimed: claimOf(), unchanged: before === (await snapshotOf()) };
   };
 
@@ -345,24 +362,21 @@ test('STD-W5-301: diagnostic container is force-removed when execution fails wit
   const options = { timeoutMs: 1, maxOutputBytes: 1 };
   const run = (name: string, tail: string) => ['run', '--rm', `--name=${name}`, 'image', 'python3', '-c', tail];
 
-  await assert.rejects(
-    async () => {
-      await runDiagnosticWithCleanup({
-        trap,
-        marker: script,
-        execute: async () => {
-          await trap.spawn('docker', run('ctr-oom-indeterminate', script), options);
-          throw new Error('INDETERMINATE_EXECUTION: container exited with code null');
-        },
-        inspect: async () => undefined,
-        remove: async name => {
-          removed.push(name);
-          return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
-        },
-      });
-    },
-    /INDETERMINATE_EXECUTION/u,
-  );
+  await assert.rejects(async () => {
+    await runDiagnosticWithCleanup({
+      trap,
+      marker: script,
+      execute: async () => {
+        await trap.spawn('docker', run('ctr-oom-indeterminate', script), options);
+        throw new Error('INDETERMINATE_EXECUTION: container exited with code null');
+      },
+      inspect: async () => undefined,
+      remove: async name => {
+        removed.push(name);
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+      },
+    });
+  }, /INDETERMINATE_EXECUTION/u);
 
   assert.deepEqual(removed, ['ctr-oom-indeterminate'], 'the captured container name was force-removed despite execution failure');
   assert.equal(trap.disarm(), undefined, 'trap was disarmed in finally');
@@ -376,26 +390,23 @@ test('STD-W5-301: diagnostic container is force-removed when inspection throws',
   const options = { timeoutMs: 1, maxOutputBytes: 1 };
   const run = (name: string, tail: string) => ['run', '--rm', `--name=${name}`, 'image', 'python3', '-c', tail];
 
-  await assert.rejects(
-    async () => {
-      await runDiagnosticWithCleanup({
-        trap,
-        marker: script,
-        execute: async () => {
-          await trap.spawn('docker', run('ctr-oom-inspect-fail', script), options);
-          return { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 100 };
-        },
-        inspect: async () => {
-          throw new Error('DOCKER_INSPECT_PIPE_ERROR');
-        },
-        remove: async name => {
-          removed.push(name);
-          return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
-        },
-      });
-    },
-    /DOCKER_INSPECT_PIPE_ERROR/u,
-  );
+  await assert.rejects(async () => {
+    await runDiagnosticWithCleanup({
+      trap,
+      marker: script,
+      execute: async () => {
+        await trap.spawn('docker', run('ctr-oom-inspect-fail', script), options);
+        return { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 100 };
+      },
+      inspect: async () => {
+        throw new Error('DOCKER_INSPECT_PIPE_ERROR');
+      },
+      remove: async name => {
+        removed.push(name);
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+      },
+    });
+  }, /DOCKER_INSPECT_PIPE_ERROR/u);
 
   assert.deepEqual(removed, ['ctr-oom-inspect-fail'], 'the captured container name was force-removed despite inspection rejection');
   assert.equal(trap.disarm(), undefined, 'trap was disarmed in finally');
@@ -408,19 +419,16 @@ test('STD-W5-301: removal failure of diagnostic container is reported as an erro
   const options = { timeoutMs: 1, maxOutputBytes: 1 };
   const run = (name: string, tail: string) => ['run', '--rm', `--name=${name}`, 'image', 'python3', '-c', tail];
 
-  await assert.rejects(
-    async () => {
-      await runDiagnosticWithCleanup({
-        trap,
-        marker: script,
-        execute: async () => {
-          await trap.spawn('docker', run('ctr-oom-rm-fail', script), options);
-          return { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 100 };
-        },
-        inspect: async name => ({ name, oomKilled: true, exitCode: 137 }),
-        remove: async () => ({ exitCode: 1, stdout: '', stderr: 'daemon error', timedOut: false }),
-      });
-    },
-    /DIAGNOSTIC_CONTAINER_REMOVAL_FAILED/u,
-  );
+  await assert.rejects(async () => {
+    await runDiagnosticWithCleanup({
+      trap,
+      marker: script,
+      execute: async () => {
+        await trap.spawn('docker', run('ctr-oom-rm-fail', script), options);
+        return { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 100 };
+      },
+      inspect: async name => ({ name, oomKilled: true, exitCode: 137 }),
+      remove: async () => ({ exitCode: 1, stdout: '', stderr: 'daemon error', timedOut: false }),
+    });
+  }, /DIAGNOSTIC_CONTAINER_REMOVAL_FAILED/u);
 });

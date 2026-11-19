@@ -156,21 +156,25 @@ async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBound
   if (result.outcome === 'pending-approval' && !options.clarificationHold?.(caseId)) {
     // Nothing approves automatically: an absent source leaves the pause recorded, not passed.
     const decision = await options.decideApproval?.(caseId, { taskId: binding.ids.taskId, console: ownersOf(assembly, binding.ids, binding.task.repositoryId).console });
-    if (decision === undefined) return { record: { stage: 'case', outcome: 'fail', reasonCode: 'approval-required', caseId, facts: { attempt, workflow: result.outcome, node: result.state?.node ?? 'none' } } };
+    if (decision === undefined)
+      return { record: { stage: 'case', outcome: 'fail', reasonCode: 'approval-required', caseId, facts: { attempt, workflow: result.outcome, node: result.state?.node ?? 'none' } } };
     approval = { decisionId: result.state?.activeDecisionId ?? '', decided: decision };
     // A rejection ends the case on its own hold; only approval continues the bound task.
     if (decision === 'approve') result = await runGraph(binding.task, binding.ports, binding.config, result.state ?? undefined);
   }
   const accounting = accountingOf(assembly, binding.ids);
   const artifactBinding = options.binding ?? UNBOUND;
-  const graded: GradeOutcome = PINS[caseId] === undefined ? undefined : await options.grade?.(assembly, caseId, {
-    caseId,
-    task: binding.task,
-    result,
-    ports: binding.ports,
-    model: artifactBinding.model,
-    requiresAdmission: caseId === 'C01',
-  });
+  const graded: GradeOutcome =
+    PINS[caseId] === undefined
+      ? undefined
+      : await options.grade?.(assembly, caseId, {
+          caseId,
+          task: binding.task,
+          result,
+          ports: binding.ports,
+          model: artifactBinding.model,
+          requiresAdmission: caseId === 'C01',
+        });
   const refusal = graded !== undefined && 'refusal' in graded ? graded.refusal : undefined;
   const gradeOutcome = graded !== undefined && !('refusal' in graded) ? graded : undefined;
   const grade = gradeOutcome?.grade;
@@ -216,7 +220,8 @@ async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBound
     accounting,
   };
   // A pinned predicate is the independent grade, never the status string; an unpinned id is not-run.
-  if (PINS[caseId] !== undefined && grade === undefined) return { record: { stage: 'case', outcome: 'not-run', reasonCode: refusal ?? 'grader-unavailable', caseId, facts }, evidence, artifact, judgedReport };
+  if (PINS[caseId] !== undefined && grade === undefined)
+    return { record: { stage: 'case', outcome: 'not-run', reasonCode: refusal ?? 'grader-unavailable', caseId, facts }, evidence, artifact, judgedReport };
   const outcome: StageRecord['outcome'] = PINS[caseId] === undefined ? 'not-run' : grade?.grade === 'pass' ? 'pass' : grade?.grade === 'fail' ? 'fail' : 'not-run';
   const record: StageRecord = { stage: 'case', outcome, ...(PINS[caseId] === undefined ? { reasonCode: 'unpinned' } : {}), caseId, facts };
   return { record, evidence, artifact, judgedReport };
@@ -242,7 +247,13 @@ function c16Outcome(options: CaseStageOptions, c01: CaseOutcome | undefined): Ca
     report: judged.facts,
   });
   return {
-    record: { stage: 'case', outcome: body.verdict, ...(body.reasonCode === undefined ? {} : { reasonCode: body.reasonCode }), caseId: 'C16', facts: { derivedFrom: 'C01', 'report-digest': judged.facts.reportDigest } },
+    record: {
+      stage: 'case',
+      outcome: body.verdict,
+      ...(body.reasonCode === undefined ? {} : { reasonCode: body.reasonCode }),
+      caseId: 'C16',
+      facts: { derivedFrom: 'C01', 'report-digest': judged.facts.reportDigest },
+    },
     derived: { kind: 'c16', body },
   };
 }
@@ -276,7 +287,8 @@ async function runC10(assembly: RealTierAssembly, options: CaseStageOptions): Pr
   } catch {
     return caseNotRun('C10', 'c10-investigate-transition-refused', { attempt: 1 });
   }
-  if (!(await publishRunAuthority(owner as unknown as { publishAuthority(input: unknown): Promise<unknown> }, binding.task, C10_GENERATION))) return caseNotRun('C10', 'c10-authority-unavailable', { attempt: 1 });
+  if (!(await publishRunAuthority(owner as unknown as { publishAuthority(input: unknown): Promise<unknown> }, binding.task, C10_GENERATION)))
+    return caseNotRun('C10', 'c10-authority-unavailable', { attempt: 1 });
   const body = await runC10Witness({
     port,
     transport: port.options.transport,
@@ -291,7 +303,11 @@ async function runC10(assembly: RealTierAssembly, options: CaseStageOptions): Pr
     identity: { taskId: binding.ids.taskId, runId: binding.ids.runId, workspaceId: binding.ids.workspaceId },
     campaignId: options.campaignId ?? STANDALONE,
     binding: options.binding ?? UNBOUND,
-    ceiling: { totalModelCalls: assembly.profile.limits.totalModelCalls, perRunInputTokens: assembly.profile.runLimits.perRunInputTokens, perRunOutputTokens: assembly.profile.runLimits.perRunOutputTokens },
+    ceiling: {
+      totalModelCalls: assembly.profile.limits.totalModelCalls,
+      perRunInputTokens: assembly.profile.runLimits.perRunInputTokens,
+      perRunOutputTokens: assembly.profile.runLimits.perRunOutputTokens,
+    },
     generation: C10_GENERATION,
     commandViewDigest: null,
   });
@@ -302,7 +318,12 @@ async function runC10(assembly: RealTierAssembly, options: CaseStageOptions): Pr
     outcome: reason === undefined ? 'pass' : 'fail',
     ...(reason === undefined ? {} : { reasonCode: reason }),
     caseId: 'C10',
-    facts: { attempt: 1, 'allowed-fetches': allowed.fetchesAfter - allowed.fetchesBefore, 'refused-fetches': refused.fetchesAfter - refused.fetchesBefore, 'refusal-reason': refused.transport?.reasonCode ?? null },
+    facts: {
+      attempt: 1,
+      'allowed-fetches': allowed.fetchesAfter - allowed.fetchesBefore,
+      'refused-fetches': refused.fetchesAfter - refused.fetchesBefore,
+      'refusal-reason': refused.transport?.reasonCode ?? null,
+    },
   };
   return { record, derived: { kind: 'c10', body } };
 }

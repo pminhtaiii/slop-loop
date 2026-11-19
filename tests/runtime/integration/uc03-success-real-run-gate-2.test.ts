@@ -42,7 +42,12 @@ const tempRoot = (label: string): string => mkdtempSync(join(tmpdir(), `t059b-${
 const c10Of = (artifacts: readonly PendingArtifact[]): unknown => artifacts.find(([caseId]) => caseId === 'C10')?.[3];
 
 function revisionOf(files: Readonly<Record<string, string>>): string {
-  return computeCanonicalSha256(Object.keys(files).sort().map(path => `${path}\0${computeFileDigest(files[path] ?? '')}\n`).join(''));
+  return computeCanonicalSha256(
+    Object.keys(files)
+      .sort()
+      .map(path => `${path}\0${computeFileDigest(files[path] ?? '')}\n`)
+      .join(''),
+  );
 }
 
 function taskOf(overrides: Partial<BugTask> = {}): BugTask {
@@ -56,7 +61,9 @@ function taskOf(overrides: Partial<BugTask> = {}): BugTask {
     reproduction: 'python -m pytest -q tests/test_calculator.py',
     acceptanceCriteria: ['divide(1, 0) raises CalculationError'],
     constraints: [],
-    requiredChecks: [{ checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 }],
+    requiredChecks: [
+      { checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 },
+    ],
     limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 2, maxMemoryBytes: 2_147_483_648, maxPids: 64 },
     budgetLimits: { maxReplanCount: 3, maxTokens: 100_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
     configId: 'config-v1',
@@ -163,7 +170,11 @@ async function runBoundWitness(fetchImpl: () => Promise<Response>): Promise<{ bo
     identity: { taskId: binding.ids.taskId, runId: binding.ids.runId, workspaceId: binding.ids.workspaceId },
     campaignId: 'campaign-1',
     binding: FIXTURE_BINDING,
-    ceiling: { totalModelCalls: assembly.profile.limits.totalModelCalls, perRunInputTokens: assembly.profile.runLimits.perRunInputTokens, perRunOutputTokens: assembly.profile.runLimits.perRunOutputTokens },
+    ceiling: {
+      totalModelCalls: assembly.profile.limits.totalModelCalls,
+      perRunInputTokens: assembly.profile.runLimits.perRunInputTokens,
+      perRunOutputTokens: assembly.profile.runLimits.perRunOutputTokens,
+    },
     generation: 2,
     commandViewDigest: null,
   });
@@ -227,7 +238,7 @@ test('STD-W5-304: overlapping C10 witnesses refuse concurrent observation and re
   // Attempt overlapping call 2 on the same transport while call 1 is active
   await assert.rejects(
     async () => {
-      await runC10Witness({ ...baseInput, state: async () => ({} as TaskState) });
+      await runC10Witness({ ...baseInput, state: async () => ({}) as TaskState });
     },
     /C10_TRANSPORT_EXCLUSIVE/u,
     'overlapping witness must be refused before mutating transport',
@@ -242,18 +253,15 @@ test('STD-W5-304: overlapping C10 witnesses refuse concurrent observation and re
 
   // Single-call throwing-path restoration check:
   const throwingTransport: HostModelTransport = { execute: original };
-  await assert.rejects(
-    async () => {
-      await runC10Witness({
-        ...baseInput,
-        transport: throwingTransport,
-        state: async () => {
-          throw new Error('STATE_READ_FAILURE');
-        },
-      });
-    },
-    /STATE_READ_FAILURE/u,
-  );
+  await assert.rejects(async () => {
+    await runC10Witness({
+      ...baseInput,
+      transport: throwingTransport,
+      state: async () => {
+        throw new Error('STATE_READ_FAILURE');
+      },
+    });
+  }, /STATE_READ_FAILURE/u);
   assert.equal(throwingTransport.execute, original, 'transport.execute is restored when observeCall throws');
 });
 
@@ -304,7 +312,18 @@ test('the operator decision source approves nothing on end of input or an unreco
     const target = {
       taskId: 'task-x',
       console: {
-        presentation: async () => ({ ok: true as const, value: { taskId: 'task-x', presentation: { decisionId: 'dec-1', requestVersion: 1, presentationDigest: `sha256:${'a'.repeat(64)}`, elements: { action: 'a', necessity: 'n', targets: [], consequences: 'c', verificationStatus: 'v' } } } }),
+        presentation: async () => ({
+          ok: true as const,
+          value: {
+            taskId: 'task-x',
+            presentation: {
+              decisionId: 'dec-1',
+              requestVersion: 1,
+              presentationDigest: `sha256:${'a'.repeat(64)}`,
+              elements: { action: 'a', necessity: 'n', targets: [], consequences: 'c', verificationStatus: 'v' },
+            },
+          },
+        }),
         decide: async (input: unknown) => {
           calls.push(input);
           return { ok: true as const, value: {} };
@@ -328,7 +347,13 @@ test('the operator decision source forwards the shown digest and version for an 
   const target = {
     taskId: 'task-x',
     console: {
-      presentation: async () => ({ ok: true as const, value: { taskId: 'task-x', presentation: { decisionId: 'dec-1', requestVersion: 3, presentationDigest: digest, elements: { action: 'a', necessity: 'n', targets: [], consequences: 'c', verificationStatus: 'v' } } } }),
+      presentation: async () => ({
+        ok: true as const,
+        value: {
+          taskId: 'task-x',
+          presentation: { decisionId: 'dec-1', requestVersion: 3, presentationDigest: digest, elements: { action: 'a', necessity: 'n', targets: [], consequences: 'c', verificationStatus: 'v' } },
+        },
+      }),
       decide: async (input: unknown) => {
         forwarded = input as Record<string, unknown>;
         return { ok: true as const, value: {} };
@@ -406,9 +431,26 @@ test('STD-W5-303: an absent, unreadable or malformed pinned grader file for C01 
 
 test('C16 is judged on the report content: absent, unsafe and unprovenanced reports fail', () => {
   assert.equal(judgeC16Report(undefined).reasonCode, 'c16-report-missing');
-  const base = { taskId: 't', runId: 'r', repositoryId: 'repo', outcome: 'COMPLETED' as const, isComplete: true, limitations: [], failureReasons: [], safeNextAction: 'none', milestones: [], generatedAt: '2026-11-18T00:00:00.000Z' };
+  const base = {
+    taskId: 't',
+    runId: 'r',
+    repositoryId: 'repo',
+    outcome: 'COMPLETED' as const,
+    isComplete: true,
+    limitations: [],
+    failureReasons: [],
+    safeNextAction: 'none',
+    milestones: [],
+    generatedAt: '2026-11-18T00:00:00.000Z',
+  };
   const usage = { tokensConsumed: 1, costUsd: 0, replanCount: 0, perLedger: [] };
-  const report = (overrides: Record<string, unknown> = {}) => ({ ...base, diff: { diffDigest: `sha256:${'c'.repeat(64)}`, changedFiles: ['src/calculator.py'] }, evidence: { verificationRefs: [], reviewRef: 'rev-1', evidenceRefs: ['ev-1'] }, usage, ...overrides });
+  const report = (overrides: Record<string, unknown> = {}) => ({
+    ...base,
+    diff: { diffDigest: `sha256:${'c'.repeat(64)}`, changedFiles: ['src/calculator.py'] },
+    evidence: { verificationRefs: [], reviewRef: 'rev-1', evidenceRefs: ['ev-1'] },
+    usage,
+    ...overrides,
+  });
   assert.equal(judgeC16Report(report() as never).ok, true, 'a bounded, provenanced report passes');
   assert.equal(judgeC16Report(report({ evidence: { verificationRefs: [], evidenceRefs: [] } }) as never).reasonCode, 'c16-report-unprovenanced');
   assert.equal(judgeC16Report(report({ diff: { diffDigest: null, changedFiles: [] } }) as never).reasonCode, 'c16-report-incomplete');
@@ -443,7 +485,11 @@ function editedCampaign(edit: (bodies: Bodies) => void, records: readonly StageR
     }
   }
   const dir = tempRoot('evidence');
-  writeRecord(dir, records, passingArtifacts().map(([caseId, attempt, kind]) => [caseId, attempt, kind, bodies[caseId]] as PendingArtifact));
+  writeRecord(
+    dir,
+    records,
+    passingArtifacts().map(([caseId, attempt, kind]) => [caseId, attempt, kind, bodies[caseId]] as PendingArtifact),
+  );
   return dir;
 }
 
@@ -455,7 +501,11 @@ test('the checker accepts a complete campaign and refuses a passing label with n
   // Each case's artifact deleted in turn: the label alone must not pass.
   for (const caseId of ['C01', 'C02', 'C16', 'C10']) {
     const dir = tempRoot('evidence');
-    writeRecord(dir, [...STAGES, ...PASSING_ROWS], passingArtifacts().filter(([id]) => id !== caseId));
+    writeRecord(
+      dir,
+      [...STAGES, ...PASSING_ROWS],
+      passingArtifacts().filter(([id]) => id !== caseId),
+    );
     const result = checkEvidence({ evidenceDir: dir, ...scanOf() });
     assert.equal(result.exitCode, 1, caseId);
     assert.ok(result.output.includes(`case:${caseId}:missing-artifact`), `${caseId}: ${result.output}`);
@@ -524,9 +574,27 @@ test('every required item, removed or corrupted on its own, makes the checker re
 test('the checker binds the campaign to its conformance receipt and to the pinned record values', () => {
   const rows: readonly (readonly [string, (dir: string) => void, string])[] = [
     ['a missing receipt', dir => rmSync(join(dir, receiptName('campaign-1'))), 'receipt:missing'],
-    ['a failed receipt', dir => writeFileSync(join(dir, receiptName('campaign-1')), JSON.stringify({ schemaVersion: RECEIPT_SCHEMA, campaignId: 'campaign-1', binding: FIXTURE_BINDING, outcome: 'failed', finishedAt: 2 })), 'receipt:not-conformed'],
-    ['a receipt for another binding', dir => writeFileSync(join(dir, receiptName('campaign-1')), JSON.stringify({ schemaVersion: RECEIPT_SCHEMA, campaignId: 'campaign-1', binding: { ...FIXTURE_BINDING, model: 'other/model' }, outcome: 'conformed', finishedAt: 2 })), 'receipt:binding-mismatch'],
-    ['a receipt for another campaign', dir => writeFileSync(join(dir, receiptName('campaign-1')), JSON.stringify({ schemaVersion: RECEIPT_SCHEMA, campaignId: 'campaign-2', binding: FIXTURE_BINDING, outcome: 'conformed', finishedAt: 2 })), 'receipt:campaign-mismatch'],
+    [
+      'a failed receipt',
+      dir =>
+        writeFileSync(join(dir, receiptName('campaign-1')), JSON.stringify({ schemaVersion: RECEIPT_SCHEMA, campaignId: 'campaign-1', binding: FIXTURE_BINDING, outcome: 'failed', finishedAt: 2 })),
+      'receipt:not-conformed',
+    ],
+    [
+      'a receipt for another binding',
+      dir =>
+        writeFileSync(
+          join(dir, receiptName('campaign-1')),
+          JSON.stringify({ schemaVersion: RECEIPT_SCHEMA, campaignId: 'campaign-1', binding: { ...FIXTURE_BINDING, model: 'other/model' }, outcome: 'conformed', finishedAt: 2 }),
+        ),
+      'receipt:binding-mismatch',
+    ],
+    [
+      'a receipt for another campaign',
+      dir =>
+        writeFileSync(join(dir, receiptName('campaign-1')), JSON.stringify({ schemaVersion: RECEIPT_SCHEMA, campaignId: 'campaign-2', binding: FIXTURE_BINDING, outcome: 'conformed', finishedAt: 2 })),
+      'receipt:campaign-mismatch',
+    ],
     ['a malformed receipt', dir => writeFileSync(join(dir, receiptName('campaign-1')), '{}'), 'receipt:malformed'],
     ['a model that is not the pinned one', dir => editRecord(dir, record => void (prop(record, 'bindings')['model'] = 'other/model')), 'record:model-not-pinned'],
     ['a missing image identity', dir => editRecord(dir, record => void delete prop(record, 'bindings')['image']), 'EVIDENCE_RECORD_INVALID'],
@@ -590,8 +658,17 @@ test('an artifact path hiding the credential behind JSON escapes is never echoed
 test('an evidence-less earlier case never renames a later case artifact', () => {
   // C01 has no artifact, C02 does: the tuple keeps C02's file at its own name (STD-W5-106).
   const dir = tempRoot('evidence');
-  writeRecord(dir, [...STAGES, ...PASSING_ROWS], passingArtifacts().filter(([id]) => id !== 'C01'));
-  assert.deepEqual(readdirSync(dir).filter(name => name.startsWith('evidence-') || name.startsWith('c16-') || name.startsWith('c10-')).sort(), ['c10-C10-1.json', 'c16-C16-1.json', 'evidence-C02-1.json']);
+  writeRecord(
+    dir,
+    [...STAGES, ...PASSING_ROWS],
+    passingArtifacts().filter(([id]) => id !== 'C01'),
+  );
+  assert.deepEqual(
+    readdirSync(dir)
+      .filter(name => name.startsWith('evidence-') || name.startsWith('c16-') || name.startsWith('c10-'))
+      .sort(),
+    ['c10-C10-1.json', 'c16-C16-1.json', 'evidence-C02-1.json'],
+  );
 });
 
 test('missing and duplicate case ids are both refused', () => {
@@ -613,7 +690,15 @@ test('every invocation writes its own directory, so no later observation overwri
   const { runCampaign } = await import('./uc03-success-real-run.ts');
   const catalog = catalogWith(taskOf(), undefined);
   const failingCase = async () => [{ record: { stage: 'case' as const, outcome: 'fail' as const, caseId: 'C01', reasonCode: 'observed-failure' } }];
-  const base = { env: catalog.env, repositoryRoot: tempRoot('repo'), evidenceDir: root, candidateSha: REV, clock: () => 1_700_000_000_000, preflight: async () => ({ ok: true as const, dockerServerVersion: '27.0.1', imageId: `sha256:${'a'.repeat(64)}` }), fetch: async () => allowedProviderResponse(MODEL) };
+  const base = {
+    env: catalog.env,
+    repositoryRoot: tempRoot('repo'),
+    evidenceDir: root,
+    candidateSha: REV,
+    clock: () => 1_700_000_000_000,
+    preflight: async () => ({ ok: true as const, dockerServerVersion: '27.0.1', imageId: `sha256:${'a'.repeat(64)}` }),
+    fetch: async () => allowedProviderResponse(MODEL),
+  };
   // The same instant three times, then a case and a resume: nothing may share or replace a directory.
   const first = await runCampaign({ ...base, mode: 'campaign', runCases: failingCase });
   const second = await runCampaign({ ...base, mode: 'campaign', runCases: failingCase });
@@ -626,7 +711,10 @@ test('every invocation writes its own directory, so no later observation overwri
   assert.ok(!dirs.some(dir => dir.includes('claim-1')), 'a resume reference never becomes a file name');
   // The failed first observation survives the later single-case invocation byte for byte.
   const record = JSON.parse(readFileSync(join(first.evidenceDir, 'campaign.json'), 'utf8')) as { records: readonly StageRecord[] };
-  assert.deepEqual(record.records.filter(row => row.stage === 'case').map(row => [row.caseId, row.outcome, row.reasonCode]), [['C01', 'fail', 'observed-failure']]);
+  assert.deepEqual(
+    record.records.filter(row => row.stage === 'case').map(row => [row.caseId, row.outcome, row.reasonCode]),
+    [['C01', 'fail', 'observed-failure']],
+  );
   // A writer never replaces an existing record, even when asked to.
   assert.throws(() => writeRecord(first.evidenceDir, [...STAGES, ...PASSING_ROWS]), /CAMPAIGN_EXISTS/u);
 });

@@ -262,7 +262,13 @@ export function bindingOf(bindings: Readonly<Record<string, string>>): ArtifactB
 export function sameBinding(left: unknown, right: ArtifactBinding): boolean {
   if (typeof left !== 'object' || left === null) return false;
   const value = left as Record<string, unknown>;
-  return Object.keys(value).length === 4 && value['candidateSha'] === right.candidateSha && value['profileDigest'] === right.profileDigest && value['endpointDigest'] === right.endpointDigest && value['model'] === right.model;
+  return (
+    Object.keys(value).length === 4 &&
+    value['candidateSha'] === right.candidateSha &&
+    value['profileDigest'] === right.profileDigest &&
+    value['endpointDigest'] === right.endpointDigest &&
+    value['model'] === right.model
+  );
 }
 
 function isBinding(value: unknown): value is ArtifactBinding {
@@ -310,7 +316,19 @@ export function parseCommandView(value: unknown): CommandView | undefined {
   if (typeof v['exclusionsPolicyVersion'] !== 'string' || v['exclusionsPolicyVersion'] === '') return undefined;
   if (typeof v['scratchIdentity'] !== 'string' || v['scratchIdentity'] === '' || v['mountedReadOnly'] !== true) return undefined;
   const files = v['admittedFiles'];
-  if (!Array.isArray(files) || !files.every(file => typeof file === 'object' && file !== null && typeof (file as Record<string, unknown>)['path'] === 'string' && (file as Record<string, unknown>)['path'] !== '' && typeof (file as Record<string, unknown>)['digest'] === 'string' && SHA256.test((file as Record<string, unknown>)['digest'] as string))) return undefined;
+  if (
+    !Array.isArray(files) ||
+    !files.every(
+      file =>
+        typeof file === 'object' &&
+        file !== null &&
+        typeof (file as Record<string, unknown>)['path'] === 'string' &&
+        (file as Record<string, unknown>)['path'] !== '' &&
+        typeof (file as Record<string, unknown>)['digest'] === 'string' &&
+        SHA256.test((file as Record<string, unknown>)['digest'] as string),
+    )
+  )
+    return undefined;
   const view = v as unknown as CommandView;
   return computeCommandViewDigest(view) === view.viewDigest ? view : undefined;
 }

@@ -164,7 +164,16 @@ class InertController implements DockerLifecycleController {
 function inertSubstrate(): Substrate {
   return {
     manager: new DockerWorkspaceManager({ controller: new InertController() }),
-    profile: { profileId: 'uc03-pytest:real-tier', image: 'uc03-pytest:real-tier', imageDigest: 'sha256:' + '0'.repeat(64), user: '1000:1000', readOnlyRootFilesystem: true, network: 'none', limits: { timeoutMs: 30_000, maxMemoryBytes: 536_870_912, maxCpuCores: 1, maxPids: 64 }, mounts: [] },
+    profile: {
+      profileId: 'uc03-pytest:real-tier',
+      image: 'uc03-pytest:real-tier',
+      imageDigest: 'sha256:' + '0'.repeat(64),
+      user: '1000:1000',
+      readOnlyRootFilesystem: true,
+      network: 'none',
+      limits: { timeoutMs: 30_000, maxMemoryBytes: 536_870_912, maxCpuCores: 1, maxPids: 64 },
+      mounts: [],
+    },
     edit: async repositoryRoot => {
       writeFileSync(join(repositoryRoot, 'src/calculator.py'), PATCHED, 'utf8');
       return { exitCode: 0, stderr: '' };
@@ -461,7 +470,13 @@ function admittedReceipt(receipt: PolicyEvaluationReceipt): Record<string, unkno
 
 /** The approved decision a service that did not enforce the rejection would have issued for this evaluation. */
 function bypassDecisionFor(evaluation: PolicyEvaluationReceipt): ActionDecisionReceipt {
-  return { decisionId: PATCH_DECISION, actionDigest: evaluation.actionDigest, evaluationReceiptRef: evaluation.receiptId, decisionAuthorityGeneration: evaluation.decisionAuthorityGeneration, status: 'approved' } as ActionDecisionReceipt;
+  return {
+    decisionId: PATCH_DECISION,
+    actionDigest: evaluation.actionDigest,
+    evaluationReceiptRef: evaluation.receiptId,
+    decisionAuthorityGeneration: evaluation.decisionAuthorityGeneration,
+    status: 'approved',
+  } as ActionDecisionReceipt;
 }
 
 function admittedDecision(receipt: ActionDecisionReceipt): Record<string, unknown> {
@@ -589,7 +604,15 @@ async function rejectedScenario(
     await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
     await d.service.requestDecision(planBindingOf(d));
     const planView = await d.service.show(TASK_ID, PLAN_DECISION);
-    const planDecision = await d.service.decide({ taskId: TASK_ID, decisionId: PLAN_DECISION, taskVersion: planView.control.version, requestVersion: 1, presentationDigest: planView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-plan-t052-probe-rej' });
+    const planDecision = await d.service.decide({
+      taskId: TASK_ID,
+      decisionId: PLAN_DECISION,
+      taskVersion: planView.control.version,
+      requestVersion: 1,
+      presentationDigest: planView.presentation.presentationDigest,
+      decision: 'approve',
+      responseKey: 'approve-plan-t052-probe-rej',
+    });
     assert.equal(planDecision.outcome, 'ok', JSON.stringify(planDecision));
     decisions += 1;
     const approvedPlan = await d.service.resolve(PLAN_DECISION);
@@ -599,14 +622,30 @@ async function rejectedScenario(
     rows.push(row('T025 the patch action starts as a pending decision', pending.status === 'pending', pending.status));
 
     const pendingView = await d.service.show(TASK_ID, PATCH_DECISION);
-    const rejection = await d.service.decide({ taskId: TASK_ID, decisionId: PATCH_DECISION, taskVersion: pendingView.control.version, requestVersion: 1, presentationDigest: pendingView.presentation.presentationDigest, decision: 'reject', responseKey: 'reject-patch-t052-probe' });
+    const rejection = await d.service.decide({
+      taskId: TASK_ID,
+      decisionId: PATCH_DECISION,
+      taskVersion: pendingView.control.version,
+      requestVersion: 1,
+      presentationDigest: pendingView.presentation.presentationDigest,
+      decision: 'reject',
+      responseKey: 'reject-patch-t052-probe',
+    });
     decisions += 1;
     rows.push(row('T025 rejected: the explicit rejection is recorded', rejection.outcome === 'ok', rejection.outcome));
     rows.push(row('T025 rejected: continuation reads the rejected decision', (await d.service.resolve(PATCH_DECISION)).status === 'rejected'));
 
     // A second, conflicting decision on the same request is refused by the service, not by this probe.
     const conflicting = await d.service
-      .decide({ taskId: TASK_ID, decisionId: PATCH_DECISION, taskVersion: pendingView.control.version, requestVersion: 1, presentationDigest: pendingView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-late-t052-probe' })
+      .decide({
+        taskId: TASK_ID,
+        decisionId: PATCH_DECISION,
+        taskVersion: pendingView.control.version,
+        requestVersion: 1,
+        presentationDigest: pendingView.presentation.presentationDigest,
+        decision: 'approve',
+        responseKey: 'approve-late-t052-probe',
+      })
       .then(
         () => 'recorded',
         (error: unknown) => (error instanceof ApprovalServiceError ? error.outcome : 'unexpected'),
@@ -620,7 +659,13 @@ async function rejectedScenario(
     const evaluation = receiptFor(d, 'APPROVAL_REQUIRED');
     const refused = await harness.dispatch(bypass ? { pe: admittedReceipt(evaluation), ad: admittedDecision(bypassDecisionFor(evaluation)) } : { pe: admittedReceipt(evaluation) });
     const after = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
-    result = { outcome: refused.outcome, reason: refused.reason, containerAttempts: harness.containerAttempts(), sourceChanged: before !== after, stateChanged: stateBefore !== (await harness.fingerprint()) };
+    result = {
+      outcome: refused.outcome,
+      reason: refused.reason,
+      containerAttempts: harness.containerAttempts(),
+      sourceChanged: before !== after,
+      stateChanged: stateBefore !== (await harness.fingerprint()),
+    };
     rows.push(row('T025 rejected: the real guard refuses for the missing approval before any container and leaves source, task and journal unchanged', rejectedRefused(result), result));
   } finally {
     d.cleanup();
@@ -643,7 +688,15 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
     await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
     await d.service.requestDecision(planBindingOf(d));
     const planView = await d.service.show(TASK_ID, PLAN_DECISION);
-    const planDecision = await d.service.decide({ taskId: TASK_ID, decisionId: PLAN_DECISION, taskVersion: planView.control.version, requestVersion: 1, presentationDigest: planView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-plan-t052-probe-app' });
+    const planDecision = await d.service.decide({
+      taskId: TASK_ID,
+      decisionId: PLAN_DECISION,
+      taskVersion: planView.control.version,
+      requestVersion: 1,
+      presentationDigest: planView.presentation.presentationDigest,
+      decision: 'approve',
+      responseKey: 'approve-plan-t052-probe-app',
+    });
     assert.equal(planDecision.outcome, 'ok', JSON.stringify(planDecision));
     decisions += 1;
     const approvedPlan = await d.service.resolve(PLAN_DECISION);
@@ -654,7 +707,15 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
     const pending = await d.service.requestDecision(patchBindingOf(d));
     rows.push(row('T025 approved: the patch action starts as a pending decision', pending.status === 'pending', pending.status));
     const approvedView = await d.service.show(TASK_ID, PATCH_DECISION);
-    const approvalDecision = await d.service.decide({ taskId: TASK_ID, decisionId: PATCH_DECISION, taskVersion: approvedView.control.version, requestVersion: 1, presentationDigest: approvedView.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-patch-t052-probe' });
+    const approvalDecision = await d.service.decide({
+      taskId: TASK_ID,
+      decisionId: PATCH_DECISION,
+      taskVersion: approvedView.control.version,
+      requestVersion: 1,
+      presentationDigest: approvedView.presentation.presentationDigest,
+      decision: 'approve',
+      responseKey: 'approve-patch-t052-probe',
+    });
     decisions += 1;
     rows.push(row('T025 approved: the explicit approval is recorded', approvalDecision.outcome === 'ok', approvalDecision.outcome));
     const evaluation = await d.service.evaluatePolicy(approvedAction, { ...POLICY_OPTIONS, planBindingDigest: d.planBindingDigest, planDecisionRef: PLAN_DECISION });
@@ -679,7 +740,9 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
 async function enterPatch(d: Awaited<ReturnType<typeof domain>>, approvedPlan: ApprovalBinding, decisionId: string): Promise<void> {
   const current = (await d.statePort.loadTask(TASK_ID)) as TaskState;
   const next: TaskState = { ...current, stateVersion: current.stateVersion + 1, node: 'Patch', nextAction: 'apply-patch' };
-  d.trustedTransitions[next.stateVersion] = { approval: { binding: approvedPlan, freshness: planFreshness(d.task, d.plan, d.revision, d.workspaceId, { actionId: decisionId, kind: 'approve_fix_plan' }) } };
+  d.trustedTransitions[next.stateVersion] = {
+    approval: { binding: approvedPlan, freshness: planFreshness(d.task, d.plan, d.revision, d.workspaceId, { actionId: decisionId, kind: 'approve_fix_plan' }) },
+  };
   await d.statePort.transition(next, current.stateVersion);
 }
 
@@ -705,7 +768,11 @@ async function guardedHarness(
   substrate: Substrate,
   d: Awaited<ReturnType<typeof domain>>,
   exitCodes: (number | null)[],
-): Promise<{ dispatch(receipts: { readonly pe: unknown; readonly ad?: unknown }): Promise<{ readonly outcome: string; readonly reason?: string | undefined }>; containerAttempts: () => number; fingerprint: () => Promise<string> }> {
+): Promise<{
+  dispatch(receipts: { readonly pe: unknown; readonly ad?: unknown }): Promise<{ readonly outcome: string; readonly reason?: string | undefined }>;
+  containerAttempts: () => number;
+  fingerprint: () => Promise<string>;
+}> {
   const filesystem = new WorkspaceFilesystemPort({ root: d.repositoryRoot });
   const manager = substrate.manager;
   await manager.createWorkspace({ taskId: TASK_ID, workspaceId: d.workspaceId, initialRevisionDigest: d.revision, profile: substrate.profile });

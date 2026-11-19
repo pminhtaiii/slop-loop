@@ -78,7 +78,16 @@ function isStageRecord(value: unknown): value is StageRecord {
 }
 
 function isArtifact(value: unknown): value is CaseArtifact {
-  return isRaw(value) && isId(value['caseId']) && typeof value['attempt'] === 'number' && Number.isSafeInteger(value['attempt']) && value['attempt'] >= 1 && (value['kind'] === 'evidence' || value['kind'] === 'c16' || value['kind'] === 'c10') && typeof value['path'] === 'string' && isDigest(value['digest']);
+  return (
+    isRaw(value) &&
+    isId(value['caseId']) &&
+    typeof value['attempt'] === 'number' &&
+    Number.isSafeInteger(value['attempt']) &&
+    value['attempt'] >= 1 &&
+    (value['kind'] === 'evidence' || value['kind'] === 'c16' || value['kind'] === 'c10') &&
+    typeof value['path'] === 'string' &&
+    isDigest(value['digest'])
+  );
 }
 
 /** Parses retained JSON as untrusted input; an unparsable file is `undefined`, never a pass. */
@@ -202,7 +211,16 @@ function judgedGraded(ctx: Context, caseId: string, row: StageRecord, body: Raw)
   // The row's own facts must agree with the receipt it cites, so a copied pass cannot travel alone.
   if (row.facts?.['grade'] !== grade['grade']) return 'label-mismatch';
   const snapshot = grade['snapshot'];
-  if (!isRaw(snapshot) || !isId(snapshot['snapshotId']) || !isDigest(snapshot['digest']) || !isDigest(grade['evidenceDigest']) || !isDigest(grade['criteriaDigest']) || typeof grade['criterionId'] !== 'string' || grade['criterionId'] === '') return 'grade-unbound';
+  if (
+    !isRaw(snapshot) ||
+    !isId(snapshot['snapshotId']) ||
+    !isDigest(snapshot['digest']) ||
+    !isDigest(grade['evidenceDigest']) ||
+    !isDigest(grade['criteriaDigest']) ||
+    typeof grade['criterionId'] !== 'string' ||
+    grade['criterionId'] === ''
+  )
+    return 'grade-unbound';
   const kept = evidence['snapshot'];
   if (!isRaw(kept) || kept['snapshotId'] !== snapshot['snapshotId'] || kept['digest'] !== snapshot['digest'] || evidence['evidenceDigest'] !== grade['evidenceDigest']) return 'snapshot-mismatch';
   if (body['finalSnapshotDigest'] !== snapshot['digest']) return 'final-snapshot-mismatch';
@@ -251,7 +269,8 @@ function judgedGraded(ctx: Context, caseId: string, row: StageRecord, body: Raw)
   if (!isRaw(approval) || approval['decided'] !== 'approve' || typeof approval['decisionId'] !== 'string' || approval['decisionId'] === '') return 'approval-missing';
   if (!isDigest(evidence['diffDigest']) || !isDigest(evidence['reportDigest'])) return 'diff-missing';
   const usage = evidence['usage'];
-  if (!isRaw(usage) || typeof usage['tokens'] !== 'number' || typeof usage['cost'] !== 'number' || (usage['costLabel'] !== 'estimate-unverified' && usage['costLabel'] !== 'unknown')) return 'usage-unlabelled';
+  if (!isRaw(usage) || typeof usage['tokens'] !== 'number' || typeof usage['cost'] !== 'number' || (usage['costLabel'] !== 'estimate-unverified' && usage['costLabel'] !== 'unknown'))
+    return 'usage-unlabelled';
   return undefined;
 }
 
@@ -315,7 +334,9 @@ export function checkEvidence(options: EvidenceCheckOptions): EvidenceCheckResul
   const duplicated = [...caseCounts.entries()].filter(([, count]) => count > 1).map(([caseId]) => caseId);
   const missingCases = REQUIRED_CASES.filter(caseId => !caseCounts.has(caseId));
   const lines: string[] = [
-    ...failed.map(entry => (entry.stage === 'case' ? `case:${entry.caseId ?? 'unknown'}:${entry.outcome}` : `${entry.stage}:${entry.outcome}`) + (entry.reasonCode === undefined ? '' : `:${entry.reasonCode}`)),
+    ...failed.map(
+      entry => (entry.stage === 'case' ? `case:${entry.caseId ?? 'unknown'}:${entry.outcome}` : `${entry.stage}:${entry.outcome}`) + (entry.reasonCode === undefined ? '' : `:${entry.reasonCode}`),
+    ),
     ...missingStages.map(stage => `${stage}:missing`),
     ...missingCases.map(caseId => `case:missing:${caseId}`),
     ...unlabelled.map(() => 'case:unlabelled'),
@@ -329,7 +350,9 @@ export function checkEvidence(options: EvidenceCheckOptions): EvidenceCheckResul
       ...recordProblems(campaign, dir),
       ...broken,
       ...(campaign.caseArtifacts.some(artifact => !(REQUIRED_CASES as readonly string[]).includes(artifact.caseId)) ? ['artifact:unexpected-case'] : []),
-      ...(broken.length > 0 ? [] : REQUIRED_CASES.map(caseId => judgedCase(ctx, caseId, caseRows.find(row => row.caseId === caseId) as StageRecord)).filter((entry): entry is string => entry !== undefined)),
+      ...(broken.length > 0
+        ? []
+        : REQUIRED_CASES.map(caseId => judgedCase(ctx, caseId, caseRows.find(row => row.caseId === caseId) as StageRecord)).filter((entry): entry is string => entry !== undefined)),
     );
   }
   if (lines.length === 0) return { exitCode: 0, output: `EVIDENCE_CLEAN ${caseCounts.size} case(s)` };

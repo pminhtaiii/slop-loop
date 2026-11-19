@@ -94,7 +94,10 @@ export function allowedProviderResponse(modelId: string): Response {
 
 /** The journal the owner reports, reduced to the ids and outcome kinds the witness compares. */
 export function journalViewOf(snapshot: unknown): JournalView {
-  const journal = (typeof snapshot === 'object' && snapshot !== null ? snapshot : {}) as { readonly claims?: readonly { readonly claimId?: unknown }[]; readonly outcomes?: readonly { readonly receiptId?: unknown; readonly outcome?: unknown }[] };
+  const journal = (typeof snapshot === 'object' && snapshot !== null ? snapshot : {}) as {
+    readonly claims?: readonly { readonly claimId?: unknown }[];
+    readonly outcomes?: readonly { readonly receiptId?: unknown; readonly outcome?: unknown }[];
+  };
   return {
     claims: (journal.claims ?? []).map(claim => String(claim.claimId)),
     outcomes: (journal.outcomes ?? []).map(entry => ({ receiptId: String(entry.receiptId), outcome: String(entry.outcome) })),
@@ -313,8 +316,17 @@ function parseCall(value: unknown): C10CallFacts | undefined {
   if (!isRaw(declared) || !count(declared['maxInputTokens']) || !count(declared['maxOutputTokens'])) return undefined;
   if (!count(value['fetchesBefore']) || !count(value['fetchesAfter'])) return undefined;
   if (!isRaw(claims) || !count(claims['before']) || !count(claims['after'])) return undefined;
-  if (!isRaw(outcomes) || !count(outcomes['before']) || !count(outcomes['after']) || !Array.isArray(outcomes['recorded']) || !outcomes['recorded'].every(kind => typeof kind === 'string')) return undefined;
-  if (transport !== null && (!isRaw(transport) || typeof transport['outcome'] !== 'string' || !(transport['reasonCode'] === null || typeof transport['reasonCode'] === 'string') || !count(transport['claimsAtTransport']) || !count(transport['fetchesAtTransport']))) return undefined;
+  if (!isRaw(outcomes) || !count(outcomes['before']) || !count(outcomes['after']) || !Array.isArray(outcomes['recorded']) || !outcomes['recorded'].every(kind => typeof kind === 'string'))
+    return undefined;
+  if (
+    transport !== null &&
+    (!isRaw(transport) ||
+      typeof transport['outcome'] !== 'string' ||
+      !(transport['reasonCode'] === null || typeof transport['reasonCode'] === 'string') ||
+      !count(transport['claimsAtTransport']) ||
+      !count(transport['fetchesAtTransport']))
+  )
+    return undefined;
   if (observedUsage !== null && (!isRaw(observedUsage) || !count(observedUsage['inputTokens']) || !count(observedUsage['outputTokens']))) return undefined;
   return value as unknown as C10CallFacts;
 }
@@ -350,7 +362,14 @@ export function parseC10(value: unknown): C10WitnessBody | undefined {
  */
 export async function publishRunAuthority(owner: { publishAuthority(input: unknown): Promise<unknown> }, task: BugTask, generation: number): Promise<boolean> {
   const receipt = await owner.publishAuthority({
-    authorityRef: { policyId: task.configId, policyVersion: task.configVersion, configId: task.configId, configVersion: task.configVersion, issuerKeyRef: `host-${task.configId}`, decisionAuthorityGeneration: generation },
+    authorityRef: {
+      policyId: task.configId,
+      policyVersion: task.configVersion,
+      configId: task.configId,
+      configVersion: task.configVersion,
+      issuerKeyRef: `host-${task.configId}`,
+      decisionAuthorityGeneration: generation,
+    },
   });
   return typeof receipt === 'object' && receipt !== null && (receipt as { status?: unknown }).status === 'published';
 }

@@ -100,7 +100,9 @@ export function hostileAdmission(input: HostileAdmissionInput): RepositoryAdmiss
     policyEvaluationReceipt: { ...evaluation, receiptDigest: computePolicyEvaluationReceiptDigest(evaluation) },
     commandView: view,
     finiteBounds: { ...profile.commandBounds, isolationProfileRef: profile.isolationProfileRef },
-    reservationRefs: (['task', 'run'] as const).flatMap(scope => ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].map(kind => `${scope}-${kind}-${action.actionId}`)),
+    reservationRefs: (['task', 'run'] as const).flatMap(scope =>
+      ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].map(kind => `${scope}-${kind}-${action.actionId}`),
+    ),
     diagnosticPurpose: 'investigate',
     taskCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
     checkSetDigest: computeCheckSetDigest(checks),
@@ -227,7 +229,11 @@ export function createContainerTrap(base: StructuredSpawn): ContainerTrap {
     spawn: (command, args, options) => {
       if (marker === undefined || name !== undefined || command !== 'docker' || args[0] !== 'run' || !args.includes(marker)) return base(command, args, options);
       name = args.find(argument => argument.startsWith('--name='))?.slice('--name='.length);
-      return base(command, args.filter(argument => argument !== '--rm'), options);
+      return base(
+        command,
+        args.filter(argument => argument !== '--rm'),
+        options,
+      );
     },
     arm: next => {
       marker = next;
