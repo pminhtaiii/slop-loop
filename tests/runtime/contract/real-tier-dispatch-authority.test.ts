@@ -1,9 +1,9 @@
 /** Bound production coder/reviewer dispatch: current control permits one fetch; a late pause permits none. Controlled ports only. */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import test from 'node:test';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import test, { type TestContext } from 'node:test';
 import { computeCanonicalSha256, computeRequestContentDigest, validateAdmissionV02 } from '../../../src/contracts/foundation/uc03.ts';
 import type { BugTask, ProviderAdmissionContextV02, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/foundation/docker-controller.ts';
@@ -16,7 +16,6 @@ import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v0
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { createScanFixture, type ScanFixture } from '../unit/real-tier-scan-fixtures.ts';
 
-const fixture: ScanFixture = createScanFixture('t059-gate-', 't059-gate-digest-key');
 const CONTRACT = 'uc03-host-composition/2';
 const REV = 'e'.repeat(40);
 const CASE = 'C01';
@@ -28,8 +27,33 @@ interface Effects {
   spawn: number;
 }
 
-function tempRoot(label: string): string {
-  return mkdtempSync(join(tmpdir(), `t059-${label}-`));
+const trackedRoots: string[] = [];
+
+function cleanTempDir(dir: string): void {
+  const resolved = resolve(dir);
+  const baseTmp = resolve(tmpdir());
+  const relativePath = relative(baseTmp.toLowerCase(), resolved.toLowerCase());
+  if (relativePath && !relativePath.startsWith('..') && !isAbsolute(relativePath) && basename(resolved).startsWith('t059-')) {
+    rmSync(resolved, { recursive: true, force: true, maxRetries: 3 });
+  }
+}
+
+function trackTempDir(t: TestContext, dir: string): string {
+  trackedRoots.push(dir);
+  t.after(() => cleanTempDir(dir));
+  return dir;
+}
+
+function tempRoot(t: TestContext, label: string): string {
+  return trackTempDir(t, mkdtempSync(join(tmpdir(), `t059-${label}-`)));
+}
+
+function scanFixture(t: TestContext, prefix = 't059-gate-', digestKeySeed = 't059-gate-digest-key'): ScanFixture {
+  const fx = createScanFixture(prefix, digestKeySeed);
+  trackTempDir(t, fx.OUTSIDE);
+  trackTempDir(t, fx.REPO);
+  trackTempDir(t, fx.BASE);
+  return fx;
 }
 
 function revisionOf(files: Readonly<Record<string, string>>): string {
@@ -67,8 +91,8 @@ interface Catalog {
 }
 
 /** A temp catalog with one contained repository, one digest-pinned fixture and its profile. */
-function catalogFor(task = taskOf(), extraCases: readonly string[] = []): Catalog {
-  const dir = tempRoot('catalog');
+function catalogFor(t: TestContext, fixture: ScanFixture, task = taskOf(), extraCases: readonly string[] = []): Catalog {
+  const dir = tempRoot(t, 'catalog');
   const repositoryDir = join(dir, 'repository');
   mkdirSync(join(repositoryDir, 'src'), { recursive: true });
   for (const [path, content] of Object.entries(REPOSITORY_FILES)) writeFileSync(join(repositoryDir, path), content, 'utf8');
@@ -107,9 +131,9 @@ function pinsOf(assembly: RealTierAssembly): { pins: { contractVersion: string; 
   };
 }
 
-function resolveOrThrow(catalog: Catalog, overrides: Partial<RealTierDependencies> = {}): { assembly: RealTierAssembly; effects: Effects; stateRoot: string } {
+function resolveOrThrow(t: TestContext, catalog: Catalog, overrides: Partial<RealTierDependencies> = {}): { assembly: RealTierAssembly; effects: Effects; stateRoot: string } {
   const effects: Effects = { fetch: 0, spawn: 0 };
-  const stateRoot = tempRoot('state');
+  const stateRoot = tempRoot(t, 'state');
   const resolved = resolveRealTierAssembly({
     env: catalog.env,
     revision: REV,
@@ -130,7 +154,7 @@ function boundOrThrow(binding: Awaited<ReturnType<typeof bindRealTierTask>>): Re
   return binding as RealTierBoundTask;
 }
 
-function assertNoSecrets(value: unknown): void {
+function assertNoSecrets(value: unknown, fixture: ScanFixture): void {
   const serialized = JSON.stringify(value);
   for (const needle of [fixture.KEY, fixture.HREF, '192.0.2.10', '54321', fixture.DIGEST_KEY]) assert.ok(!serialized.includes(needle), 'no record may carry a sentinel credential or endpoint');
 }
@@ -245,9 +269,10 @@ function providerContext(
   return admitted.value as ProviderAdmissionContextV02;
 }
 
-test('CR-195-A: both bound model ports admit one request and dispatch exactly once each', async () => {
-  const catalog = catalogFor();
-  const { assembly, effects } = resolveOrThrow(catalog, {
+test('CR-195-A: both bound model ports admit one request and dispatch exactly once each', async t => {
+  const fixture = scanFixture(t);
+  const catalog = catalogFor(t, fixture);
+  const { assembly, effects } = resolveOrThrow(t, catalog, {
     fetch: async () => {
       effects.fetch += 1;
       // The raw payload is the messages envelope; the role is not in it, so the reply is role-agnostic.
@@ -289,7 +314,7 @@ test('CR-195-A: both bound model ports admit one request and dispatch exactly on
     true,
     'both claims settle',
   );
-  assertNoSecrets({ coder, reviewer });
+  assertNoSecrets({ coder, reviewer }, fixture);
 });
 
 /* ----------------------------------- CR-195 (C): public state-port accounting */
@@ -334,12 +359,13 @@ async function investigating(
  * The attempt is already durable, so the refusal also records a usage-free uncertain outcome: the
  * claim is accounted (not left attempting) and its reservations are releasable through recovery.
  */
-test('CR-195-FENCE: a fence after beginAttempt makes both bound production ports refuse with zero fetches', async () => {
+test('CR-195-FENCE: a fence after beginAttempt makes both bound production ports refuse with zero fetches', async t => {
   for (const role of ['coder', 'reviewer'] as const) {
-    const catalog = catalogFor();
+    const fixture = scanFixture(t);
+    const catalog = catalogFor(t, fixture);
     const effects: Effects = { fetch: 0, spawn: 0 };
     // A fenced dispatch must not reach the transport, so the counting fake would throw if it did.
-    const { assembly } = resolveOrThrow(catalog, {
+    const { assembly } = resolveOrThrow(t, catalog, {
       fetch: async () => {
         effects.fetch += 1;
         throw new Error('a fenced port must not fetch');
@@ -376,10 +402,11 @@ test('CR-195-FENCE: a fence after beginAttempt makes both bound production ports
   }
 });
 
-test('CR-195-FENCE observed: a fence between claim and beginAttempt refuses with zero fetches', async () => {
-  const catalog = catalogFor();
+test('CR-195-FENCE observed: a fence between claim and beginAttempt refuses with zero fetches', async t => {
+  const fixture = scanFixture(t);
+  const catalog = catalogFor(t, fixture);
   const effects: Effects = { fetch: 0, spawn: 0 };
-  const { assembly } = resolveOrThrow(catalog, {
+  const { assembly } = resolveOrThrow(t, catalog, {
     fetch: async () => {
       effects.fetch += 1;
       throw new Error('a fenced port must not fetch');
@@ -404,10 +431,11 @@ test('CR-195-FENCE observed: a fence between claim and beginAttempt refuses with
   assert.equal(effects.fetch, 0, 'the claim-to-attempt fence admits no transport call');
 });
 
-test('CR-195-CONTROL: the pre-transport check reads the control head, not unrelated journal history', async () => {
-  const catalog = catalogFor();
+test('CR-195-CONTROL: the pre-transport check reads the control head, not unrelated journal history', async t => {
+  const fixture = scanFixture(t);
+  const catalog = catalogFor(t, fixture);
   let sends = 0;
-  const { assembly } = resolveOrThrow(catalog, {
+  const { assembly } = resolveOrThrow(t, catalog, {
     fetch: async () => {
       sends += 1;
       return new Response(JSON.stringify({ id: 'msg-1', model: MODEL, content: [{ type: 'text', text: '{"status":"accepted","findings":[]}' }], usage: { input_tokens: 10, output_tokens: 5 } }), {
@@ -430,4 +458,11 @@ test('CR-195-CONTROL: the pre-transport check reads the control head, not unrela
   const result = await binding.ports.modelPort.propose(state, [], context.providerRequest, context);
   assert.equal(result.outcome, 'observed', JSON.stringify(result));
   assert.equal(sends, 1, 'dispatch succeeded despite the unrelated corrupt outcome');
+});
+
+test.after(() => {
+  assert.ok(trackedRoots.length > 0, 'tests must create tracked temporary roots');
+  for (const root of trackedRoots) {
+    assert.equal(existsSync(root), false, `expected root ${root} to have been cleaned up`);
+  }
 });
