@@ -48,8 +48,8 @@ function tempRoot(t: TestContext, label: string): string {
   return trackTempDir(t, mkdtempSync(join(tmpdir(), `t059-${label}-`)));
 }
 
-function scanFixture(t: TestContext, prefix = 't059-gate-', digestKeySeed = 't059-gate-digest-key'): ScanFixture {
-  const fx = createScanFixture(prefix, digestKeySeed);
+function scanFixture(t: TestContext, prefix = 't059-gate-', digestSeed = 't059-gate-digest-key'): ScanFixture {
+  const fx = createScanFixture(prefix, digestSeed);
   trackTempDir(t, fx.OUTSIDE);
   trackTempDir(t, fx.REPO);
   trackTempDir(t, fx.BASE);
