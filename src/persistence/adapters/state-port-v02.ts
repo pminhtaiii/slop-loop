@@ -34,6 +34,7 @@ import type { ControlRecordV02, FenceProofV02, RecoveryEvidenceV02, TaskControlM
 import { CONTROL_MODES, DEFAULT_CONTROL } from './state-port-v02-types.ts';
 import * as claims from './state-port-v02-claims.ts';
 import * as reconcile from './state-port-v02-reconcile.ts';
+import type { ExecutionProfileSourceV02 } from './state-port-v02-admission.ts';
 import * as control from './state-port-v02-control.ts';
 import * as journal from './state-port-v02-journal.ts';
 import * as tasks from './state-port-v02-task.ts';
@@ -57,6 +58,12 @@ export interface DurableStatePortV02Options {
   /** Seed for a task that has no persisted control head yet (mirrors the reference initialControl*). */
   readonly initialControl?: Partial<Pick<ControlRecordV02, 'controlVersion' | 'epoch' | 'mode' | 'holdRef' | 'activeAuthorityRef'>>;
   readonly trustedTransitions?: Readonly<Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>>;
+  /**
+   * The owner's own execution profile: a fixed value, or one derived from the trusted task and
+   * workspace the port reads. It never comes from the submitted admission's view or action. Absent,
+   * the port applies its synthetic admission constants.
+   */
+  readonly executionProfile?: ExecutionProfileSourceV02;
 }
 
 /** Durable UC-03 v0.2 state port. Missing optional methods fail closed by absence. */
@@ -69,6 +76,7 @@ export class DurableStatePortV02 implements StatePortV02 {
   private readonly statePort: StatePortStore;
   private readonly boundTaskId: string | undefined;
   private readonly taskOptions: tasks.TaskOperationOptions;
+  private readonly executionProfile: ExecutionProfileSourceV02 | undefined;
 
   constructor(options: DurableStatePortV02Options) {
     this.provenance = options.provenance ?? 'real';
@@ -76,6 +84,7 @@ export class DurableStatePortV02 implements StatePortV02 {
     this.store = options.store;
     this.statePort = new StatePortStore(options.store);
     this.boundTaskId = options.taskId;
+    this.executionProfile = options.executionProfile;
     this.taskOptions = { store: this.statePort, trustedTransitions: options.trustedTransitions ?? {} };
     const seed = options.initialControl ?? {};
     this.controlSeed = {
@@ -110,11 +119,11 @@ export class DurableStatePortV02 implements StatePortV02 {
   }
 
   claim(context: AdmissionContextV02): Promise<ClaimReceiptV02> {
-    return claims.claim({ store: this.statePort, initialControl: this.controlSeed }, context);
+    return claims.claim({ store: this.statePort, initialControl: this.controlSeed, executionProfile: this.executionProfile }, context);
   }
 
   beginAttempt(claimId: string, executor: ExecutorIdentityV02): Promise<AttemptReceiptV02> {
-    return claims.beginAttempt(this.statePort, claimId, executor);
+    return claims.beginAttempt(this.statePort, claimId, executor, this.executionProfile);
   }
 
   recordOutcome(receipt: AttemptOutcomeReceiptV02): Promise<OutcomeRecordResultV02> {
@@ -130,7 +139,7 @@ export class DurableStatePortV02 implements StatePortV02 {
   }
 
   closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> {
-    return reconcile.closeUnattemptedClaim(this.statePort, receipt);
+    return reconcile.closeUnattemptedClaim(this.statePort, receipt, this.executionProfile);
   }
 
   /* ---------------- optional: settled patch ancestry ---------------- */

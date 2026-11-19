@@ -37,15 +37,19 @@ import {
   isRepairPatch,
   isRepositoryPatch,
   observedPatchTaskState,
+  ownerExecutionProfile,
   taskMatchesAttempt,
   taskSemantic,
   validExecutorIdentity,
 } from './state-port-v02-admission.ts';
+import type { ExecutionProfileSourceV02 } from './state-port-v02-admission.ts';
 import { providerSpecs, replaceLedgers, reviewerIterationSpecs, stageClaimReservations, stageReservation } from './state-port-v02-ledgers.ts';
 
 export interface ClaimOperationOptions {
   readonly store: StatePortStore;
   readonly initialControl: ControlRecordV02;
+  /** The owner-held execution profile; absent applies the port's own admission constants. */
+  readonly executionProfile?: ExecutionProfileSourceV02 | undefined;
 }
 
 function outcomeContext(claim: StoredClaimV02, attempt: StoredAttemptV02, task: TaskState, control: ControlRecordV02): AttemptOutcomeValidationContextV02 {
@@ -80,7 +84,13 @@ export async function claim(options: ClaimOperationOptions, context: AdmissionCo
       }
     }
     const task = await store.readTask(taskId);
-    if (!task || !contextMatchesTask(snapshot, task) || control.controlVersion !== snapshot.expectedControlVersion || control.epoch !== snapshot.expectedEpoch) return NEUTRAL_CLAIM_RECEIPT_V02;
+    if (
+      !task ||
+      !contextMatchesTask(snapshot, task, ownerExecutionProfile(options.executionProfile, task)) ||
+      control.controlVersion !== snapshot.expectedControlVersion ||
+      control.epoch !== snapshot.expectedEpoch
+    )
+      return NEUTRAL_CLAIM_RECEIPT_V02;
     const authorityRef = authorityFor(snapshot);
     if (!control.activeAuthorityRef || !equal(control.activeAuthorityRef, authorityRef)) return NEUTRAL_CLAIM_RECEIPT_V02;
 
@@ -121,7 +131,7 @@ export async function claim(options: ClaimOperationOptions, context: AdmissionCo
       context: snapshot,
       taskSnapshot: structuredClone(task),
       authorityRef,
-      trustedAdmissionContext: deriveTrustedContext(snapshot),
+      trustedAdmissionContext: deriveTrustedContext(snapshot, ownerExecutionProfile(options.executionProfile, task)),
       status: 'claimed',
     });
     await store.writeControl(taskId, { ...control, controlVersion: postClaimControlVersion, activeClaimId: claimId });
@@ -129,7 +139,7 @@ export async function claim(options: ClaimOperationOptions, context: AdmissionCo
   });
 }
 
-export async function beginAttempt(store: StatePortStore, claimId: string, executor: ExecutorIdentityV02): Promise<AttemptReceiptV02> {
+export async function beginAttempt(store: StatePortStore, claimId: string, executor: ExecutorIdentityV02, executionProfile?: ExecutionProfileSourceV02): Promise<AttemptReceiptV02> {
   let actor: ExecutorIdentityV02;
   try {
     actor = structuredClone(executor);
@@ -156,7 +166,8 @@ export async function beginAttempt(store: StatePortStore, claimId: string, execu
     )
       return NEUTRAL_ATTEMPT_RECEIPT_V02;
     const task = await store.readTask(taskId);
-    if (!task || !contextMatchesTask(claimRecord.context, task) || !equal(taskSemantic(task), taskSemantic(claimRecord.taskSnapshot))) return NEUTRAL_ATTEMPT_RECEIPT_V02;
+    if (!task || !contextMatchesTask(claimRecord.context, task, ownerExecutionProfile(executionProfile, task)) || !equal(taskSemantic(task), taskSemantic(claimRecord.taskSnapshot)))
+      return NEUTRAL_ATTEMPT_RECEIPT_V02;
 
     const repairPatch = isRepairPatch(claimRecord.context);
     const nextTaskVersion = task.stateVersion + (repairPatch ? 1 : 0);
