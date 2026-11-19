@@ -6,10 +6,9 @@
  * synchronous and effect-free: it loads the profile, reads the credential, pins the endpoint and model,
  * and builds the real adapters. It never fetches, spawns, writes a task or touches the filesystem.
  *
- * The host is assembly-ready: the four task-bound producers and the three per-task host ports are
- * unbound (full surface, `TASK_UNBOUND` on every call) and the config names no task, so
- * `prepareUC03Host` is `ready` while nothing can act. Binding them to one task is T061
- * (`real-tier-task-binding.ts`).
+ * The host is assembly-ready: the task-bound producers and per-task host ports are unbound (full
+ * surface, `TASK_UNBOUND` on every call) and the config names no task, so `prepareUC03Host` is `ready`
+ * while nothing can act. Binding them to one task is T061 (`real-tier-task-binding.ts`).
  *
  * `dependencies` is the test seam: `{ env, fetch, spawn, stateRoot, revision, components }`, each
  * defaulting to the real value. Every refusal is a `RealTierUnavailable` with a bounded reason code,
@@ -20,7 +19,8 @@
 import { randomUUID } from 'node:crypto';
 import { DEEPSEEK_REVIEW_PROMPT } from '../foundation/deepseek-review-profile.ts';
 import { createRuntimeReviewer, type RuntimeReviewer } from '../foundation/reviewer.ts';
-import { HostModelPortV02 } from '../foundation/model-v02.ts';
+import { HostModelPortV02, type DispatchAuthorityFacts } from '../foundation/model-v02.ts';
+import { authorityFor, equal } from '../persistence/adapters/state-port-v02-admission.ts';
 import { createRunUsageLimiter } from '../foundation/run-usage-limit.ts';
 import { createDeepSeekTransport } from '../foundation/deepseek-transport.ts';
 import type { StructuredCommandExecutor } from '../foundation/docker-command-executor.ts';
@@ -127,8 +127,7 @@ const unavailable = (reasonCode: string, path = '$'): RealTierUnavailable => Obj
 
 /**
  * The four owner components this host never takes from an owner: `baselineEvidence` is a host producer
- * (host contract §3), and the other three are T061's task-bound producers. Listing any of them twice
- * would deny the whole composition.
+ * (host contract §3), and the other three are T061's task-bound producers. Listing one twice denies all.
  */
 const PRODUCER_COMPONENTS = ['guardedRead', 'baselineEvidence', 'hostAuthority', 'contextSource'] as const;
 
@@ -249,21 +248,40 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
   // The reviewer ingress is the same transport in a distinct role; the marker is required by
   // `PORT_DECLARATIONS_V02`, and provenance still derives from the branded transport alone.
   // Both ports carry an explicit trusted actor: without one every dispatch is EXECUTOR_IDENTITY_REQUIRED.
-  // One incarnation per assembly process, and the generation the seeded control head starts at.
-  // shortcut: generation 1 matches the task seed's epoch; raise it if a resumed task re-fences.
+  // shortcut: one incarnation per process, generation 1 (the seeded head's epoch); raise on re-fence.
   const incarnation = `real-tier-${randomUUID()}`;
   const actorOf = (adapterIdentity: string) => ({ adapterIdentity, processIncarnation: incarnation, fencingGeneration: 1 });
+  /**
+   * Last pre-transport check (SPEC-W5-001): the durable control head must still match the attempt's begin
+   * facts, so a pause after `beginAttempt` (epoch unchanged) is refused. Missing/drifted head is `false`.
+   *
+   * shortcut: a pause ordered between this synchronous read and transport start still escapes; closing
+   * that window needs the owner lock to serialize transport start too.
+   */
+  const ownerState = owners.components.statePort as { readonly readControlHead?: (taskId: string) => unknown };
+  const currentDispatchAuthority = (facts: DispatchAuthorityFacts): boolean => {
+    const control = ownerState.readControlHead?.(facts.taskId) as Partial<Record<'mode' | 'controlVersion' | 'epoch' | 'activeAuthorityRef' | 'activeClaimId', unknown>> | undefined;
+    if (typeof control !== 'object' || control === null) return false;
+    return (
+      Object.is(control.mode, 'runnable') &&
+      control.controlVersion === facts.attempt.postBeginControlVersion &&
+      control.epoch === facts.attempt.epoch &&
+      control.activeClaimId === facts.claimId &&
+      equal(control.activeAuthorityRef, authorityFor(facts.context))
+    );
+  };
   const reviewerActor = actorOf('uc03-real-tier-reviewer');
-  const reviewerModelPort = Object.assign(new HostModelPortV02({ transport, statePort: owners.components.statePort, executorIdentity: reviewerActor, currentExecutorIdentity: () => reviewerActor }), {
-    providerRole: 'reviewer' as const,
-  });
+  const reviewerModelPort = Object.assign(
+    new HostModelPortV02({ transport, statePort: owners.components.statePort, executorIdentity: reviewerActor, currentExecutorIdentity: () => reviewerActor, currentDispatchAuthority }),
+    { providerRole: 'reviewer' as const },
+  );
   // The published revision is the owner state's own fact, keyed by the task the caller supplies, so
   // the reviewer needs no binding of its own.
   const reviewer = createRuntimeReviewer({ model: reviewerModelPort, resolveRepoDigest: async task => (await owners.components.statePort.loadTask(task.taskId))?.repositoryRevisionDigest });
   const coderActor = actorOf('uc03-real-tier-coder');
   const built: RealTierComponents = {
     ...owners.components,
-    modelPort: new HostModelPortV02({ transport, statePort: owners.components.statePort, executorIdentity: coderActor, currentExecutorIdentity: () => coderActor }),
+    modelPort: new HostModelPortV02({ transport, statePort: owners.components.statePort, executorIdentity: coderActor, currentExecutorIdentity: () => coderActor, currentDispatchAuthority }),
     reviewerModelPort,
   };
   const merged = { ...built, ...dependencies.components };
