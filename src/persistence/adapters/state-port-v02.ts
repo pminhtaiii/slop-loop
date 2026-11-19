@@ -149,6 +149,15 @@ export class DurableStatePortV02 implements StatePortV02 {
     return journal.getJournalSnapshot({ store: this.statePort, initialControl: this.controlSeed }, taskId);
   }
 
+  /**
+   * The current control head of one task, synchronously and without historical records: what the
+   * pre-transport dispatch authority check reads. Missing, unreadable or malformed is `null` (fail
+   * closed); it never widens authority and never depends on an unrelated corrupt outcome file.
+   */
+  readControlHead(taskId: string): ControlRecordV02 | null {
+    return this.statePort.readControlHead(taskId);
+  }
+
   /* ---------------- adapter-specific journal control ---------------- */
 
   setTaskControl(taskId: string, mode: TaskControlModeV02, eventRef: string): Promise<boolean> {
