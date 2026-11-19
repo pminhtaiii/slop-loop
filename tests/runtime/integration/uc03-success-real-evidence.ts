@@ -17,6 +17,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { needleGuard, resolveScanProfile, scanDirectory, type ScanOptions, type ScanResult } from '../../../src/runtime/real-tier-endpoint-scan.ts';
+import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 
 import { judgeC10, parseC10 } from './uc03-success-real-c10.ts';
 import { PINNED_MODEL } from './uc03-success-real-provider.ts';
@@ -180,15 +181,16 @@ function judgedCase(ctx: Context, caseId: string, row: StageRecord): string | un
   if (body['caseId'] !== caseId) return `case:${caseId}:artifact-misattributed`;
   if (body['campaignId'] !== ctx.campaign.campaignId) return `case:${caseId}:artifact-campaign`;
   if (body['attempt'] !== ref.attempt) return `case:${caseId}:artifact-attempt`;
+  if (row.facts?.['attempt'] !== undefined && row.facts?.['attempt'] !== body['attempt']) return `case:${caseId}:attempt-mismatch`;
   if (!sameBinding(body['binding'], ctx.binding)) return `case:${caseId}:artifact-binding`;
-  const failure = caseId === 'C16' ? judgedC16(ctx, row, body, ref) : caseId === 'C10' ? judgedC10(body) : judgedGraded(caseId, row, body);
+  const failure = caseId === 'C16' ? judgedC16(ctx, row, body, ref) : caseId === 'C10' ? judgedC10(body) : judgedGraded(ctx, caseId, row, body);
   return failure === undefined ? undefined : `case:${caseId}:${failure}`;
 }
 
 const identityOk = (body: Raw): boolean => isRaw(body['identity']) && isId(body['identity']['taskId']) && isId(body['identity']['runId']) && isId(body['identity']['workspaceId']);
 
 /** C01/C02: a graded receipt whose snapshot, evidence and criteria the artifact and its row both name. */
-function judgedGraded(caseId: string, row: StageRecord, body: Raw): string | undefined {
+function judgedGraded(ctx: Context, caseId: string, row: StageRecord, body: Raw): string | undefined {
   if (body['schema'] !== CASE_EVIDENCE_SCHEMA) return 'artifact-schema';
   if (!identityOk(body)) return 'identity-missing';
   const evidence = body['evidence'];
@@ -205,10 +207,46 @@ function judgedGraded(caseId: string, row: StageRecord, body: Raw): string | und
   if (!isRaw(kept) || kept['snapshotId'] !== snapshot['snapshotId'] || kept['digest'] !== snapshot['digest'] || evidence['evidenceDigest'] !== grade['evidenceDigest']) return 'snapshot-mismatch';
   if (body['finalSnapshotDigest'] !== snapshot['digest']) return 'final-snapshot-mismatch';
   if (row.facts?.['grader-digest'] !== grade['criteriaDigest']) return 'criteria-mismatch';
+
+  // Grade receipt binding checks (SPEC-W5-302 / STD-W5-302)
+  const gradeBinding = evidence['gradeBinding'];
+  if (!isRaw(gradeBinding)) return 'grade-unbound';
+  if (gradeBinding['caseId'] !== caseId) return 'grade-case-mismatch';
+  const bodyId = body['identity'] as Raw;
+  if (gradeBinding['taskId'] !== bodyId['taskId'] || gradeBinding['runId'] !== bodyId['runId'] || gradeBinding['workspaceId'] !== bodyId['workspaceId']) {
+    return 'grade-identity-mismatch';
+  }
+  if (gradeBinding['criterionId'] !== grade['criterionId'] || gradeBinding['criteriaDigest'] !== grade['criteriaDigest']) {
+    return 'grade-criterion-mismatch';
+  }
+  if (gradeBinding['snapshotId'] !== snapshot['snapshotId'] || gradeBinding['snapshotDigest'] !== snapshot['digest']) {
+    return 'grade-snapshot-mismatch';
+  }
+  if (gradeBinding['evidenceDigest'] !== grade['evidenceDigest']) {
+    return 'grade-binding-mismatch';
+  }
+  const campaignTier = ctx.campaign.bindings['tier'];
+  if (campaignTier === 'real-tier' && gradeBinding['tier'] !== 'real-tier') {
+    return 'grade-controlled-unacceptable';
+  }
+
   const accounting = body['accounting'];
   if (!isRaw(accounting) || !['claims', 'attempts', 'outcomes'].every(key => Number.isSafeInteger(accounting[key]))) return 'accounting-missing';
-  if (!isRaw(evidence['ownerRevisions']) || typeof evidence['ownerRevisions']['repository'] !== 'string') return 'owner-revisions-missing';
+
+  // Owner revisions checks: must carry repository and all UC03_PRODUCTION_COMPONENTS_V02
+  const ownerRevs = evidence['ownerRevisions'];
+  if (!isRaw(ownerRevs) || typeof ownerRevs['repository'] !== 'string' || ownerRevs['repository'] === '') return 'owner-revisions-missing';
+  for (const comp of UC03_PRODUCTION_COMPONENTS_V02) {
+    if (typeof ownerRevs[comp] !== 'string' || ownerRevs[comp] === '') return 'owner-revisions-missing';
+  }
+
   if (caseId !== 'C01') return undefined;
+
+  // C01-specific checks (SPEC-W5-301)
+  if (!isDigest(evidence['commandViewDigest']) || typeof evidence['commandAdmissionRef'] !== 'string' || evidence['commandAdmissionRef'] === '') {
+    return 'command-view-missing';
+  }
+
   const approval = evidence['approval'];
   if (!isRaw(approval) || approval['decided'] !== 'approve' || typeof approval['decisionId'] !== 'string' || approval['decisionId'] === '') return 'approval-missing';
   if (!isDigest(evidence['diffDigest']) || !isDigest(evidence['reportDigest'])) return 'diff-missing';

@@ -15,13 +15,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { SnapshotGradeResult } from '../../../eval/uc03/workflow-grade.ts';
+import { computeCommandViewDigest, type CommandView } from '../../../src/contracts/foundation/uc03.ts';
 
 /** `uc03-campaign-record/2` adds artifact references and the started/finished pair to v1. */
 export const RECORD_SCHEMA = 'uc03-campaign-record/2';
-export const CASE_EVIDENCE_SCHEMA = 'uc03-case-evidence/1';
+/** Version 2 adds the measured command view and the independent grade receipt binding. */
+export const CASE_EVIDENCE_SCHEMA = 'uc03-case-evidence/2';
 export const C16_REPORT_SCHEMA = 'uc03-c16-report/2';
-/** Version 2 carries per-call observations: the limiter verdict, per-call fetches and settlement. */
-export const C10_WITNESS_SCHEMA = 'uc03-c10-witness/2';
+/** Version 3 adds the task-budget refusal rows and the explicit not-applicable command view. */
+export const C10_WITNESS_SCHEMA = 'uc03-c10-witness/3';
 export const RECEIPT_SCHEMA = 'uc03-conformance-receipt/1';
 
 export const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -65,11 +67,37 @@ export interface ConformanceReceipt {
   readonly finishedAt: number;
 }
 
+/**
+ * The host-measured facts a grade receipt is issued from (real-tier contract §(f) T028, T062):
+ * the case's own bound identities, expected criterion, measured snapshot/evidence and the tier and
+ * executor/admission that graded it. The checker compares the grade against this, never the reverse.
+ */
+export interface GradeReceiptBinding {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly workspaceId: string;
+  readonly caseId: string;
+  readonly criterionId: string;
+  readonly criteriaDigest: string;
+  readonly snapshotId: string;
+  readonly snapshotDigest: string;
+  readonly evidenceDigest: string;
+  readonly tier: 'real-tier' | 'controlled-tier';
+  readonly executorId: string;
+  readonly admissionId: string | null;
+}
+
 /** One case's host-only evidence before projection. */
 export interface CaseEvidence {
   readonly snapshot?: Readonly<{ snapshotId: string; digest: string }> | undefined;
   readonly evidenceDigest?: string | undefined;
   readonly grade?: SnapshotGradeResult | undefined;
+  /** The receipt binding `gradeCase` measured on the same run; a grade is never judged without it. */
+  readonly gradeBinding?: GradeReceiptBinding | undefined;
+  /** The command view the actual run published, measured by the owner; C01 must retain it. */
+  readonly commandView?: CommandView | undefined;
+  readonly commandViewDigest?: string | undefined;
+  readonly commandAdmissionRef?: string | undefined;
   readonly diffDigest?: string | undefined;
   /** The digest of the final report the C16 row is judged on; C16 must name the same bytes. */
   readonly reportDigest?: string | undefined;
@@ -136,7 +164,31 @@ export interface C10CallFacts {
   readonly observedUsage: Readonly<{ inputTokens: number; outputTokens: number }> | null;
 }
 
-/** The C10 refusal witness: one allowed call that settles, then one over-limit call that never dispatches. */
+/**
+ * One task-token-budget refusal (UC-03 T028): a provider request whose durable reservation the
+ * owner refuses before the transport. `absent` is issued before the allowed call against a budget
+ * the whole request exceeds; `exhausted` follows the allowed settlement and asks for more than the
+ * remaining capacity. Neither may reach `fetch`.
+ */
+export interface C10BudgetCallFacts {
+  readonly requestId: string;
+  readonly kind: 'absent' | 'exhausted';
+  readonly declared: Readonly<{ maxInputTokens: number; maxOutputTokens: number; maxBillableTokens: number }>;
+  readonly budgetRefs: readonly string[];
+  readonly reservationRef: string;
+  readonly ledger: Readonly<{ limit: number; consumedBefore: number; reservedBefore: number; consumedAfter: number; reservedAfter: number }>;
+  readonly requestedBillable: number;
+  readonly fetchesBefore: number;
+  readonly fetchesAfter: number;
+  readonly portOutcome: string;
+  /** The port's leading bounded refusal code; a budget claim refuses as `CLAIM_DENIED`. */
+  readonly refusal: string;
+  readonly transport: null;
+  readonly claims: Readonly<{ before: number; after: number }>;
+  readonly outcomes: Readonly<{ before: number; after: number; recorded: readonly string[] }>;
+}
+
+/** The C10 refusal witness: one allowed call that settles, then the budget and run-limit refusals. */
 export interface C10WitnessBody {
   readonly schema: typeof C10_WITNESS_SCHEMA;
   readonly campaignId: string;
@@ -148,7 +200,10 @@ export interface C10WitnessBody {
   readonly provider: Readonly<Record<string, string>>;
   readonly limits: Readonly<{ totalModelCalls: number; perRunInputTokens: number; perRunOutputTokens: number; budgetRefs: readonly string[] }>;
   readonly calls: Readonly<{ allowed: C10CallFacts; refused: C10CallFacts }>;
-  readonly commandViewDigest: string | null;
+  readonly budgets: Readonly<{ absent: C10BudgetCallFacts; exhausted: C10BudgetCallFacts }>;
+  readonly commandViewDigest: null;
+  /** C10 is provider-only, so its own command view is explicitly not applicable. */
+  readonly commandViewScope: 'not-applicable-provider-only';
   readonly disclosure: string;
 }
 
@@ -237,6 +292,27 @@ export function parseReceipt(value: unknown): ConformanceReceipt | undefined {
     ...(typeof v['reasonCode'] === 'string' ? { reasonCode: v['reasonCode'] } : {}),
     finishedAt: v['finishedAt'],
   };
+}
+
+/**
+ * The v0.1 command view a run published, read back as untrusted input. The production digest is
+ * recomputed over the complete view, so a copied or edited field is not a measured view.
+ */
+export function parseCommandView(value: unknown): CommandView | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  const keys = ['viewId', 'viewDigest', 'taskId', 'workspaceId', 'canonicalRevisionDigest', 'admittedFiles', 'exclusionsPolicyVersion', 'scratchIdentity', 'mountedReadOnly'] as const;
+  if (Object.keys(v).length !== keys.length || !keys.every(key => Object.hasOwn(v, key))) return undefined;
+  if (typeof v['viewId'] !== 'string' || !SAFE_ID.test(v['viewId'])) return undefined;
+  if (typeof v['viewDigest'] !== 'string' || !SHA256.test(v['viewDigest'])) return undefined;
+  if (typeof v['taskId'] !== 'string' || !SAFE_ID.test(v['taskId']) || typeof v['workspaceId'] !== 'string' || !SAFE_ID.test(v['workspaceId'])) return undefined;
+  if (typeof v['canonicalRevisionDigest'] !== 'string' || !SHA256.test(v['canonicalRevisionDigest'])) return undefined;
+  if (typeof v['exclusionsPolicyVersion'] !== 'string' || v['exclusionsPolicyVersion'] === '') return undefined;
+  if (typeof v['scratchIdentity'] !== 'string' || v['scratchIdentity'] === '' || v['mountedReadOnly'] !== true) return undefined;
+  const files = v['admittedFiles'];
+  if (!Array.isArray(files) || !files.every(file => typeof file === 'object' && file !== null && typeof (file as Record<string, unknown>)['path'] === 'string' && (file as Record<string, unknown>)['path'] !== '' && typeof (file as Record<string, unknown>)['digest'] === 'string' && SHA256.test((file as Record<string, unknown>)['digest'] as string))) return undefined;
+  const view = v as unknown as CommandView;
+  return computeCommandViewDigest(view) === view.viewDigest ? view : undefined;
 }
 
 /** Writes a new file only: an existing observation is never replaced. */

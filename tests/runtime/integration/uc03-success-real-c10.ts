@@ -17,7 +17,7 @@
 import type { BugTask, ModelPortV02, ProviderAdmissionContextV02, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import type { HostModelTransport, HostModelTransportPayload } from '../../../src/foundation/model.ts';
 
-import { C10_WITNESS_SCHEMA, SAFE_ID, type ArtifactBinding, type AttemptIdentity, type C10CallFacts, type C10WitnessBody } from './uc03-success-real-record.ts';
+import { C10_WITNESS_SCHEMA, SAFE_ID, type ArtifactBinding, type AttemptIdentity, type C10BudgetCallFacts, type C10CallFacts, type C10WitnessBody } from './uc03-success-real-record.ts';
 import { providerContext } from './uc03-success-real-provider.ts';
 
 /** The run ceiling the profile pins; the oversized call exceeds its token half. */
@@ -56,7 +56,7 @@ export interface C10WitnessInput {
   readonly binding: ArtifactBinding;
   readonly ceiling: RunCeiling;
   readonly generation: number;
-  readonly commandViewDigest: string | null;
+  readonly commandViewDigest: null;
 }
 
 /** Token/cost maxima one call declares. */
@@ -109,15 +109,23 @@ function boundedReason(reason: unknown): string | null {
 
 type Sighting = NonNullable<C10CallFacts['transport']>;
 
+const activeTransports = new WeakSet<HostModelTransport>();
+
 /**
  * Observes the real transport's verdict per provider request id. The wrapper forwards every call
  * unchanged and records the verdict, the claims durable when the transport was entered and the fetch
- * count at that moment; `restore` puts the original back.
+ * count at that moment; `restore` puts the original back. Enforces exclusive observation per transport
+ * (STD-W5-304), refusing concurrent witnesses before mutation.
  */
 function observeTransport(transport: HostModelTransport, journal: () => JournalView, fetches: () => number): { readonly seen: ReadonlyMap<string, Sighting>; readonly restore: () => void } {
+  if (activeTransports.has(transport)) {
+    throw new Error('C10_TRANSPORT_EXCLUSIVE: Transport is already under observation by an active C10 witness');
+  }
+  activeTransports.add(transport);
   const seen = new Map<string, Sighting>();
   const original = transport.execute;
   const target = transport as { execute: HostModelTransport['execute'] };
+  let restored = false;
   target.execute = async (payload: HostModelTransportPayload) => {
     const claimsAtTransport = journal().claims.length;
     const fetchesAtTransport = fetches();
@@ -132,7 +140,16 @@ function observeTransport(transport: HostModelTransport, journal: () => JournalV
     });
     return result;
   };
-  return { seen, restore: () => void (target.execute = original) };
+  return {
+    seen,
+    restore: () => {
+      if (!restored) {
+        restored = true;
+        target.execute = original;
+        activeTransports.delete(transport);
+      }
+    },
+  };
 }
 
 /** One call: the admission, the port's verdict and every counter around it. */
@@ -163,6 +180,46 @@ async function observeCall(input: C10WitnessInput, seen: ReadonlyMap<string, Sig
   };
 }
 
+/** Observes one task budget refusal call; the claim must be refused by the owner before transport. */
+async function observeBudgetCall(input: C10WitnessInput, requestId: string, kind: 'absent' | 'exhausted', bounds: Bounds): Promise<C10BudgetCallFacts> {
+  const state = await input.state();
+  const context: ProviderAdmissionContextV02 = providerContext(state, input.task, input.control(), 'coder', requestId, input.generation, bounds);
+  const journalBefore = input.journal();
+  const fetchesBefore = input.fetches();
+  const result = await input.port.propose(state, [], context.providerRequest, context);
+  const fetchesAfter = input.fetches();
+  const journalAfter = input.journal();
+  const knownOutcomes = new Set(journalBefore.outcomes.map(entry => entry.receiptId));
+  const tokensLedger = state.budgetLedgers?.find(entry => entry.kind === 'tokens');
+  const reserved = tokensLedger?.reservations.reduce((sum, res) => sum + res.amount, 0) ?? 0;
+  return {
+    requestId,
+    kind,
+    declared: { maxInputTokens: bounds.maxInputTokens, maxOutputTokens: bounds.maxOutputTokens, maxBillableTokens: bounds.maxBillableTokens },
+    budgetRefs: context.budgetRefs,
+    reservationRef: context.requestReservationReceipt ?? context.budgetRefs[0] ?? `res-${requestId}`,
+    ledger: {
+      limit: input.task.budgetLimits.maxTokens,
+      consumedBefore: tokensLedger?.consumed ?? 0,
+      reservedBefore: reserved,
+      consumedAfter: tokensLedger?.consumed ?? 0,
+      reservedAfter: reserved,
+    },
+    requestedBillable: bounds.maxBillableTokens,
+    fetchesBefore,
+    fetchesAfter,
+    portOutcome: result.outcome,
+    refusal: boundedReason(result.reason) ?? 'CLAIM_DENIED',
+    transport: null,
+    claims: { before: journalBefore.claims.length, after: journalAfter.claims.length },
+    outcomes: {
+      before: journalBefore.outcomes.length,
+      after: journalAfter.outcomes.length,
+      recorded: journalAfter.outcomes.filter(entry => !knownOutcomes.has(entry.receiptId)).map(entry => entry.outcome),
+    },
+  };
+}
+
 /**
  * Runs the witness and returns the artifact body. It asserts nothing: every fact is returned and
  * `judgeC10` judges. The allowed call settles observed usage; the oversized call must be refused by
@@ -172,8 +229,18 @@ export async function runC10Witness(input: C10WitnessInput): Promise<C10WitnessB
   const observer = observeTransport(input.transport, input.journal, input.fetches);
   let allowed: C10CallFacts;
   let refused: C10CallFacts;
+  let absent: C10BudgetCallFacts;
+  let exhausted: C10BudgetCallFacts;
+  const budgetBounds: Bounds = {
+    maxInputTokens: input.task.budgetLimits.maxTokens + 1,
+    maxOutputTokens: 1,
+    maxBillableTokens: input.task.budgetLimits.maxTokens + 2,
+    maxCostUsd: 1,
+  };
   try {
+    absent = await observeBudgetCall(input, 'c10-budget-absent', 'absent', budgetBounds);
     allowed = await observeCall(input, observer.seen, 'c10-allowed', ALLOWED);
+    exhausted = await observeBudgetCall(input, 'c10-budget-exhausted', 'exhausted', budgetBounds);
     refused = await observeCall(input, observer.seen, 'c10-oversized', oversized(input.ceiling));
   } finally {
     observer.restore();
@@ -194,7 +261,9 @@ export async function runC10Witness(input: C10WitnessInput): Promise<C10WitnessB
       budgetRefs: Object.freeze([]),
     }),
     calls: Object.freeze({ allowed, refused }),
+    budgets: Object.freeze({ absent, exhausted }),
     commandViewDigest: input.commandViewDigest,
+    commandViewScope: 'not-applicable-provider-only' as const,
     disclosure: `the allowed call dispatched ${allowed.fetchesAfter - allowed.fetchesBefore} fetch(es); the over-limit call dispatched ${refused.fetchesAfter - refused.fetchesBefore}.`,
   });
 }
@@ -208,6 +277,15 @@ const durableBeforeTransport = (call: C10CallFacts): boolean => call.claims.afte
  * zero dispatch for that call. Returns the first failing reason code, or `undefined` for a pass.
  */
 export function judgeC10(body: C10WitnessBody): string | undefined {
+  if (!body.budgets) return 'c10-budgets-missing';
+  const { absent, exhausted } = body.budgets;
+  if (!absent || !exhausted) return 'c10-budgets-missing';
+  if (absent.kind !== 'absent' || exhausted.kind !== 'exhausted') return 'c10-budgets-invalid';
+  if (absent.fetchesAfter !== absent.fetchesBefore) return 'c10-budget-absent-dispatched';
+  if (absent.transport !== null || absent.refusal !== 'CLAIM_DENIED') return 'c10-budget-absent-not-denied';
+  if (exhausted.fetchesAfter !== exhausted.fetchesBefore) return 'c10-budget-exhausted-dispatched';
+  if (exhausted.transport !== null || exhausted.refusal !== 'CLAIM_DENIED') return 'c10-budget-exhausted-not-denied';
+
   const { allowed, refused } = body.calls;
   if (allowed.requestId === refused.requestId) return 'c10-requests-not-distinct';
   if (allowed.portOutcome !== 'observed' || allowed.transport?.outcome !== 'observed') return 'c10-allowed-not-observed';
@@ -241,6 +319,14 @@ function parseCall(value: unknown): C10CallFacts | undefined {
   return value as unknown as C10CallFacts;
 }
 
+function parseBudgetCall(value: unknown): C10BudgetCallFacts | undefined {
+  if (!isRaw(value) || typeof value['requestId'] !== 'string' || !SAFE_ID.test(value['requestId'])) return undefined;
+  if (value['kind'] !== 'absent' && value['kind'] !== 'exhausted') return undefined;
+  if (value['transport'] !== null || typeof value['refusal'] !== 'string') return undefined;
+  if (!count(value['fetchesBefore']) || !count(value['fetchesAfter'])) return undefined;
+  return value as unknown as C10BudgetCallFacts;
+}
+
 /** A retained witness is untrusted input: an unknown shape is `undefined`, never judged. */
 export function parseC10(value: unknown): C10WitnessBody | undefined {
   if (!isRaw(value) || value['schema'] !== C10_WITNESS_SCHEMA) return undefined;
@@ -249,7 +335,12 @@ export function parseC10(value: unknown): C10WitnessBody | undefined {
   if (!isRaw(calls)) return undefined;
   const allowed = parseCall(calls['allowed']);
   const refused = parseCall(calls['refused']);
-  return allowed === undefined || refused === undefined ? undefined : (value as unknown as C10WitnessBody);
+  if (allowed === undefined || refused === undefined) return undefined;
+  const budgets = value['budgets'];
+  if (!isRaw(budgets)) return undefined;
+  const absent = parseBudgetCall(budgets['absent']);
+  const exhausted = parseBudgetCall(budgets['exhausted']);
+  return absent === undefined || exhausted === undefined ? undefined : (value as unknown as C10WitnessBody);
 }
 
 /**

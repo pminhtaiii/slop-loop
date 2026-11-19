@@ -7,9 +7,9 @@
  * synthetic key, exactly as the first gate file documents.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import { sha256Text } from '../../../src/uc01/contracts.ts';
@@ -22,12 +22,13 @@ import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile
 import { computeCanonicalSha256 } from '../../../src/contracts/foundation/uc03.ts';
 import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
 import type { HostModelTransport } from '../../../src/foundation/model.ts';
+import { runCaseStage } from './uc03-success-real-run-cases.ts';
 import { runC10Witness, allowedProviderResponse, judgeC10, journalViewOf, publishRunAuthority } from './uc03-success-real-c10.ts';
 import { createOperatorDecisionSource, type OperatorIo } from './uc03-success-real-operator.ts';
-import { resolvePinnedGrader } from './uc03-success-real-grader.ts';
+import { resolvePinnedGrader, type GraderCapability } from './uc03-success-real-grader.ts';
 import { judgeC16Report } from './uc03-success-real-c16.ts';
 import { checkEvidence } from './uc03-success-real-evidence.ts';
-import { RECEIPT_SCHEMA, artifactName, receiptName, type C10WitnessBody, type PendingArtifact, type StageRecord } from './uc03-success-real-record.ts';
+import { RECEIPT_SCHEMA, artifactName, digestOf, receiptName, serialize, type C10WitnessBody, type PendingArtifact, type StageRecord } from './uc03-success-real-record.ts';
 import { FIXTURE_BINDING, PASSING_ROWS, STAGES, passingArtifacts, writeRecord } from './uc03-success-real-fixture.ts';
 import { createScanFixture, type ScanFixture } from '../unit/real-tier-scan-fixtures.ts';
 
@@ -194,6 +195,68 @@ test('C10 witness: a failing allowed call is not a pass, even though the second 
   assert.equal(judgeC10(body), 'c10-allowed-not-observed');
 });
 
+test('STD-W5-304: overlapping C10 witnesses refuse concurrent observation and restore on throwing path', async () => {
+  let releaseCall1: () => void = () => undefined;
+  const gatePromise = new Promise<void>(resolve => {
+    releaseCall1 = resolve;
+  });
+  const dummyState = async () => {
+    await gatePromise;
+    return {} as TaskState;
+  };
+  const original = async () => ({ outcome: 'observed' });
+  const transport: HostModelTransport = { execute: original };
+  const baseInput = {
+    port: { propose: async () => ({ outcome: 'observed' as const, observedUsage: { inputTokens: 1, outputTokens: 1, costUsd: 0 } }) },
+    transport,
+    fetches: () => 0,
+    journal: () => ({ claims: [], outcomes: [] }),
+    control: () => ({ controlVersion: 1, epoch: 1 }),
+    task: taskOf(),
+    identity: { taskId: 't1', runId: 'r1', workspaceId: 'w1' },
+    campaignId: 'c1',
+    binding: FIXTURE_BINDING,
+    ceiling: { totalModelCalls: 10, perRunInputTokens: 1000, perRunOutputTokens: 1000 },
+    generation: 1,
+    commandViewDigest: null,
+  };
+
+  // Start call 1 which pauses at state()
+  const call1Promise = runC10Witness({ ...baseInput, state: dummyState });
+
+  // Attempt overlapping call 2 on the same transport while call 1 is active
+  await assert.rejects(
+    async () => {
+      await runC10Witness({ ...baseInput, state: async () => ({} as TaskState) });
+    },
+    /C10_TRANSPORT_EXCLUSIVE/u,
+    'overlapping witness must be refused before mutating transport',
+  );
+
+  // Release call 1 to finish
+  releaseCall1();
+  await call1Promise.catch(() => undefined);
+
+  // Verify transport.execute is restored
+  assert.equal(transport.execute, original, 'transport.execute is restored after call 1 completes/fails');
+
+  // Single-call throwing-path restoration check:
+  const throwingTransport: HostModelTransport = { execute: original };
+  await assert.rejects(
+    async () => {
+      await runC10Witness({
+        ...baseInput,
+        transport: throwingTransport,
+        state: async () => {
+          throw new Error('STATE_READ_FAILURE');
+        },
+      });
+    },
+    /STATE_READ_FAILURE/u,
+  );
+  assert.equal(throwingTransport.execute, original, 'transport.execute is restored when observeCall throws');
+});
+
 test('judgeC10 distinguishes a limiter refusal from any other refusal and disproves a fetch for the refused call', () => {
   interface Editable {
     calls: { allowed: Record<string, unknown>; refused: Record<string, unknown> };
@@ -296,7 +359,8 @@ test('the pinned grader names its missing inputs and never fabricates a grade', 
     assert.deepEqual([...withoutCapability.missing].sort(), ['grader.executor', 'grader.finalTree', 'grader.isolationAuthority']);
   }
   // With the two capabilities supplied, the grader is constructed from the pinned material.
-  const capability = {
+  const capability: GraderCapability = {
+    tier: 'controlled-tier',
     isolationAuthority: { admit: () => ({ kind: 'injected-mock-isolation-admission' as const, admissionId: 'adm-1' }) },
     executor: { executorId: 'exec-1', execute: () => ({}) },
     finalTree: { freezeFinalTree: () => ({}), recheckCurrentFinalTree: () => ({}) },
@@ -310,6 +374,32 @@ test('a catalog entry with no grader file is a bounded refusal, not a fabricated
   const resolution = resolvePinnedGrader(assembly, 'C99', undefined);
   assert.equal(resolution.status, 'unavailable');
   if (resolution.status === 'unavailable') assert.equal(resolution.reasonCode, 'grader-catalog-entry-missing');
+});
+
+test('STD-W5-303: an absent, unreadable or malformed pinned grader file for C01 records unavailable boundedly', () => {
+  // 1. Absent grader file for C01
+  const absentCatalog = catalogWith(taskOf(), undefined);
+  const absentAssembly = resolveOrThrow(absentCatalog.env);
+  const catalogDir = dirname(absentAssembly.profile.catalog.path);
+  rmSync(join(catalogDir, 'grader.json'));
+  const absentRes = resolvePinnedGrader(absentAssembly, CASE, undefined);
+  assert.equal(absentRes.status, 'unavailable');
+  if (absentRes.status === 'unavailable') {
+    assert.equal(absentRes.reasonCode, 'grader-file-unreadable');
+    assert.deepEqual(absentRes.missing, ['catalog.grader.path']);
+  }
+
+  // 2. Malformed grader file for C01
+  const malformedCatalog = catalogWith(taskOf(), undefined);
+  const malformedAssembly = resolveOrThrow(malformedCatalog.env);
+  const malformedDir = dirname(malformedAssembly.profile.catalog.path);
+  writeFileSync(join(malformedDir, 'grader.json'), '{ not valid json', 'utf8');
+  const malformedRes = resolvePinnedGrader(malformedAssembly, CASE, undefined);
+  assert.equal(malformedRes.status, 'unavailable');
+  if (malformedRes.status === 'unavailable') {
+    assert.equal(malformedRes.reasonCode, 'grader-file-malformed');
+    assert.deepEqual(malformedRes.missing, ['catalog.grader']);
+  }
 });
 
 /* --------------------------------------- SPEC-W5-103: the C16 safe report */
@@ -327,19 +417,31 @@ test('C16 is judged on the report content: absent, unsafe and unprovenanced repo
 /* ------------------------- SPEC-W5-105/106/206/207: artifacts, binding and the checker */
 
 const scanOf = () => ({ env: fixture.envOf(), repositoryRoot: tempRoot('repo') });
-type Bodies = Record<string, Record<string, any>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+type Bodies = Record<string, Record<string, unknown>>;
 
-const of = (bodies: Bodies, caseId: string): Record<string, any> => bodies[caseId] as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+const of = (bodies: Bodies, caseId: string): Record<string, unknown> => bodies[caseId] as Record<string, unknown>;
+
+const prop = (root: Record<string, unknown>, ...path: string[]): Record<string, unknown> => {
+  let curr = root;
+  for (const key of path) curr = curr[key] as Record<string, unknown>;
+  return curr;
+};
 
 /** The complete artifact set keyed by case id, as editable plain data. */
 function editableArtifacts(): Bodies {
-  return Object.fromEntries(passingArtifacts().map(([caseId, , , body]) => [caseId, structuredClone(body) as Record<string, any>])); // eslint-disable-line @typescript-eslint/no-explicit-any
+  return Object.fromEntries(passingArtifacts().map(([caseId, , , body]) => [caseId, structuredClone(body) as Record<string, unknown>]));
 }
 
 /** Writes a complete campaign whose artifact bodies were edited first; digests are recomputed by the writer. */
 function editedCampaign(edit: (bodies: Bodies) => void, records: readonly StageRecord[] = [...STAGES, ...PASSING_ROWS]): string {
   const bodies = editableArtifacts();
   edit(bodies);
+  if (bodies['C16'] && bodies['C01']) {
+    const c16Body = bodies['C16'] as Record<string, unknown>;
+    if (c16Body['sourceDigest'] !== `sha256:${'0'.repeat(64)}`) {
+      c16Body['sourceDigest'] = digestOf(serialize(bodies['C01']));
+    }
+  }
   const dir = tempRoot('evidence');
   writeRecord(dir, records, passingArtifacts().map(([caseId, attempt, kind]) => [caseId, attempt, kind, bodies[caseId]] as PendingArtifact));
   return dir;
@@ -381,33 +483,33 @@ const MUTATIONS: readonly (readonly [string, (bodies: Bodies) => void, string])[
   ['a missing campaign id', bodies => void delete of(bodies, 'C01')['campaignId'], 'case:C01:artifact-campaign'],
   ['an empty campaign id', bodies => void (of(bodies, 'C10')['campaignId'] = ''), 'case:C10:artifact-campaign'],
   ['a wrong attempt', bodies => void (of(bodies, 'C02')['attempt'] = 2), 'case:C02:artifact-attempt'],
-  ['a foreign candidate', bodies => void (of(bodies, 'C10')['binding'].candidateSha = 'f'.repeat(40)), 'case:C10:artifact-binding'],
-  ['a foreign profile digest', bodies => void (of(bodies, 'C01')['binding'].profileDigest = `sha256:${'0'.repeat(64)}`), 'case:C01:artifact-binding'],
-  ['a foreign endpoint digest', bodies => void (of(bodies, 'C02')['binding'].endpointDigest = `sha256:${'0'.repeat(64)}`), 'case:C02:artifact-binding'],
-  ['a foreign model', bodies => void (of(bodies, 'C16')['binding'].model = 'other/model'), 'case:C16:artifact-binding'],
+  ['a foreign candidate', bodies => void (prop(of(bodies, 'C10'), 'binding')['candidateSha'] = 'f'.repeat(40)), 'case:C10:artifact-binding'],
+  ['a foreign profile digest', bodies => void (prop(of(bodies, 'C01'), 'binding')['profileDigest'] = `sha256:${'0'.repeat(64)}`), 'case:C01:artifact-binding'],
+  ['a foreign endpoint digest', bodies => void (prop(of(bodies, 'C02'), 'binding')['endpointDigest'] = `sha256:${'0'.repeat(64)}`), 'case:C02:artifact-binding'],
+  ['a foreign model', bodies => void (prop(of(bodies, 'C16'), 'binding')['model'] = 'other/model'), 'case:C16:artifact-binding'],
   ['a missing binding', bodies => void delete of(bodies, 'C01')['binding'], 'case:C01:artifact-binding'],
   ['a mismatched final snapshot', bodies => void (of(bodies, 'C01')['finalSnapshotDigest'] = `sha256:${'0'.repeat(64)}`), 'case:C01:final-snapshot-mismatch'],
   ['a missing final snapshot', bodies => void (of(bodies, 'C02')['finalSnapshotDigest'] = null), 'case:C02:final-snapshot-mismatch'],
-  ['a retained snapshot that is not the graded one', bodies => void (of(bodies, 'C02')['evidence'].snapshot.digest = `sha256:${'0'.repeat(64)}`), 'case:C02:snapshot-mismatch'],
-  ['an evidence digest the grade does not name', bodies => void (of(bodies, 'C01')['evidence'].evidenceDigest = `sha256:${'0'.repeat(64)}`), 'case:C01:snapshot-mismatch'],
-  ['a grade with no snapshot', bodies => void delete of(bodies, 'C01')['evidence'].grade.snapshot, 'case:C01:grade-unbound'],
-  ['a grade with no criteria digest', bodies => void delete of(bodies, 'C02')['evidence'].grade.criteriaDigest, 'case:C02:grade-unbound'],
-  ['a grade for another case', bodies => void (of(bodies, 'C02')['evidence'].grade.caseId = 'C01'), 'case:C02:grade-case-mismatch'],
-  ['a failed grade behind a passing row', bodies => void (of(bodies, 'C01')['evidence'].grade.grade = 'fail'), 'case:C01:label-unsubstantiated'],
+  ['a retained snapshot that is not the graded one', bodies => void (prop(of(bodies, 'C02'), 'evidence', 'snapshot')['digest'] = `sha256:${'0'.repeat(64)}`), 'case:C02:snapshot-mismatch'],
+  ['an evidence digest the grade does not name', bodies => void (prop(of(bodies, 'C01'), 'evidence')['evidenceDigest'] = `sha256:${'0'.repeat(64)}`), 'case:C01:snapshot-mismatch'],
+  ['a grade with no snapshot', bodies => void delete prop(of(bodies, 'C01'), 'evidence', 'grade')['snapshot'], 'case:C01:grade-unbound'],
+  ['a grade with no criteria digest', bodies => void delete prop(of(bodies, 'C02'), 'evidence', 'grade')['criteriaDigest'], 'case:C02:grade-unbound'],
+  ['a grade for another case', bodies => void (prop(of(bodies, 'C02'), 'evidence', 'grade')['caseId'] = 'C01'), 'case:C02:grade-case-mismatch'],
+  ['a failed grade behind a passing row', bodies => void (prop(of(bodies, 'C01'), 'evidence', 'grade')['grade'] = 'fail'), 'case:C01:label-unsubstantiated'],
   ['a missing identity', bodies => void delete of(bodies, 'C01')['identity'], 'case:C01:identity-missing'],
   ['missing accounting', bodies => void delete of(bodies, 'C02')['accounting'], 'case:C02:accounting-missing'],
-  ['missing owner revisions', bodies => void delete of(bodies, 'C01')['evidence'].ownerRevisions, 'case:C01:owner-revisions-missing'],
-  ['a missing plan approval', bodies => void delete of(bodies, 'C01')['evidence'].approval, 'case:C01:approval-missing'],
-  ['a rejected plan approval', bodies => void (of(bodies, 'C01')['evidence'].approval.decided = 'reject'), 'case:C01:approval-missing'],
-  ['a missing diff digest', bodies => void delete of(bodies, 'C01')['evidence'].diffDigest, 'case:C01:diff-missing'],
-  ['a cost with no estimate label', bodies => void delete of(bodies, 'C01')['evidence'].usage.costLabel, 'case:C01:usage-unlabelled'],
+  ['missing owner revisions', bodies => void delete prop(of(bodies, 'C01'), 'evidence')['ownerRevisions'], 'case:C01:owner-revisions-missing'],
+  ['a missing plan approval', bodies => void delete prop(of(bodies, 'C01'), 'evidence')['approval'], 'case:C01:approval-missing'],
+  ['a rejected plan approval', bodies => void (prop(of(bodies, 'C01'), 'evidence', 'approval')['decided'] = 'reject'), 'case:C01:approval-missing'],
+  ['a missing diff digest', bodies => void delete prop(of(bodies, 'C01'), 'evidence')['diffDigest'], 'case:C01:diff-missing'],
+  ['a cost with no estimate label', bodies => void delete prop(of(bodies, 'C01'), 'evidence', 'usage')['costLabel'], 'case:C01:usage-unlabelled'],
   ['a C16 report derived from other bytes', bodies => void (of(bodies, 'C16')['sourceDigest'] = `sha256:${'0'.repeat(64)}`), 'case:C16:report-source-mismatch'],
-  ['a C16 report of another digest', bodies => void (of(bodies, 'C16')['report'].reportDigest = `sha256:${'0'.repeat(64)}`), 'case:C16:report-source-mismatch'],
+  ['a C16 report of another digest', bodies => void (prop(of(bodies, 'C16'), 'report')['reportDigest'] = `sha256:${'0'.repeat(64)}`), 'case:C16:report-source-mismatch'],
   ['a C16 report on another snapshot', bodies => void (of(bodies, 'C16')['finalSnapshotDigest'] = `sha256:${'0'.repeat(64)}`), 'case:C16:final-snapshot-mismatch'],
   ['a C16 report with a failed verdict', bodies => void (of(bodies, 'C16')['verdict'] = 'fail'), 'case:C16:report-unsafe'],
-  ['a C16 report citing no evidence', bodies => void (of(bodies, 'C16')['report'].evidenceRefs = []), 'case:C16:report-unprovenanced'],
-  ['a C10 witness with no limiter verdict', bodies => void (of(bodies, 'C10')['calls'].refused.transport = null), 'case:C10:c10-refusal-not-limiter'],
-  ['a C10 witness whose refused call fetched', bodies => void (of(bodies, 'C10')['calls'].refused.fetchesAfter = 2), 'case:C10:c10-refused-dispatched'],
+  ['a C16 report citing no evidence', bodies => void (prop(of(bodies, 'C16'), 'report')['evidenceRefs'] = []), 'case:C16:report-unprovenanced'],
+  ['a C10 witness with no limiter verdict', bodies => void (prop(of(bodies, 'C10'), 'calls', 'refused')['transport'] = null), 'case:C10:c10-refusal-not-limiter'],
+  ['a C10 witness whose refused call fetched', bodies => void (prop(of(bodies, 'C10'), 'calls', 'refused')['fetchesAfter'] = 2), 'case:C10:c10-refused-dispatched'],
   ['a C10 witness with the old shape', bodies => void (of(bodies, 'C10')['schema'] = 'uc03-c10-witness/1'), 'case:C10:artifact-schema'],
 ];
 
@@ -426,10 +528,10 @@ test('the checker binds the campaign to its conformance receipt and to the pinne
     ['a receipt for another binding', dir => writeFileSync(join(dir, receiptName('campaign-1')), JSON.stringify({ schemaVersion: RECEIPT_SCHEMA, campaignId: 'campaign-1', binding: { ...FIXTURE_BINDING, model: 'other/model' }, outcome: 'conformed', finishedAt: 2 })), 'receipt:binding-mismatch'],
     ['a receipt for another campaign', dir => writeFileSync(join(dir, receiptName('campaign-1')), JSON.stringify({ schemaVersion: RECEIPT_SCHEMA, campaignId: 'campaign-2', binding: FIXTURE_BINDING, outcome: 'conformed', finishedAt: 2 })), 'receipt:campaign-mismatch'],
     ['a malformed receipt', dir => writeFileSync(join(dir, receiptName('campaign-1')), '{}'), 'receipt:malformed'],
-    ['a model that is not the pinned one', dir => editRecord(dir, record => void (record.bindings.model = 'other/model')), 'record:model-not-pinned'],
-    ['a missing image identity', dir => editRecord(dir, record => void delete record.bindings.image), 'EVIDENCE_RECORD_INVALID'],
-    ['a record that is not a campaign', dir => editRecord(dir, record => void (record.mode = 'case')), 'record:not-a-campaign'],
-    ['a candidate that is not the bound one', dir => editRecord(dir, record => void (record.candidateSha = 'f'.repeat(40))), 'record:candidate-invalid'],
+    ['a model that is not the pinned one', dir => editRecord(dir, record => void (prop(record, 'bindings')['model'] = 'other/model')), 'record:model-not-pinned'],
+    ['a missing image identity', dir => editRecord(dir, record => void delete prop(record, 'bindings')['image']), 'EVIDENCE_RECORD_INVALID'],
+    ['a record that is not a campaign', dir => editRecord(dir, record => void (record['mode'] = 'case')), 'record:not-a-campaign'],
+    ['a candidate that is not the bound one', dir => editRecord(dir, record => void (record['candidateSha'] = 'f'.repeat(40))), 'record:candidate-invalid'],
   ];
   for (const [label, change, expected] of rows) {
     const dir = tempRoot('evidence');
@@ -446,9 +548,9 @@ test('the checker binds the campaign to its conformance receipt and to the pinne
 });
 
 /** Edits the retained record in place; its artifacts and receipt are untouched. */
-function editRecord(dir: string, change: (record: any) => void): void { // eslint-disable-line @typescript-eslint/no-explicit-any
+function editRecord(dir: string, change: (record: Record<string, unknown>) => void): void {
   const path = join(dir, 'campaign.json');
-  const record = JSON.parse(readFileSync(path, 'utf8'));
+  const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
   change(record);
   writeFileSync(path, JSON.stringify(record), 'utf8');
 }
@@ -550,4 +652,60 @@ test('an unavailable grader is retained in the record with the exact missing inp
   const preflight = record.records.find(entry => entry.stage === 'preflight');
   assert.equal(preflight?.facts?.['grader-status'], 'unavailable', 'the refusal is retained, not just printed');
   assert.match(String(preflight?.facts?.['grader-missing']), /grader\.isolationAuthority/u, 'the missing inputs are named');
+});
+
+test('SPEC-W5-304: C10 reports not-run c10-task-budget-below-run-limit when task token headroom cannot cover allowed call plus oversized reservation', async () => {
+  let dispatched = 0;
+  // perRunInputTokens is 400_000 by default in profile.
+  // maxTokens = 400_003 is > perRunInputTokens + 1 (400_001), but < ALLOWED.maxBillableTokens (32_768) + perRunInputTokens + 2 = 432_770.
+  const taskWithInsufficientHeadroom = taskOf({
+    budgetLimits: { maxReplanCount: 3, maxTokens: 400_003, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
+  });
+  const { env } = catalogWith(taskWithInsufficientHeadroom, undefined);
+  const resolved = resolveOrThrow(env, {
+    fetch: async () => (dispatched++, allowedProviderResponse(MODEL)),
+  });
+  const pins = pinsOf(resolved);
+  const [outcome] = await runCaseStage(() => resolved, {
+    caseIds: ['C10'],
+    repositoryRoot: tempRoot('repo'),
+    ...pins,
+    fetches: () => dispatched,
+  });
+  assert.deepEqual([outcome?.record.outcome, outcome?.record.reasonCode], ['not-run', 'c10-task-budget-below-run-limit']);
+});
+
+test('SPEC-W5-301: checker requires command-view evidence for C01 and rejects missing or corrupted command view digest', () => {
+  const missing = checkEvidence({
+    evidenceDir: editedCampaign(bodies => void delete prop(of(bodies, 'C01'), 'evidence')['commandViewDigest']),
+    ...scanOf(),
+  });
+  assert.equal(missing.exitCode, 1);
+  assert.ok(missing.output.includes('case:C01:command-view-missing'), `expects case:C01:command-view-missing, got ${missing.output}`);
+});
+
+test('STD-W5-302 / SPEC-W5-302: checker refuses row/artifact attempt disagreement and foreign identity in grade binding', () => {
+  // Row has attempt: 1 in PASSING_ROWS, while reference and body are attempt: 2
+  const dir = editedCampaign(bodies => void (of(bodies, 'C02')['attempt'] = 2));
+  const oldPath = join(dir, artifactName('C02', 1, 'evidence'));
+  const newPath = join(dir, artifactName('C02', 2, 'evidence'));
+  renameSync(oldPath, newPath);
+  editRecord(dir, record => {
+    const artifacts = record['caseArtifacts'] as { caseId: string; attempt: number; path: string }[];
+    for (const a of artifacts) {
+      if (a.caseId === 'C02') {
+        a.attempt = 2;
+        a.path = artifactName('C02', 2, 'evidence');
+      }
+    }
+  });
+  const res = checkEvidence({ evidenceDir: dir, ...scanOf() });
+  assert.equal(res.exitCode, 1);
+  assert.ok(res.output.includes('case:C02:attempt-mismatch'), `expects attempt-mismatch, got ${res.output}`);
+});
+
+test('SPEC-W5-303: judgeC10 requires absent and exhausted task-budget refusal rows with zero dispatch and CLAIM_DENIED', () => {
+  const base = structuredClone(c10Of(passingArtifacts())) as Record<string, unknown>;
+  delete base['budgets'];
+  assert.equal(judgeC10(base as unknown as C10WitnessBody), 'c10-budgets-missing');
 });

@@ -35,7 +35,7 @@ import { isSupportedSnapshotPlatform, createTrustedHostSnapshot } from '../../..
 import { createHostAssembly, type RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import type { BugTask, ExecutionLimits, RepositoryAdmissionContextV02, RunCommandAction, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { isCanonicalRelativePath } from '../../../src/contracts/foundation/uc03.ts';
-import { createContainerTrap, type ContainerTrap, type InspectedContainer, hostileAdmission, hostileCommand, measuredAdmissionView, memoryKillWitnessed, parseInspected, REFUSAL_REASONS, refusalContexts, sigkilled, timeoutKilled } from './uc03-real-containment-evidence.ts';
+import { createContainerTrap, type ContainerTrap, type InspectedContainer, hostileAdmission, hostileCommand, measuredAdmissionView, memoryKillWitnessed, parseInspected, REFUSAL_REASONS, refusalContexts, runDiagnosticWithCleanup, sigkilled, timeoutKilled } from './uc03-real-containment-evidence.ts';
 
 const TASK_ID = 'task-t024';
 const WORKSPACE_ID = 'ws-t024';
@@ -681,11 +681,14 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
     const memoryBytes = 64 * 1024 * 1024;
     // The trap keeps the one container this execution starts (it drops only `--rm`), so Docker can say
     // why exactly that container died. A SIGKILL with no OOM there, or an OOM elsewhere, is not a pass.
-    trap.arm(OOM_SCRIPT);
-    const oom = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', OOM_SCRIPT], limits: { ...limits, maxMemoryBytes: memoryBytes } });
-    const ranName = trap.disarm();
-    const inspected = ranName === undefined ? undefined : await inspectContainer(ranName);
-    if (ranName !== undefined) await structuredSpawn('docker', ['rm', '-f', ranName], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
+    const diagnostic = await runDiagnosticWithCleanup({
+      trap,
+      marker: OOM_SCRIPT,
+      execute: () => executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', OOM_SCRIPT], limits: { ...limits, maxMemoryBytes: memoryBytes } }),
+      inspect: inspectContainer,
+      remove: name => structuredSpawn('docker', ['rm', '-f', name], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 }),
+    });
+    const { outcome: oom, ranName, inspected } = diagnostic;
     evidence['memoryBound'] = { exitCode: oom.exitCode, timedOut: oom.timedOut, outcome: oom.outcome, durationMs: oom.durationMs, container: inspected, removalDisabledForInspection: true };
     rows.push(row('C10 memory over the admitted ceiling is OOM-killed in its own executor container, within its timeout', memoryKillWitnessed(oom, ranName, inspected, limits.timeoutMs), evidence['memoryBound']));
 

@@ -244,6 +244,9 @@ Run the emitted counterparts after the build. Record each recorded gap as closed
 
 ### 5. Real tier, live calls to the self-hosted endpoint: T028 success route (T054)
 
+> [!NOTE]
+> **C10 task token headroom requirement (`contracts/real-tier.md` §(f)):** The C10 witness must first reserve its oversized request through task and run ledgers; the pinned C01 catalog task must declare enough token headroom (`budgetLimits.maxTokens`) to cover both the preceding allowed call reservation (up to 32,768 billable tokens) plus the oversized reservation (`perRunInputTokens + 2`, e.g. 400,002 tokens for the default 400,000 ceiling, requiring at least 432,770 tokens total; recommend 500,000+). If catalog task headroom is insufficient, the task budget ledger refuses the reservation as a budget claim before transport, and C10 records bounded `not-run: c10-task-budget-below-run-limit` rather than mistaking a budget refusal for a limiter failure.
+
 ```powershell
 node dist/tests/runtime/integration/uc03-success-real-run.js --campaign
 node dist/tests/runtime/integration/uc03-success-real-evidence.js --evidence .agent-work/<date>/uc03-real-tier/evidence/T054

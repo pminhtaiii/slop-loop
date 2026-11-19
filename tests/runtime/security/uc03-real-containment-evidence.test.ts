@@ -37,6 +37,7 @@ import {
   parseInspected,
   REFUSAL_REASONS,
   refusalContexts,
+  runDiagnosticWithCleanup,
 } from './uc03-real-containment-evidence.ts';
 
 const fixture = createScanFixture('t051-evidence-', 't051-evidence-digest-key');
@@ -332,4 +333,94 @@ test('the container trap keeps only the armed run, drops only --rm and records i
   assert.ok(seen[1]?.includes('--rm'), 'another command keeps --rm');
   assert.deepEqual(seen[2], ['run', '--network=none', '--name=ctr-armed', 'image', 'python3', '-c', script], 'the armed run loses only --rm');
   assert.ok(seen[3]?.includes('--rm'), 'only the first armed run is kept');
+});
+
+test('STD-W5-301: diagnostic container is force-removed when execution fails with indeterminate null-exit', async () => {
+  const removed: string[] = [];
+  const script = 'x=bytearray(2*1024**3)';
+  const base: StructuredSpawn = async () => {
+    return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+  };
+  const trap = createContainerTrap(base);
+  const options = { timeoutMs: 1, maxOutputBytes: 1 };
+  const run = (name: string, tail: string) => ['run', '--rm', `--name=${name}`, 'image', 'python3', '-c', tail];
+
+  await assert.rejects(
+    async () => {
+      await runDiagnosticWithCleanup({
+        trap,
+        marker: script,
+        execute: async () => {
+          await trap.spawn('docker', run('ctr-oom-indeterminate', script), options);
+          throw new Error('INDETERMINATE_EXECUTION: container exited with code null');
+        },
+        inspect: async () => undefined,
+        remove: async name => {
+          removed.push(name);
+          return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+        },
+      });
+    },
+    /INDETERMINATE_EXECUTION/u,
+  );
+
+  assert.deepEqual(removed, ['ctr-oom-indeterminate'], 'the captured container name was force-removed despite execution failure');
+  assert.equal(trap.disarm(), undefined, 'trap was disarmed in finally');
+});
+
+test('STD-W5-301: diagnostic container is force-removed when inspection throws', async () => {
+  const removed: string[] = [];
+  const script = 'x=bytearray(2*1024**3)';
+  const base: StructuredSpawn = async () => ({ exitCode: 0, stdout: '', stderr: '', timedOut: false });
+  const trap = createContainerTrap(base);
+  const options = { timeoutMs: 1, maxOutputBytes: 1 };
+  const run = (name: string, tail: string) => ['run', '--rm', `--name=${name}`, 'image', 'python3', '-c', tail];
+
+  await assert.rejects(
+    async () => {
+      await runDiagnosticWithCleanup({
+        trap,
+        marker: script,
+        execute: async () => {
+          await trap.spawn('docker', run('ctr-oom-inspect-fail', script), options);
+          return { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 100 };
+        },
+        inspect: async () => {
+          throw new Error('DOCKER_INSPECT_PIPE_ERROR');
+        },
+        remove: async name => {
+          removed.push(name);
+          return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+        },
+      });
+    },
+    /DOCKER_INSPECT_PIPE_ERROR/u,
+  );
+
+  assert.deepEqual(removed, ['ctr-oom-inspect-fail'], 'the captured container name was force-removed despite inspection rejection');
+  assert.equal(trap.disarm(), undefined, 'trap was disarmed in finally');
+});
+
+test('STD-W5-301: removal failure of diagnostic container is reported as an error', async () => {
+  const script = 'x=bytearray(2*1024**3)';
+  const base: StructuredSpawn = async () => ({ exitCode: 0, stdout: '', stderr: '', timedOut: false });
+  const trap = createContainerTrap(base);
+  const options = { timeoutMs: 1, maxOutputBytes: 1 };
+  const run = (name: string, tail: string) => ['run', '--rm', `--name=${name}`, 'image', 'python3', '-c', tail];
+
+  await assert.rejects(
+    async () => {
+      await runDiagnosticWithCleanup({
+        trap,
+        marker: script,
+        execute: async () => {
+          await trap.spawn('docker', run('ctr-oom-rm-fail', script), options);
+          return { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 100 };
+        },
+        inspect: async name => ({ name, oomKilled: true, exitCode: 137 }),
+        remove: async () => ({ exitCode: 1, stdout: '', stderr: 'daemon error', timedOut: false }),
+      });
+    },
+    /DIAGNOSTIC_CONTAINER_REMOVAL_FAILED/u,
+  );
 });

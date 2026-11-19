@@ -12,10 +12,10 @@
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import test from 'node:test';
 
-import { computeCanonicalSha256, type BugTask, type TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCommandViewDigest, type BugTask, type CommandView, type TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { computeFileDigest } from '../../../src/foundation/docker-workspace-policy.ts';
 import { resolveRealTierAssembly, type RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
@@ -138,6 +138,7 @@ function capability(seen: Seen, state: { drift: boolean; facts: boolean; hidden:
     recheckCurrentFinalTree: binding => treeOf(binding, state.drift ? 'drifted' : 'fixed'),
   };
   return {
+    tier: 'controlled-tier',
     finalTree,
     isolationAuthority: {
       admit: request => {
@@ -191,6 +192,34 @@ function graphDouble(): NonNullable<Parameters<typeof runCaseStage>[1]['runGraph
   return async (task, ports, _config, initial) => {
     const loaded = (initial ?? (await ports.statePort.loadTask(task.taskId))) as TaskState;
     if (initial !== undefined) {
+      const store = (ports.statePort as unknown as { store?: { getClaimPath?: (taskId: string, claimId: string) => string } }).store;
+      if (store?.getClaimPath) {
+        const claimFile = store.getClaimPath(task.taskId, 'claim-cmd-c01');
+        mkdirSync(dirname(claimFile), { recursive: true });
+        const commandView: CommandView = {
+          viewId: 'view-c01-1',
+          viewDigest: `sha256:${'c'.repeat(64)}`,
+          taskId: task.taskId,
+          workspaceId: loaded.workspaceId ?? 'ws-c01',
+          canonicalRevisionDigest: loaded.repositoryRevisionDigest ?? `sha256:${'0'.repeat(64)}`,
+          admittedFiles: [],
+          exclusionsPolicyVersion: '1.0.0',
+          scratchIdentity: 'scratch-1',
+          mountedReadOnly: true,
+        };
+        const viewDigest = computeCommandViewDigest(commandView);
+        const validView = { ...commandView, viewDigest };
+        writeFileSync(claimFile, JSON.stringify({
+          context: {
+            subjectKind: 'repository-action',
+            commandView: validView,
+            action: { actionId: 'action-cmd-c01' },
+          },
+          receipt: {
+            claimId: 'claim-cmd-c01',
+          },
+        }), 'utf8');
+      }
       const state = { ...loaded, node: 'Deliver', outcome: 'COMPLETED', repositoryRevisionDigest: FINAL_REVISION } as unknown as TaskState;
       return { outcome: 'COMPLETED', state, finalReport, reasons: [], milestones: [], executionEvidence: { finalState: state } } as unknown as UC03WorkflowResult;
     }
@@ -280,12 +309,18 @@ test('the ready grader receives the case observation and the measured final snap
   assert.equal(run.dispatched(), 2, 'exactly the conformance call and the one allowed C10 call dispatched');
 });
 
+const prop = (root: Record<string, unknown>, ...path: string[]): Record<string, unknown> => {
+  let curr = root;
+  for (const key of path) curr = curr[key] as Record<string, unknown>;
+  return curr;
+};
+
 /** Rewrites one retained artifact and records its new digest, as a forger with the right hashes would. */
-function tampered(run: Run, file: string, edit: (body: any) => void): string { // eslint-disable-line @typescript-eslint/no-explicit-any
+function tampered(run: Run, file: string, edit: (body: Record<string, unknown>) => void): string {
   const root = tempRoot('copy');
   cpSync(run.root, root, { recursive: true });
   const dir = join(root, basename(run.dir));
-  const body = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+  const body = JSON.parse(readFileSync(join(dir, file), 'utf8')) as Record<string, unknown>;
   edit(body);
   const text = serialize(body);
   writeFileSync(join(dir, file), text, 'utf8');
@@ -298,18 +333,19 @@ function tampered(run: Run, file: string, edit: (body: any) => void): string { /
 test('each required item of the real record, removed or corrupted on its own, is refused', async () => {
   const run = await campaign();
   const other = `sha256:${'0'.repeat(64)}`;
-  const rows: readonly (readonly [string, string, (body: any) => void, string])[] = [ // eslint-disable-line @typescript-eslint/no-explicit-any
-    ['a foreign campaign', 'evidence-C02-1.json', body => void (body.campaignId = 'campaign-0-campaign-all'), 'case:C02:artifact-campaign'],
-    ['a foreign candidate', 'c10-C10-1.json', body => void (body.binding.candidateSha = 'f'.repeat(40)), 'case:C10:artifact-binding'],
-    ['a foreign endpoint', 'evidence-C01-1.json', body => void (body.binding.endpointDigest = other), 'case:C01:artifact-binding'],
-    ['another snapshot', 'evidence-C01-1.json', body => void (body.finalSnapshotDigest = other), 'case:C01:final-snapshot-mismatch'],
-    ['a grade on another snapshot', 'evidence-C02-1.json', body => void (body.evidence.grade.snapshot.digest = other), 'case:C02:'],
-    ['no plan approval', 'evidence-C01-1.json', body => void delete body.evidence.approval, 'case:C01:approval-missing'],
-    ['no cost label', 'evidence-C01-1.json', body => void delete body.evidence.usage.costLabel, 'case:C01:usage-unlabelled'],
-    ['a C16 report of another run', 'c16-C16-1.json', body => void (body.report.reportDigest = other), 'case:C16:report-source-mismatch'],
-    ['no limiter verdict', 'c10-C10-1.json', body => void (body.calls.refused.transport = null), 'case:C10:c10-refusal-not-limiter'],
-    ['no settled usage', 'c10-C10-1.json', body => void (body.calls.allowed.observedUsage = null), 'case:C10:c10-allowed-usage-unobserved'],
-    ['a fetch for the refused call', 'c10-C10-1.json', body => void (body.calls.refused.fetchesAfter += 1), 'case:C10:c10-refused-dispatched'],
+  const rows: readonly (readonly [string, string, (body: Record<string, unknown>) => void, string])[] = [
+    ['a foreign campaign', 'evidence-C02-1.json', body => void (body['campaignId'] = 'campaign-0-campaign-all'), 'case:C02:artifact-campaign'],
+    ['a foreign candidate', 'c10-C10-1.json', body => void (prop(body, 'binding')['candidateSha'] = 'f'.repeat(40)), 'case:C10:artifact-binding'],
+    ['a foreign endpoint', 'evidence-C01-1.json', body => void (prop(body, 'binding')['endpointDigest'] = other), 'case:C01:artifact-binding'],
+    ['another snapshot', 'evidence-C01-1.json', body => void (body['finalSnapshotDigest'] = other), 'case:C01:final-snapshot-mismatch'],
+    ['a grade on another snapshot', 'evidence-C02-1.json', body => void (prop(body, 'evidence', 'grade', 'snapshot')['digest'] = other), 'case:C02:'],
+    ['no command view', 'evidence-C01-1.json', body => void delete prop(body, 'evidence')['commandViewDigest'], 'case:C01:command-view-missing'],
+    ['no plan approval', 'evidence-C01-1.json', body => void delete prop(body, 'evidence')['approval'], 'case:C01:approval-missing'],
+    ['no cost label', 'evidence-C01-1.json', body => void delete prop(body, 'evidence', 'usage')['costLabel'], 'case:C01:usage-unlabelled'],
+    ['a C16 report of another run', 'c16-C16-1.json', body => void (prop(body, 'report')['reportDigest'] = other), 'case:C16:report-source-mismatch'],
+    ['no limiter verdict', 'c10-C10-1.json', body => void (prop(body, 'calls', 'refused')['transport'] = null), 'case:C10:c10-refusal-not-limiter'],
+    ['no settled usage', 'c10-C10-1.json', body => void (prop(body, 'calls', 'allowed')['observedUsage'] = null), 'case:C10:c10-allowed-usage-unobserved'],
+    ['a fetch for the refused call', 'c10-C10-1.json', body => void ((prop(body, 'calls', 'refused')['fetchesAfter'] as number) += 1), 'case:C10:c10-refused-dispatched'],
   ];
   for (const [label, file, edit, expected] of rows) {
     const result = checkEvidence({ evidenceDir: tampered(run, file, edit), ...scanOf() });

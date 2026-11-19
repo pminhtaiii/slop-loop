@@ -241,3 +241,59 @@ export function createContainerTrap(base: StructuredSpawn): ContainerTrap {
     },
   };
 }
+
+export interface DiagnosticRunResult {
+  readonly outcome: CommandOutcome;
+  readonly ranName: string | undefined;
+  readonly inspected: InspectedContainer | undefined;
+  readonly removed: boolean;
+}
+
+/**
+ * Runs one armed diagnostic execution with guaranteed container cleanup (STD-W5-301):
+ * owns the diagnostic container in a local try/finally, disarming the trap and force-removing
+ * the captured container name on every return and failure path (including execution rejection,
+ * indeterminate exit or inspection failure), and checking and reporting removal failure.
+ */
+export async function runDiagnosticWithCleanup(options: {
+  readonly trap: ContainerTrap;
+  readonly marker: string;
+  readonly execute: () => Promise<CommandOutcome>;
+  readonly inspect: (name: string) => Promise<InspectedContainer | undefined>;
+  readonly remove: (name: string) => Promise<{ exitCode: number | null }>;
+}): Promise<DiagnosticRunResult> {
+  const { trap, marker, execute, inspect, remove } = options;
+  let ranName: string | undefined;
+  let inspected: InspectedContainer | undefined;
+  let outcome: CommandOutcome | undefined;
+  let runSuccess = false;
+  let removalError: Error | undefined;
+
+  trap.arm(marker);
+  try {
+    outcome = await execute();
+    ranName = trap.disarm();
+    if (ranName !== undefined) {
+      inspected = await inspect(ranName);
+    }
+    runSuccess = true;
+  } finally {
+    const target = ranName ?? trap.disarm();
+    if (target !== undefined) {
+      try {
+        const rm = await remove(target);
+        if (rm.exitCode !== 0) {
+          removalError = new Error(`DIAGNOSTIC_CONTAINER_REMOVAL_FAILED: docker rm -f ${target} exited with ${rm.exitCode}`);
+        }
+      } catch (err) {
+        removalError = err instanceof Error ? err : new Error(String(err));
+      }
+    }
+    if (runSuccess && removalError !== undefined) {
+      throw removalError;
+    }
+  }
+
+  if (outcome === undefined) throw new Error('DIAGNOSTIC_EXECUTION_MISSING');
+  return { outcome, ranName, inspected, removed: removalError === undefined && ranName !== undefined };
+}

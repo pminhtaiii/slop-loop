@@ -6,6 +6,7 @@
  * item makes it refuse. Values are RFC 5737 / `.invalid`-safe: digests and ids only, no endpoint, no key.
  */
 import type { SnapshotGradeResult } from '../../../eval/uc03/workflow-grade.ts';
+import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 
 import type { CaseOutcome } from './uc03-success-real-run-cases.ts';
 import { PINNED_MODEL } from './uc03-success-real-provider.ts';
@@ -20,6 +21,7 @@ import {
   writeCampaign,
   writeReceipt,
   type ArtifactBinding,
+  type C10BudgetCallFacts,
   type C10CallFacts,
   type C10WitnessBody,
   type C16ReportBody,
@@ -68,8 +70,8 @@ export const STAGES: readonly StageRecord[] = Object.freeze([
 const rowOf = (caseId: string, facts: StageRecord['facts']): StageRecord => ({ stage: 'case', outcome: 'pass', caseId, facts });
 /** The four passing case rows, each naming the receipt facts its artifact must repeat. */
 export const PASSING_ROWS: readonly StageRecord[] = Object.freeze([
-  rowOf('C01', { workflow: 'COMPLETED', grade: 'pass', 'grader-digest': hex('f') }),
-  rowOf('C02', { workflow: 'needs-info', grade: 'pass', 'grader-digest': hex('f') }),
+  rowOf('C01', { attempt: 1, workflow: 'COMPLETED', grade: 'pass', 'grader-digest': hex('f') }),
+  rowOf('C02', { attempt: 1, workflow: 'needs-info', grade: 'pass', 'grader-digest': hex('f') }),
   rowOf('C16', { derivedFrom: 'C01', 'report-digest': REPORT }),
   rowOf('C10', { attempt: 1 }),
 ]);
@@ -87,9 +89,34 @@ function evidenceBody(caseId: 'C01' | 'C02', campaignId: string, binding: Artifa
       snapshot: { snapshotId: `snap-${caseId}`, digest: FINAL_SNAPSHOT },
       evidenceDigest: hex('e'),
       grade: gradeFor(caseId, 'pass'),
-      ownerRevisions: { repository: hex('7'), statePort: FIXTURE_REV },
+      gradeBinding: {
+        taskId: `task-${caseId}`,
+        runId: `run-${caseId}`,
+        workspaceId: `ws-${caseId}`,
+        caseId,
+        criterionId: `criterion-${caseId}`,
+        criteriaDigest: hex('f'),
+        snapshotId: `snap-${caseId}`,
+        snapshotDigest: FINAL_SNAPSHOT,
+        evidenceDigest: hex('e'),
+        tier: 'controlled-tier',
+        executorId: 'mock-grader-executor',
+        admissionId: 'admission-grader-1',
+      },
+      ownerRevisions: {
+        repository: hex('7'),
+        statePort: FIXTURE_REV,
+        ...Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(c => [c, FIXTURE_REV])),
+      },
       ...(caseId === 'C01'
-        ? { approval: { decisionId: 'decision-1', decided: 'approve' as const }, diffDigest: DIFF, reportDigest: REPORT, usage: { tokens: 120, cost: 0.01, costLabel: 'estimate-unverified' as const } }
+        ? {
+            approval: { decisionId: 'decision-1', decided: 'approve' as const },
+            diffDigest: DIFF,
+            reportDigest: REPORT,
+            commandViewDigest: hex('c'),
+            commandAdmissionRef: 'admission-c01-cmd-1',
+            usage: { tokens: 120, cost: 0.01, costLabel: 'estimate-unverified' as const },
+          }
         : {}),
     },
     accounting: { claims: 3, attempts: 3, outcomes: 3 },
@@ -139,6 +166,42 @@ function c10Calls(): C10WitnessBody['calls'] {
   return { allowed, refused };
 }
 
+function c10Budgets(): C10WitnessBody['budgets'] {
+  const absent: C10BudgetCallFacts = {
+    requestId: 'c10-budget-absent',
+    kind: 'absent',
+    declared: { maxInputTokens: 2_000_001, maxOutputTokens: 1, maxBillableTokens: 2_000_002 },
+    budgetRefs: ['task-tokens-c10', 'run-tokens-c10'],
+    reservationRef: 'res-c10-budget-absent',
+    ledger: { limit: 2_000_000, consumedBefore: 0, reservedBefore: 0, consumedAfter: 0, reservedAfter: 0 },
+    requestedBillable: 2_000_002,
+    fetchesBefore: 0,
+    fetchesAfter: 0,
+    portOutcome: 'claim-denied',
+    refusal: 'CLAIM_DENIED',
+    transport: null,
+    claims: { before: 0, after: 0 },
+    outcomes: { before: 0, after: 0, recorded: [] },
+  };
+  const exhausted: C10BudgetCallFacts = {
+    requestId: 'c10-budget-exhausted',
+    kind: 'exhausted',
+    declared: { maxInputTokens: 2_000_001, maxOutputTokens: 1, maxBillableTokens: 2_000_002 },
+    budgetRefs: ['task-tokens-c10', 'run-tokens-c10'],
+    reservationRef: 'res-c10-budget-exhausted',
+    ledger: { limit: 2_000_000, consumedBefore: 16, reservedBefore: 0, consumedAfter: 16, reservedAfter: 0 },
+    requestedBillable: 2_000_002,
+    fetchesBefore: 1,
+    fetchesAfter: 1,
+    portOutcome: 'claim-denied',
+    refusal: 'CLAIM_DENIED',
+    transport: null,
+    claims: { before: 1, after: 1 },
+    outcomes: { before: 1, after: 1, recorded: [] },
+  };
+  return { absent, exhausted };
+}
+
 function c10Body(campaignId: string, binding: ArtifactBinding): C10WitnessBody {
   return {
     schema: C10_WITNESS_SCHEMA,
@@ -151,7 +214,9 @@ function c10Body(campaignId: string, binding: ArtifactBinding): C10WitnessBody {
     provider: { providerId: 'provider-deepseek', modelId: binding.model, configId: 'config-v1', configVersion: '1.0.0' },
     limits: { totalModelCalls: 24, perRunInputTokens: 400_000, perRunOutputTokens: 80_000, budgetRefs: [] },
     calls: c10Calls(),
+    budgets: c10Budgets(),
     commandViewDigest: null,
+    commandViewScope: 'not-applicable-provider-only',
     disclosure: 'test fixture',
   };
 }

@@ -11,13 +11,16 @@
  * The operator entry wires the real decision source and the real grader; the gate drives the same
  * seams with doubles, so nothing here reaches Docker, the network or a live endpoint.
  */
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
 import type { RealTierAssembly, resolveRealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
 import { bindRealTierTask, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
 import { runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
 import type { SnapshotPredicate } from '../../../eval/uc03/workflow-grade.ts';
 import type { UC03HostInputs } from '../../../src/runtime/uc03-host-bootstrap.ts';
-import type { TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import type { CommandView, TaskState } from '../../../src/contracts/foundation/uc03.ts';
 
 import { judgeC16Report } from './uc03-success-real-c16.ts';
 import { journalViewOf, judgeC10, publishRunAuthority, runC10Witness } from './uc03-success-real-c10.ts';
@@ -116,6 +119,36 @@ async function runCaseAttempt(assembly: RealTierAssembly, caseId: string, attemp
   return attemptOnBound(assembly, binding, caseId, attempt, options);
 }
 
+export function findSettledCommandAdmission(
+  assembly: RealTierAssembly,
+  ids: Readonly<{ taskId: string; workspaceId: string }>,
+  repositoryId: string,
+): { commandView?: CommandView; commandViewDigest?: string; commandAdmissionRef?: string } {
+  try {
+    const owner = ownersOf(assembly, ids, repositoryId);
+    const store = (owner.statePort as unknown as { store?: { getClaimPath?: (taskId: string, claimId: string) => string } }).store;
+    if (!store?.getClaimPath) return {};
+    const claimDir = dirname(store.getClaimPath(ids.taskId, 'dummy'));
+    if (!existsSync(claimDir)) return {};
+    const files = readdirSync(claimDir).filter(f => f.endsWith('.json'));
+    for (const file of files) {
+      const content = readFileSync(join(claimDir, file), 'utf8');
+      const claim = JSON.parse(content) as Record<string, unknown>;
+      const ctx = claim['context'] as Record<string, unknown> | undefined;
+      if (ctx && ctx['subjectKind'] === 'repository-action' && ctx['commandView']) {
+        const commandView = ctx['commandView'] as CommandView;
+        const commandViewDigest = digestOf(serialize(commandView));
+        const receipt = claim['receipt'] as Record<string, unknown> | undefined;
+        const commandAdmissionRef = (receipt?.['claimId'] as string) ?? (ctx['action'] as { actionId?: string })?.actionId ?? file.replace(/\.json$/, '');
+        return { commandView, commandViewDigest, commandAdmissionRef };
+      }
+    }
+  } catch {
+    // Non-throwing bounded read
+  }
+  return {};
+}
+
 async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBoundTask, caseId: string, attempt: number, options: CaseStageOptions): Promise<CaseOutcome> {
   const runGraph = options.runGraph ?? runUC03GraphV02;
   let result = await runGraph(binding.task, binding.ports, binding.config);
@@ -130,9 +163,19 @@ async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBound
   }
   const accounting = accountingOf(assembly, binding.ids);
   const artifactBinding = options.binding ?? UNBOUND;
-  const graded: GradeOutcome = PINS[caseId] === undefined ? undefined : await options.grade?.(assembly, caseId, { caseId, task: binding.task, result, ports: binding.ports, model: artifactBinding.model });
+  const graded: GradeOutcome = PINS[caseId] === undefined ? undefined : await options.grade?.(assembly, caseId, {
+    caseId,
+    task: binding.task,
+    result,
+    ports: binding.ports,
+    model: artifactBinding.model,
+    requiresAdmission: caseId === 'C01',
+  });
   const refusal = graded !== undefined && 'refusal' in graded ? graded.refusal : undefined;
-  const grade = graded !== undefined && !('refusal' in graded) ? graded : undefined;
+  const gradeOutcome = graded !== undefined && !('refusal' in graded) ? graded : undefined;
+  const grade = gradeOutcome?.grade;
+  const gradeBinding = gradeOutcome?.binding;
+  const commandAdmission = caseId === 'C01' ? findSettledCommandAdmission(assembly, binding.ids, binding.task.repositoryId) : {};
   const finalReport = result.finalReport;
   // C16 is judged from this run's own final report, on its content (SPEC-W5-103).
   const judgedReport = caseId === 'C01' ? judgeC16Report(finalReport) : undefined;
@@ -140,6 +183,10 @@ async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBound
     ...(grade?.snapshot ? { snapshot: grade.snapshot } : {}),
     ...(grade?.evidenceDigest ? { evidenceDigest: grade.evidenceDigest } : {}),
     ...(grade ? { grade } : {}),
+    ...(gradeBinding ? { gradeBinding } : {}),
+    ...(commandAdmission.commandView ? { commandView: commandAdmission.commandView } : {}),
+    ...(commandAdmission.commandViewDigest ? { commandViewDigest: commandAdmission.commandViewDigest } : {}),
+    ...(commandAdmission.commandAdmissionRef ? { commandAdmissionRef: commandAdmission.commandAdmissionRef } : {}),
     ...(approval ? { approval } : {}),
     ...(finalReport ? { diffDigest: finalReport.diff.diffDigest } : {}),
     ...(judgedReport?.facts.present ? { reportDigest: judgedReport.facts.reportDigest } : {}),
@@ -155,6 +202,7 @@ async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBound
     outcomes: accounting.outcomes,
     ...(approval ? { approval: approval.decided, decision: approval.decisionId } : {}),
     ...(grade ? { grade: grade.grade, 'grade-reason': grade.reason, 'grader-digest': grade.criteriaDigest } : {}),
+    ...(commandAdmission.commandViewDigest ? { 'command-view-digest': commandAdmission.commandViewDigest } : {}),
   };
   const artifact: CaseArtifactBody = {
     schema: CASE_EVIDENCE_SCHEMA,
@@ -214,7 +262,10 @@ async function runC10(assembly: RealTierAssembly, options: CaseStageOptions): Pr
   if (!(port instanceof HostModelPortV02)) return caseNotRun('C10', 'c10-transport-unobservable', { attempt: 1 });
   // The over-limit request reserves more than the whole per-run input budget from the task's own token
   // ledger first; a smaller ledger would refuse it as a budget claim, never reaching the limiter.
-  if (binding.task.budgetLimits.maxTokens <= assembly.profile.runLimits.perRunInputTokens + 1) return caseNotRun('C10', 'c10-task-budget-below-run-limit', { attempt: 1 });
+  // Headroom must cover both the preceding allowed call's reservation (ALLOWED = 32,768) and the
+  // oversized call's reservation (perRunInputTokens + 2).
+  const requiredHeadroom = 32_768 + assembly.profile.runLimits.perRunInputTokens + 2;
+  if (binding.task.budgetLimits.maxTokens < requiredHeadroom) return caseNotRun('C10', 'c10-task-budget-below-run-limit', { attempt: 1 });
   const owner = ownersOf(assembly, binding.ids, binding.task.repositoryId).statePort;
   // A pre-plan provider admission is only legal at Investigate, so the witness moves the fresh task
   // there first, exactly as the operator's own first coder call will. The owner refuses a bad

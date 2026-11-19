@@ -40,6 +40,7 @@ import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { parseCampaignArgs, runCampaign, type CampaignOptions } from './uc03-success-real-run.ts';
 import { runCaseStage } from './uc03-success-real-run-cases.ts';
 import type { DecisionTarget } from './uc03-success-real-operator.ts';
+import type { CaseGradeRequest, GradeOutcome } from './uc03-success-real-grader.ts';
 import { checkEvidence } from './uc03-success-real-evidence.ts';
 import { allowedProviderResponse } from './uc03-success-real-c10.ts';
 import type { StageRecord } from './uc03-success-real-record.ts';
@@ -195,7 +196,26 @@ function campaignOptions(catalog: Catalog, evidenceDir: string, overrides: Parti
 }
 
 /** The grader seam that returns a validated grade. The campaign judge reads the receipt, never the workflow string (SPEC-W5-003). */
-const gradePass = (_assembly: RealTierAssembly, caseId: string) => Promise.resolve(gradeFor(caseId, 'pass'));
+const gradePass = async (_assembly: RealTierAssembly, caseId: string, request: CaseGradeRequest): Promise<GradeOutcome> => {
+  const grade = gradeFor(caseId, 'pass');
+  return {
+    grade,
+    binding: {
+      taskId: request.task.taskId,
+      runId: 'run-1',
+      workspaceId: 'ws-1',
+      caseId,
+      criterionId: grade.criterionId ?? `criterion-${caseId}`,
+      criteriaDigest: grade.criteriaDigest,
+      snapshotId: grade.snapshot?.snapshotId ?? `snap-${caseId}`,
+      snapshotDigest: grade.snapshot?.digest ?? '',
+      evidenceDigest: grade.evidenceDigest ?? '',
+      tier: 'controlled-tier',
+      executorId: 'mock-grader-executor',
+      admissionId: request.requiresAdmission ? 'admission-1' : null,
+    },
+  };
+};
 
 /** The stage seam of a campaign whose four cases all pass, each with the artifact bound to this campaign. */
 const passingStage: NonNullable<CampaignOptions['runCases']> = async (_assembly, stage) => passingCases(stage.campaignId, stage.binding);
