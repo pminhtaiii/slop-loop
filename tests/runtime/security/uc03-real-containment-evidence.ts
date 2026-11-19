@@ -78,7 +78,7 @@ export function hostileAdmission(input: HostileAdmissionInput): RepositoryAdmiss
     decisionAuthorityGeneration: authority.decisionAuthorityGeneration,
     result: 'ALLOWED' as const,
   };
-  const context = {
+  const context: RepositoryAdmissionContextV02 = {
     schemaVersion: '0.2.0',
     subjectKind: 'repository-action',
     planApplicability: 'pre-plan-diagnostic',
@@ -109,7 +109,7 @@ export function hostileAdmission(input: HostileAdmissionInput): RepositoryAdmiss
     checkId: checks[0]?.checkId,
     testPath: HOSTILE_TEST_PATH,
   };
-  return context as unknown as RepositoryAdmissionContextV02;
+  return context;
 }
 
 /**
@@ -169,7 +169,10 @@ export interface CommandOutcome {
  */
 export function timeoutKilled(result: CommandOutcome, admittedTimeoutMs?: number): boolean {
   if (!result.timedOut || result.outcome !== 'timeout') return false;
-  return admittedTimeoutMs === undefined || result.durationMs === undefined || result.durationMs <= admittedTimeoutMs + 15_000;
+  if (admittedTimeoutMs === undefined) return true;
+  // A supplied deadline needs measured evidence that the kill settled within it plus the grace.
+  const duration = result.durationMs;
+  return duration !== undefined && Number.isFinite(duration) && duration >= 0 && duration <= admittedTimeoutMs + 15_000;
 }
 
 /** A non-timeout SIGKILL exit (137 = 128+9), the one kill signal the controller surfaces. Not yet proof of OOM. */
@@ -272,7 +275,7 @@ export async function runDiagnosticWithCleanup(options: {
   let ranName: string | undefined;
   let inspected: InspectedContainer | undefined;
   let outcome: CommandOutcome | undefined;
-  let runSuccess = false;
+  let runFailure: { readonly error: unknown } | undefined;
   let removalError: Error | undefined;
 
   trap.arm(marker);
@@ -282,23 +285,25 @@ export async function runDiagnosticWithCleanup(options: {
     if (ranName !== undefined) {
       inspected = await inspect(ranName);
     }
-    runSuccess = true;
-  } finally {
-    const target = ranName ?? trap.disarm();
-    if (target !== undefined) {
-      try {
-        const rm = await remove(target);
-        if (rm.exitCode !== 0) {
-          removalError = new Error(`DIAGNOSTIC_CONTAINER_REMOVAL_FAILED: docker rm -f ${target} exited with ${rm.exitCode}`);
-        }
-      } catch (err) {
-        removalError = err instanceof Error ? err : new Error(String(err));
-      }
-    }
-    if (runSuccess && removalError !== undefined) {
-      throw removalError;
+  } catch (error) {
+    // Held, not swallowed: cleanup runs first, then this failure is rethrown with any removal failure.
+    runFailure = { error };
+  }
+  const target = ranName ?? trap.disarm();
+  if (target !== undefined) {
+    try {
+      const rm = await remove(target);
+      if (rm.exitCode !== 0) removalError = new Error(`DIAGNOSTIC_CONTAINER_REMOVAL_FAILED: docker rm -f ${target} exited with ${rm.exitCode}`);
+    } catch (error) {
+      removalError = new Error(`DIAGNOSTIC_CONTAINER_REMOVAL_FAILED: docker rm -f ${target} threw`, { cause: error });
     }
   }
+  if (runFailure !== undefined) {
+    // A retained container must not hide behind the run's own failure, so both are reported together.
+    if (removalError !== undefined) throw new AggregateError([runFailure.error, removalError], `DIAGNOSTIC_RUN_FAILED_AND_CONTAINER_RETAINED: ${target}`);
+    throw runFailure.error;
+  }
+  if (removalError !== undefined) throw removalError;
 
   if (outcome === undefined) throw new Error('DIAGNOSTIC_EXECUTION_MISSING');
   return { outcome, ranName, inspected, removed: removalError === undefined && ranName !== undefined };

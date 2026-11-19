@@ -38,6 +38,7 @@ import {
   REFUSAL_REASONS,
   refusalContexts,
   runDiagnosticWithCleanup,
+  timeoutKilled,
 } from './uc03-real-containment-evidence.ts';
 
 const fixture = createScanFixture('t051-evidence-', 't051-evidence-digest-key');
@@ -227,6 +228,8 @@ test('the probe hostile admission is CLAIMED by the bound task port through the 
   const snapshotOf = async (): Promise<string> => computeCanonicalSha256({ task: await port.loadTask(h.state.taskId), journal: port.getJournalSnapshot(h.state.taskId) });
 
   let receiverCalls = 0;
+  let claimCalls = 0;
+  let receiverRefusal = 'none';
   const claim: { receipt: Awaited<ReturnType<typeof port.claim>> | undefined } = { receipt: undefined };
   const claimOf = () => claim.receipt;
   const noop = async (): Promise<never> => {
@@ -245,7 +248,16 @@ test('the probe hostile admission is CLAIMED by the bound task port through the 
     runCommand: async (_action: unknown, context: RepositoryAdmissionContextV02): Promise<never> => {
       receiverCalls += 1;
       const admitted = snapshotRepositoryAdmission(context, 'run_command');
-      commandExecutionLimits(admitted, h.policy);
+      // The guard reports any receiver throw as an uncertain effect, so the refusal is read here.
+      receiverRefusal = 'none';
+      try {
+        commandExecutionLimits(admitted, h.policy);
+      } catch (error) {
+        receiverRefusal = String(error);
+        throw error;
+      }
+      // Counted before the await, so a claim that rejects without a receipt is still seen.
+      claimCalls += 1;
       claim.receipt = await port.claim(admitted);
       throw new Error('stop after the claim');
     },
@@ -254,11 +266,12 @@ test('the probe hostile admission is CLAIMED by the bound task port through the 
   const dispatch = async (context: RepositoryAdmissionContextV02) => {
     const before = await snapshotOf();
     const callsBefore = receiverCalls;
+    const claimsBefore = claimCalls;
     claim.receipt = undefined;
     const result = await guard
       .validateAndExecute(context.action, (await port.loadTask(h.state.taskId)) as TaskState, context)
       .catch((error: unknown) => ({ outcome: 'denied' as const, reason: String(error) }));
-    return { result, receiverCalls: receiverCalls - callsBefore, claimed: claimOf(), unchanged: before === (await snapshotOf()) };
+    return { result, receiverCalls: receiverCalls - callsBefore, claimCalls: claimCalls - claimsBefore, claimed: claimOf(), unchanged: before === (await snapshotOf()) };
   };
 
   // The published v0.1 view and the admitted v0.2 view agree on the digest the Docker layer recomputes.
@@ -279,6 +292,8 @@ test('the probe hostile admission is CLAIMED by the bound task port through the 
   // receiver's resource-policy step, before any claim exists.
   const foreign = await dispatch(refusals.foreignIsolation);
   assert.equal(foreign.receiverCalls, 1);
+  assert.equal(foreign.claimCalls, 0, 'a foreign isolation view never calls claim');
+  assert.ok(receiverRefusal.includes('COMMAND_RESOURCE_POLICY_MISMATCH'), `foreign: ${receiverRefusal}`);
   assert.equal(foreign.claimed, undefined, 'a foreign isolation view never reaches the claim');
   assert.ok(foreign.unchanged, 'a foreign isolation view changed the task or journal');
 
@@ -410,6 +425,42 @@ test('STD-W5-301: diagnostic container is force-removed when inspection throws',
 
   assert.deepEqual(removed, ['ctr-oom-inspect-fail'], 'the captured container name was force-removed despite inspection rejection');
   assert.equal(trap.disarm(), undefined, 'trap was disarmed in finally');
+});
+
+test('CR-198: a failed removal is reported together with an inspection failure', async () => {
+  const script = 'x=bytearray(2*1024**3)';
+  const trap = createContainerTrap(async () => ({ exitCode: 0, stdout: '', stderr: '', timedOut: false }));
+  const failure = await runDiagnosticWithCleanup({
+    trap,
+    marker: script,
+    execute: async () => {
+      await trap.spawn('docker', ['run', '--rm', '--name=ctr-both-fail', 'image', 'python3', '-c', script], { timeoutMs: 1, maxOutputBytes: 1 });
+      return { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 100 };
+    },
+    inspect: async () => {
+      throw new Error('DOCKER_INSPECT_PIPE_ERROR');
+    },
+    remove: async () => ({ exitCode: 1 }),
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  assert.ok(failure instanceof AggregateError, String(failure));
+  assert.match(failure.message, /CONTAINER_RETAINED: ctr-both-fail/u);
+  assert.deepEqual(
+    failure.errors.map((error: unknown) => String(error)),
+    ['Error: DOCKER_INSPECT_PIPE_ERROR', 'Error: DIAGNOSTIC_CONTAINER_REMOVAL_FAILED: docker rm -f ctr-both-fail exited with 1'],
+  );
+});
+
+test('CR-198: a timeout counts as enforced only with a measured duration inside the deadline and grace', () => {
+  const timeout = { exitCode: null, timedOut: true, outcome: 'timeout' } as const;
+  assert.equal(timeoutKilled(timeout), true, 'no deadline supplied: the verdict alone is the predicate');
+  assert.equal(timeoutKilled(timeout, 2_000), false, 'a supplied deadline with no duration is no evidence');
+  assert.equal(timeoutKilled({ ...timeout, durationMs: Number.NaN }, 2_000), false, 'a non-finite duration is no evidence');
+  assert.equal(timeoutKilled({ ...timeout, durationMs: -1 }, 2_000), false, 'a negative duration is no evidence');
+  assert.equal(timeoutKilled({ ...timeout, durationMs: 17_000 }, 2_000), true, 'inside the deadline plus grace, with a null exit');
+  assert.equal(timeoutKilled({ ...timeout, durationMs: 17_001 }, 2_000), false, 'past the deadline plus grace');
 });
 
 test('STD-W5-301: removal failure of diagnostic container is reported as an error', async () => {
