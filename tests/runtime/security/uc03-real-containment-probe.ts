@@ -16,7 +16,7 @@
  * is how the red path is demonstrated without a profile.
  */
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -51,9 +51,6 @@ import {
   timeoutKilled,
 } from './uc03-real-containment-evidence.ts';
 
-const TASK_ID = 'task-t024';
-const WORKSPACE_ID = 'ws-t024';
-
 interface Row {
   readonly case: string;
   readonly ok: boolean;
@@ -79,10 +76,11 @@ function report(rows: readonly Row[], evidence: Record<string, unknown>): void {
   const failed = rows.filter(row => !row.ok).map(row => row.case);
   if (failed.length === 0) {
     emit('pass', { rows, failed, ...evidence });
-    process.exit(0);
+    process.exitCode = 0;
+    return;
   }
   emit('fail', { rows, failed, ...evidence });
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 function row(caseName: string, ok: boolean, detail?: unknown): Row {
@@ -103,9 +101,7 @@ async function refusalRow(caseName: string, pattern: RegExp, operation: () => Pr
 if (selfCheck) {
   // The same `report` path a real failed row takes: this must exit nonzero, which is the red proof.
   report([row('SELF-CHECK deliberate red row', false, 'a failed row must never pass')], { selfCheck: true });
-}
-
-if (argv.includes('--red-proof')) {
+} else if (argv.includes('--red-proof')) {
   // The memory predicate's behavioral red witness. The witness row is the pre-fix false positive: the
   // executor command was SIGKILLed for an unrelated reason (exit 137, no OOM in its own container) while
   // a different container did OOM. The shipped predicate must score it false, so the row fails and this
@@ -132,9 +128,7 @@ if (argv.includes('--red-proof')) {
     ],
     { redProof: true, note: 'exits nonzero by design: the witness row shows the shipped predicate rejects a SIGKILL whose own container was not OOM-killed' },
   );
-}
-
-if (argv.includes('--helper-check')) {
+} else if (argv.includes('--helper-check')) {
   // Independent behavioral checks for the row predicates that previously mis-scored evidence.
   // Order must not decide a mutation verdict: the same mapping in a different order is still equal.
   const a = { 'tests/test_malicious.py': 'sha256:1', 'src/calculator.py': 'sha256:2', '.env': 'sha256:3' };
@@ -169,13 +163,14 @@ if (argv.includes('--helper-check')) {
     ],
     { helperCheck: true },
   );
+} else {
+  await main();
 }
 
 const MALICIOUS_TEST = `
 import pathlib
 import os
 import pytest
-import socket
 
 REPO = pathlib.Path('/workspace/repo')
 SCRATCH = pathlib.Path('/workspace/scratch')
@@ -204,11 +199,7 @@ def test_no_docker_socket():
     assert not pathlib.Path('/var/run/docker.sock').exists()
 
 def test_network_unreachable():
-    sock = socket.socket()
-    sock.settimeout(2)
-    with pytest.raises(OSError):
-        sock.connect(('192.0.2.1', 443))
-    sock.close()
+    assert set(os.listdir('/sys/class/net')) == {'lo'}
 
 def test_runs_as_non_root_with_zero_capabilities():
     assert os.getuid() == 1000 and os.getgid() == 1000
@@ -377,11 +368,27 @@ interface ProbeOutcome {
   readonly evidence: Record<string, unknown>;
 }
 
-const GUARDED_TASK_ID = 'task-t024-guarded';
-const GUARDED_WORKSPACE_ID = 'ws-t024-guarded';
-const GUARDED_RUN_ID = 'run-t024-guarded';
 const CONFIG_POLICY = { policyId: 'config-t024', policyVersion: '1.0.0', configId: 'config-t024', configVersion: '1.0.0' };
 const AUTHORITY = { ...CONFIG_POLICY, issuerKeyRef: 'host-config-t024', decisionAuthorityGeneration: 1 };
+
+/** Attempts removal of owned volumes, verifying absent status and returning any unresolvable volume IDs. */
+async function removeOwnedVolumes(volumes: readonly string[]): Promise<string[]> {
+  const removalFailures: string[] = [];
+  for (const volume of volumes) {
+    try {
+      const rm = await structuredSpawn('docker', ['volume', 'rm', '-f', volume], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
+      if (rm.exitCode !== 0) {
+        const inspect = await structuredSpawn('docker', ['volume', 'inspect', volume], { timeoutMs: 10_000, maxOutputBytes: 16 * 1024 });
+        if (inspect.exitCode === 0) {
+          removalFailures.push(volume);
+        }
+      }
+    } catch {
+      removalFailures.push(volume);
+    }
+  }
+  return removalFailures;
+}
 
 /**
  * C06–C11 rows through the production guard/receiver. The port is built the way the bound task's own
@@ -394,59 +401,68 @@ const AUTHORITY = { ...CONFIG_POLICY, issuerKeyRef: 'host-config-t024', decision
 async function guardedContainmentRows(assembly: RealTierAssembly, revision: string): Promise<{ rows: Row[]; guardedHostile: Record<string, unknown> }> {
   const rows: Row[] = [];
   const guardedEvidence: Record<string, unknown> = {};
+  const guardedTaskId = `task-t024-guarded-${randomUUID()}`;
+  const guardedWorkspaceId = `ws-t024-guarded-${randomUUID()}`;
+  const guardedRunId = `run-t024-guarded-${randomUUID()}`;
+  const ids = { taskId: guardedTaskId, workspaceId: guardedWorkspaceId };
   const root = mkdtempSync(join(tmpdir(), 'uc03-t024-guarded-'));
-  const repositoryRoot = join(root, 'repository');
-  mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
-  mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
-  for (const [path, content] of Object.entries(CANONICAL)) writeFileSync(join(repositoryRoot, path), content, 'utf8');
-  const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
-  const store = new DurableStore(join(root, 'store'));
-  const ids = { taskId: GUARDED_TASK_ID, workspaceId: GUARDED_WORKSPACE_ID };
-  const label = assembly.profile.image.label;
-  const requiredChecks = [
-    {
-      checkId: 'check-1',
-      executable: 'pytest',
-      argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'],
-      purpose: 'reproduction' as const,
-      workingDirectory: 'tests',
-      timeoutMs: 30_000,
-      maxOutputBytes: 1_048_576,
-    },
-  ];
-  const task: BugTask = {
-    taskId: GUARDED_TASK_ID,
-    repositoryId: 'repo-t024-guarded',
-    initialRevisionDigest: revision,
-    goal: 'Contain the hostile test command',
-    observedBehavior: 'A hostile test could escape',
-    expectedBehavior: 'The hostile test is contained',
-    reproduction: 'pytest -q tests/test_malicious.py',
-    acceptanceCriteria: ['the hostile test is contained'],
-    constraints: [],
-    requiredChecks,
-    limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 1, maxMemoryBytes: 536_870_912, maxPids: 64 },
-    budgetLimits: { maxReplanCount: 3, maxTokens: 100_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
-    configId: CONFIG_POLICY.configId,
-    configVersion: CONFIG_POLICY.configVersion,
-  };
-  const statePort = new DurableStatePortV02({
-    store,
-    taskId: GUARDED_TASK_ID,
-    initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY },
-    // The owner-held profile the bound task's port carries: the workspace's own scratch, the builder's
-    // exclusions version and the task's limits. Without it the port's synthetic constants refuse every
-    // real view, so a guard row would pass on that unrelated refusal instead of its own.
-    executionProfile: (taskId, workspaceId) => executionProfileOf(task, label, { taskId, workspaceId }),
-  });
+  const acquiredVolumes: string[] = [];
+  let primaryError: unknown;
+
   try {
-    await statePort.transition(seedTaskState(task, { ...ids, runId: GUARDED_RUN_ID }), 0);
-    await statePort.transition({ ...((await statePort.loadTask(GUARDED_TASK_ID)) as TaskState), stateVersion: 2, node: 'Investigate', nextAction: 'propose-fix-plan' }, 1);
+    const repositoryRoot = join(root, 'repository');
+    for (const [path, content] of Object.entries(CANONICAL)) {
+      const full = join(repositoryRoot, path);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, content, 'utf8');
+    }
+    const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
+    const store = new DurableStore(join(root, 'store'));
+    const label = assembly.profile.image.label;
+    const requiredChecks = [
+      {
+        checkId: 'check-1',
+        executable: 'pytest',
+        argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'],
+        purpose: 'reproduction' as const,
+        workingDirectory: 'tests',
+        timeoutMs: 30_000,
+        maxOutputBytes: 1_048_576,
+      },
+    ];
+    const task: BugTask = {
+      taskId: guardedTaskId,
+      repositoryId: `repo-${guardedTaskId}`,
+      initialRevisionDigest: revision,
+      goal: 'Contain the hostile test command',
+      observedBehavior: 'A hostile test could escape',
+      expectedBehavior: 'The hostile test is contained',
+      reproduction: 'pytest -q tests/test_malicious.py',
+      acceptanceCriteria: ['the hostile test is contained'],
+      constraints: [],
+      requiredChecks,
+      limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 1, maxMemoryBytes: 536_870_912, maxPids: 64 },
+      budgetLimits: { maxReplanCount: 3, maxTokens: 100_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
+      configId: CONFIG_POLICY.configId,
+      configVersion: CONFIG_POLICY.configVersion,
+    };
+    const statePort = new DurableStatePortV02({
+      store,
+      taskId: guardedTaskId,
+      initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY },
+      // The owner-held profile the bound task's port carries: the workspace's own scratch, the builder's
+      // exclusions version and the task's limits. Without it the port's synthetic constants refuse every
+      // real view, so a guard row would pass on that unrelated refusal instead of its own.
+      executionProfile: (taskId, workspaceId) => executionProfileOf(task, label, { taskId, workspaceId }),
+    });
+
+    await statePort.transition(seedTaskState(task, { ...ids, runId: guardedRunId }), 0);
+    await statePort.transition({ ...((await statePort.loadTask(guardedTaskId)) as TaskState), stateVersion: 2, node: 'Investigate', nextAction: 'propose-fix-plan' }, 1);
 
     const manager = assembly.workspaceManager;
     await manager.createWorkspace({
-      taskId: GUARDED_TASK_ID,
-      workspaceId: GUARDED_WORKSPACE_ID,
+      taskId: guardedTaskId,
+      workspaceId: guardedWorkspaceId,
       initialRevisionDigest: revision,
       profile: {
         profileId: label,
@@ -465,18 +481,21 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
         mounts: [],
       },
     });
-    await seedRepoVolume(assembly, computeWorkspaceVolumeIds(GUARDED_TASK_ID, GUARDED_WORKSPACE_ID).repoVolumeId);
-    const view = await measuredAdmissionView(params => manager.admitMeasuredCommandView(params), GUARDED_WORKSPACE_ID, ['src/calculator.py', 'tests/test_calculator.py'], label);
-    const state = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
+    const guardedVolumes = computeWorkspaceVolumeIds(guardedTaskId, guardedWorkspaceId);
+    acquiredVolumes.push(guardedVolumes.repoVolumeId, guardedVolumes.scratchVolumeId);
+
+    await seedRepoVolume(assembly, guardedVolumes.repoVolumeId);
+    const view = await measuredAdmissionView(params => manager.admitMeasuredCommandView(params), guardedWorkspaceId, ['src/calculator.py', 'tests/test_calculator.py'], label);
+    const state = (await statePort.loadTask(guardedTaskId)) as TaskState;
     const input = { state, view, profile: executionProfileOf(task, label, ids), authority: AUTHORITY, checks: requiredChecks };
 
     let receiverCalls = 0;
     const receiver = createRepositoryReceiverV02({
       guardCapability: {
         provenance: 'real',
-        capabilityId: `read-${GUARDED_TASK_ID}`,
-        workspaceId: GUARDED_WORKSPACE_ID,
-        taskId: GUARDED_TASK_ID,
+        capabilityId: `read-${guardedTaskId}`,
+        workspaceId: guardedWorkspaceId,
+        taskId: guardedTaskId,
         mediateRead: async operation => await operation.execute(),
       },
       fsPort: filesystem,
@@ -505,13 +524,13 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
     const guard = createExecutionGuardV02({ ports: { statePort, repositoryPort: guardedReceiver }, config: { provenance: 'real' } });
     /** Claim and attempt counts from the durable journal, for the evidence record. */
     const journalCounts = (): { claims: number; attempts: number } => {
-      const journal = statePort.getJournalSnapshot(GUARDED_TASK_ID) as { claims?: readonly unknown[]; attempts?: readonly unknown[] } | null;
+      const journal = statePort.getJournalSnapshot(guardedTaskId) as { claims?: readonly unknown[]; attempts?: readonly unknown[] } | null;
       return { claims: journal?.claims?.length ?? 0, attempts: journal?.attempts?.length ?? 0 };
     };
     /** The whole task record and journal: a refusal that rewrote either with equal content is still a change. */
-    const fingerprint = async (): Promise<string> => computeCanonicalSha256({ task: await statePort.loadTask(GUARDED_TASK_ID), journal: statePort.getJournalSnapshot(GUARDED_TASK_ID) });
+    const fingerprint = async (): Promise<string> => computeCanonicalSha256({ task: await statePort.loadTask(guardedTaskId), journal: statePort.getJournalSnapshot(guardedTaskId) });
     const dispatch = async (context: RepositoryAdmissionContextV02) => {
-      const before = (await statePort.loadTask(GUARDED_TASK_ID)) as TaskState;
+      const before = (await statePort.loadTask(guardedTaskId)) as TaskState;
       const beforePrint = await fingerprint();
       const beforeCalls = receiverCalls;
       const result = await guard
@@ -570,12 +589,16 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
         guardedEvidence['guardedHostile'],
       ),
     );
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
     await assembly.controller.cleanup().catch(() => undefined);
-    for (const volume of [computeWorkspaceVolumeIds(GUARDED_TASK_ID, GUARDED_WORKSPACE_ID).repoVolumeId, computeWorkspaceVolumeIds(GUARDED_TASK_ID, GUARDED_WORKSPACE_ID).scratchVolumeId]) {
-      await structuredSpawn('docker', ['volume', 'rm', '-f', volume], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
-    }
+    const removalFailures = await removeOwnedVolumes(acquiredVolumes);
     rmSync(root, { recursive: true, force: true });
+    if (removalFailures.length > 0 && primaryError === undefined) {
+      throw new Error(`GUARDED_VOLUME_REMOVAL_FAILED: Failed to remove volumes: ${removalFailures.join(', ')}`);
+    }
   }
   return { rows, guardedHostile: guardedEvidence };
 }
@@ -603,7 +626,9 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
   const trusted = dockerProfile.value;
 
   const revision = canonicalRevisionDigest(CANONICAL);
-  const { repoVolumeId, scratchVolumeId } = computeWorkspaceVolumeIds(TASK_ID, WORKSPACE_ID);
+  const taskId = `task-t024-${randomUUID()}`;
+  const workspaceId = `ws-t024-${randomUUID()}`;
+  const { repoVolumeId, scratchVolumeId } = computeWorkspaceVolumeIds(taskId, workspaceId);
   const rows: Row[] = [];
   const evidence: Record<string, unknown> = {
     imageId: profile.image.imageId,
@@ -623,15 +648,16 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
   const manager = assembly.workspaceManager;
   const controller = assembly.controller;
   const executor = assembly.executor;
-  let viewVolumeId: string | undefined;
-  const secondVolumes: string[] = [];
+  const acquiredVolumes: string[] = [];
+  let primaryError: unknown;
 
   try {
-    await manager.createWorkspace({ taskId: TASK_ID, workspaceId: WORKSPACE_ID, initialRevisionDigest: revision, profile: trusted });
+    await manager.createWorkspace({ taskId, workspaceId, initialRevisionDigest: revision, profile: trusted });
+    acquiredVolumes.push(repoVolumeId, scratchVolumeId);
     await seedRepoVolume(assembly, repoVolumeId);
 
-    const view = await manager.admitCommandView({ workspaceId: WORKSPACE_ID, requiredFiles: ['src/calculator.py', 'tests/test_calculator.py'] });
-    viewVolumeId = view.viewId;
+    const view = await manager.admitCommandView({ workspaceId, requiredFiles: ['src/calculator.py', 'tests/test_calculator.py'] });
+    acquiredVolumes.push(view.viewId);
     evidence['viewId'] = view.viewId;
     evidence['viewDigest'] = view.viewDigest;
     evidence['admittedFiles'] = view.admittedFiles.map(file => file.path);
@@ -639,7 +665,7 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
 
     // §9 issuance: the same measurement built through the owner-bound entry point must be accepted.
     const measured = await manager.admitMeasuredCommandView({
-      workspaceId: WORKSPACE_ID,
+      workspaceId,
       requiredFiles: ['src/calculator.py', 'tests/test_calculator.py'],
       trustedIsolationProfileRef: profile.image.label,
       ownerView: {
@@ -655,17 +681,15 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
 
     rows.push(
       await refusalRow('C08 required secret-bearing source refuses before execution', /REQUIRED_FILE_CONTAINS_PROTECTED_CONTENT/u, () =>
-        manager.admitCommandView({ workspaceId: WORKSPACE_ID, requiredFiles: ['src/leaky.py'] }),
+        manager.admitCommandView({ workspaceId, requiredFiles: ['src/leaky.py'] }),
       ),
     );
-    rows.push(
-      await refusalRow('C07 required protected path refuses before execution', /PROTECTED_PATH_FORBIDDEN/u, () => manager.admitCommandView({ workspaceId: WORKSPACE_ID, requiredFiles: ['.env'] })),
-    );
+    rows.push(await refusalRow('C07 required protected path refuses before execution', /PROTECTED_PATH_FORBIDDEN/u, () => manager.admitCommandView({ workspaceId, requiredFiles: ['.env'] })));
     for (const forbidden of FORBIDDEN_IN_VIEW) assert.ok(!view.admittedFiles.some(file => file.path === forbidden), `${forbidden} must be excluded before view creation`);
 
     const escapePaths = ['../../outside_marker.txt', '../escape.py', '/etc/shadow', '/root/.ssh/id_rsa', 'C:/Windows/win.ini', 'src/../../escape.py'];
     for (const escapePath of escapePaths) assert.equal(isCanonicalRelativePath(escapePath), false, `${escapePath} must not be a canonical relative path`);
-    const escapeViewId = 'view-ws-t024-c07';
+    const escapeViewId = `view-${workspaceId}-c07`;
     // The file-set size must match the view, so the traversal path replaces one admitted entry:
     // otherwise VIEW_FILE_SET_MISMATCH would decide the row and UNSAFE_VIEW_PATH would go unproven.
     const [, ...restAdmitted] = view.admittedFiles;
@@ -700,39 +724,35 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
 
     rows.push(
       await refusalRow('C09 shell metacharacters refuse before dispatch', /FORBIDDEN_SHELL_CHARACTERS/u, () =>
-        executor.execute({ workspaceId: WORKSPACE_ID, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py; id'], limits }),
+        executor.execute({ workspaceId, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py; id'], limits }),
       ),
     );
-    rows.push(
-      await refusalRow('C09 disallowed executable refuses before dispatch', /DISALLOWED_EXECUTABLE/u, () =>
-        executor.execute({ workspaceId: WORKSPACE_ID, executable: 'sh', argv: ['-c', 'id'], limits }),
-      ),
-    );
+    rows.push(await refusalRow('C09 disallowed executable refuses before dispatch', /DISALLOWED_EXECUTABLE/u, () => executor.execute({ workspaceId, executable: 'sh', argv: ['-c', 'id'], limits })));
     rows.push(
       await refusalRow('C07 working directory outside the workspace refuses before dispatch', /INVALID_WORKING_DIRECTORY/u, () =>
-        executor.execute({ workspaceId: WORKSPACE_ID, executable: 'pytest', argv: ['-q'], workingDirectory: '/etc', limits }),
+        executor.execute({ workspaceId, executable: 'pytest', argv: ['-q'], workingDirectory: '/etc', limits }),
       ),
     );
     rows.push(
       await refusalRow('C10 limits above the profile ceiling refuse before any container runs', /RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING/u, () =>
-        executor.execute({ workspaceId: WORKSPACE_ID, executable: 'pytest', argv: ['-q'], limits: { ...limits, maxMemoryBytes: profile.limits.memoryBytes + 1 } }),
+        executor.execute({ workspaceId, executable: 'pytest', argv: ['-q'], limits: { ...limits, maxMemoryBytes: profile.limits.memoryBytes + 1 } }),
       ),
     );
     // Injected environment never reaches the container: a credential-shaped key and an interpreter
     // loader hook are both refused by the production plan builder before any container is launched.
     rows.push(
       await refusalRow('C09 a credential-shaped environment variable refuses before dispatch', /FORBIDDEN_ENVIRONMENT_VARIABLE/u, () =>
-        executor.execute({ workspaceId: WORKSPACE_ID, executable: 'pytest', argv: ['-q'], limits, env: { GITHUB_TOKEN: 'sentinel-not-a-real-token' } }),
+        executor.execute({ workspaceId, executable: 'pytest', argv: ['-q'], limits, env: { GITHUB_TOKEN: 'sentinel-not-a-real-token' } }),
       ),
     );
     rows.push(
       await refusalRow('C09 an interpreter loader hook refuses before dispatch', /LOADER_HOOK_FORBIDDEN/u, () =>
-        executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-V'], limits, env: { PYTHONSTARTUP: '/workspace/repo/src/leaky.py' } }),
+        executor.execute({ workspaceId, executable: 'python3', argv: ['-V'], limits, env: { PYTHONSTARTUP: '/workspace/repo/src/leaky.py' } }),
       ),
     );
     rows.push(await linkEscapeRow());
 
-    const hostile = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], limits });
+    const hostile = await executor.execute({ workspaceId, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], limits });
     evidence['hostileRun'] = { argv: ['pytest', '-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], exitCode: hostile.exitCode, sample: hostile.stdout.slice(-1_500) };
     rows.push(row('C06–C09/C11 hostile pytest passes inside the container', hostile.exitCode === 0, hostile.stderr.slice(-500)));
     rows.push(row('C11 no shell parses the execution argv', hostile.plan.executable === 'pytest' && hostile.plan.argv.every(argument => !/[;&|><`$\r\n]/u.test(argument)), hostile.plan.argv));
@@ -750,7 +770,7 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
     const diagnostic = await runDiagnosticWithCleanup({
       trap,
       marker: OOM_SCRIPT,
-      execute: () => executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', OOM_SCRIPT], limits: { ...limits, maxMemoryBytes: memoryBytes } }),
+      execute: () => executor.execute({ workspaceId, executable: 'python3', argv: ['-c', OOM_SCRIPT], limits: { ...limits, maxMemoryBytes: memoryBytes } }),
       inspect: inspectContainer,
       remove: name => structuredSpawn('docker', ['rm', '-f', name], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 }),
     });
@@ -764,7 +784,7 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
       ),
     );
 
-    const timeout = await executor.execute({ workspaceId: WORKSPACE_ID, executable: 'python3', argv: ['-c', 'import time; time.sleep(30)'], limits: { ...limits, timeoutMs: 2_000 } });
+    const timeout = await executor.execute({ workspaceId, executable: 'python3', argv: ['-c', '__import__("time").sleep(30)'], limits: { ...limits, timeoutMs: 2_000 } });
     evidence['timeoutBound'] = { exitCode: timeout.exitCode, timedOut: timeout.timedOut, outcome: timeout.outcome, durationMs: timeout.durationMs };
     // The timeout row requires an observed timeout verdict bounded by the admitted deadline, not merely
     // a nonzero exit or any null code.
@@ -781,11 +801,11 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
 
     // C11 fresh-task state separation: a second, distinct task/workspace is created independently; an
     // attempted execution against the first task's workspace id from the second's context is refused.
-    const secondTaskId = 'task-t024-alt';
-    const secondWorkspaceId = 'ws-t024-alt';
+    const secondTaskId = `task-t024-alt-${randomUUID()}`;
+    const secondWorkspaceId = `ws-t024-alt-${randomUUID()}`;
     const secondIds = computeWorkspaceVolumeIds(secondTaskId, secondWorkspaceId);
-    secondVolumes.push(secondIds.repoVolumeId, secondIds.scratchVolumeId);
     await manager.createWorkspace({ taskId: secondTaskId, workspaceId: secondWorkspaceId, initialRevisionDigest: revision, profile: trusted });
+    acquiredVolumes.push(secondIds.repoVolumeId, secondIds.scratchVolumeId);
     rows.push(
       await refusalRow('C11 a distinct task/workspace owns separate state and refuses its own absent view', /COMMAND_VIEW_REQUIRED/u, () =>
         executor.execute({ workspaceId: secondWorkspaceId, executable: 'pytest', argv: ['-q'], limits }),
@@ -794,16 +814,16 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
     rows.push(row('C11 the two tasks share no volume identity', secondIds.repoVolumeId !== repoVolumeId && secondIds.scratchVolumeId !== scratchVolumeId));
 
     // C11 invalidating the view removes execution authority for the first workspace.
-    manager.invalidateViews(WORKSPACE_ID);
-    rows.push(
-      await refusalRow('C11 a workspace with no active view cannot execute', /COMMAND_VIEW_REQUIRED/u, () =>
-        executor.execute({ workspaceId: WORKSPACE_ID, executable: 'pytest', argv: ['-q'], limits }),
-      ),
-    );
+    manager.invalidateViews(workspaceId);
+    rows.push(await refusalRow('C11 a workspace with no active view cannot execute', /COMMAND_VIEW_REQUIRED/u, () => executor.execute({ workspaceId, executable: 'pytest', argv: ['-q'], limits })));
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
     await controller.cleanup().catch(() => undefined);
-    for (const volume of [repoVolumeId, scratchVolumeId, ...(viewVolumeId === undefined ? [] : [viewVolumeId]), ...secondVolumes]) {
-      await structuredSpawn('docker', ['volume', 'rm', '-f', volume], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
+    const removalFailures = await removeOwnedVolumes(acquiredVolumes);
+    if (removalFailures.length > 0 && primaryError === undefined) {
+      throw new Error(`CONTAINMENT_VOLUME_REMOVAL_FAILED: Failed to remove volumes: ${removalFailures.join(', ')}`);
     }
   }
   return { rows, evidence };
@@ -826,18 +846,21 @@ async function main(): Promise<void> {
   });
   if (!('host' in created)) {
     emit('not-run', { reason: created.reasonCode, path: created.path, detail: 'operator profile unavailable; see real-tier contract §(d)' });
-    process.exit(3);
+    process.exitCode = 3;
+    return;
   }
   const { assembly, metadata, preflight } = created;
 
   if (!isSupportedSnapshotPlatform(process.platform)) {
     emit('not-run', { reason: 'host-platform-unsupported', platform: process.platform, imageId: metadata.imageId });
-    process.exit(3);
+    process.exitCode = 3;
+    return;
   }
   const ready = await preflight();
   if (!ready.ok) {
     emit('not-run', { reason: ready.reasonCode, imageId: metadata.imageId, detail: 'Docker daemon or pinned image unavailable' });
-    process.exit(3);
+    process.exitCode = 3;
+    return;
   }
 
   let outcome: ProbeOutcome;
@@ -846,10 +869,9 @@ async function main(): Promise<void> {
   } catch (error) {
     // A probe that cannot complete is not a containment pass; the message is bounded, never a stack.
     emit('fail', { failed: ['probe'], detail: error instanceof Error ? error.message.slice(0, 400) : 'probe failed' });
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   assert.equal(fetchCalls.count, 0, 'the T024 containment probe must make zero model calls');
   report(outcome.rows, { ...outcome.evidence, dockerServerVersion: ready.dockerServerVersion, fetches: fetchCalls.count });
 }
-
-await main();
