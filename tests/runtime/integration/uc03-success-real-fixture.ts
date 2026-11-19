@@ -6,6 +6,7 @@
  * item makes it refuse. Values are RFC 5737 / `.invalid`-safe: digests and ids only, no endpoint, no key.
  */
 import type { SnapshotGradeResult } from '../../../eval/uc03/workflow-grade.ts';
+import { isEvaluationCaseId } from '../../../eval/uc03/validation-primitives.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 
 import type { CaseOutcome } from './uc03-success-real-run-cases.ts';
@@ -49,8 +50,9 @@ const bindingsOf = (binding: ArtifactBinding): Record<string, string> => ({
 
 /** A validated snapshot grade for one case. */
 export function gradeFor(caseId: string, grade: 'pass' | 'fail' | 'not-run'): SnapshotGradeResult {
+  if (!isEvaluationCaseId(caseId)) throw new Error(`INVALID_CASE_ID: ${caseId}`);
   return {
-    caseId: caseId as SnapshotGradeResult['caseId'],
+    caseId,
     criterionId: `criterion-${caseId}`,
     grade,
     reason: grade === 'pass' ? 'criteria-satisfied' : grade === 'fail' ? 'criteria-violation' : 'private-grading',

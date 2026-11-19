@@ -770,6 +770,13 @@ test('SPEC-W5-301: checker requires command-view evidence for C01 and rejects mi
   });
   assert.equal(missing.exitCode, 1);
   assert.ok(missing.output.includes('case:C01:command-view-missing'), `expects case:C01:command-view-missing, got ${missing.output}`);
+
+  const corrupted = checkEvidence({
+    evidenceDir: editedCampaign(bodies => void (prop(of(bodies, 'C01'), 'evidence')['commandViewDigest'] = 'sha256:corrupted')),
+    ...scanOf(),
+  });
+  assert.equal(corrupted.exitCode, 1);
+  assert.ok(corrupted.output.includes('case:C01:command-view-missing'), `expects case:C01:command-view-missing, got ${corrupted.output}`);
 });
 
 test('STD-W5-302 / SPEC-W5-302: checker refuses row/artifact attempt disagreement and foreign identity in grade binding', () => {

@@ -13,9 +13,10 @@
  * a pass. `--self-check` scores a deliberately failed row through the same path and exits 1.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ApprovalServiceError, createApprovalService, type ApprovalService, type ApprovalServiceV02 } from '../../../src/approvals/service.ts';
 import { computePlanBindingDigest } from '../../../src/approvals/plan-binding.ts';
 import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, CONTRACT_VERSION } from '../../../src/contracts/foundation/uc03.ts';
@@ -617,7 +618,9 @@ async function rejectedScenario(
     decisions += 1;
     const approvedPlan = await d.service.resolve(PLAN_DECISION);
     await enterPatch(d, approvedPlan, PLAN_DECISION);
-    await d.source.register({ action: patchActionOf(d), facts: patchFacts(d, approvedPlan), elements: PATCH_ELEMENTS });
+    const patchAction = patchActionOf(d);
+    await d.source.register({ action: patchAction, facts: patchFacts(d, approvedPlan), elements: PATCH_ELEMENTS });
+    const evaluation = await d.service.evaluatePolicy(patchAction, { ...POLICY_OPTIONS, planBindingDigest: d.planBindingDigest, planDecisionRef: PLAN_DECISION });
     const pending = await d.service.requestDecision(patchBindingOf(d));
     rows.push(row('T025 the patch action starts as a pending decision', pending.status === 'pending', pending.status));
 
@@ -634,6 +637,11 @@ async function rejectedScenario(
     decisions += 1;
     rows.push(row('T025 rejected: the explicit rejection is recorded', rejection.outcome === 'ok', rejection.outcome));
     rows.push(row('T025 rejected: continuation reads the rejected decision', (await d.service.resolve(PATCH_DECISION)).status === 'rejected'));
+    const issuanceRefused = await d.service.issueActionDecision(PATCH_DECISION, evaluation.receiptId).then(
+      () => false,
+      (error: unknown) => error instanceof ApprovalServiceError,
+    );
+    rows.push(row('T025 rejected: receipt issuance is refused for a rejected decision', issuanceRefused));
 
     // A second, conflicting decision on the same request is refused by the service, not by this probe.
     const conflicting = await d.service
@@ -656,7 +664,6 @@ async function rejectedScenario(
     // approved decision must be refused before the receiver, leaving the source bytes and counter untouched.
     const before = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
     const stateBefore = await harness.fingerprint();
-    const evaluation = receiptFor(d, 'APPROVAL_REQUIRED');
     const refused = await harness.dispatch(bypass ? { pe: admittedReceipt(evaluation), ad: admittedDecision(bypassDecisionFor(evaluation)) } : { pe: admittedReceipt(evaluation) });
     const after = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
     result = {
@@ -729,7 +736,12 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
     rows.push(row('T025 approved: the real guard settles exactly one patch', applied.outcome === 'success', { outcome: applied.outcome, reason: (applied as { reason?: string }).reason }));
     rows.push(row('T025 approved: exactly one container run performs the edit', exitCodes.length === 1 && exitCodes[0] === 0, { runs: exitCodes.length, exitCode: exitCodes[0] }));
     const after = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
-    rows.push(row('T025 approved: the edit landed only after admission', after !== before, { before, after }));
+    const calculatorBytes = readFileSync(join(d.repositoryRoot, 'src/calculator.py'), 'utf8');
+    const testBytes = readFileSync(join(d.repositoryRoot, 'tests/test_calculator.py'), 'utf8');
+    const expectedTestBytes = 'from src.calculator import divide\n\ndef test_divide():\n    assert divide(10, 2) == 5\n';
+    const changedPaths = [...(calculatorBytes !== SOURCE ? ['src/calculator.py'] : []), ...(testBytes !== expectedTestBytes ? ['tests/test_calculator.py'] : [])];
+    const patchMatches = after !== before && isDeepStrictEqual(changedPaths, approvedAction.targetPaths) && calculatorBytes === PATCHED;
+    rows.push(row('T025 approved: the edit landed only after admission', patchMatches, { before, after, changedPaths, matchesExpected: calculatorBytes === PATCHED }));
   } finally {
     d.cleanup();
   }
@@ -744,23 +756,6 @@ async function enterPatch(d: Awaited<ReturnType<typeof domain>>, approvedPlan: A
     approval: { binding: approvedPlan, freshness: planFreshness(d.task, d.plan, d.revision, d.workspaceId, { actionId: decisionId, kind: 'approve_fix_plan' }) },
   };
   await d.statePort.transition(next, current.stateVersion);
-}
-
-/** A structurally valid policy evaluation receipt with a chosen result, for the refusal rows. */
-function receiptFor(d: Awaited<ReturnType<typeof domain>>, result: 'APPROVAL_REQUIRED' | 'ALLOWED' | 'FORBIDDEN'): PolicyEvaluationReceipt {
-  const body = {
-    receiptId: `receipt-eval-${result.toLowerCase()}-${TASK_ID}`,
-    actionDigest: computeActionDigest(patchActionOf(d)),
-    freshnessContextDigest: computeCanonicalSha256({ freshness: result }),
-    policyId: CONFIG.configId,
-    policyVersion: CONFIG.configVersion,
-    configId: CONFIG.configId,
-    configVersion: CONFIG.configVersion,
-    decisionAuthorityGeneration: 1,
-    result,
-    schemaVersion: 'uc05-approval/0.2-draft' as const,
-  };
-  return { ...body, receiptDigest: computePolicyEvaluationReceiptDigest(body) } as PolicyEvaluationReceipt;
 }
 
 /** The production guard/receiver over one domain, counting container attempts at the receiver. */
@@ -839,6 +834,15 @@ async function guardedHarness(
 async function redProof(): Promise<void> {
   const enforced = await rejectedScenario(inertSubstrate(), 'red-enforced', false);
   const bypassed = await rejectedScenario(inertSubstrate(), 'red-bypassed', true);
+  if (!rejectedRefused(enforced.result)) {
+    emit('fail', { failed: ['red-enforced-row-failed'], detail: `Enforced rejection did not behave as expected: ${JSON.stringify(enforced.result)}` });
+    process.exit(1);
+  }
+  const witnessLandedEdit = bypassed.result.outcome === 'success' && bypassed.result.containerAttempts === 1 && bypassed.result.sourceChanged;
+  if (!witnessLandedEdit) {
+    emit('fail', { failed: ['red-witness-row-failed'], detail: `Witness did not land edit as expected: ${JSON.stringify(bypassed.result)}` });
+    process.exit(1);
+  }
   report(
     [
       row('RED-PROOF a rejection through the real guard is refused for the missing approval (must pass)', rejectedRefused(enforced.result), enforced.result),
@@ -868,6 +872,17 @@ async function main(): Promise<void> {
   if (!ready.ok) {
     emit('not-run', { reason: ready.reasonCode, imageId: metadata.imageId, detail: 'Docker daemon or pinned image unavailable' });
     process.exit(3);
+  }
+  if (typeof process.getuid === 'function') {
+    const configuredUid = Number.parseInt(assembly.profile.image.user.split(':')[0] ?? '', 10);
+    if (!Number.isNaN(configuredUid) && process.getuid() !== configuredUid) {
+      emit('not-run', {
+        reason: 'operator-container-uid-mismatch',
+        imageId: metadata.imageId,
+        detail: `Host operator UID ${process.getuid()} does not match configured container user ${assembly.profile.image.user}`,
+      });
+      process.exit(3);
+    }
   }
   let outcome: { rows: readonly Row[]; evidence: Record<string, unknown> };
   try {

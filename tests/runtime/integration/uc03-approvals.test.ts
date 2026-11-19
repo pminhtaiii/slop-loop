@@ -765,6 +765,8 @@ test('C13 rejected: a rejection mints nothing and the guard dispatches no patch'
     await d.source.register({ action: equivalent, facts: { ...patchFacts(d, approvedPlan), registeredActionDigest: computeActionDigest(equivalent) }, elements: PATCH_ELEMENTS });
     assert.equal(await d.service.classify(equivalent), 'APPROVAL_REQUIRED', 'an equivalent action is never downgraded to ALLOWED');
     await d.source.register({ action: patchActionOf(d), facts: patchFacts(d, approvedPlan), elements: PATCH_ELEMENTS });
+    const evaluation = await d.service.evaluatePolicy(patchActionOf(d), { ...POLICY_OPTIONS, planBindingDigest: d.planBindingDigest, planDecisionRef: PLAN_DECISION });
+    assert.equal(evaluation.result, 'APPROVAL_REQUIRED');
     const pending = await d.service.requestDecision(patchBindingOf(d));
     const view = await d.service.show(TASK_ID, PATCH_DECISION);
     const rejected = await d.service.decide({
@@ -779,13 +781,14 @@ test('C13 rejected: a rejection mints nothing and the guard dispatches no patch'
     assert.equal(rejected.outcome, 'ok', JSON.stringify(rejected));
     assert.equal(pending.status, 'pending', 'the same action was pending before the rejection');
     assert.equal((await d.service.resolve(PATCH_DECISION)).status, 'rejected', 'continuation reads the rejected decision');
-    await assert.rejects(d.service.issueActionDecision(PATCH_DECISION, 'receipt-eval-unused'), (error: unknown) => error instanceof ApprovalServiceError);
+    await assert.rejects(d.service.issueActionDecision(PATCH_DECISION, evaluation.receiptId), (error: unknown) => error instanceof ApprovalServiceError);
 
     // Attempt the rejected edit through the same guarded receiver the approved row uses: the service
     // cannot mint the decision receipt a rejection never produced, so the guard refuses before an effect.
     const { patches, containers, dispatch } = await gate(d);
-    const refused = await dispatch({ pe: receiptStub(d) });
+    const refused = await dispatch({ pe: admittedReceipt(evaluation) });
     assert.equal(refused.outcome, 'denied', JSON.stringify(refused));
+    assert.match(refused.reason ?? '', /APPROVAL_REQUIRED requires ActionDecisionReceipt/u, 'refused for missing action decision receipt');
     assert.equal(patches(), 0, 'a rejected decision produces zero patches');
     assert.equal(containers(), 0, 'a rejected decision produces zero executor calls');
   } finally {
@@ -1009,15 +1012,14 @@ test('C13 revised: a revised plan needs a fresh decision and cannot reuse the ol
     const revisedApproval = await approvePatch(r, 'approve-revised-patch-t052', revisedDecisionId, revisedBindingDigest);
 
     const { patches, containers, dispatch } = await gate(r);
-    const oldPlanRefused = await dispatch({ pe: receiptStub(r) }, { decisionId: PLAN_DECISION, bindingDigest: r.planBindingDigest });
+    const validReceipts = { pe: admittedReceipt(revisedApproval.evaluation), ad: admittedDecision(revisedApproval.decision) };
+    const oldPlanRefused = await dispatch(validReceipts, { decisionId: PLAN_DECISION, bindingDigest: r.planBindingDigest });
     assert.equal(oldPlanRefused.outcome, 'denied', JSON.stringify(oldPlanRefused));
+    assert.match(oldPlanRefused.reason ?? '', /APPROVED_PLAN_MISMATCH/u, 'the superseded plan values produce APPROVED_PLAN_MISMATCH');
     assert.equal(patches(), 0, 'the superseded v1 plan produces zero patches');
     assert.equal(containers(), 0, 'the superseded v1 plan produces zero executor calls');
 
-    const revisedApplied = await dispatch(
-      { pe: admittedReceipt(revisedApproval.evaluation), ad: admittedDecision(revisedApproval.decision) },
-      { decisionId: revisedDecisionId, bindingDigest: revisedBindingDigest },
-    );
+    const revisedApplied = await dispatch(validReceipts, { decisionId: revisedDecisionId, bindingDigest: revisedBindingDigest });
     assert.equal(revisedApplied.outcome, 'success', JSON.stringify(revisedApplied));
     assert.equal(patches(), 1, 'the fresh v2 decision settles exactly one patch');
   } finally {
@@ -1059,19 +1061,3 @@ test('no edit before explicit plan approval: the AwaitPlan barrier pauses, then 
     d.cleanup();
   }
 });
-
-/** A structurally valid APPROVAL_REQUIRED evaluation receipt with no decision behind it. */
-function receiptStub(d: Domain): Record<string, unknown> {
-  const base = {
-    receiptId: 'receipt-eval-stub-t052',
-    actionDigest: computeActionDigest(patchActionOf(d)),
-    freshnessContextDigest: computeCanonicalSha256({ stub: 'freshness' }),
-    policyId: AUTHORITY.policyId,
-    policyVersion: AUTHORITY.policyVersion,
-    configId: AUTHORITY.configId,
-    configVersion: AUTHORITY.configVersion,
-    decisionAuthorityGeneration: AUTHORITY.decisionAuthorityGeneration,
-    result: 'APPROVAL_REQUIRED' as const,
-  };
-  return { ...base, receiptDigest: computeCanonicalSha256(base) };
-}
