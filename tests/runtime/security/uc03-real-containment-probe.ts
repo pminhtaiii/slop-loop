@@ -39,6 +39,7 @@ import {
   createContainerTrap,
   type ContainerTrap,
   type InspectedContainer,
+  firstCheck,
   hostileAdmission,
   hostileCommand,
   measuredAdmissionView,
@@ -567,7 +568,7 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
 
     // The admitted row: the same state the refusals left untouched, a view from the production builder
     // and a receipt digested over its whole body. It must claim, dispatch once and pass the hostile test.
-    const admitted = await dispatch(hostileAdmission({ ...input, action: hostileCommand('act-guarded-hostile') }));
+    const admitted = await dispatch(hostileAdmission({ ...input, action: hostileCommand('act-guarded-hostile', firstCheck(input.checks)) }));
     const hostileResult = admitted.result as {
       readonly outcome: string;
       readonly result?: { readonly exitCode?: number | null; readonly stdout?: string; readonly plan?: { readonly argv?: readonly string[] } };

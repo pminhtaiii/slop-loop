@@ -21,7 +21,7 @@ import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/founda
 import { computeFileDigest, computeWorkspaceVolumeIds } from '../../../src/foundation/docker-workspace-policy.ts';
 import type { CanonicalRepositorySnapshot, DockerLifecycleController, MaterializeViewParams } from '../../../src/foundation/docker-workspace-types.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
-import { commandExecutionLimits, dockerCommandView, snapshotRepositoryAdmission } from '../../../src/foundation/repository-admission.ts';
+import { bindCheckToAdmission, commandExecutionLimits, dockerCommandView, snapshotRepositoryAdmission } from '../../../src/foundation/repository-admission.ts';
 import { resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
 import { executionProfileOf } from '../../../src/runtime/real-tier-execution-profile.ts';
 import { bindRealTierTask } from '../../../src/runtime/real-tier-task-binding.ts';
@@ -37,6 +37,7 @@ import {
   parseInspected,
   REFUSAL_REASONS,
   refusalContexts,
+  firstCheck,
   runDiagnosticWithCleanup,
   timeoutKilled,
 } from './uc03-real-containment-evidence.ts';
@@ -115,7 +116,15 @@ async function harness(): Promise<Harness> {
     acceptanceCriteria: ['divide(1, 0) raises CalculationError'],
     constraints: [],
     requiredChecks: [
-      { checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction' as const, workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 },
+      {
+        checkId: 'check-1',
+        executable: 'pytest',
+        argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'],
+        purpose: 'reproduction' as const,
+        workingDirectory: 'tests',
+        timeoutMs: 30_000,
+        maxOutputBytes: 1_048_576,
+      },
     ],
     limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 2, maxMemoryBytes: 2_147_483_648, maxPids: 64 },
     budgetLimits: { maxReplanCount: 3, maxTokens: 100_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
@@ -275,8 +284,10 @@ test('the probe hostile admission is CLAIMED by the bound task port through the 
   };
 
   // The published v0.1 view and the admitted v0.2 view agree on the digest the Docker layer recomputes.
-  const positive = hostileAdmission({ ...h.input, action: hostileCommand('act-guarded-hostile') });
+  const positive = hostileAdmission({ ...h.input, action: hostileCommand('act-guarded-hostile', firstCheck(h.input.checks)) });
   assert.equal(dockerCommandView(positive).viewDigest, h.published.viewDigest, 'the receiver finds the view the builder published');
+  // CR-198: the receiver's check binding admits the hostile action, so the positive row is not refused before execution.
+  assert.doesNotThrow(() => bindCheckToAdmission(firstCheck(h.input.checks), positive), 'the hostile action agrees with its bound check');
   assert.equal(positive.commandView?.viewDigest, computeCommandViewDigest(positive.commandView as never), 'the v0.2 view digest hashes its own key set');
 
   const refusals = refusalContexts(h.input);
@@ -308,7 +319,7 @@ test('the probe hostile admission is CLAIMED by the bound task port through the 
 test('the pre-fix constructions are not claimed, so the positive row discriminates', async () => {
   const h = await harness();
   const port = h.owners.statePort;
-  const good = hostileAdmission({ ...h.input, action: hostileCommand('act-prefix') });
+  const good = hostileAdmission({ ...h.input, action: hostileCommand('act-prefix', firstCheck(h.input.checks)) });
   const claimOf = async (context: unknown) => port.claim(snapshotRepositoryAdmission(context, 'run_command'));
 
   // An ID-only receipt digest: the owner re-hashes the whole receipt body.

@@ -21,8 +21,21 @@ import type { ExecutionProfileV02 } from '../../../src/persistence/adapters/stat
 /** The one test file the hostile command targets; the diagnostic admission names it as its test path. */
 const HOSTILE_TEST_PATH = 'tests/test_malicious.py';
 
-export function hostileCommand(actionId: string): RunCommandAction {
-  return { actionId, kind: 'run_command', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py', HOSTILE_TEST_PATH], workingDirectory: '/workspace/repo', purpose: 'investigate' };
+/** The one check the hostile admission binds to; a missing check is a fixture error, not a refusal. */
+export function firstCheck(checks: readonly CheckDefinition[]): CheckDefinition {
+  const check = checks[0];
+  if (check === undefined) throw new Error('the hostile admission needs a bound check');
+  return check;
+}
+
+/**
+ * The hostile action is the bound check's own command, so the receiver's check binding
+ * (`bindCheckToAdmission`: executable, argv, working directory) admits it. The check is the one source.
+ */
+export function hostileCommand(actionId: string, check: CheckDefinition): RunCommandAction {
+  const { workingDirectory } = check;
+  if (!check.argv.includes(HOSTILE_TEST_PATH) || workingDirectory === undefined) throw new Error(`the bound check must run ${HOSTILE_TEST_PATH} in a named working directory`);
+  return { actionId, kind: 'run_command', executable: check.executable, argv: [...check.argv], workingDirectory, purpose: 'investigate' };
 }
 
 /** Any owner-bound view build: the workspace manager's in the probe, the production builder over a double in the test. */
@@ -130,7 +143,7 @@ const STALE_REVISION = `sha256:${'0'.repeat(64)}`;
 /** One context per negative row, each differing from the admitted one in exactly the field it names. */
 export function refusalContexts(input: Omit<HostileAdmissionInput, 'action'>): Record<RefusalName, RepositoryAdmissionContextV02> {
   const make = (name: RefusalName, change: (base: Record<string, unknown>) => void): RepositoryAdmissionContextV02 => {
-    const base = structuredClone(hostileAdmission({ ...input, action: hostileCommand(`act-guarded-${name}`) })) as unknown as Record<string, unknown>;
+    const base = structuredClone(hostileAdmission({ ...input, action: hostileCommand(`act-guarded-${name}`, firstCheck(input.checks)) })) as unknown as Record<string, unknown>;
     change(base);
     return base as unknown as RepositoryAdmissionContextV02;
   };
