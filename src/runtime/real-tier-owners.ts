@@ -21,6 +21,7 @@ import type { ApprovalPort, TaskState } from '../contracts/foundation/uc03.ts';
 import type { PolicyAuthorityRefV02 } from '../contracts/foundation/uc03.ts';
 import type { GuardedReadOwnerPort } from '../foundation/guarded-read-capability.ts';
 import { isProductionJournal } from '../foundation/production-journal-registry.ts';
+import type { ExecutionProfileSourceV02 } from '../persistence/adapters/state-port-v02-admission.ts';
 import type { OwnerDelivery } from './evaluation-composition.ts';
 import { createBaselineEvidenceAdapter } from './baseline-evidence-adapter.ts';
 import { createConsoleApprovalPort } from './console-approval-port.ts';
@@ -55,6 +56,11 @@ export interface RealTierTaskBinding {
   readonly createContext?: (() => RealContextSource) | undefined;
   /** The published authority ref the read fence must see; absent leaves the read fence refusing. */
   readonly authorityRef?: PolicyAuthorityRefV02 | undefined;
+  /**
+   * The task's own execution profile — the facts its real Docker-built command view will carry.
+   * Absent leaves the port on its synthetic admission constants, which no real view matches.
+   */
+  readonly executionProfile?: ExecutionProfileSourceV02 | undefined;
 }
 
 /** The per-task owner instances T061 composes; each is already bound to one task. */
@@ -157,6 +163,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
       store,
       taskId: binding.taskId,
       ...(binding.authorityRef === undefined ? {} : { initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable' as const, activeAuthorityRef: binding.authorityRef } }),
+      ...(binding.executionProfile === undefined ? {} : { executionProfile: binding.executionProfile }),
     });
     // The UC-05 policy identity must be the task's own, or every action fact classifies as unbound.
     const profile = Object.freeze({
