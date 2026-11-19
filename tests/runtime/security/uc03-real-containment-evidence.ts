@@ -268,10 +268,10 @@ export function createContainerTrap(base: StructuredSpawn): ContainerTrap {
   };
 }
 
-export interface DiagnosticRunResult {
+export interface DiagnosticRunResult<T extends InspectedContainer = InspectedContainer> {
   readonly outcome: CommandOutcome;
   readonly ranName: string | undefined;
-  readonly inspected: InspectedContainer | undefined;
+  readonly inspected: T | undefined;
   readonly removed: boolean;
 }
 
@@ -281,16 +281,16 @@ export interface DiagnosticRunResult {
  * the captured container name on every return and failure path (including execution rejection,
  * indeterminate exit or inspection failure), and checking and reporting removal failure.
  */
-export async function runDiagnosticWithCleanup(options: {
+export async function runDiagnosticWithCleanup<T extends InspectedContainer>(options: {
   readonly trap: ContainerTrap;
   readonly marker: string;
   readonly execute: () => Promise<CommandOutcome>;
-  readonly inspect: (name: string) => Promise<InspectedContainer | undefined>;
+  readonly inspect: (name: string) => Promise<T | undefined>;
   readonly remove: (name: string) => Promise<{ exitCode: number | null }>;
-}): Promise<DiagnosticRunResult> {
+}): Promise<DiagnosticRunResult<T>> {
   const { trap, marker, execute, inspect, remove } = options;
   let ranName: string | undefined;
-  let inspected: InspectedContainer | undefined;
+  let inspected: T | undefined;
   let outcome: CommandOutcome | undefined;
   let runFailure: { readonly error: unknown } | undefined;
   let removalError: Error | undefined;

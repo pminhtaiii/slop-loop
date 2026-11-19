@@ -99,75 +99,6 @@ async function refusalRow(caseName: string, pattern: RegExp, operation: () => Pr
   }
 }
 
-if (selfCheck) {
-  // The same `report` path a real failed row takes: this must exit nonzero, which is the red proof.
-  report([row('SELF-CHECK deliberate red row', false, 'a failed row must never pass')], { selfCheck: true });
-} else if (argv.includes('--red-proof')) {
-  // The memory predicate's behavioral red witness. The witness row is the pre-fix false positive: the
-  // executor command was SIGKILLed for an unrelated reason (exit 137, no OOM in its own container) while
-  // a different container did OOM. The shipped predicate must score it false, so the row fails and this
-  // run exits nonzero by design. The supporting rows show the other false positives are rejected and a
-  // genuine kill of the same container passes. Loosening the predicate to ignore which container was
-  // inspected, or to accept a bare exit 137, flips the witness row green and this stops failing.
-  const killed = { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 400 };
-  const sigkillNoOom = { name: 'ctr-executor', oomKilled: false, exitCode: 137 };
-  const otherContainerOom = { name: 'oom-witness-calibration', oomKilled: true, exitCode: 137 };
-  const genericError = { exitCode: null, timedOut: false, outcome: 'error', durationMs: 30 };
-  const startupFailure = { exitCode: 125, timedOut: false, outcome: 'failure', durationMs: 20 };
-  const ownOom = { name: 'ctr-executor', oomKilled: true, exitCode: 137 };
-  report(
-    [
-      row(
-        'RED-PROOF WITNESS an unrelated SIGKILL beside a separate OOM container must not score as a memory kill (this row must fail)',
-        memoryKillWitnessed(killed, 'ctr-executor', otherContainerOom, 60_000),
-        { executed: killed, inspected: otherContainerOom },
-      ),
-      row('RED-PROOF a SIGKILL with no OOM in its own container is rejected (must pass)', !memoryKillWitnessed(killed, 'ctr-executor', sigkillNoOom, 60_000), sigkillNoOom),
-      row('RED-PROOF a generic error is rejected (must pass)', !memoryKillWitnessed(genericError, 'ctr-executor', ownOom, 60_000), genericError),
-      row('RED-PROOF a Docker startup failure is rejected (must pass)', !memoryKillWitnessed(startupFailure, 'ctr-executor', ownOom, 60_000), startupFailure),
-      row('RED-PROOF the executor container reported OOMKilled with the same exit code is accepted (must pass)', memoryKillWitnessed(killed, 'ctr-executor', ownOom, 60_000), ownOom),
-    ],
-    { redProof: true, note: 'exits nonzero by design: the witness row shows the shipped predicate rejects a SIGKILL whose own container was not OOM-killed' },
-  );
-} else if (argv.includes('--helper-check')) {
-  // Independent behavioral checks for the row predicates that previously mis-scored evidence.
-  // Order must not decide a mutation verdict: the same mapping in a different order is still equal.
-  const a = { 'tests/test_malicious.py': 'sha256:1', 'src/calculator.py': 'sha256:2', '.env': 'sha256:3' };
-  const b = { '.env': 'sha256:3', 'src/calculator.py': 'sha256:2', 'tests/test_malicious.py': 'sha256:1' };
-  // An unrelated command failure (import error, exit 1, not timed out) is not resource enforcement.
-  const importError = { exitCode: 1, timedOut: false, outcome: 'failure', durationMs: 200 };
-  const oomKill = { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 400 };
-  const observedTimeout = { exitCode: null, timedOut: true, outcome: 'timeout', durationMs: 2_100 };
-  // The false positives SPEC-W5-108 / STD-W5-103 name: a generic error, a null exit with a timeout
-  // verdict but no timeout outcome, and a Docker launch failure (exit 125) all once scored as kills.
-  const genericError = { exitCode: null, timedOut: false, outcome: 'error', durationMs: 30 };
-  const nullWithTimeout = { exitCode: null, timedOut: true, outcome: 'failure', durationMs: 2_100 };
-  const launchFailure = { exitCode: 125, timedOut: false, outcome: 'failure', durationMs: 20 };
-  const lateTimeout = { exitCode: null, timedOut: true, outcome: 'timeout', durationMs: 120_000 };
-  report(
-    [
-      row('HELPER-CHECK same digests in different order compare equal (must pass)', sameDigests(a, b)),
-      row('HELPER-CHECK a changed digest fails (must pass)', !sameDigests(a, { ...b, 'src/calculator.py': 'sha256:X' })),
-      row('HELPER-CHECK an import error is not a timeout kill (must pass)', !timeoutKilled(importError)),
-      row('HELPER-CHECK an observed timeout is a timeout kill (must pass)', timeoutKilled(observedTimeout, 2_000)),
-      row('HELPER-CHECK an OOM-killed executor container is a memory kill (must pass)', memoryKillWitnessed(oomKill, 'ctr-a', { name: 'ctr-a', oomKilled: true, exitCode: 137 }, 60_000)),
-      row('HELPER-CHECK a bare SIGKILL exit is not by itself a memory kill (must pass)', sigkilled(oomKill) && !memoryKillWitnessed(oomKill, 'ctr-a', undefined, 60_000)),
-      row('HELPER-CHECK an import error is not a memory kill (must pass)', !memoryKillWitnessed(importError, 'ctr-a', { name: 'ctr-a', oomKilled: true, exitCode: 1 }, 60_000)),
-      row('HELPER-CHECK a generic error is not a memory kill (must pass)', !sigkilled(genericError)),
-      row('HELPER-CHECK a null exit with a timeout verdict is not a memory kill (must pass)', !sigkilled(nullWithTimeout)),
-      row('HELPER-CHECK a Docker launch failure (125) is not a memory kill (must pass)', !sigkilled(launchFailure)),
-      row('HELPER-CHECK a timeout settled past its deadline is not an enforced timeout (must pass)', !timeoutKilled(lateTimeout, 2_000)),
-      row(
-        'HELPER-CHECK an inspect line parses and a missing container does not (must pass)',
-        parseInspected('ctr-a', 'true 137')?.oomKilled === true && parseInspected('ctr-a', 'Error: No such container') === undefined,
-      ),
-    ],
-    { helperCheck: true },
-  );
-} else {
-  await main();
-}
-
 const MALICIOUS_TEST = `
 import pathlib
 import os
@@ -311,6 +242,17 @@ async function inspectContainer(name: string): Promise<InspectedContainer | unde
   return result.exitCode === 0 ? parseInspected(name, result.stdout) : undefined;
 }
 
+function parseTimeoutInspect(name: string, stdout: string): (InspectedContainer & { readonly running: boolean }) | undefined {
+  const [running, code] = stdout.trim().split(/\s+/u);
+  if ((running !== 'true' && running !== 'false') || code === undefined || !/^\d+$/u.test(code)) return undefined;
+  return { name, running: running === 'true', oomKilled: false, exitCode: Number.parseInt(code, 10) };
+}
+
+async function inspectTimeoutContainer(name: string): Promise<(InspectedContainer & { readonly running: boolean }) | undefined> {
+  const result = await structuredSpawn('docker', ['inspect', '--format', '{{.State.Running}} {{.State.ExitCode}}', name], { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 });
+  return result.exitCode === 0 ? parseTimeoutInspect(name, result.stdout) : undefined;
+}
+
 /**
  * A real link/junction on this host, measured by the production trusted snapshot: the test inventory
  * must not resolve through a link to a path outside the approved workspace. A host where the link
@@ -372,6 +314,10 @@ interface ProbeOutcome {
 const CONFIG_POLICY = { policyId: 'config-t024', policyVersion: '1.0.0', configId: 'config-t024', configVersion: '1.0.0' };
 const AUTHORITY = { ...CONFIG_POLICY, issuerKeyRef: 'host-config-t024', decisionAuthorityGeneration: 1 };
 
+function isVolumeNotFound(inspect: { readonly exitCode: number | null; readonly stdout: string; readonly stderr: string; readonly timedOut?: boolean }): boolean {
+  return !inspect.timedOut && inspect.exitCode !== 0 && /no such volume/i.test(`${inspect.stderr} ${inspect.stdout}`);
+}
+
 /** Attempts removal of owned volumes, verifying absent status and returning any unresolvable volume IDs. */
 async function removeOwnedVolumes(volumes: readonly string[]): Promise<string[]> {
   const removalFailures: string[] = [];
@@ -380,7 +326,7 @@ async function removeOwnedVolumes(volumes: readonly string[]): Promise<string[]>
       const rm = await structuredSpawn('docker', ['volume', 'rm', '-f', volume], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
       if (rm.exitCode !== 0) {
         const inspect = await structuredSpawn('docker', ['volume', 'inspect', volume], { timeoutMs: 10_000, maxOutputBytes: 16 * 1024 });
-        if (inspect.exitCode === 0) {
+        if (!isVolumeNotFound(inspect)) {
           removalFailures.push(volume);
         }
       }
@@ -426,7 +372,7 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
         executable: 'pytest',
         argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'],
         purpose: 'reproduction' as const,
-        workingDirectory: 'tests',
+        workingDirectory: '/workspace/repo',
         timeoutMs: 30_000,
         maxOutputBytes: 1_048_576,
       },
@@ -491,6 +437,13 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
     const input = { state, view, profile: executionProfileOf(task, label, ids), authority: AUTHORITY, checks: requiredChecks };
 
     let receiverCalls = 0;
+    let receiverRefusal = 'none';
+    let claimCalls = 0;
+    const originalClaim = statePort.claim.bind(statePort);
+    statePort.claim = async context => {
+      claimCalls += 1;
+      return originalClaim(context);
+    };
     const receiver = createRepositoryReceiverV02({
       guardCapability: {
         provenance: 'real',
@@ -517,9 +470,15 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
     });
     const guardedReceiver = {
       ...receiver,
-      runCommand: (action: RunCommandAction, context: RepositoryAdmissionContextV02) => {
+      runCommand: async (action: RunCommandAction, context: RepositoryAdmissionContextV02) => {
         receiverCalls += 1;
-        return receiver.runCommand(action, context);
+        receiverRefusal = 'none';
+        try {
+          return await receiver.runCommand(action, context);
+        } catch (error) {
+          receiverRefusal = error instanceof Error ? error.message : String(error);
+          throw error;
+        }
       },
     };
     const guard = createExecutionGuardV02({ ports: { statePort, repositoryPort: guardedReceiver }, config: { provenance: 'real' } });
@@ -534,10 +493,19 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
       const before = (await statePort.loadTask(guardedTaskId)) as TaskState;
       const beforePrint = await fingerprint();
       const beforeCalls = receiverCalls;
+      const beforeClaims = claimCalls;
+      receiverRefusal = 'none';
       const result = await guard
         .validateAndExecute(context.action, before, context)
         .catch((error: unknown) => ({ outcome: 'denied' as const, reason: error instanceof Error ? error.message : String(error) }));
-      return { result, unchanged: beforePrint === (await fingerprint()), receiverCalls: receiverCalls - beforeCalls, journal: journalCounts() };
+      return {
+        result,
+        unchanged: beforePrint === (await fingerprint()),
+        receiverCalls: receiverCalls - beforeCalls,
+        claimCalls: claimCalls - beforeClaims,
+        receiverRefusal,
+        journal: journalCounts(),
+      };
     };
     const reasonHas = (result: { readonly reason?: string | undefined }, text: string): boolean => typeof result.reason === 'string' && result.reason.includes(text);
 
@@ -561,8 +529,14 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
     rows.push(
       row(
         'C06 a foreign isolation view is refused inside the receiver before any claim, attempt or executor effect',
-        isolation.result.outcome === 'uncertain-effect' && isolation.receiverCalls === 1 && isolation.unchanged,
-        isolation.result,
+        isolation.result.outcome === 'uncertain-effect' &&
+          isolation.receiverCalls === 1 &&
+          isolation.claimCalls === 0 &&
+          isolation.journal.claims === 0 &&
+          isolation.journal.attempts === 0 &&
+          isolation.receiverRefusal.includes('COMMAND_RESOURCE_POLICY_MISMATCH') &&
+          isolation.unchanged,
+        { result: isolation.result, receiverRefusal: isolation.receiverRefusal, claimCalls: isolation.claimCalls },
       ),
     );
 
@@ -571,17 +545,18 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
     const admitted = await dispatch(hostileAdmission({ ...input, action: hostileCommand('act-guarded-hostile', firstCheck(input.checks)) }));
     const hostileResult = admitted.result as {
       readonly outcome: string;
-      readonly result?: { readonly exitCode?: number | null; readonly stdout?: string; readonly plan?: { readonly argv?: readonly string[] } };
+      readonly result?: { readonly exitCode?: number | null; readonly plan?: { readonly argv?: readonly string[] } };
     };
     const hostileExit = hostileResult.result?.exitCode;
     guardedEvidence['guardedHostile'] = {
       outcome: admitted.result.outcome,
       exitCode: hostileExit,
+      passed: hostileExit === 0,
       argv: hostileResult.result?.plan?.argv,
       viewDigest: view.viewDigest,
       receiverCalls: admitted.receiverCalls,
+      claimCalls: admitted.claimCalls,
       journal: admitted.journal,
-      sample: (hostileResult.result?.stdout ?? '').slice(-1_500),
     };
     rows.push(
       row(
@@ -597,8 +572,12 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
     await assembly.controller.cleanup().catch(() => undefined);
     const removalFailures = await removeOwnedVolumes(acquiredVolumes);
     rmSync(root, { recursive: true, force: true });
-    if (removalFailures.length > 0 && primaryError === undefined) {
-      throw new Error(`GUARDED_VOLUME_REMOVAL_FAILED: Failed to remove volumes: ${removalFailures.join(', ')}`);
+    if (removalFailures.length > 0) {
+      const cleanupError = new Error(`GUARDED_VOLUME_REMOVAL_FAILED: Failed to remove volumes: ${removalFailures.join(', ')}`);
+      if (primaryError !== undefined) {
+        throw new AggregateError([primaryError, cleanupError], `${primaryError instanceof Error ? primaryError.message : String(primaryError)}; cleanup: ${cleanupError.message}`);
+      }
+      throw cleanupError;
     }
   }
   return { rows, guardedHostile: guardedEvidence };
@@ -754,8 +733,12 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
     rows.push(await linkEscapeRow());
 
     const hostile = await executor.execute({ workspaceId, executable: 'pytest', argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], limits });
-    evidence['hostileRun'] = { argv: ['pytest', '-q', 'tests/test_calculator.py', 'tests/test_malicious.py'], exitCode: hostile.exitCode, sample: hostile.stdout.slice(-1_500) };
-    rows.push(row('C06–C09/C11 hostile pytest passes inside the container', hostile.exitCode === 0, hostile.stderr.slice(-500)));
+    evidence['hostileRun'] = {
+      argv: ['pytest', '-q', 'tests/test_calculator.py', 'tests/test_malicious.py'],
+      exitCode: hostile.exitCode,
+      passed: hostile.exitCode === 0,
+    };
+    rows.push(row('C06\u2013C09/C11 hostile pytest passes inside the container', hostile.exitCode === 0, { exitCode: hostile.exitCode, passed: hostile.exitCode === 0 }));
     rows.push(row('C11 no shell parses the execution argv', hostile.plan.executable === 'pytest' && hostile.plan.argv.every(argument => !/[;&|><`$\r\n]/u.test(argument)), hostile.plan.argv));
     rows.push(
       row(
@@ -785,11 +768,47 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
       ),
     );
 
-    const timeout = await executor.execute({ workspaceId, executable: 'python3', argv: ['-c', '__import__("time").sleep(30)'], limits: { ...limits, timeoutMs: 2_000 } });
-    evidence['timeoutBound'] = { exitCode: timeout.exitCode, timedOut: timeout.timedOut, outcome: timeout.outcome, durationMs: timeout.durationMs };
+    const timeoutScript = '__import__("time").sleep(30)';
+    const timeoutDiagnostic = await runDiagnosticWithCleanup({
+      trap,
+      marker: timeoutScript,
+      execute: () => executor.execute({ workspaceId, executable: 'python3', argv: ['-c', timeoutScript], limits: { ...limits, timeoutMs: 2_000 } }),
+      inspect: inspectTimeoutContainer,
+      remove: name => structuredSpawn('docker', ['rm', '-f', name], { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 }),
+    });
+    const { outcome: timeout, ranName: timeoutRanName, inspected: timeoutInspected } = timeoutDiagnostic;
+    evidence['timeoutBound'] = {
+      exitCode: timeout.exitCode,
+      timedOut: timeout.timedOut,
+      outcome: timeout.outcome,
+      durationMs: timeout.durationMs,
+      container: timeoutInspected,
+      containerStopped: timeoutInspected !== undefined && !timeoutInspected.running,
+      removalDisabledForInspection: true,
+    };
     // The timeout row requires an observed timeout verdict bounded by the admitted deadline, not merely
-    // a nonzero exit or any null code.
-    rows.push(row('C10 a command past its admitted timeout is killed within its deadline', timeoutKilled(timeout, 2_000), evidence['timeoutBound']));
+    // a nonzero exit or any null code, and verifies that the workload container is no longer running.
+    rows.push(
+      row(
+        'C10 a command past its admitted timeout is killed within its deadline',
+        timeoutKilled(timeout, 2_000) && timeoutRanName !== undefined && timeoutInspected !== undefined && timeoutInspected.name === timeoutRanName && !timeoutInspected.running,
+        evidence['timeoutBound'],
+      ),
+    );
+
+    evidence['cpuBound'] = {
+      maxCpuCores: limits.maxCpuCores,
+      verified: false,
+      status: 'unverified',
+      reason: 'CPU core limit enforcement is not measured by probe workload',
+    };
+    evidence['pidsBound'] = {
+      maxPids: limits.maxPids,
+      verified: false,
+      status: 'unverified',
+      reason: 'PID limit enforcement is not measured by probe workload',
+    };
+    evidence['unverifiedLimits'] = ['maxCpuCores', 'maxPids'];
 
     const canonicalAfter = await readVolume(assembly, repoVolumeId);
     const expectedCanonical = Object.fromEntries(Object.entries(CANONICAL).map(([path, content]) => [path, computeFileDigest(Buffer.from(content, 'utf8'))]));
@@ -823,8 +842,12 @@ async function runContainment(assembly: RealTierAssembly, trap: ContainerTrap): 
   } finally {
     await controller.cleanup().catch(() => undefined);
     const removalFailures = await removeOwnedVolumes(acquiredVolumes);
-    if (removalFailures.length > 0 && primaryError === undefined) {
-      throw new Error(`CONTAINMENT_VOLUME_REMOVAL_FAILED: Failed to remove volumes: ${removalFailures.join(', ')}`);
+    if (removalFailures.length > 0) {
+      const cleanupError = new Error(`CONTAINMENT_VOLUME_REMOVAL_FAILED: Failed to remove volumes: ${removalFailures.join(', ')}`);
+      if (primaryError !== undefined) {
+        throw new AggregateError([primaryError, cleanupError], `${primaryError instanceof Error ? primaryError.message : String(primaryError)}; cleanup: ${cleanupError.message}`);
+      }
+      throw cleanupError;
     }
   }
   return { rows, evidence };
@@ -869,10 +892,86 @@ async function main(): Promise<void> {
     outcome = await runContainment(assembly, trap);
   } catch (error) {
     // A probe that cannot complete is not a containment pass; the message is bounded, never a stack.
-    emit('fail', { failed: ['probe'], detail: error instanceof Error ? error.message.slice(0, 400) : 'probe failed' });
+    const detail = error instanceof Error ? error.message.slice(0, 400) : 'probe failed';
+    const failures = error instanceof AggregateError ? error.errors.map(err => (err instanceof Error ? err.message : String(err))) : undefined;
+    emit('fail', { failed: ['probe'], detail, ...(failures !== undefined ? { failures } : {}) });
     process.exitCode = 1;
     return;
   }
   assert.equal(fetchCalls.count, 0, 'the T024 containment probe must make zero model calls');
   report(outcome.rows, { ...outcome.evidence, dockerServerVersion: ready.dockerServerVersion, fetches: fetchCalls.count });
+}
+
+if (selfCheck) {
+  // The same `report` path a real failed row takes: this must exit nonzero, which is the red proof.
+  report([row('SELF-CHECK deliberate red row', false, 'a failed row must never pass')], { selfCheck: true });
+} else if (argv.includes('--red-proof')) {
+  // The memory predicate's behavioral red witness. The witness row is the pre-fix false positive: the
+  // executor command was SIGKILLed for an unrelated reason (exit 137, no OOM in its own container) while
+  // a different container did OOM. The shipped predicate must score it false, so the row fails and this
+  // run exits nonzero by design. The supporting rows show the other false positives are rejected and a
+  // genuine kill of the same container passes. Loosening the predicate to ignore which container was
+  // inspected, or to accept a bare exit 137, flips the witness row green and this stops failing.
+  const killed = { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 400 };
+  const sigkillNoOom = { name: 'ctr-executor', oomKilled: false, exitCode: 137 };
+  const otherContainerOom = { name: 'oom-witness-calibration', oomKilled: true, exitCode: 137 };
+  const genericError = { exitCode: null, timedOut: false, outcome: 'error', durationMs: 30 };
+  const startupFailure = { exitCode: 125, timedOut: false, outcome: 'failure', durationMs: 20 };
+  const ownOom = { name: 'ctr-executor', oomKilled: true, exitCode: 137 };
+  report(
+    [
+      row(
+        'RED-PROOF WITNESS an unrelated SIGKILL beside a separate OOM container must not score as a memory kill (this row must fail)',
+        memoryKillWitnessed(killed, 'ctr-executor', otherContainerOom, 60_000),
+        { executed: killed, inspected: otherContainerOom },
+      ),
+      row('RED-PROOF a SIGKILL with no OOM in its own container is rejected (must pass)', !memoryKillWitnessed(killed, 'ctr-executor', sigkillNoOom, 60_000), sigkillNoOom),
+      row('RED-PROOF a generic error is rejected (must pass)', !memoryKillWitnessed(genericError, 'ctr-executor', ownOom, 60_000), genericError),
+      row('RED-PROOF a Docker startup failure is rejected (must pass)', !memoryKillWitnessed(startupFailure, 'ctr-executor', ownOom, 60_000), startupFailure),
+      row('RED-PROOF the executor container reported OOMKilled with the same exit code is accepted (must pass)', memoryKillWitnessed(killed, 'ctr-executor', ownOom, 60_000), ownOom),
+    ],
+    { redProof: true, note: 'exits nonzero by design: the witness row shows the shipped predicate rejects a SIGKILL whose own container was not OOM-killed' },
+  );
+} else if (argv.includes('--helper-check')) {
+  // Independent behavioral checks for the row predicates that previously mis-scored evidence.
+  // Order must not decide a mutation verdict: the same mapping in a different order is still equal.
+  const a = { 'tests/test_malicious.py': 'sha256:1', 'src/calculator.py': 'sha256:2', '.env': 'sha256:3' };
+  const b = { '.env': 'sha256:3', 'src/calculator.py': 'sha256:2', 'tests/test_malicious.py': 'sha256:1' };
+  // An unrelated command failure (import error, exit 1, not timed out) is not resource enforcement.
+  const importError = { exitCode: 1, timedOut: false, outcome: 'failure', durationMs: 200 };
+  const oomKill = { exitCode: 137, timedOut: false, outcome: 'failure', durationMs: 400 };
+  const observedTimeout = { exitCode: null, timedOut: true, outcome: 'timeout', durationMs: 2_100 };
+  // The false positives SPEC-W5-108 / STD-W5-103 name: a generic error, a null exit with a timeout
+  // verdict but no timeout outcome, and a Docker launch failure (exit 125) all once scored as kills.
+  const genericError = { exitCode: null, timedOut: false, outcome: 'error', durationMs: 30 };
+  const nullWithTimeout = { exitCode: null, timedOut: true, outcome: 'failure', durationMs: 2_100 };
+  const launchFailure = { exitCode: 125, timedOut: false, outcome: 'failure', durationMs: 20 };
+  const lateTimeout = { exitCode: null, timedOut: true, outcome: 'timeout', durationMs: 120_000 };
+  report(
+    [
+      row('HELPER-CHECK same digests in different order compare equal (must pass)', sameDigests(a, b)),
+      row('HELPER-CHECK a changed digest fails (must pass)', !sameDigests(a, { ...b, 'src/calculator.py': 'sha256:X' })),
+      row('HELPER-CHECK an import error is not a timeout kill (must pass)', !timeoutKilled(importError)),
+      row('HELPER-CHECK an observed timeout is a timeout kill (must pass)', timeoutKilled(observedTimeout, 2_000)),
+      row('HELPER-CHECK an OOM-killed executor container is a memory kill (must pass)', memoryKillWitnessed(oomKill, 'ctr-a', { name: 'ctr-a', oomKilled: true, exitCode: 137 }, 60_000)),
+      row('HELPER-CHECK a bare SIGKILL exit is not by itself a memory kill (must pass)', sigkilled(oomKill) && !memoryKillWitnessed(oomKill, 'ctr-a', undefined, 60_000)),
+      row('HELPER-CHECK an import error is not a memory kill (must pass)', !memoryKillWitnessed(importError, 'ctr-a', { name: 'ctr-a', oomKilled: true, exitCode: 1 }, 60_000)),
+      row('HELPER-CHECK a generic error is not a memory kill (must pass)', !sigkilled(genericError)),
+      row('HELPER-CHECK a null exit with a timeout verdict is not a memory kill (must pass)', !sigkilled(nullWithTimeout)),
+      row('HELPER-CHECK a Docker launch failure (125) is not a memory kill (must pass)', !sigkilled(launchFailure)),
+      row('HELPER-CHECK a timeout settled past its deadline is not an enforced timeout (must pass)', !timeoutKilled(lateTimeout, 2_000)),
+      row(
+        'HELPER-CHECK an inspect line parses and a missing container does not (must pass)',
+        parseInspected('ctr-a', 'true 137')?.oomKilled === true && parseInspected('ctr-a', 'Error: No such container') === undefined,
+      ),
+      row('HELPER-CHECK volume inspect with no such volume confirms removal (must pass)', isVolumeNotFound({ exitCode: 1, stdout: '', stderr: 'Error: No such volume: vol-1' })),
+      row('HELPER-CHECK volume inspect with daemon error is not proof of removal (must pass)', !isVolumeNotFound({ exitCode: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon' })),
+      row('HELPER-CHECK volume inspect finding volume exists is not proof of removal (must pass)', !isVolumeNotFound({ exitCode: 0, stdout: '[{}]', stderr: '' })),
+      row('HELPER-CHECK timeout inspect parses stopped container (must pass)', parseTimeoutInspect('ctr-t', 'false 137')?.running === false),
+      row('HELPER-CHECK timeout inspect detects running container (must pass)', parseTimeoutInspect('ctr-t', 'true 0')?.running === true),
+    ],
+    { helperCheck: true },
+  );
+} else {
+  await main();
 }
