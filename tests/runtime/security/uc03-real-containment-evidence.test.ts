@@ -9,10 +9,11 @@
  * row's CLAIMED is asserted here.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import type { TestContext } from 'node:test';
 
 import { computeCanonicalSha256, computeCommandViewDigest } from '../../../src/contracts/foundation/uc03.ts';
 import type { ExecutionLimits, RepositoryAdmissionContextV02, TaskState, TaskWorkspace } from '../../../src/contracts/foundation/uc03.ts';
@@ -91,6 +92,7 @@ class SnapshotController implements DockerLifecycleController {
 }
 
 interface Harness {
+  readonly root: string;
   readonly assembly: RealTierAssembly;
   readonly owners: ReturnType<RealTierAssembly['owners']['taskOwners']>;
   readonly state: TaskState;
@@ -101,8 +103,10 @@ interface Harness {
 }
 
 /** A bound real-tier task (row (q)'s doubles), moved to `Investigate`, with a view issued by the production builder. */
-async function harness(): Promise<Harness> {
-  const catalogDir = mkdtempSync(join(tmpdir(), 't051-evidence-catalog-'));
+async function harness(t: TestContext): Promise<Harness> {
+  const root = mkdtempSync(join(tmpdir(), 't051-evidence-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const catalogDir = join(root, 'catalog');
   mkdirSync(join(catalogDir, 'repository', 'src'), { recursive: true });
   writeFileSync(join(catalogDir, 'repository', 'src', 'calculator.py'), FILES['src/calculator.py'] ?? '', 'utf8');
   const task = {
@@ -121,7 +125,7 @@ async function harness(): Promise<Harness> {
         executable: 'pytest',
         argv: ['-q', 'tests/test_calculator.py', 'tests/test_malicious.py'],
         purpose: 'reproduction' as const,
-        workingDirectory: 'tests',
+        workingDirectory: '/workspace/repo',
         timeoutMs: 30_000,
         maxOutputBytes: 1_048_576,
       },
@@ -160,24 +164,28 @@ async function harness(): Promise<Harness> {
     spawns += 1;
     return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
   };
+  const stateRoot = join(root, 'state');
+  mkdirSync(stateRoot, { recursive: true });
   const dependencies: RealTierDependencies = {
     env: fixture.envOf({ catalog: { path: catalogPath } }),
     fetch: (async () => {
       throw new Error('the T051 evidence test makes no model calls');
     }) as typeof globalThis.fetch,
     spawn,
-    stateRoot: mkdtempSync(join(tmpdir(), 't051-evidence-state-')),
+    stateRoot,
     revision: REV,
   };
   const resolved = resolveRealTierAssembly(dependencies);
   assert.equal(resolved.status, 'assembly-ready');
   const assembly = resolved as RealTierAssembly;
+  const retainedRoot = join(root, 'artifacts');
+  mkdirSync(retainedRoot, { recursive: true });
   const bound = await bindRealTierTask(assembly, {
     caseId: 'C01',
     pins: PINS,
     identity: IDENTITY,
     readTextFile: undefined,
-    retainedRoot: join(mkdtempSync(join(tmpdir(), 't051-evidence-retained-')), 'artifacts'),
+    retainedRoot,
   });
   assert.equal(bound.status, 'task-bound', JSON.stringify(bound));
   if (bound.status !== 'task-bound') throw new Error('unreachable');
@@ -221,6 +229,7 @@ async function harness(): Promise<Harness> {
     decisionAuthorityGeneration: 1,
   };
   return {
+    root,
     assembly,
     owners,
     state,
@@ -231,8 +240,8 @@ async function harness(): Promise<Harness> {
   };
 }
 
-test('the probe hostile admission is CLAIMED by the bound task port through the production guard, and each refusal is its own', async () => {
-  const h = await harness();
+test('the probe hostile admission is CLAIMED by the bound task port through the production guard, and each refusal is its own', async t => {
+  const h = await harness(t);
   const port = h.owners.statePort;
   const snapshotOf = async (): Promise<string> => computeCanonicalSha256({ task: await port.loadTask(h.state.taskId), journal: port.getJournalSnapshot(h.state.taskId) });
 
@@ -316,8 +325,8 @@ test('the probe hostile admission is CLAIMED by the bound task port through the 
   assert.equal(h.spawns(), 0, 'no Docker process was started');
 });
 
-test('the pre-fix constructions are not claimed, so the positive row discriminates', async () => {
-  const h = await harness();
+test('the pre-fix constructions are not claimed, so the positive row discriminates', async t => {
+  const h = await harness(t);
   const port = h.owners.statePort;
   const good = hostileAdmission({ ...h.input, action: hostileCommand('act-prefix', firstCheck(h.input.checks)) });
   const claimOf = async (context: unknown) => port.claim(snapshotRepositoryAdmission(context, 'run_command'));
@@ -493,4 +502,40 @@ test('STD-W5-301: removal failure of diagnostic container is reported as an erro
       remove: async () => ({ exitCode: 1, stdout: '', stderr: 'daemon error', timedOut: false }),
     });
   }, /DIAGNOSTIC_CONTAINER_REMOVAL_FAILED/u);
+});
+
+test('harness creates a single temporary root and removes it via t.after', async t => {
+  let harnessRoot = '';
+  await t.test('inner run', async inner => {
+    const h = await harness(inner);
+    harnessRoot = h.root;
+    assert.ok(existsSync(harnessRoot), 'temp root exists while test is running');
+    assert.ok(existsSync(join(harnessRoot, 'catalog')));
+    assert.ok(existsSync(join(harnessRoot, 'state')));
+    assert.ok(existsSync(join(harnessRoot, 'artifacts')));
+  });
+  assert.ok(!existsSync(harnessRoot), 'temp root was removed after the test finished');
+});
+
+test('a nameless armed run keeps --rm and records no name', async () => {
+  const seen: string[][] = [];
+  const base: StructuredSpawn = async (_command, args) => {
+    seen.push([...args]);
+    return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+  };
+  const trap = createContainerTrap(base);
+  const options = { timeoutMs: 1, maxOutputBytes: 1 };
+  const script = 'x=bytearray(2*1024**3)';
+  const namelessRun = ['run', '--rm', '--network=none', 'image', 'python3', '-c', script];
+  const emptyNameRun = ['run', '--rm', '--name=', 'image', 'python3', '-c', script];
+
+  trap.arm(script);
+  await trap.spawn('docker', namelessRun, options);
+  assert.equal(trap.disarm(), undefined, 'records no name for nameless run');
+  assert.deepEqual(seen[0], namelessRun, 'a nameless armed run keeps --rm and all original arguments');
+
+  trap.arm(script);
+  await trap.spawn('docker', emptyNameRun, options);
+  assert.equal(trap.disarm(), undefined, 'records no name for empty --name= run');
+  assert.deepEqual(seen[1], emptyNameRun, 'an empty --name= armed run keeps --rm and all original arguments');
 });
