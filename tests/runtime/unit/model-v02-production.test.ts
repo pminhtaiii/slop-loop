@@ -126,12 +126,14 @@ test('a rejected authority verdict is consumed, sends nothing, and leaves no unh
   const rejections: unknown[] = [];
   const listener = (reason: unknown) => rejections.push(reason);
   process.on('unhandledRejection', listener);
+  let sends = 0;
   try {
     const port = new HostModelPortV02({
       statePort,
       transport: {
         async execute() {
-          assert.fail('a rejected verdict must send nothing');
+          sends += 1;
+          return { proposal: { content: '{}' }, observedUsage: { inputTokens: 1, outputTokens: 1, costUsd: 0, billableTokens: 2 } };
         },
       },
       executorIdentity: ACTOR,
@@ -141,6 +143,7 @@ test('a rejected authority verdict is consumed, sends nothing, and leaves no unh
     const result = await port.propose(state, evidence, request, admission);
     assert.equal(result.outcome, 'denied');
     assert.equal(result.reason, 'FENCED_EXECUTOR');
+    assert.equal(sends, 0, 'a rejected verdict sends nothing');
     // Let any escaped rejection surface before asserting the process saw none.
     await new Promise(resolve => setImmediate(resolve));
     await new Promise(resolve => setTimeout(resolve, 10));
@@ -157,6 +160,7 @@ test('a rejected authority verdict is consumed, sends nothing, and leaves no unh
 test('an executor fence after beginAttempt is accounted exactly like a final authority refusal', async () => {
   const { state, evidence, request, admission, statePort } = admitted();
   let generation = 1;
+  let sends = 0;
   const ownBegin = statePort.beginAttempt.bind(statePort);
   statePort.beginAttempt = async (claimId: string, executor: never) => {
     const attempt = await ownBegin(claimId, executor);
@@ -168,7 +172,8 @@ test('an executor fence after beginAttempt is accounted exactly like a final aut
     statePort,
     transport: {
       async execute() {
-        assert.fail('a fenced port must send nothing');
+        sends += 1;
+        return { proposal: { content: '{}' }, observedUsage: { inputTokens: 1, outputTokens: 1, costUsd: 0, billableTokens: 2 } };
       },
     },
     executorIdentity: ACTOR,
@@ -177,6 +182,7 @@ test('an executor fence after beginAttempt is accounted exactly like a final aut
   const first = await port.propose(state, evidence, request, admission);
   assert.equal(first.outcome, 'denied');
   assert.equal(first.reason, 'FENCED_EXECUTOR');
+  assert.equal(sends, 0, 'a fenced port sends nothing');
 
   const journal = statePort.getJournalSnapshot();
   assert.equal(journal.attempts.length, 1, 'the durable attempt is kept');
@@ -235,12 +241,13 @@ test('a post-beginAttempt fence is recorded and keeps the attempt reservations h
 
 /* ---------------- M3: a failed fenced-outcome write keeps a replayable recovery payload ---------------- */
 
-function fencedPort(statePort: MemoryStatePortV02) {
+function fencedPort(statePort: MemoryStatePortV02, onExecute?: () => void) {
   return new HostModelPortV02({
     statePort,
     transport: {
       async execute() {
-        assert.fail('a fenced port must send nothing');
+        onExecute?.();
+        return { proposal: { content: '{}' }, observedUsage: { inputTokens: 1, outputTokens: 1, costUsd: 0, billableTokens: 2 } };
       },
     },
     executorIdentity: ACTOR,
@@ -253,14 +260,18 @@ test('a fenced-outcome write that fails once still accounts the attempt on the b
   const { state, evidence, request, admission, statePort } = admitted();
   const record = statePort.recordOutcome.bind(statePort);
   let writes = 0;
+  let sends = 0;
   statePort.recordOutcome = async receipt => {
     writes++;
     if (writes === 1) throw new Error('transient write failure');
     return record(receipt);
   };
-  const result = await fencedPort(statePort).propose(state, evidence, request, admission);
+  const result = await fencedPort(statePort, () => {
+    sends += 1;
+  }).propose(state, evidence, request, admission);
   assert.equal(result.outcome, 'denied');
   assert.equal(result.reason, 'FENCED_EXECUTOR');
+  assert.equal(sends, 0, 'a fenced port sends nothing');
   assert.equal(writes, 2, 'the write is retried once, not infinitely');
   assert.equal(result.recovery, undefined, 'a durable hold needs no recovery payload');
   const journal = statePort.getJournalSnapshot();
@@ -272,13 +283,17 @@ test('a persistently failing fenced-outcome write keeps the payload and the owne
   const { state, evidence, request, admission, statePort } = admitted();
   const record = statePort.recordOutcome.bind(statePort);
   let writes = 0;
+  let sends = 0;
   statePort.recordOutcome = async () => {
     writes++;
     throw new Error('persistent write failure');
   };
-  const result = await fencedPort(statePort).propose(state, evidence, request, admission);
+  const result = await fencedPort(statePort, () => {
+    sends += 1;
+  }).propose(state, evidence, request, admission);
   assert.equal(result.outcome, 'denied');
   assert.equal(result.reason, 'FENCED_EXECUTOR');
+  assert.equal(sends, 0, 'a fenced port sends nothing');
   assert.equal(writes, 2, 'the retry is bounded');
   assert.ok(result.recovery, 'the failed write hands the receipt back instead of discarding it');
   const journal = statePort.getJournalSnapshot();
