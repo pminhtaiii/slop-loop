@@ -431,6 +431,10 @@ test('shipped exemptions validate and clear exactly the reviewed synthetic findi
     ['generic-api-key', 'tests/runtime/unit/real-tier-endpoint-scan-3.test.ts', 22, '63216da6e1bb498487647866f2f6dd09b0f5331e'],
     ['generic-api-key', 'tests/runtime/unit/real-tier-endpoint-scan.test.ts', 17, '1cfac243e6f4bbe4d300547fa0dd09cb43805906'],
     ['generic-api-key', 'tests/runtime/unit/real-tier-endpoint-scan-2.test.ts', 19, '1cfac243e6f4bbe4d300547fa0dd09cb43805906'],
+    ['generic-api-key', 'tests/runtime/contract/real-tier-dispatch-authority.test.ts', 51, '4948f7c62c477b0424888b1724e033b070cb3826'],
+    ['generic-api-key', 'tests/runtime/contract/real-tier-dispatch-authority.test.ts', 51, '25cfb1240ce76702bdcb7f48ba278017afe2f722'],
+    ['generic-api-key', 'tests/runtime/contract/real-tier-dispatch-authority.test.ts', 51, '3eff2fd737ddc3228ee39f3c15dc76d1c7855098'],
+    ['generic-api-key', 'tests/runtime/contract/real-tier-dispatch-authority.test.ts', 51, '504931d67e82767beaa59e1847db32eb11911449'],
   ];
   const findings = reviewed.map(([ruleId, path, line, commit]) => ({ ruleId, path, line, commit }));
   // applyExemptions validates every entry (exact path, reason, commit) and rejects duplicates.
