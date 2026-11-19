@@ -1,2 +1,8 @@
 # Keep local and CI installs on pnpm's default 24-hour release-age policy.
 minimumReleaseAge: 1440
+
+# CPU ONNX and sharp use the binaries shipped in the pinned packages.
+allowBuilds:
+  onnxruntime-node@1.21.0: false
+  protobufjs@7.6.6: false
+  sharp@0.34.5: false

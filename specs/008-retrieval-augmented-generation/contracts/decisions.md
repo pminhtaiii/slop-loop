@@ -30,3 +30,9 @@ G-PLAN requires fresh automated and independent review of this revision. G-IMPLE
 After the UC-02 planning review, the user explicitly requested implementation of T001–T006 in [`tasks.md`](../tasks.md), with Luna Max implementing and Sol medium reviewing and repairing the batch. G-IMPLEMENT covers those six task scopes at the source and controlled-test tier, including the assigned foundation, question contracts, fixture, budget, and evidence paths.
 
 T007 onward, live owner/provider composition, production defaults, durable storage and restart acceptance, embedding experiments, and real-model quality acceptance require their own releases and evidence. The contributor workflow governs publication and the human merge decision.
+
+## 2026-11-17 — T019, T022 and T020 implementation release
+
+The user requested T019, T020 and T022 and selected the `feat/rag-retrieval-foundation` branch. The selected scope covers pinned dependency and SQLite compatibility checks, the controlled and local embedding adapters, and guarded corpus segmentation. Execute T019, then T022, then T020 in dependency order. The existing Ubuntu CI verifies the SQLite extension in the emitted build. Verify Windows on a Windows checkout.
+
+T021, serving and runtime composition, real embedding quality measurement, production defaults and merge remain separately gated.
