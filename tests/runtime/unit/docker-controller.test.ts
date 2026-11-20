@@ -315,6 +315,14 @@ test('a timed-out execution reports timedOut with a null exit code and preserves
   assert.deepEqual(raw, { exitCode: null, stdout: '', stderr: '', durationMs: raw.durationMs, timedOut: true });
   assert.equal(normalizeDockerExecutionOutput(raw, containerPlan.limits, containerPlan).outcome, 'timeout');
   assert.deepEqual(controller.getUncertainWorkspaces(), ['ws-1']);
+  const runName = calls
+    .find(call => call.args[0] === 'run' && call.args.includes('pytest'))
+    ?.args.find(a => a.startsWith('--name='))
+    ?.slice(7);
+  assert.ok(
+    calls.some(call => call.args[0] === 'kill' && call.args[1] === runName),
+    'a timed-out container is killed',
+  );
 
   const beforeCleanup = calls.length;
   await controller.cleanup();

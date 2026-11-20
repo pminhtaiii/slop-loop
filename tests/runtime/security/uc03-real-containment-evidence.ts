@@ -236,13 +236,15 @@ export interface ContainerTrap {
 /**
  * Records the name of the one container started for an armed command and keeps it after exit, so
  * `docker inspect` can report its own kill reason: `--rm` is dropped only for a matching run that
- * captures a nonempty container name. Every resource, isolation and mount argument reaches Docker unchanged.
+ * captures a nonempty container name, and the executor's own `rm` of that container is withheld until the diagnostic removes it. Every resource, isolation and mount argument reaches Docker unchanged.
  */
 export function createContainerTrap(base: StructuredSpawn): ContainerTrap {
   let marker: string | undefined;
   let name: string | undefined;
   return {
     spawn: (command, args, options) => {
+      // The executor's own post-run cleanup would remove this container before it can be inspected; the diagnostic removes it.
+      if (name !== undefined && command === 'docker' && args[0] === 'rm' && args.includes(name)) return Promise.resolve({ exitCode: 0, stdout: '', stderr: '', timedOut: false });
       if (marker === undefined || name !== undefined || command !== 'docker' || args[0] !== 'run' || !args.includes(marker)) return base(command, args, options);
       const captured = args.find(argument => argument.startsWith('--name='))?.slice('--name='.length);
       if (captured === undefined || captured.length === 0) {
