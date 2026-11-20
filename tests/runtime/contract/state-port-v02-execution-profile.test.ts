@@ -168,6 +168,16 @@ test('(a2) the profile source may derive its values from the owner-known task an
   assert.equal(claimed(await port.claim(contextOf(REAL_VIEW))), `claim-${ACTION_ID}`);
 });
 
+test('(a3) a claim resolves a function-form profile source once', async () => {
+  let calls = 0;
+  const port = await portFor('a3', () => {
+    calls += 1;
+    return OWNER_PROFILE;
+  });
+  assert.equal(claimed(await port.claim(contextOf(REAL_VIEW))), `claim-${ACTION_ID}`);
+  assert.equal(calls, 1, 'the admission check and the stored trusted context share one resolved profile');
+});
+
 test('(b) a view that disagrees with the owner profile is refused', async () => {
   const port = await portFor('b', OWNER_PROFILE);
   const rows: readonly (readonly [string, ViewFacts])[] = [

@@ -435,6 +435,11 @@ test('shipped exemptions validate and clear exactly the reviewed synthetic findi
     ['generic-api-key', 'tests/runtime/contract/real-tier-dispatch-authority.test.ts', 51, '25cfb1240ce76702bdcb7f48ba278017afe2f722'],
     ['generic-api-key', 'tests/runtime/contract/real-tier-dispatch-authority.test.ts', 51, '3eff2fd737ddc3228ee39f3c15dc76d1c7855098'],
     ['generic-api-key', 'tests/runtime/contract/real-tier-dispatch-authority.test.ts', 51, '504931d67e82767beaa59e1847db32eb11911449'],
+    ['generic-api-key', 'tests/runtime/integration/uc03-approvals-real-probe.ts', 615, 'fcfa2fef2f47fab478b19d8a808fb2242ff55d5e'],
+    ['generic-api-key', 'tests/runtime/integration/uc03-approvals-real-probe.ts', 655, 'fcfa2fef2f47fab478b19d8a808fb2242ff55d5e'],
+    ['generic-api-key', 'tests/runtime/integration/uc03-approvals.test.ts', 370, 'fcfa2fef2f47fab478b19d8a808fb2242ff55d5e'],
+    ['generic-api-key', 'tests/runtime/integration/uc03-approvals.test.ts', 990, 'fcfa2fef2f47fab478b19d8a808fb2242ff55d5e'],
+    ['generic-api-key', 'tests/runtime/integration/uc03-approvals.test.ts', 1050, 'fcfa2fef2f47fab478b19d8a808fb2242ff55d5e'],
   ];
   const findings = reviewed.map(([ruleId, path, line, commit]) => ({ ruleId, path, line, commit }));
   // applyExemptions validates every entry (exact path, reason, commit) and rejects duplicates.

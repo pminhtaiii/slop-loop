@@ -84,12 +84,9 @@ export async function claim(options: ClaimOperationOptions, context: AdmissionCo
       }
     }
     const task = await store.readTask(taskId);
-    if (
-      !task ||
-      !contextMatchesTask(snapshot, task, ownerExecutionProfile(options.executionProfile, task)) ||
-      control.controlVersion !== snapshot.expectedControlVersion ||
-      control.epoch !== snapshot.expectedEpoch
-    )
+    // Resolved once: the stored trusted context must carry the profile the admission was checked against.
+    const profile = task ? ownerExecutionProfile(options.executionProfile, task) : undefined;
+    if (!task || !contextMatchesTask(snapshot, task, profile) || control.controlVersion !== snapshot.expectedControlVersion || control.epoch !== snapshot.expectedEpoch)
       return NEUTRAL_CLAIM_RECEIPT_V02;
     const authorityRef = authorityFor(snapshot);
     if (!control.activeAuthorityRef || !equal(control.activeAuthorityRef, authorityRef)) return NEUTRAL_CLAIM_RECEIPT_V02;
@@ -131,7 +128,7 @@ export async function claim(options: ClaimOperationOptions, context: AdmissionCo
       context: snapshot,
       taskSnapshot: structuredClone(task),
       authorityRef,
-      trustedAdmissionContext: deriveTrustedContext(snapshot, ownerExecutionProfile(options.executionProfile, task)),
+      trustedAdmissionContext: deriveTrustedContext(snapshot, profile),
       status: 'claimed',
     });
     await store.writeControl(taskId, { ...control, controlVersion: postClaimControlVersion, activeClaimId: claimId });
