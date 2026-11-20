@@ -13,10 +13,9 @@
  * a pass. `--self-check` scores a deliberately failed row through the same path and exits 1.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 import { ApprovalServiceError, createApprovalService, type ApprovalService, type ApprovalServiceV02 } from '../../../src/approvals/service.ts';
 import { computePlanBindingDigest } from '../../../src/approvals/plan-binding.ts';
 import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, CONTRACT_VERSION } from '../../../src/contracts/foundation/uc03.ts';
@@ -82,9 +81,40 @@ function applyUnifiedDiff(source: string, diffText: string): string {
 
 async function releaseWorkspaceVolumes(controller: DockerLifecycleController, taskId: string, workspaceId: string): Promise<void> {
   const { repoVolumeId, scratchVolumeId } = computeWorkspaceVolumeIds(taskId, workspaceId);
+  const failures: unknown[] = [];
   for (const volumeId of [repoVolumeId, scratchVolumeId]) {
-    if (await controller.hasVolume(volumeId)) await controller.removeVolume(volumeId);
+    try {
+      if (await controller.hasVolume(volumeId)) await controller.removeVolume(volumeId);
+    } catch (error) {
+      failures.push(error);
+    }
   }
+  if (failures.length === 1) {
+    throw failures[0];
+  } else if (failures.length > 1) {
+    throw new AggregateError(failures, `Failed to release workspace volumes for ${taskId}/${workspaceId}`);
+  }
+}
+
+async function cleanupScenario(controller: DockerLifecycleController, taskId: string, workspaceId: string, hostCleanup: () => void): Promise<void> {
+  let dockerError: unknown;
+  let hostError: unknown;
+  try {
+    await releaseWorkspaceVolumes(controller, taskId, workspaceId);
+  } catch (error) {
+    dockerError = error;
+  } finally {
+    try {
+      hostCleanup();
+    } catch (error) {
+      hostError = error;
+    }
+  }
+  if (dockerError !== undefined && hostError !== undefined) {
+    throw new AggregateError([dockerError, hostError], 'Scenario cleanup failed for both Docker volumes and host files');
+  }
+  if (dockerError !== undefined) throw dockerError;
+  if (hostError !== undefined) throw hostError;
 }
 
 interface Row {
@@ -246,104 +276,109 @@ function taskOf(revision: string): BugTask {
 /** One temp store, one temp repository, the seeded `AwaitPlan` task and the real UC-05 service. */
 async function domain(scenario: string): Promise<Domain> {
   const root = mkdtempSync(join(tmpdir(), `uc03-approvals-probe-${scenario}-`));
-  const workspaceId = `${WORKSPACE_ID}-${scenario}`;
-  const repositoryRoot = join(root, 'repository');
-  mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
-  mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
-  writeFileSync(join(repositoryRoot, 'src/calculator.py'), SOURCE, 'utf8');
-  writeFileSync(join(repositoryRoot, 'tests/test_calculator.py'), TEST_SOURCE, 'utf8');
-  const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
-  const revision = await filesystem.getCurrentRevisionDigest();
-  const task = taskOf(revision);
-  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
-  const plan: FixPlan = {
-    planVersion: 1,
-    diagnosis: 'The divisor is not guarded',
-    suspectedCauseLocations: ['src/calculator.py:1'],
-    evidenceRefs: ['evidence-baseline-t052-probe'],
-    strategy: 'Reject a zero divisor before division',
-    scopedChanges: ['src/calculator.py'],
-    checkSetDigest,
-    baselineRef: revision,
-    strategyDigest: computeCanonicalSha256('Reject a zero divisor before division'),
-    decisionRef: PLAN_DECISION,
-  };
-  const planBindingDigest = computePlanBindingDigest({
-    taskId: TASK_ID,
-    planVersion: plan.planVersion,
-    strategyDigest: plan.strategyDigest,
-    baselineRef: plan.baselineRef,
-    evidenceRefs: plan.evidenceRefs,
-    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-    checkSetDigest,
-    decisionRef: plan.decisionRef ?? '',
-  });
-  const trustedTransitions: Domain['trustedTransitions'] = {};
-  const store = new DurableStore(join(root, 'store'));
-  const statePort = new DurableStatePortV02({ store, taskId: TASK_ID, initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY }, trustedTransitions });
-  const approvals = new DurableApprovalStore({ storageDir: join(root, 'approvals'), durableStore: store, profile: PROFILE, provenance: 'real' });
-  const source = createHostActionContext({ filesystem, workspaceId, repositoryId: REPOSITORY_ID, policyIdentity: POLICY, ttlMs: 600_000 });
-  const context = {
-    loadForAction: async (taskId: string, actionId: string) => {
-      const observed = await source.observe(taskId, actionId);
-      return { ...observed, freshness: planFreshness(task, plan, observed.facts.repositoryRevisionDigest, workspaceId, observed.action), runId: RUN_ID };
-    },
-    loadForDecision: async (decisionId: string) => context.loadForAction(TASK_ID, decisionId),
-  };
-  const service = createApprovalService({
-    taskId: TASK_ID,
-    profile: PROFILE,
-    store: approvals,
-    provenance: 'real',
-    context,
-    operator: { identity: { actorId: 'probe-driver-t052', channelRef: 'host-t052-probe', provenance: 'real' } },
-    now: () => '2026-11-17T00:00:00.000Z',
-  });
-  await statePort.transition(
-    {
-      schemaVersion: CONTRACT_VERSION,
-      stateVersion: 1,
+  try {
+    const workspaceId = `${WORKSPACE_ID}-${scenario}`;
+    const repositoryRoot = join(root, 'repository');
+    mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
+    mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
+    writeFileSync(join(repositoryRoot, 'src/calculator.py'), SOURCE, 'utf8');
+    writeFileSync(join(repositoryRoot, 'tests/test_calculator.py'), TEST_SOURCE, 'utf8');
+    const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
+    const revision = await filesystem.getCurrentRevisionDigest();
+    const task = taskOf(revision);
+    const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
+    const plan: FixPlan = {
+      planVersion: 1,
+      diagnosis: 'The divisor is not guarded',
+      suspectedCauseLocations: ['src/calculator.py:1'],
+      evidenceRefs: ['evidence-baseline-t052-probe'],
+      strategy: 'Reject a zero divisor before division',
+      scopedChanges: ['src/calculator.py'],
+      checkSetDigest,
+      baselineRef: revision,
+      strategyDigest: computeCanonicalSha256('Reject a zero divisor before division'),
+      decisionRef: PLAN_DECISION,
+    };
+    const planBindingDigest = computePlanBindingDigest({
       taskId: TASK_ID,
-      runId: RUN_ID,
-      workspaceId,
-      repositoryId: REPOSITORY_ID,
-      repositoryRevisionDigest: revision,
-      goal: task.goal,
-      observedBehavior: task.observedBehavior,
-      expectedBehavior: task.expectedBehavior,
-      reproduction: task.reproduction,
-      acceptanceCriteria: task.acceptanceCriteria,
-      constraints: task.constraints,
-      requiredCheckIds: task.requiredChecks.map(check => check.checkId),
-      taskContext: task,
-      node: 'AwaitPlan',
       planVersion: plan.planVersion,
-      replanCount: 0,
+      strategyDigest: plan.strategyDigest,
+      baselineRef: plan.baselineRef,
+      evidenceRefs: plan.evidenceRefs,
+      criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+      checkSetDigest,
+      decisionRef: plan.decisionRef ?? '',
+    });
+    const trustedTransitions: Domain['trustedTransitions'] = {};
+    const store = new DurableStore(join(root, 'store'));
+    const statePort = new DurableStatePortV02({ store, taskId: TASK_ID, initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY }, trustedTransitions });
+    const approvals = new DurableApprovalStore({ storageDir: join(root, 'approvals'), durableStore: store, profile: PROFILE, provenance: 'real' });
+    const source = createHostActionContext({ filesystem, workspaceId, repositoryId: REPOSITORY_ID, policyIdentity: POLICY, ttlMs: 600_000 });
+    const context = {
+      loadForAction: async (taskId: string, actionId: string) => {
+        const observed = await source.observe(taskId, actionId);
+        return { ...observed, freshness: planFreshness(task, plan, observed.facts.repositoryRevisionDigest, workspaceId, observed.action), runId: RUN_ID };
+      },
+      loadForDecision: async (decisionId: string) => context.loadForAction(TASK_ID, decisionId),
+    };
+    const service = createApprovalService({
+      taskId: TASK_ID,
+      profile: PROFILE,
+      store: approvals,
+      provenance: 'real',
+      context,
+      operator: { identity: { actorId: 'probe-driver-t052', channelRef: 'host-t052-probe', provenance: 'real' } },
+      now: () => '2026-11-17T00:00:00.000Z',
+    });
+    await statePort.transition(
+      {
+        schemaVersion: CONTRACT_VERSION,
+        stateVersion: 1,
+        taskId: TASK_ID,
+        runId: RUN_ID,
+        workspaceId,
+        repositoryId: REPOSITORY_ID,
+        repositoryRevisionDigest: revision,
+        goal: task.goal,
+        observedBehavior: task.observedBehavior,
+        expectedBehavior: task.expectedBehavior,
+        reproduction: task.reproduction,
+        acceptanceCriteria: task.acceptanceCriteria,
+        constraints: task.constraints,
+        requiredCheckIds: task.requiredChecks.map(check => check.checkId),
+        taskContext: task,
+        node: 'AwaitPlan',
+        planVersion: plan.planVersion,
+        replanCount: 0,
+        plan,
+        activeDecisionId: PLAN_DECISION,
+        evidenceRefs: [...plan.evidenceRefs],
+        changedPaths: [],
+        risks: [],
+        nextAction: 'await-plan-approval',
+        budgetLedgers: seedLedgers(task),
+      },
+      0,
+    );
+    return {
+      root,
+      repositoryRoot,
+      revision,
+      workspaceId,
+      statePort,
+      service,
+      source,
+      task,
       plan,
-      activeDecisionId: PLAN_DECISION,
-      evidenceRefs: [...plan.evidenceRefs],
-      changedPaths: [],
-      risks: [],
-      nextAction: 'await-plan-approval',
-      budgetLedgers: seedLedgers(task),
-    },
-    0,
-  );
-  return {
-    root,
-    repositoryRoot,
-    revision,
-    workspaceId,
-    statePort,
-    service,
-    source,
-    task,
-    plan,
-    checkSetDigest,
-    planBindingDigest,
-    trustedTransitions,
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
-  };
+      checkSetDigest,
+      planBindingDigest,
+      trustedTransitions,
+      cleanup: () => rmSync(root, { recursive: true, force: true }),
+    };
+  } catch (error) {
+    rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function planFreshness(task: BugTask, plan: FixPlan, revision: string, workspaceId: string, observed: { readonly actionId: string; readonly kind: string }): Record<string, unknown> {
@@ -592,6 +627,9 @@ async function applyPatchInContainer(assembly: RealTierAssembly, repositoryRoot:
     '--security-opt=no-new-privileges',
     `--platform=${assembly.profile.image.platform}`,
     `--user=${assembly.profile.image.user}`,
+    `--cpus=${assembly.profile.limits.cpus}`,
+    `--memory=${assembly.profile.limits.memoryBytes}`,
+    `--pids-limit=${assembly.profile.limits.processes}`,
     `--mount=type=bind,source=${repositoryRoot},target=/workspace/repo`,
     assembly.metadata.imageId,
     'python3',
@@ -602,6 +640,66 @@ async function applyPatchInContainer(assembly: RealTierAssembly, repositoryRoot:
   ];
   const result = await structuredSpawn('docker', dockerArgv, { timeoutMs: 60_000, maxOutputBytes: 64 * 1024 });
   return { argv: dockerArgv, exitCode: result.exitCode, stderr: result.stderr.slice(0, 200) };
+}
+
+interface InventoryComparison {
+  readonly ok: boolean;
+  readonly created: readonly string[];
+  readonly deleted: readonly string[];
+  readonly modified: readonly string[];
+  readonly targetMatchesExpected: boolean;
+}
+
+function snapshotRepository(root: string): Map<string, string> {
+  const inventory = new Map<string, string>();
+  function walk(current: string, rel: string): void {
+    const entries = readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const relPath = rel === '' ? entry.name : `${rel}/${entry.name}`;
+      const fullPath = join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath, relPath);
+      } else if (entry.isFile()) {
+        inventory.set(relPath.replaceAll('\\', '/'), readFileSync(fullPath, 'utf8'));
+      } else {
+        // A symlink or other non-file entry is still a change to the tree, so it must show in the inventory.
+        inventory.set(relPath.replaceAll('\\', '/'), entry.isSymbolicLink() ? `symlink:${readlinkSync(fullPath)}` : 'non-file-entry');
+      }
+    }
+  }
+  walk(root, '');
+  return inventory;
+}
+
+function compareRepositoryInventories(before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>, expectedPath: string, expectedContent: string): InventoryComparison {
+  const created: string[] = [];
+  const deleted: string[] = [];
+  const modified: string[] = [];
+
+  for (const [path, content] of after.entries()) {
+    if (!before.has(path)) {
+      created.push(path);
+    } else if (before.get(path) !== content) {
+      modified.push(path);
+    }
+  }
+
+  for (const path of before.keys()) {
+    if (!after.has(path)) {
+      deleted.push(path);
+    }
+  }
+
+  const targetMatchesExpected = after.get(expectedPath) === expectedContent;
+  const ok = created.length === 0 && deleted.length === 0 && modified.length === 1 && modified[0] === expectedPath && targetMatchesExpected;
+
+  return {
+    ok,
+    created,
+    deleted,
+    modified,
+    targetMatchesExpected,
+  };
 }
 
 /**
@@ -648,6 +746,7 @@ async function rejectedScenario(
   let decisions = 0;
   let harness: Awaited<ReturnType<typeof guardedHarness>> | undefined;
   let result: RejectedResult = { outcome: 'not-run', containerAttempts: 0, sourceChanged: false, stateChanged: false };
+  let scenarioError: unknown;
   try {
     harness = await guardedHarness(substrate, d, exitCodes);
     await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
@@ -725,9 +824,24 @@ async function rejectedScenario(
       stateChanged: stateBefore !== (await harness.fingerprint()),
     };
     rows.push(row('T025 rejected: the real guard refuses for the missing approval before any container and leaves source, task and journal unchanged', rejectedRefused(result), result));
+  } catch (error) {
+    scenarioError = error;
   } finally {
-    await releaseWorkspaceVolumes(substrate.manager.getController(), TASK_ID, d.workspaceId);
-    d.cleanup();
+    let cleanupError: unknown;
+    try {
+      await cleanupScenario(substrate.manager.getController(), TASK_ID, d.workspaceId, () => d.cleanup());
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (scenarioError !== undefined && cleanupError !== undefined) {
+      throw new AggregateError([scenarioError, cleanupError], 'Scenario and cleanup failed');
+    }
+    if (scenarioError !== undefined) {
+      throw scenarioError;
+    }
+    if (cleanupError !== undefined) {
+      throw cleanupError;
+    }
   }
   return { rows, decisions, exitCodes, containerAttempts: harness?.containerAttempts() ?? 0, result };
 }
@@ -743,6 +857,7 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
   const exitCodes: (number | null)[] = [];
   let decisions = 0;
   let harness: Awaited<ReturnType<typeof guardedHarness>> | undefined;
+  let scenarioError: unknown;
   try {
     harness = await guardedHarness(substrate, d, exitCodes);
     await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
@@ -784,6 +899,7 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
     const decisionReceipt = await d.service.issueActionDecision(PATCH_DECISION, evaluation.receiptId);
 
     // The source equals its original bytes right up to the moment the guard admits and the receiver runs.
+    const beforeInventory = snapshotRepository(d.repositoryRoot);
     const before = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
     rows.push(row('T025 approved: no source byte changes before admission', before === d.revision, { before, revision: d.revision }));
 
@@ -791,15 +907,28 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
     rows.push(row('T025 approved: the real guard settles exactly one patch', applied.outcome === 'success', { outcome: applied.outcome, reason: (applied as { reason?: string }).reason }));
     rows.push(row('T025 approved: exactly one container run performs the edit', exitCodes.length === 1 && exitCodes[0] === 0, { runs: exitCodes.length, exitCode: exitCodes[0] }));
     const after = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
-    const calculatorBytes = readFileSync(join(d.repositoryRoot, 'src/calculator.py'), 'utf8');
-    const testBytes = readFileSync(join(d.repositoryRoot, 'tests/test_calculator.py'), 'utf8');
-    const expectedTestBytes = TEST_SOURCE;
-    const changedPaths = [...(calculatorBytes !== SOURCE ? ['src/calculator.py'] : []), ...(testBytes !== expectedTestBytes ? ['tests/test_calculator.py'] : [])];
-    const patchMatches = after !== before && isDeepStrictEqual(changedPaths, approvedAction.targetPaths) && calculatorBytes === PATCHED;
-    rows.push(row('T025 approved: the edit landed only after admission', patchMatches, { before, after, changedPaths, matchesExpected: calculatorBytes === PATCHED }));
+    const afterInventory = snapshotRepository(d.repositoryRoot);
+    const comparison = compareRepositoryInventories(beforeInventory, afterInventory, 'src/calculator.py', PATCHED);
+    const patchMatches = after !== before && comparison.ok;
+    rows.push(row('T025 approved: the edit landed only after admission', patchMatches, { before, after, comparison }));
+  } catch (error) {
+    scenarioError = error;
   } finally {
-    await releaseWorkspaceVolumes(substrate.manager.getController(), TASK_ID, d.workspaceId);
-    d.cleanup();
+    let cleanupError: unknown;
+    try {
+      await cleanupScenario(substrate.manager.getController(), TASK_ID, d.workspaceId, () => d.cleanup());
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (scenarioError !== undefined && cleanupError !== undefined) {
+      throw new AggregateError([scenarioError, cleanupError], 'Scenario and cleanup failed');
+    }
+    if (scenarioError !== undefined) {
+      throw scenarioError;
+    }
+    if (cleanupError !== undefined) {
+      throw cleanupError;
+    }
   }
   return { rows, decisions, exitCodes, containerAttempts: harness?.containerAttempts() ?? 0 };
 }
@@ -830,7 +959,11 @@ async function guardedHarness(
   try {
     await manager.createWorkspace({ taskId: TASK_ID, workspaceId: d.workspaceId, initialRevisionDigest: d.revision, profile: substrate.profile });
   } catch (error) {
-    await releaseWorkspaceVolumes(manager.getController(), TASK_ID, d.workspaceId);
+    try {
+      await releaseWorkspaceVolumes(manager.getController(), TASK_ID, d.workspaceId);
+    } catch (releaseError) {
+      throw new AggregateError([error, releaseError], 'Workspace creation and volume release failed');
+    }
     throw error;
   }
   let attempts = 0;
@@ -907,12 +1040,28 @@ async function redProof(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  const beforeBaseline = new Map([
+    ['src/calculator.py', SOURCE],
+    ['tests/test_calculator.py', TEST_SOURCE],
+  ]);
+  const extraFileAfter = new Map([
+    ['src/calculator.py', PATCHED],
+    ['tests/test_calculator.py', TEST_SOURCE],
+    ['src/extra.py', '# unauthorized created file\n'],
+  ]);
+  const extraFileCheck = compareRepositoryInventories(beforeBaseline, extraFileAfter, 'src/calculator.py', PATCHED);
+  if (extraFileCheck.ok) {
+    emit('fail', { failed: ['red-inventory-extra-file-failed'], detail: 'Inventory comparison unexpectedly passed with an extra created file' });
+    process.exitCode = 1;
+    return;
+  }
   report(
     [
       row('RED-PROOF a rejection through the real guard is refused for the missing approval (must pass)', rejectedRefused(enforced.result), enforced.result),
       row('RED-PROOF WITNESS a rejection whose enforcement is bypassed lands the edit and must score false (this row must fail)', rejectedRefused(bypassed.result), bypassed.result),
+      row('RED-PROOF WITNESS an extra created file fails repository inventory comparison (this row must fail)', extraFileCheck.ok, extraFileCheck),
     ],
-    { redProof: true, note: 'exits nonzero by design: the witness row shows the predicate rejects a result in which the rejected edit reached the container' },
+    { redProof: true, note: 'exits nonzero by design: witness rows show predicates reject invalid results' },
   );
 }
 

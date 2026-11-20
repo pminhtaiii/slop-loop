@@ -106,89 +106,94 @@ function taskOf(revision: string): BugTask {
 /** One temp store, one temp repository, the seeded `AwaitPlan` task, and the real UC-05 service. */
 async function domain(): Promise<Domain> {
   const root = mkdtempSync(join(tmpdir(), 'uc03-approvals-'));
-  const repositoryRoot = join(root, 'repository');
-  mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
-  mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
-  for (const [path, content] of Object.entries(REPO_FILES)) writeFileSync(join(repositoryRoot, path), content, 'utf8');
-  const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
-  const revision = await filesystem.getCurrentRevisionDigest();
-  const task = taskOf(revision);
-  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
-  const plan: FixPlan = {
-    planVersion: 1,
-    diagnosis: 'The divisor is not guarded',
-    suspectedCauseLocations: ['src/calculator.py:1'],
-    evidenceRefs: ['evidence-baseline-t052'],
-    strategy: 'Reject a zero divisor before division',
-    scopedChanges: ['src/calculator.py'],
-    checkSetDigest,
-    baselineRef: revision,
-    strategyDigest: computeCanonicalSha256('Reject a zero divisor before division'),
-    decisionRef: PLAN_DECISION,
-  };
-  const planBindingDigest = computePlanBindingDigest({
-    taskId: TASK_ID,
-    planVersion: plan.planVersion,
-    strategyDigest: plan.strategyDigest,
-    baselineRef: plan.baselineRef,
-    evidenceRefs: plan.evidenceRefs,
-    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-    checkSetDigest,
-    decisionRef: plan.decisionRef ?? '',
-  });
+  try {
+    const repositoryRoot = join(root, 'repository');
+    mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
+    mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
+    for (const [path, content] of Object.entries(REPO_FILES)) writeFileSync(join(repositoryRoot, path), content, 'utf8');
+    const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
+    const revision = await filesystem.getCurrentRevisionDigest();
+    const task = taskOf(revision);
+    const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
+    const plan: FixPlan = {
+      planVersion: 1,
+      diagnosis: 'The divisor is not guarded',
+      suspectedCauseLocations: ['src/calculator.py:1'],
+      evidenceRefs: ['evidence-baseline-t052'],
+      strategy: 'Reject a zero divisor before division',
+      scopedChanges: ['src/calculator.py'],
+      checkSetDigest,
+      baselineRef: revision,
+      strategyDigest: computeCanonicalSha256('Reject a zero divisor before division'),
+      decisionRef: PLAN_DECISION,
+    };
+    const planBindingDigest = computePlanBindingDigest({
+      taskId: TASK_ID,
+      planVersion: plan.planVersion,
+      strategyDigest: plan.strategyDigest,
+      baselineRef: plan.baselineRef,
+      evidenceRefs: plan.evidenceRefs,
+      criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+      checkSetDigest,
+      decisionRef: plan.decisionRef ?? '',
+    });
 
-  const store = new DurableStore(join(root, 'store'));
-  const trustedTransitions: Domain['trustedTransitions'] = {};
-  // The seeded control head a bound real task starts with (T061): version 1, epoch 1.
-  const statePort = new DurableStatePortV02({ store, taskId: TASK_ID, initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY }, trustedTransitions });
-  const approvals = new DurableApprovalStore({ storageDir: join(root, 'approvals'), durableStore: store, profile: PROFILE, provenance: 'real' });
-  const source = createHostActionContext({ filesystem, workspaceId: WORKSPACE_ID, repositoryId: REPOSITORY_ID, policyIdentity: POLICY, ttlMs: 600_000 });
-  let observedPlan = plan;
-  // The host seam the service is given. The action, facts and elements are the host registry's
-  // observed values (real provenance, re-measured); the freshness is the complete plan context that
-  // `repair-types.ts` builds for the same state, because `createRealContextProvider` emits only the
-  // six base fields and a fix-plan binding needs all twelve. The first-request convention is the
-  // one `real-tier-owners.ts` applies: a decision id names its own registered action until a
-  // stored request exists.
-  const context = {
-    loadForAction: async (taskId: string, actionId: string) => {
-      const observed = await source.observe(taskId, actionId);
-      // Freshness is always measured from the observation the host just re-measured, so a drifted
-      // tree shows up here exactly as it does in `trusted-host-snapshot`'s refusal.
-      return { ...observed, freshness: completePlanFreshness(task, observedPlan, observed.facts.repositoryRevisionDigest, observed.action), runId: RUN_ID };
-    },
-    loadForDecision: async (decisionId: string) => context.loadForAction(TASK_ID, decisionId),
-  };
-  // The operator identity is this driver, never a production default: the service refuses to record
-  // any decision without one, and nothing here mints one on the operator's behalf.
-  const service = createApprovalService({
-    taskId: TASK_ID,
-    profile: PROFILE,
-    store: approvals,
-    provenance: 'real',
-    context,
-    operator: { identity: { actorId: 'test-driver-t052', channelRef: 'host-t052', provenance: 'real' } },
-    now: () => '2026-11-17T00:00:00.000Z',
-  });
-  await statePort.transition(taskStateOf(task, plan, revision), 0);
-  return {
-    root,
-    repositoryRoot,
-    revision,
-    statePort,
-    service,
-    source,
-    task,
-    plan,
-    checkSetDigest,
-    planBindingDigest,
-    trustedTransitions,
-    currentPlan: (next?: FixPlan): FixPlan => {
-      observedPlan = next ?? observedPlan;
-      return observedPlan;
-    },
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
-  };
+    const store = new DurableStore(join(root, 'store'));
+    const trustedTransitions: Domain['trustedTransitions'] = {};
+    // The seeded control head a bound real task starts with (T061): version 1, epoch 1.
+    const statePort = new DurableStatePortV02({ store, taskId: TASK_ID, initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable', activeAuthorityRef: AUTHORITY }, trustedTransitions });
+    const approvals = new DurableApprovalStore({ storageDir: join(root, 'approvals'), durableStore: store, profile: PROFILE, provenance: 'real' });
+    const source = createHostActionContext({ filesystem, workspaceId: WORKSPACE_ID, repositoryId: REPOSITORY_ID, policyIdentity: POLICY, ttlMs: 600_000 });
+    let observedPlan = plan;
+    // The host seam the service is given. The action, facts and elements are the host registry's
+    // observed values (real provenance, re-measured); the freshness is the complete plan context that
+    // `repair-types.ts` builds for the same state, because `createRealContextProvider` emits only the
+    // six base fields and a fix-plan binding needs all twelve. The first-request convention is the
+    // one `real-tier-owners.ts` applies: a decision id names its own registered action until a
+    // stored request exists.
+    const context = {
+      loadForAction: async (taskId: string, actionId: string) => {
+        const observed = await source.observe(taskId, actionId);
+        // Freshness is always measured from the observation the host just re-measured, so a drifted
+        // tree shows up here exactly as it does in `trusted-host-snapshot`'s refusal.
+        return { ...observed, freshness: completePlanFreshness(task, observedPlan, observed.facts.repositoryRevisionDigest, observed.action), runId: RUN_ID };
+      },
+      loadForDecision: async (decisionId: string) => context.loadForAction(TASK_ID, decisionId),
+    };
+    // The operator identity is this driver, never a production default: the service refuses to record
+    // any decision without one, and nothing here mints one on the operator's behalf.
+    const service = createApprovalService({
+      taskId: TASK_ID,
+      profile: PROFILE,
+      store: approvals,
+      provenance: 'real',
+      context,
+      operator: { identity: { actorId: 'test-driver-t052', channelRef: 'host-t052', provenance: 'real' } },
+      now: () => '2026-11-17T00:00:00.000Z',
+    });
+    await statePort.transition(taskStateOf(task, plan, revision), 0);
+    return {
+      root,
+      repositoryRoot,
+      revision,
+      statePort,
+      service,
+      source,
+      task,
+      plan,
+      checkSetDigest,
+      planBindingDigest,
+      trustedTransitions,
+      currentPlan: (next?: FixPlan): FixPlan => {
+        observedPlan = next ?? observedPlan;
+        return observedPlan;
+      },
+      cleanup: () => rmSync(root, { recursive: true, force: true }),
+    };
+  } catch (error) {
+    rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /** Every field an approval binding is compared against, naming the action that is actually being decided. */
@@ -729,6 +734,7 @@ test('C13 pending: no edit reaches the guard before an explicit approval', async
     const { patches, containers, dispatch } = await gate(d);
     const refused = await dispatch({ pe: admittedReceipt(evaluation) });
     assert.equal(refused.outcome, 'denied', JSON.stringify(refused));
+    assert.match(refused.reason ?? '', /APPROVAL_REQUIRED requires ActionDecisionReceipt/u, 'refused for missing action decision receipt');
     assert.equal(patches(), 0, 'no edit lands before an explicit decision');
     assert.equal(containers(), 0, 'no container is dispatched before an explicit decision');
   } finally {
