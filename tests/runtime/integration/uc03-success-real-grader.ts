@@ -34,7 +34,9 @@ import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { isHostAdmission, registerHostAdmission } from '../../../eval/uc03/grading.ts';
 import type { GraderCasePins } from '../../../src/runtime/real-tier-grader.ts';
 
+import type { OperatorIo } from './uc03-success-real-operator.ts';
 import type { GradeReceiptBinding } from './uc03-success-real-record.ts';
+import { PINS, type CaseStageOptions } from './uc03-success-real-run-cases.ts';
 
 /** The live host capabilities the pinned catalog cannot carry. */
 export interface GraderCapability {
@@ -303,5 +305,34 @@ export function resolvePinnedGrader(assembly: RealTierAssembly, caseId: string, 
       capability.bindCase?.({ taskId: request.task.taskId, repositoryRoot: request.repositoryRoot, profile: pinned.profile, image });
       return gradeCase(grader, capability, observed.admissions, catalog.entry.graderDigest, request);
     },
+  };
+}
+
+export interface PinnedGraderOptions {
+  readonly graderCapability?: GraderCapability | undefined;
+  readonly operators?: OperatorIo | undefined;
+}
+
+/**
+ * The pinned grader and the facts that explain it. A ready grader yields the seam with no facts; an
+ * unavailable one yields no seam and the bounded reason plus the exact missing inputs, which the
+ * campaign record then carries so the refusal is visible to an evidence reader (SPEC-W5-102). No
+ * grade is ever invented.
+ */
+export function pinnedGraderOf(options: PinnedGraderOptions, assembly: RealTierAssembly): { grade: CaseStageOptions['grade']; facts: Readonly<Record<string, string>> } {
+  // Each pinned case resolves its own criterion from the same material (C02 has its own).
+  const resolutions = new Map(Object.keys(PINS).map(caseId => [caseId, resolvePinnedGrader(assembly, caseId, options.graderCapability)] as const));
+  const first = resolutions.get('C01');
+  if (first === undefined || first.status === 'unavailable') {
+    const reason = first?.status === 'unavailable' ? first : { reasonCode: 'grader-catalog-entry-missing', missing: ['catalog.grader.path'] };
+    options.operators?.write(`T054: grader unavailable (${reason.reasonCode}); missing: ${reason.missing.join(', ')}.`);
+    return { grade: undefined, facts: { 'grader-status': 'unavailable', 'grader-reason': reason.reasonCode, 'grader-missing': reason.missing.join(',') } };
+  }
+  return {
+    grade: async (_assembly, caseId, request) => {
+      const resolution = resolutions.get(caseId);
+      return resolution?.status === 'ready' ? resolution.grade(request) : undefined;
+    },
+    facts: {},
   };
 }

@@ -6,7 +6,7 @@
  * freezes the bound root, reports drift, and records symlinks instead of following them.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -20,7 +20,7 @@ import { resolvePinnedGrader, type CaseGradeRequest } from '../integration/uc03-
 import type { EvaluationGradingProfile, EvaluationSnapshotIdentity } from '../../../eval/uc03/types.ts';
 import { isHostAdmission } from '../../../eval/uc03/grading.ts';
 import { parseWorkflowFinalTree, type FinalTreeBinding } from '../../../eval/uc03/workflow-evidence-facts.ts';
-import { createHostIsolationAuthority, createRealTierGraderCapability } from '../../../src/runtime/real-tier-grader.ts';
+import { createHostIsolationAuthority, createRealTierGraderCapability, type TreeDirent } from '../../../src/runtime/real-tier-grader.ts';
 
 const CHECK_ID = 'hidden-c01-check';
 const EXECUTOR_ID = 'docker-grader-exec-1';
@@ -161,20 +161,71 @@ test('the final-tree port freezes the bound root and a mutation changes the rech
   }
 });
 
-test('F7: a symlink appearing between freeze and recheck changes the identity and is not followed', t => {
+test('C4: a tree containing a symlink or non-file entry returns undefined on freeze and recheck', () => {
+  const root = makeRoot();
+  try {
+    let injectEntry: 'symlink' | 'other' | 'none' = 'none';
+    const capability = createRealTierGraderCapability({
+      executorId: EXECUTOR_ID,
+      readEntries: (dir: string) => {
+        const entries: TreeDirent[] = [...readdirSync(dir, { withFileTypes: true })];
+        if (dir === root && injectEntry !== 'none') {
+          entries.push({
+            name: injectEntry === 'symlink' ? 'link.txt' : 'fifo.pipe',
+            isFile: () => false,
+            isDirectory: () => false,
+            isSymbolicLink: () => injectEntry === 'symlink',
+          });
+        }
+        return entries;
+      },
+    });
+    capability.bindCase({ taskId: BINDING.taskId, repositoryRoot: root, profile: PROFILE, image: IMAGE });
+
+    // When freeze sees a symlink, it returns undefined
+    injectEntry = 'symlink';
+    assert.equal(capability.finalTree.freezeFinalTree(BINDING), undefined);
+
+    // When freeze sees a non-file, non-directory entry, it returns undefined
+    injectEntry = 'other';
+    assert.equal(capability.finalTree.freezeFinalTree(BINDING), undefined);
+
+    // Without special entries, freeze succeeds
+    injectEntry = 'none';
+    const frozen = capability.finalTree.freezeFinalTree(BINDING);
+    assert.ok(frozen);
+    const snapshot = snapshotOf(frozen);
+
+    // If a symlink appears before recheck, recheck returns undefined
+    injectEntry = 'symlink';
+    assert.equal(capability.finalTree.recheckCurrentFinalTree(BINDING, snapshot), undefined);
+
+    // If a non-file entry appears before recheck, recheck returns undefined
+    injectEntry = 'other';
+    assert.equal(capability.finalTree.recheckCurrentFinalTree(BINDING, snapshot), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('C5: a tree containing an executable regular file returns undefined on POSIX', t => {
+  if (process.platform === 'win32') {
+    t.skip('executable permission bits are synthetic on Windows');
+    return;
+  }
   const root = makeRoot();
   try {
     const capability = bound(root);
-    const snapshot = snapshotOf(capability.finalTree.freezeFinalTree(BINDING));
-    try {
-      symlinkSync('file1.txt', join(root, 'link.txt'));
-    } catch (error) {
-      t.skip(`this OS refused to create a symlink (${(error as NodeJS.ErrnoException).code ?? 'unknown'})`);
-      return;
-    }
-    const rechecked = capability.finalTree.recheckCurrentFinalTree(BINDING, snapshot) as { files: { path: string; content: Buffer }[] };
-    assert.notEqual(snapshotOf(rechecked).digest, snapshot.digest);
-    assert.equal(rechecked.files.find(file => file.path === 'link.txt')?.content.toString(), 'symlink:file1.txt');
+    chmodSync(join(root, 'file1.txt'), 0o755);
+    assert.equal(capability.finalTree.freezeFinalTree(BINDING), undefined);
+
+    chmodSync(join(root, 'file1.txt'), 0o644);
+    const frozen = capability.finalTree.freezeFinalTree(BINDING);
+    assert.ok(frozen);
+    const snapshot = snapshotOf(frozen);
+
+    chmodSync(join(root, 'file1.txt'), 0o755);
+    assert.equal(capability.finalTree.recheckCurrentFinalTree(BINDING, snapshot), undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

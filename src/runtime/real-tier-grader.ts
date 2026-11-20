@@ -8,7 +8,7 @@
  * registry in `eval/uc03/grading.ts`. A new bind invalidates every earlier admission.
  */
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import type { EvaluationGradingAdmission, EvaluationGradingAdmissionRequest, EvaluationGradingProfile, EvaluationIsolationAuthority, EvaluationSnapshotIdentity } from '../../eval/uc03/types.ts';
@@ -101,21 +101,39 @@ interface TreeFile {
   readonly content: Buffer;
 }
 
-/** Walks without following links: a symlink is its target text, any other special entry a marker. `.git` is skipped. */
-function walkTree(rootDir: string): readonly TreeFile[] {
+/** Dirent-compatible interface for directory traversal. */
+export interface TreeDirent {
+  readonly name: string;
+  isFile(): boolean;
+  isDirectory(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+export type TreeEntryReader = (directory: string) => readonly TreeDirent[];
+
+/** Walks without following links: fail closed if a symlink, non-file/non-directory entry, or (POSIX) executable regular file is found. `.git` is skipped. */
+function walkTree(rootDir: string, readEntries: TreeEntryReader = (dir: string) => readdirSync(dir, { withFileTypes: true })): readonly TreeFile[] | undefined {
   const files: TreeFile[] = [];
-  function walk(currentDir: string): void {
-    for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
+  function walk(currentDir: string): boolean {
+    for (const entry of readEntries(currentDir)) {
       if (entry.name === '.git') continue;
       const fullPath = join(currentDir, entry.name);
-      const path = relative(rootDir, fullPath).split(sep).join('/');
-      if (entry.isSymbolicLink()) files.push({ path, content: Buffer.from(`symlink:${readlinkSync(fullPath)}`) });
-      else if (entry.isDirectory()) walk(fullPath);
-      else if (entry.isFile()) files.push({ path, content: readFileSync(fullPath) });
-      else files.push({ path, content: Buffer.from('non-file-entry') });
+      if (entry.isSymbolicLink()) return false;
+      if (entry.isDirectory()) {
+        if (!walk(fullPath)) return false;
+      } else if (entry.isFile()) {
+        if (process.platform !== 'win32') {
+          const stat = statSync(fullPath, { throwIfNoEntry: false });
+          if (stat === undefined || (stat.mode & 0o111) !== 0) return false;
+        }
+        files.push({ path: relative(rootDir, fullPath).split(sep).join('/'), content: readFileSync(fullPath) });
+      } else {
+        return false;
+      }
     }
+    return true;
   }
-  walk(rootDir);
+  if (!walk(rootDir)) return undefined;
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -139,11 +157,16 @@ interface BoundCase {
 }
 
 /** The tree for `binding` if its task is the bound one and the root exists; otherwise nothing. */
-function walkBound(bound: BoundCase | undefined, binding: FinalTreeBinding): { readonly files: readonly TreeFile[]; readonly tree: ReturnType<typeof treeOf> } | undefined {
+function walkBound(
+  bound: BoundCase | undefined,
+  binding: FinalTreeBinding,
+  readEntries?: TreeEntryReader,
+): { readonly files: readonly TreeFile[]; readonly tree: ReturnType<typeof treeOf> } | undefined {
   if (bound === undefined || bound.pins.taskId !== binding.taskId) return undefined;
   const stat = statSync(bound.pins.repositoryRoot, { throwIfNoEntry: false });
   if (stat === undefined || !stat.isDirectory()) return undefined;
-  const files = walkTree(bound.pins.repositoryRoot);
+  const files = walkTree(bound.pins.repositoryRoot, readEntries);
+  if (files === undefined) return undefined;
   return { files, tree: treeOf(binding, files) };
 }
 
@@ -155,18 +178,24 @@ export interface RealTierGraderCapability {
   bindCase(pins: GraderCasePins): void;
 }
 
+export interface RealTierGraderOptions {
+  readonly executorId?: string | undefined;
+  readonly spawn?: StructuredSpawn | undefined;
+  readonly readEntries?: TreeEntryReader | undefined;
+}
+
 /**
  * Creates the real-tier capability: host authority, docker executor and the production final-tree port.
  * Nothing is pinned until `bindCase`; an unbound task or a missing root freezes to nothing (not-run).
  */
-export function createRealTierGraderCapability(options: { readonly executorId?: string | undefined; readonly spawn?: StructuredSpawn | undefined } = {}): RealTierGraderCapability {
+export function createRealTierGraderCapability(options: RealTierGraderOptions = {}): RealTierGraderCapability {
   const executorId = options.executorId ?? 'docker-grader-executor';
   const authority = createHostIsolationAuthority({ executorId });
   let bound: BoundCase | undefined;
 
   const finalTree: TrustedFinalTreeSnapshotPort = {
     freezeFinalTree(binding: FinalTreeBinding) {
-      const walked = walkBound(bound, binding);
+      const walked = walkBound(bound, binding, options.readEntries);
       const parsed = walked === undefined ? undefined : parseWorkflowFinalTree(walked.tree, binding);
       if (bound === undefined || walked === undefined || parsed === undefined) return undefined;
       bound.frozen = { binding, files: walked.files, snapshot: parsed.snapshot };
@@ -174,7 +203,7 @@ export function createRealTierGraderCapability(options: { readonly executorId?: 
     },
     // The grader compares the rechecked identity with the expected one, so a drifted tree is returned as-is.
     recheckCurrentFinalTree(binding: FinalTreeBinding) {
-      return walkBound(bound, binding)?.tree;
+      return walkBound(bound, binding, options.readEntries)?.tree;
     },
   };
 
@@ -182,11 +211,13 @@ export function createRealTierGraderCapability(options: { readonly executorId?: 
     frozen: () => bound?.frozen,
     measure(directory) {
       const frozen = bound?.frozen;
-      return frozen === undefined ? undefined : parseWorkflowFinalTree(treeOf(frozen.binding, walkTree(directory)), frozen.binding)?.snapshot.digest;
+      if (frozen === undefined) return undefined;
+      const files = walkTree(directory, options.readEntries);
+      return files === undefined ? undefined : parseWorkflowFinalTree(treeOf(frozen.binding, files), frozen.binding)?.snapshot.digest;
     },
     measureLive() {
       const frozen = bound?.frozen;
-      const walked = frozen === undefined ? undefined : walkBound(bound, frozen.binding);
+      const walked = frozen === undefined ? undefined : walkBound(bound, frozen.binding, options.readEntries);
       return frozen === undefined || walked === undefined ? undefined : parseWorkflowFinalTree(walked.tree, frozen.binding)?.snapshot.digest;
     },
     image: () => bound?.pins.image,

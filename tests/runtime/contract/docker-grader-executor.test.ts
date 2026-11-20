@@ -13,7 +13,7 @@ import test from 'node:test';
 
 import type { EvaluationGraderExecutionRequest, EvaluationGradingAdmission, EvaluationGradingProfile } from '../../../eval/uc03/types.ts';
 import { parseWorkflowFinalTree, type FinalTreeBinding } from '../../../eval/uc03/workflow-evidence-facts.ts';
-import { buildDockerGraderArgv } from '../../../src/foundation/docker-grader-executor.ts';
+import { buildDockerGraderArgv, createDockerGraderExecutor } from '../../../src/foundation/docker-grader-executor.ts';
 import type { StructuredSpawn, StructuredSpawnResult } from '../../../src/foundation/docker-controller.ts';
 import { createRealTierGraderCapability } from '../../../src/runtime/real-tier-grader.ts';
 
@@ -302,5 +302,205 @@ test('Row (6): exit and kill reasons are sanitized and no private grader bytes r
     } finally {
       s.done();
     }
+  }
+});
+
+test('C1: buildDockerGraderArgv sets fractional --cpus respecting admitted ratio and stays 1 when bounds are equal', () => {
+  const fractionalArgv = buildDockerGraderArgv({
+    containerName: 'test-grader-c1',
+    imageId: IMAGE.imageId,
+    snapshotMountPath: '/host/snapshot',
+    graderMountPath: '/host/grader',
+    bounds: { ...PROFILE.bounds, timeoutMs: 15_000, maxCpuMs: 10_000 },
+    command: ['pytest'],
+    platform: IMAGE.platform,
+    user: IMAGE.user,
+  });
+  assert.ok(fractionalArgv.includes('--cpus=0.66'), `expected --cpus=0.66, got: ${fractionalArgv.find(a => a.startsWith('--cpus='))}`);
+
+  const equalArgv = buildDockerGraderArgv({
+    containerName: 'test-grader-c1-equal',
+    imageId: IMAGE.imageId,
+    snapshotMountPath: '/host/snapshot',
+    graderMountPath: '/host/grader',
+    bounds: { ...PROFILE.bounds, timeoutMs: 10_000, maxCpuMs: 10_000 },
+    command: ['pytest'],
+    platform: IMAGE.platform,
+    user: IMAGE.user,
+  });
+  assert.ok(equalArgv.includes('--cpus=1'), `expected --cpus=1, got: ${equalArgv.find(a => a.startsWith('--cpus='))}`);
+});
+
+test('C1: cpuMs ceiling is derived from durationMs and cpus bound rather than durationMs directly', async () => {
+  const s = setup({
+    during: () => {
+      const end = Date.now() + 50;
+      while (Date.now() < end) {
+        // busy-wait 50ms to ensure durationMs > 0
+      }
+    },
+  });
+  try {
+    const result = await s.run(s.execution(s.admit()));
+    assert.ok(result);
+    assert.ok(result.durationMs >= 30, `expected durationMs >= 30, got ${result.durationMs}`);
+    // With timeoutMs=15000 and maxCpuMs=10000, cpus is 0.66.
+    // cpuMs must be Math.min(maxCpuMs, Math.ceil(durationMs * 0.66)) which is strictly less than durationMs
+    assert.equal(result.cpuMs, Math.min(PROFILE.bounds.maxCpuMs, Math.ceil(result.durationMs * 0.66)));
+    assert.ok(result.cpuMs < result.durationMs, `cpuMs (${result.cpuMs}) should be strictly less than durationMs (${result.durationMs})`);
+  } finally {
+    s.done();
+  }
+});
+
+test('C2: on POSIX when host uid is 0, both mount trees are chowned recursively to pinned uid:gid', async () => {
+  const s = setup();
+  try {
+    const chowned: { path: string; uid: number; gid: number }[] = [];
+    const calls: Calls = { runs: [], removals: [], copyFiles: [], graderFiles: [] };
+    const customExecutor = createDockerGraderExecutor({
+      executorId: EXECUTOR_ID,
+      spawn: fakeSpawn(calls),
+      authority: s.capability.isolationAuthority,
+      host: {
+        frozen: () => ({
+          files: [
+            { path: 'file1.txt', content: 'content 1' },
+            { path: 'sub/file2.txt', content: 'content 2' },
+          ],
+        }),
+        measure: () => s.snapshot.digest,
+        measureLive: () => s.snapshot.digest,
+        image: () => IMAGE,
+      },
+      getuid: () => 0,
+      chownSync: (path, uid, gid) => {
+        chowned.push({ path, uid, gid });
+      },
+    });
+    const result = await customExecutor.execute(s.execution(s.admit()));
+    assert.equal(result?.status, 'pass');
+    assert.equal(calls.runs.length, 1);
+    assert.ok(chowned.length >= 4, `expected at least 4 chown calls, got ${chowned.length}`);
+    for (const record of chowned) {
+      assert.equal(record.uid, 1000);
+      assert.equal(record.gid, 1000);
+    }
+  } finally {
+    s.done();
+  }
+});
+
+test('C2: on POSIX when host uid equals pinned uid, mount trees are left as-is without chown', async () => {
+  const s = setup();
+  try {
+    const chowned: { path: string; uid: number; gid: number }[] = [];
+    const calls: Calls = { runs: [], removals: [], copyFiles: [], graderFiles: [] };
+    const customExecutor = createDockerGraderExecutor({
+      executorId: EXECUTOR_ID,
+      spawn: fakeSpawn(calls),
+      authority: s.capability.isolationAuthority,
+      host: {
+        frozen: () => ({ files: [{ path: 'file1.txt', content: 'content 1' }] }),
+        measure: () => s.snapshot.digest,
+        measureLive: () => s.snapshot.digest,
+        image: () => IMAGE,
+      },
+      getuid: () => 1000,
+      chownSync: (path, uid, gid) => {
+        chowned.push({ path, uid, gid });
+      },
+    });
+    const result = await customExecutor.execute(s.execution(s.admit()));
+    assert.equal(result?.status, 'pass');
+    assert.equal(calls.runs.length, 1);
+    assert.equal(chowned.length, 0, 'no chown calls for matching uid');
+  } finally {
+    s.done();
+  }
+});
+
+test('C2: on POSIX when host uid is neither 0 nor matching pinned uid, returns not-run with zero spawns', async () => {
+  const s = setup();
+  try {
+    const calls: Calls = { runs: [], removals: [], copyFiles: [], graderFiles: [] };
+    const customExecutor = createDockerGraderExecutor({
+      executorId: EXECUTOR_ID,
+      spawn: fakeSpawn(calls),
+      authority: s.capability.isolationAuthority,
+      host: {
+        frozen: () => ({ files: [{ path: 'file1.txt', content: 'content 1' }] }),
+        measure: () => s.snapshot.digest,
+        measureLive: () => s.snapshot.digest,
+        image: () => IMAGE,
+      },
+      getuid: () => 1001,
+    });
+    const result = await customExecutor.execute(s.execution(s.admit()));
+    assert.equal(result, undefined, 'mismatched uid returns not-run');
+    assert.equal(calls.runs.length, 0, 'zero spawns on mismatched uid');
+    assert.equal(calls.removals.length, 0, 'zero removals because no container was created');
+  } finally {
+    s.done();
+  }
+});
+
+test('C2: non-numeric pinned user returns not-run with zero spawns', async () => {
+  const s = setup();
+  try {
+    const calls: Calls = { runs: [], removals: [], copyFiles: [], graderFiles: [] };
+    const customExecutor = createDockerGraderExecutor({
+      executorId: EXECUTOR_ID,
+      spawn: fakeSpawn(calls),
+      authority: s.capability.isolationAuthority,
+      host: {
+        frozen: () => ({ files: [{ path: 'file1.txt', content: 'content 1' }] }),
+        measure: () => s.snapshot.digest,
+        measureLive: () => s.snapshot.digest,
+        image: () => ({ ...IMAGE, user: 'root' }),
+      },
+      getuid: () => 0,
+    });
+    const result = await customExecutor.execute(s.execution(s.admit()));
+    assert.equal(result, undefined, 'non-numeric user returns not-run');
+    assert.equal(calls.runs.length, 0, 'zero spawns');
+  } finally {
+    s.done();
+  }
+});
+
+test('C3: Docker launch error exit code 125 is not-run (undefined) with cleanup still run', async () => {
+  const s = setup({ result: { exitCode: 125 } });
+  try {
+    const result = await s.run(s.execution(s.admit()));
+    assert.equal(result, undefined, 'exit 125 is not-run');
+    assert.equal(s.calls.runs.length, 1);
+    assert.equal(s.calls.removals.length, 1, 'cleanup still runs');
+  } finally {
+    s.done();
+  }
+});
+
+test('C3: Docker launch error exit code 126 is not-run (undefined) with cleanup still run', async () => {
+  const s = setup({ result: { exitCode: 126 } });
+  try {
+    const result = await s.run(s.execution(s.admit()));
+    assert.equal(result, undefined, 'exit 126 is not-run');
+    assert.equal(s.calls.runs.length, 1);
+    assert.equal(s.calls.removals.length, 1, 'cleanup still runs');
+  } finally {
+    s.done();
+  }
+});
+
+test('C3: Docker launch error exit code 127 is not-run (undefined) with cleanup still run', async () => {
+  const s = setup({ result: { exitCode: 127 } });
+  try {
+    const result = await s.run(s.execution(s.admit()));
+    assert.equal(result, undefined, 'exit 127 is not-run');
+    assert.equal(s.calls.runs.length, 1);
+    assert.equal(s.calls.removals.length, 1, 'cleanup still runs');
+  } finally {
+    s.done();
   }
 });

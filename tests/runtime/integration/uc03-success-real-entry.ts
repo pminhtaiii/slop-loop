@@ -5,12 +5,9 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createRealTierGraderCapability } from '../../../src/runtime/real-tier-grader.ts';
-import type { RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
-import { PINS, type CaseStageOptions } from './uc03-success-real-run-cases.ts';
-import { resolvePinnedGrader } from './uc03-success-real-grader.ts';
 import { stdioOperator } from './uc03-success-real-operator.ts';
 import { SAFE_ID } from './uc03-success-real-record.ts';
-import { runCampaign, type CampaignMode, type CampaignOptions } from './uc03-success-real-run.ts';
+import { runCampaign, type CampaignMode } from './uc03-success-real-run.ts';
 
 const OPERATION_REF = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$/u;
 const FLAGS = new Set(['--campaign', '--case', '--resume', '--evidence']);
@@ -24,30 +21,6 @@ export interface ParsedCampaignArgs {
 
 export function defaultEvidenceDir(now: number): string {
   return join('.agent-work', new Date(now).toISOString().slice(0, 10), 'uc03-real-tier', 'evidence', 'T054');
-}
-
-/**
- * The pinned grader and the facts that explain it. A ready grader yields the seam with no facts; an
- * unavailable one yields no seam and the bounded reason plus the exact missing inputs, which the
- * campaign record then carries so the refusal is visible to an evidence reader (SPEC-W5-102). No
- * grade is ever invented.
- */
-export function pinnedGraderOf(options: CampaignOptions, assembly: RealTierAssembly): { grade: CaseStageOptions['grade']; facts: Readonly<Record<string, string>> } {
-  // Each pinned case resolves its own criterion from the same material (C02 has its own).
-  const resolutions = new Map(Object.keys(PINS).map(caseId => [caseId, resolvePinnedGrader(assembly, caseId, options.graderCapability)] as const));
-  const first = resolutions.get('C01');
-  if (first === undefined || first.status === 'unavailable') {
-    const reason = first?.status === 'unavailable' ? first : { reasonCode: 'grader-catalog-entry-missing', missing: ['catalog.grader.path'] };
-    options.operators?.write(`T054: grader unavailable (${reason.reasonCode}); missing: ${reason.missing.join(', ')}.`);
-    return { grade: undefined, facts: { 'grader-status': 'unavailable', 'grader-reason': reason.reasonCode, 'grader-missing': reason.missing.join(',') } };
-  }
-  return {
-    grade: async (_assembly, caseId, request) => {
-      const resolution = resolutions.get(caseId);
-      return resolution?.status === 'ready' ? resolution.grade(request) : undefined;
-    },
-    facts: {},
-  };
 }
 
 /** The operator's argv. A malformed invocation is a `refused` reason, never a default campaign. */

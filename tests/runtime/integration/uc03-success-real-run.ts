@@ -42,9 +42,8 @@ import {
   type StageRecord,
 } from './uc03-success-real-record.ts';
 import { createOperatorDecisionSource, type OperatorIo } from './uc03-success-real-operator.ts';
-import type { GraderCapability } from './uc03-success-real-grader.ts';
+import { pinnedGraderOf, type GraderCapability } from './uc03-success-real-grader.ts';
 import { PINNED_MODEL } from './uc03-success-real-provider.ts';
-import { pinnedGraderOf } from './uc03-success-real-entry.ts';
 
 const TEMPLATE_PROFILE_ID = 'uc03-runtime-evaluation-v1';
 /** The T028 case plan, in contract order. */
