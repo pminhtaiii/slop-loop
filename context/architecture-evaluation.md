@@ -2,6 +2,10 @@
 
 See [architecture.md](architecture.md) for runtime authority and flow.
 
+UC-02 index checks use disposable on-disk SQLite with controlled embedding and repository ports. They exercise incremental refresh, atomic publication, explicit reopen admission, vector reuse, interruption, revocation and finite resources through the public index boundary. These local-store observations do not establish real embedding quality, Recall@5, graph delivery or durable question-session recovery; the [retrieval contract](../specs/008-retrieval-augmented-generation/contracts/retrieval.md) and task ledger keep those scopes separate.
+
+The cache entry `src/questions/index.ts` uses guarded chunk preparation and embedding adapters; `index-worker.ts` isolates synchronous SQLite, and `index-storage.ts` owns staging and atomic predecessor-checked publication. Host authority admits snapshots before access and commit. Source text stays outside the index and must pass the existing guarded evidence registry. Compatible identical manifests under new snapshots reuse vectors without corpus embedding. Run `node --test tests/runtime/integration/question-index.test.ts` and its fresh `dist/tests/runtime/integration/question-index.test.js` after build. Include index-platform, chunk and embedding suites for compatibility; independent probes verify returned state and refusal effects after reopen, interruption, stale predecessor and revocation.
+
 ## Controlled test-only ports
 
 Controlled test-only ports in `tests/runtime/support/uc03/` simulate state, approval, model, repository and reviewer behavior with explicit finite profiles and mock provenance. They do not implement the real adapters or execution boundaries described in [architecture.md](architecture.md).
