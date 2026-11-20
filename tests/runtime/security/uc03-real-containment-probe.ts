@@ -468,19 +468,24 @@ async function guardedContainmentRows(assembly: RealTierAssembly, revision: stri
       attemptStartRecoveryHandoff: createDurableAttemptStartRecoveryHandoff(statePort),
       patchRecoveryHandoff: createRefusingPatchRecoveryHandoff(),
     });
-    const guardedReceiver = {
-      ...receiver,
-      runCommand: async (action: RunCommandAction, context: RepositoryAdmissionContextV02) => {
-        receiverCalls += 1;
-        receiverRefusal = 'none';
-        try {
-          return await receiver.runCommand(action, context);
-        } catch (error) {
-          receiverRefusal = error instanceof Error ? error.message : String(error);
-          throw error;
-        }
-      },
+    const countedRunCommand = async (action: RunCommandAction, context: RepositoryAdmissionContextV02) => {
+      receiverCalls += 1;
+      receiverRefusal = 'none';
+      try {
+        return await receiver.runCommand(action, context);
+      } catch (error) {
+        receiverRefusal = error instanceof Error ? error.message : String(error);
+        throw error;
+      }
     };
+    // A Proxy, not a spread: the guard walks the prototype chain for the marker and methods, and a spread drops them.
+    const guardedReceiver = new Proxy(receiver, {
+      get: (target, key) => {
+        if (key === 'runCommand') return countedRunCommand;
+        const value: unknown = Reflect.get(target, key, target);
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
     const guard = createExecutionGuardV02({ ports: { statePort, repositoryPort: guardedReceiver }, config: { provenance: 'real' } });
     /** Claim and attempt counts from the durable journal, for the evidence record. */
     const journalCounts = (): { claims: number; attempts: number } => {

@@ -304,6 +304,8 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
     );
     const durationMs = Math.round(performance.now() - started);
 
+    // Killing the docker client does not stop the container, so stop it here; the record stays for cleanup.
+    if (result.timedOut) await this.spawnProcess('docker', ['kill', record.name], VOLUME_OP_OPTIONS);
     if (result.timedOut || result.exitCode === null) {
       record.uncertain = true;
       // A plan mounting an unmaterialized volume has no owner; treat the effect scope as unknown
