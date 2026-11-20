@@ -52,8 +52,10 @@ export function createAbsenceAuthority(options: QuestionRetrievalOptions, isClos
     control: QuestionRepositoryOperationControl,
   ): Promise<QuestionAbsenceResult> {
     if (!eligible || !options.staticLookup || !view || query === undefined) return { status: 'insufficient', reasonCode: 'not-static' };
-    const before = await current(control);
-    if (before.status !== 'ok') return before;
+    if (isClosed()) return { status: 'unavailable', reasonCode: 'store-unavailable' };
+    const stop = stopped(control);
+    if (stop) return stop;
+    // Native freshness checks run only inside an admitted search or final-validation reservation.
     if (proving) return { status: 'busy', reasonCode: 'busy' };
     if (issued) {
       const fresh = await confirm(control);

@@ -28,6 +28,42 @@ const limits = {
 };
 const repositoryLimits = { maxFileBytes: 20000, maxSpanBytes: 4096, maxSpanLines: 60, maxPageEntries: 100, maxSearchHits: 20, maxQueryBytes: 1000, maxPathBytes: 500 };
 const control = () => ({ signal: new AbortController().signal, deadlineEpochMs: Date.now() + 10000 });
+
+test('absence proof refuses an exactly spent tool budget before downstream freshness checks', async () => {
+  const f = fixture();
+  let validations = 0;
+  const retrieval = createQuestionRetrieval({
+    ...f.options,
+    staticLookup: 'missing',
+    index: {
+      ...f.options.index,
+      async validateCurrent() {
+        validations++;
+        return f.options.index.validateCurrent();
+      },
+    },
+  });
+  const ranked = await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'missing', limits }, control());
+  assert.equal(ranked.status, 'complete');
+  while (f.budget.snapshot().consumed.toolCalls < 100) {
+    const admission = f.budget.reserveRepositoryOperation('read');
+    assert.ok(admission.ok);
+    const settled = await admission.value.execute(
+      async () => undefined,
+      () => ({ kind: 'work', work: {} }),
+    );
+    assert.ok(settled.ok);
+  }
+  assert.equal(f.budget.snapshot().status, 'open');
+  const validationsBefore = validations;
+  const countsBefore = f.counts();
+  const result = await retrieval.proveAbsence(control());
+  assert.equal(result.status, 'exhausted');
+  assert.ok(!('receipt' in result));
+  assert.equal(validations, validationsBefore);
+  assert.deepEqual(f.counts(), countsBefore);
+});
+
 function fixture(names = ['zeta', 'eta', 'beta', 'gamma', 'delta', 'alpha', 'theta']) {
   const binding = { repositoryId: 'repo', workspaceId: 'workspace', revisionDigest: digest('revision'), policyDigest: digest('policy') };
   const identity = { sessionId: 'session', taskId: 'task', runId: 'run', questionId: 'question', binding, configDigest: digest('config') };
