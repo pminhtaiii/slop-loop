@@ -35,6 +35,14 @@ export function retrievalOptions(input: QuestionRetrievalOptions): QuestionRetri
     typeof input.index?.validateCurrent !== 'function' ||
     typeof input.embedding?.embed !== 'function' ||
     typeof input.embedding?.count !== 'function' ||
+    !input.embedding.profile ||
+    typeof input.embedding.profile.id !== 'string' ||
+    !input.embedding.profile.id ||
+    !Number.isSafeInteger(input.embedding.profile.dimension) ||
+    input.embedding.profile.dimension < 1 ||
+    input.embedding.profile.dimension > limits.value.maxVectorDimensions ||
+    !Number.isSafeInteger(input.embedding.profile.maxTokens) ||
+    input.embedding.profile.maxTokens < 1 ||
     typeof input.budget?.reserveRetrievalQuery !== 'function' ||
     !input.repositoryLimits ||
     Object.values(input.repositoryLimits).some(value => !Number.isSafeInteger(value) || value < 1)

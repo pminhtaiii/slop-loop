@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -27,6 +28,51 @@ const limits = {
   maxRetrievalDeadlineMs: 10_000,
 };
 const control = () => ({ signal: new AbortController().signal, deadlineEpochMs: Date.now() + 20_000 });
+
+test('reopened index revocation reclaims persisted data before its lazy worker starts', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'question-index-lazy-revoke-'));
+  const target = join(directory, 'target');
+  await mkdir(target);
+  let embedded = 0;
+  const options = {
+    databasePath: join(directory, 'index.sqlite'),
+    targetRoots: [target],
+    limits,
+    embedding: createControlledQuestionEmbedding(
+      { id: 'controlled/1', dimension: 2, maxTokens: 512 },
+      () => [1],
+      () => {
+        embedded++;
+        return [1, 0];
+      },
+    ),
+    configDigest: digest('config'),
+    embeddingDigest: digest('embedding'),
+    authorize: async () => true,
+  };
+  let index = createQuestionIndex({ ...options, budget: budget() });
+  try {
+    const initial = source({ 'a.py': 'def first():\n    return 1' });
+    assert.equal((await index.synchronize({ ...initial, expectedGenerationId: null }, control())).status, 'ok');
+    await index.close();
+    index = createQuestionIndex({ ...options, budget: budget() });
+    await index.revoke();
+    await index.close();
+    index = createQuestionIndex({ ...options, budget: budget() });
+    const fresh = await index.synchronize({ ...initial, expectedGenerationId: null }, control());
+    assert.equal(fresh.status, 'ok');
+    assert.equal(embedded, 2);
+    const closedPath = join(directory, 'closed.sqlite');
+    const closedIndex = createQuestionIndex({ ...options, databasePath: closedPath, budget: budget() });
+    await closedIndex.close();
+    await closedIndex.revoke();
+    assert.equal(existsSync(closedPath), false);
+  } finally {
+    await index.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function budget() {
   const result = createQuestionBudgetLedger(
     {

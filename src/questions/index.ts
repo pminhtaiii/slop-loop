@@ -357,9 +357,10 @@ export function createQuestionIndex(input: QuestionIndexOptions): QuestionIndex 
     read,
     validateCurrent,
     async revoke() {
+      if (closed) return;
       revoked = true;
       admitted = undefined;
-      if (worker) await rpc({ kind: 'cleanup', attempt: null, revoke: true }, { signal: new AbortController().signal, deadlineEpochMs: Date.now() + limits.maxIndexDeadlineMs });
+      await rpc({ kind: 'cleanup', attempt: null, revoke: true }, { signal: new AbortController().signal, deadlineEpochMs: Date.now() + limits.maxIndexDeadlineMs });
     },
     async close() {
       closed = true;

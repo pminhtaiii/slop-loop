@@ -29,6 +29,30 @@ const limits = {
 const repositoryLimits = { maxFileBytes: 20000, maxSpanBytes: 4096, maxSpanLines: 60, maxPageEntries: 100, maxSearchHits: 20, maxQueryBytes: 1000, maxPathBytes: 500 };
 const control = () => ({ signal: new AbortController().signal, deadlineEpochMs: Date.now() + 10000 });
 
+test('embedding dimension cap is enforced during configuration before downstream effects', () => {
+  const f = fixture();
+  let embeddingCalls = 0;
+  for (const dimension of [0, Number.NaN, 3]) {
+    const embedding = {
+      ...f.options.embedding,
+      profile: { ...f.options.embedding.profile, dimension },
+      count: (...args: Parameters<typeof f.options.embedding.count>) => {
+        embeddingCalls++;
+        return f.options.embedding.count(...args);
+      },
+      embed: (...args: Parameters<typeof f.options.embedding.embed>) => {
+        embeddingCalls++;
+        return f.options.embedding.embed(...args);
+      },
+    };
+    assert.throws(() => createQuestionRetrieval({ ...f.options, embedding }), TypeError);
+  }
+  const valid = createQuestionRetrieval(f.options);
+  valid.close();
+  assert.equal(embeddingCalls, 0);
+  assert.deepEqual(f.counts(), { reads: 0, scans: 0, embeds: 0 });
+});
+
 test('absence proof refuses an exactly spent tool budget before downstream freshness checks', async () => {
   const f = fixture();
   let validations = 0;
