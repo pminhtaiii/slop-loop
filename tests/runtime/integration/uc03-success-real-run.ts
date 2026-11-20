@@ -351,8 +351,6 @@ export async function runCampaign(options: CampaignOptions): Promise<CampaignRes
   return done([stage('preflight', 'pass', undefined, { facts: graderFacts }), conformance, ...records], passed, artifacts);
 }
 
-export { parseCampaignArgs, type ParsedCampaignArgs } from './uc03-success-real-entry.ts';
-
 function isDirectExecution(): boolean {
   const invoked = process.argv[1];
   return invoked !== undefined && resolve(invoked) === resolve(fileURLToPath(import.meta.url));
