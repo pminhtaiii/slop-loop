@@ -29,7 +29,7 @@ import { createScanFixture } from '../unit/real-tier-scan-fixtures.ts';
 import { allowedProviderResponse } from './uc03-success-real-c10.ts';
 import { checkEvidence } from './uc03-success-real-evidence.ts';
 import { resolvePinnedGrader, type CaseGradeRequest, type GraderCapability } from './uc03-success-real-grader.ts';
-import { PINNED_MODEL } from './uc03-success-real-provider.ts';
+import { PINNED_RETURNED_MODEL } from './uc03-success-real-provider.ts';
 import { digestOf, serialize } from './uc03-success-real-record.ts';
 import { runCampaign } from './uc03-success-real-run.ts';
 import { runCaseStage } from './uc03-success-real-run-cases.ts';
@@ -286,7 +286,7 @@ async function doubledCampaign(state = { drift: false, facts: true, hidden: 'pas
     preflight: async () => ({ ok: true, dockerServerVersion: '27.0.1', imageId: `sha256:${'a'.repeat(64)}` }),
     fetch: async () => {
       dispatched += 1;
-      return allowedProviderResponse(PINNED_MODEL);
+      return allowedProviderResponse(PINNED_RETURNED_MODEL);
     },
     runGraph: graphDouble(),
     decideApproval: async caseId => {
@@ -415,7 +415,7 @@ test('a grade is not-run, never a pass, when the run cannot supply or hold its s
         revision: REV,
         stateRoot: tempRoot('state'),
         spawn: async () => ({ exitCode: 0, stdout: '', stderr: '', timedOut: false }),
-        fetch: async () => allowedProviderResponse(PINNED_MODEL),
+        fetch: async () => allowedProviderResponse(PINNED_RETURNED_MODEL),
       });
     const first = assemble();
     assert.equal(first.status, 'assembly-ready');

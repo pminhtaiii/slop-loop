@@ -43,7 +43,7 @@ import {
 } from './uc03-success-real-record.ts';
 import { createOperatorDecisionSource, type OperatorIo } from './uc03-success-real-operator.ts';
 import { pinnedGraderOf, type GraderCapability } from './uc03-success-real-grader.ts';
-import { PINNED_MODEL } from './uc03-success-real-provider.ts';
+import { PINNED_MODEL, PINNED_RETURNED_MODEL } from './uc03-success-real-provider.ts';
 
 const TEMPLATE_PROFILE_ID = 'uc03-runtime-evaluation-v1';
 /** The T028 case plan, in contract order. */
@@ -150,7 +150,7 @@ function dependenciesOf(options: CampaignOptions, candidateSha: string, fetchFn:
 
 /**
  * One conformance call through the injected fetch. It is an identity probe, not a graph dispatch:
- * the returned `model` must equal the pinned id exactly, and every failure path yields one bounded
+ * the returned `model` must equal the pinned returned identity exactly, and every failure path yields one bounded
  * reason code — never the endpoint, the status body or the credential.
  */
 async function conformanceCall(assembly: RealTierAssembly, fetchFn: typeof globalThis.fetch): Promise<StageRecord> {
@@ -190,7 +190,7 @@ async function conformanceCall(assembly: RealTierAssembly, fetchFn: typeof globa
   const returned = typeof parsed === 'object' && parsed !== null ? (parsed as { model?: unknown }).model : undefined;
   // A different identity string is the operator's to resolve, so the campaign stops rather than adapting.
   // Exact equality: a whitespace-wrapped or otherwise near-identical id is still a different identity.
-  return returned === endpoint.model ? stage('conformance', 'pass') : stage('conformance', 'fail', 'conformance-model-mismatch');
+  return returned === PINNED_RETURNED_MODEL ? stage('conformance', 'pass') : stage('conformance', 'fail', 'conformance-model-mismatch');
 }
 
 /** A missing directory is no receipts; a present-but-unreadable or unshaped file is `malformed`. */

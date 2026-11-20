@@ -23,6 +23,7 @@ import { computeCanonicalSha256 } from '../../../src/contracts/foundation/uc03.t
 import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
 import type { HostModelTransport } from '../../../src/foundation/model.ts';
 import { runCaseStage } from './uc03-success-real-run-cases.ts';
+import { PINNED_RETURNED_MODEL } from './uc03-success-real-provider.ts';
 import { runC10Witness, allowedProviderResponse, judgeC10, journalViewOf, publishRunAuthority } from './uc03-success-real-c10.ts';
 import { createOperatorDecisionSource, type OperatorIo } from './uc03-success-real-operator.ts';
 import { resolvePinnedGrader, type GraderCapability } from './uc03-success-real-grader.ts';
@@ -33,7 +34,6 @@ import { FIXTURE_BINDING, PASSING_ROWS, STAGES, passingArtifacts, writeRecord } 
 import { createScanFixture, type ScanFixture } from '../unit/real-tier-scan-fixtures.ts';
 
 const fixture: ScanFixture = createScanFixture('t059-gate2-', 't059-gate2-digest-key');
-const MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
 const REV = 'e'.repeat(40);
 const CASE = 'C01';
 const REPOSITORY_FILES = { 'src/calculator.py': 'def divide(a, b):\n    return a / b\n' } as const;
@@ -182,7 +182,7 @@ async function runBoundWitness(fetchImpl: () => Promise<Response>): Promise<{ bo
 }
 
 test('C10 witness: the limiter refuses the over-limit call, that call adds no fetch, and the allowed call settles observed usage', async () => {
-  const { body, fetches, transport, original } = await runBoundWitness(async () => allowedProviderResponse(MODEL));
+  const { body, fetches, transport, original } = await runBoundWitness(async () => allowedProviderResponse(PINNED_RETURNED_MODEL));
   const { allowed, refused } = body.calls;
   assert.equal(judgeC10(body), undefined, JSON.stringify(body.calls));
   // The port reports every post-claim refusal as pending; the limiter verdict is the transport's own.
@@ -697,7 +697,7 @@ test('every invocation writes its own directory, so no later observation overwri
     candidateSha: REV,
     clock: () => 1_700_000_000_000,
     preflight: async () => ({ ok: true as const, dockerServerVersion: '27.0.1', imageId: `sha256:${'a'.repeat(64)}` }),
-    fetch: async () => allowedProviderResponse(MODEL),
+    fetch: async () => allowedProviderResponse(PINNED_RETURNED_MODEL),
   };
   // The same instant three times, then a case and a resume: nothing may share or replace a directory.
   const first = await runCampaign({ ...base, mode: 'campaign', runCases: failingCase });
@@ -732,7 +732,7 @@ test('an unavailable grader is retained in the record with the exact missing inp
     candidateSha: REV,
     clock: () => 1_700_000_000_000,
     preflight: async () => ({ ok: true, dockerServerVersion: '27.0.1', imageId: `sha256:${'a'.repeat(64)}` }),
-    fetch: async () => new Response(JSON.stringify({ model: MODEL, content: [] }), { status: 200 }),
+    fetch: async () => new Response(JSON.stringify({ model: PINNED_RETURNED_MODEL, content: [] }), { status: 200 }),
     runCases: async () => [],
   });
   assert.equal(result.exitCode, 2, 'a campaign whose grader is unavailable is not a pass');
@@ -751,7 +751,7 @@ test('SPEC-W5-304: C10 reports not-run c10-task-budget-below-run-limit when task
   });
   const { env } = catalogWith(taskWithInsufficientHeadroom, undefined);
   const resolved = resolveOrThrow(env, {
-    fetch: async () => (dispatched++, allowedProviderResponse(MODEL)),
+    fetch: async () => (dispatched++, allowedProviderResponse(PINNED_RETURNED_MODEL)),
   });
   const pins = pinsOf(resolved);
   const [outcome] = await runCaseStage(() => resolved, {

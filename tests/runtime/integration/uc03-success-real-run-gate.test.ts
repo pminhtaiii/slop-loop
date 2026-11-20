@@ -40,6 +40,7 @@ import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { parseCampaignArgs } from './uc03-success-real-entry.ts';
 import { runCampaign, type CampaignOptions } from './uc03-success-real-run.ts';
 import { runCaseStage } from './uc03-success-real-run-cases.ts';
+import { PINNED_MODEL, PINNED_RETURNED_MODEL } from './uc03-success-real-provider.ts';
 import type { DecisionTarget } from './uc03-success-real-operator.ts';
 import type { CaseGradeRequest, GradeOutcome } from './uc03-success-real-grader.ts';
 import { checkEvidence } from './uc03-success-real-evidence.ts';
@@ -52,7 +53,7 @@ const fixture: ScanFixture = createScanFixture('t059-gate-', 't059-gate-digest-k
 const CONTRACT = 'uc03-host-composition/2';
 const REV = 'e'.repeat(40);
 const CASE = 'C01';
-const MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
+const MODEL = PINNED_MODEL;
 const IMAGE_ID = `sha256:${'a'.repeat(64)}`;
 const REPOSITORY_FILES = { 'src/calculator.py': 'def divide(a, b):\n    return a / b\n' } as const;
 
@@ -188,7 +189,7 @@ function campaignOptions(catalog: Catalog, evidenceDir: string, overrides: Parti
       preflight,
       fetch: async () => {
         effects.fetch += 1;
-        return new Response(JSON.stringify({ model: MODEL, content: [] }), { status: 200 });
+        return new Response(JSON.stringify({ model: PINNED_RETURNED_MODEL, content: [] }), { status: 200 });
       },
       runCases: async () => [],
       ...overrides,
@@ -305,6 +306,8 @@ test('each conformance failure exits nonzero after exactly one fetch and zero ca
     ['conformance-redirect', async () => new Response('', { status: 302, headers: { location: 'http://elsewhere.invalid/' } })],
     ['conformance-malformed', async () => new Response('not json', { status: 200 })],
     ['conformance-model-mismatch', async () => new Response(JSON.stringify({ model: 'other/model' }), { status: 200 })],
+    // The endpoint answers the pinned request id with a different identity; echoing the request id is not it.
+    ['conformance-model-mismatch', async () => new Response(JSON.stringify({ model: PINNED_MODEL }), { status: 200 })],
   ];
   for (const [reasonCode, respond] of rows) {
     const catalog = catalogFor();
@@ -363,7 +366,7 @@ test('a profile model other than the pinned identity, or a whitespace-wrapped re
   );
 
   // A reply carrying the right id plus whitespace is still a different identity: exact equality only.
-  const padded = new Response(JSON.stringify({ model: `${MODEL} ` }), { status: 200 });
+  const padded = new Response(JSON.stringify({ model: `${PINNED_RETURNED_MODEL} ` }), { status: 200 });
   const displaced: string[] = [];
   const paddedOptions = campaignOptions(catalogFor(), tempRoot('evidence'), {
     fetch: async () => {
@@ -556,7 +559,7 @@ test('C16 is judged from the C01 report on its own content, and C10 is never inf
       grade: gradePass,
       ...(withCounter ? { fetches: () => dispatched } : {}),
     });
-  const [passed] = await witness(() => allowedProviderResponse(MODEL));
+  const [passed] = await witness(() => allowedProviderResponse(PINNED_RETURNED_MODEL));
   assert.equal(passed?.record.caseId, 'C10');
   assert.notEqual(passed?.record.facts?.['derivedFrom'], 'C01', 'C10 is never inferred from C01');
   assert.deepEqual(
@@ -569,9 +572,9 @@ test('C16 is judged from the C01 report on its own content, and C10 is never inf
   const [failedAllowed] = await witness(() => new Response('{}', { status: 503 }));
   assert.deepEqual([failedAllowed?.record.outcome, failedAllowed?.record.reasonCode], ['fail', 'c10-allowed-not-observed']);
   // A task ledger below the run limit would refuse the request as a budget claim, so nothing is observed.
-  const [tight] = await witness(() => allowedProviderResponse(MODEL), true, catalog);
+  const [tight] = await witness(() => allowedProviderResponse(PINNED_RETURNED_MODEL), true, catalog);
   assert.deepEqual([tight?.record.outcome, tight?.record.reasonCode], ['not-run', 'c10-task-budget-below-run-limit']);
-  const [uncounted] = await witness(() => allowedProviderResponse(MODEL), false);
+  const [uncounted] = await witness(() => allowedProviderResponse(PINNED_RETURNED_MODEL), false);
   assert.deepEqual([uncounted?.record.outcome, uncounted?.record.reasonCode], ['not-run', 'c10-fetch-counter-unavailable']);
 });
 
