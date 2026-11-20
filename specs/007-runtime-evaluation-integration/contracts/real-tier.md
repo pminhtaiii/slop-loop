@@ -75,6 +75,7 @@ Reuse `src/approvals/` unchanged for policy, decision, presentation and history;
 - **Endpoint.** The profile's `provider.endpoint` (an exact `<base>/messages` URL), or, when that is absent, `process.env.ANTHROPIC_BASE_URL` plus `/messages` (the variable holds a `http://<host>:<port>/v1`-shaped base). If both are set and differ, readiness refuses (`endpoint-ambiguous`). If neither is set, the current pinned `https://api.deepseek.com/anthropic/v1/messages` stays the default.
 - **Validation** (T047 at load and T049 in the transport, both required). The value must be an absolute URL with no username, password, query or fragment, and its path must end in `/messages`. The protocol must be `https:`, or `http:` only when the profile sets `"allowInsecureHttp": true`; otherwise the profile refuses to load (`insecure-endpoint-unacknowledged`). The transport stores the normalized `href` at construction and compares it exactly before every `fetch`. No model-, task-, request- or browser-supplied URL is ever accepted, and redirects stay refused.
 - **Model id.** The profile's `provider.model`, or else `process.env.ANTHROPIC_MODEL`; if both are set and differ, readiness refuses (`model-ambiguous`). The user's id is `po/deepseek-ai/deepseek-v4.1-flash-1017` (supplied by the user, as `decisions.md:108` anticipated; it supersedes the earlier `deepseek-flash` alias), and it already satisfies the host file's identifier rule (`src/cli/evaluate.ts:69`). Readiness pins it as `requestedModel` in `host.json`. The transport already records requested and returned identities (`deepseek-transport.ts:317`). The T054 conformance call requires the returned identity to equal the pinned id exactly and stops the campaign on mismatch; the coordinator then asks the user rather than accepting another string.
+- **Re-pin (2026-11-20, decisions.md).** The pinned requested id is now `cmc/deepseek/deepseek-v4.1-flash`, and the conformance call requires the returned identity to equal exactly `deepseek/deepseek-v4.1-flash`, which the user accepted for that request. Where this section and the T028 row name `po/deepseek-ai/deepseek-v4.1-flash-1017`, that is the earlier pin.
 - **Two pinning sites change** (T049). The transport's `assertPinnedEndpoint` (`deepseek-transport.ts:89-93`) and the profile's `endpointOf` (`src/runtime/evaluation-profile-primitives.ts:102-106`, today `https` on `api.deepseek.com` only) both accept the operator-pinned endpoint under the same rule, and both keep the current default.
 
 **Cleartext risk.** A plain-`http` endpoint on a public address sends the `x-api-key` header, prompts (which contain repository excerpts) and responses unencrypted. Anyone on the path can read or alter them, and a captured key gives full use of the deployment. `allowInsecureHttp: true` is the operator's explicit acceptance of that risk. Neither the transport nor the profile can make an `http` hop safe. Recommendation: put TLS in front of the deployment, or tunnel it (`ssh -N -L 127.0.0.1:<local-port>:127.0.0.1:<port> <user>@<host>`) and point the profile at `http://127.0.0.1:<local-port>/v1/messages`, where the cleartext hop is loopback-only. Readiness output and evidence records state `transport: insecure-http-acknowledged` whenever the flag is in force.
@@ -105,7 +106,7 @@ Reuse `src/approvals/` unchanged for policy, decision, presentation and history;
     "endpoint": "http://<host>:<port>/v1/messages",
     "allowInsecureHttp": true,
     "endpointDigestKey": "<32 random bytes as 64 lowercase hex, generated locally>",
-    "model": "po/deepseek-ai/deepseek-v4.1-flash-1017",
+    "model": "cmc/deepseek/deepseek-v4.1-flash",
     "mode": "nonstreaming",
     "timeoutMs": 60000
   },
@@ -215,7 +216,7 @@ Not released and not planned here: running T011, any G-REAL/SC-001 claim, T017 b
   "profileDigest": "sha256:<64 hex>",
   "configDigest": "sha256:<64 hex>",
   "pricingDigest": "sha256:<64 hex>",
-  "requestedModel": "po/deepseek-ai/deepseek-v4.1-flash-1017",
+  "requestedModel": "cmc/deepseek/deepseek-v4.1-flash",
   "adapterVersions": ["uc03-real-tier/1"],
   "contractVersion": "uc03-host-composition/2",
   "revisions": { "statePort": "<40-hex commit SHA>", "...": "one entry per production component" },

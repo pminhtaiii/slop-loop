@@ -11,7 +11,7 @@ import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 
 const KEY = 'sentinel-key-0123456789abcdef';
-const MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
+const MODEL = 'cmc/deepseek/deepseek-v4.1-flash';
 const HREF = 'http://192.0.2.10:54321/v1/messages';
 const PRICING = { pricingId: 'placeholder-unverified', denominator: 1000000, inputRate: 2000000, cacheRate: 2000000, outputRate: 8000000, overheadRate: 0 };
 const LIMITS = {

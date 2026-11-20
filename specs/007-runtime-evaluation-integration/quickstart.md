@@ -214,7 +214,7 @@ Then run the emitted counterparts under `dist/`. These checks use temp directori
    ```powershell
    $env:UC03_REAL_TIER_PROFILE = "$env:USERPROFILE\.slop-loop\uc03-real-tier\profile.json"
    $env:ANTHROPIC_BASE_URL = 'http://<host>:<port>/v1'   # or leave unset and keep provider.endpoint in the profile
-   $env:ANTHROPIC_MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017'
+   $env:ANTHROPIC_MODEL = 'cmc/deepseek/deepseek-v4.1-flash'   # re-pinned 2026-11-20; the endpoint returns deepseek/deepseek-v4.1-flash
    $secure = Read-Host -AsSecureString 'Model API key'
    $env:ANTHROPIC_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
    ```
