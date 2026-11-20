@@ -31,6 +31,8 @@ import type { RealTierAssembly } from '../../../src/runtime/real-tier-assembly.t
 import type { UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
 import type { UC03WorkflowResult } from '../../../src/uc03/graph-types.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { isHostAdmission, registerHostAdmission } from '../../../eval/uc03/grading.ts';
+import type { GraderCasePins } from '../../../src/runtime/real-tier-grader.ts';
 
 import type { GradeReceiptBinding } from './uc03-success-real-record.ts';
 
@@ -42,6 +44,8 @@ export interface GraderCapability {
   readonly executor: EvaluationGraderExecutor;
   /** Freezes the final worktree for grading and rechecks it afterwards. */
   readonly finalTree: TrustedFinalTreeSnapshotPort;
+  /** Pins the case's task, root, grading profile and image before it is graded; a new bind makes earlier admissions stale. */
+  readonly bindCase?: ((pins: GraderCasePins) => void) | undefined;
   /** Evidence derivation; the real one by default. The gate injects a double. */
   readonly deriveFacts?: typeof deriveWorkflowEvidenceFacts | undefined;
 }
@@ -54,6 +58,8 @@ export interface CaseGradeRequest {
   readonly ports: Pick<UC03GraphPortsV02, 'repositoryPort' | 'statePort'>;
   /** The conformed model identity; the observation names it only in the grader's identifier shape. */
   readonly model: string;
+  /** The live repository root the run's final tree is frozen from. */
+  readonly repositoryRoot: string;
   /** Whether the pinned criterion routes through a hidden check and so needs an isolation admission. */
   readonly requiresAdmission: boolean;
 }
@@ -197,6 +203,9 @@ function observeAdmissions(authority: EvaluationIsolationAuthority): Readonly<{ 
       const issued: unknown = await authority.admit(request);
       const id = isRecord(issued) ? issued['admissionId'] : undefined;
       if (typeof id === 'string' && IDENTIFIER.test(id)) admissions.ids.push(id);
+      // The grading module checks provenance against the authority it was handed (this wrapper), so
+      // vouch only for an admission the live authority itself issued.
+      if (isHostAdmission(authority, issued)) registerHostAdmission(wrapped, issued as object);
       return issued;
     },
   };
@@ -287,5 +296,12 @@ export function resolvePinnedGrader(assembly: RealTierAssembly, caseId: string, 
     isolationAuthority: observed.authority,
     executor: capability.executor,
   });
-  return { status: 'ready', grade: request => gradeCase(grader, capability, observed.admissions, catalog.entry.graderDigest, request) };
+  const image = { imageId: assembly.metadata.imageId, platform: assembly.profile.image.platform, user: assembly.profile.image.user };
+  return {
+    status: 'ready',
+    grade: request => {
+      capability.bindCase?.({ taskId: request.task.taskId, repositoryRoot: request.repositoryRoot, profile: pinned.profile, image });
+      return gradeCase(grader, capability, observed.admissions, catalog.entry.graderDigest, request);
+    },
+  };
 }

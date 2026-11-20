@@ -129,8 +129,10 @@ export interface EvaluationGradingAdmissionRequest {
   readonly executorId: string;
 }
 
+export type EvaluationGradingAdmissionKind = 'injected-mock-isolation-admission' | 'host-isolation-admission';
+
 export interface EvaluationGradingAdmission extends EvaluationGradingAdmissionRequest {
-  readonly kind: 'injected-mock-isolation-admission';
+  readonly kind: EvaluationGradingAdmissionKind;
   readonly admissionId: string;
 }
 
@@ -167,6 +169,10 @@ export interface SafeEvaluationGradingResult {
   readonly actualOutcome: EvaluationOutcome;
   readonly durationMs: number;
   readonly outputBytes: number;
+  readonly exitReason?: string | undefined;
+  readonly killReason?: string | undefined;
+  readonly admissionKind?: EvaluationGradingAdmissionKind | undefined;
+  readonly admissionId?: string | undefined;
 }
 
 export interface EvaluationDriverContext extends EvaluationCaseContext {
