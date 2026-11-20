@@ -10,7 +10,10 @@ import { computeCanonicalSha256, computeRequestContentDigest, validateAdmissionV
 import { computeContextDigest } from '../../../src/foundation/model.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 
-export const PINNED_MODEL = 'po/deepseek-ai/deepseek-v4.1-flash-1017';
+/** The requested model id the operator pinned on 2026-11-20 (decisions.md). */
+export const PINNED_MODEL = 'cmc/deepseek/deepseek-v4.1-flash';
+/** The exact identity the endpoint returns for `PINNED_MODEL`; the operator accepted it on 2026-11-20. */
+export const PINNED_RETURNED_MODEL = 'deepseek/deepseek-v4.1-flash';
 
 /** The admitted maxima a provider admission declares; the C10 row raises them over the run ceiling. */
 export interface ProviderBounds {
