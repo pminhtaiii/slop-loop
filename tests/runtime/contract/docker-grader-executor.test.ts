@@ -20,6 +20,8 @@ import { createRealTierGraderCapability } from '../../../src/runtime/real-tier-g
 const CHECK_ID = 'hidden-check-c01';
 const EXECUTOR_ID = 'docker-grader-executor';
 const IMAGE = { imageId: `sha256:${'b'.repeat(64)}`, platform: 'linux/amd64', user: '1000:1000' };
+// The pinned user is 1000:1000; a fixed host uid keeps success rows independent of the CI runner uid.
+const PINNED_UID = (): number => 1000;
 const PROFILE: EvaluationGradingProfile = {
   profileId: 'grading-profile-v1',
   digest: `sha256:${'c'.repeat(64)}`,
@@ -75,7 +77,7 @@ function setup(spawnOptions: { result?: Partial<StructuredSpawnResult>; during?:
   mkdirSync(join(root, 'sub'));
   writeFileSync(join(root, 'sub', 'file2.txt'), 'content 2');
   const calls: Calls = { runs: [], removals: [], copyFiles: [], graderFiles: [] };
-  const capability = createRealTierGraderCapability({ executorId: EXECUTOR_ID, spawn: fakeSpawn(calls, spawnOptions.result, spawnOptions.during, spawnOptions.removal) });
+  const capability = createRealTierGraderCapability({ getuid: PINNED_UID, executorId: EXECUTOR_ID, spawn: fakeSpawn(calls, spawnOptions.result, spawnOptions.during, spawnOptions.removal) });
   capability.bindCase({ taskId: BINDING.taskId, repositoryRoot: root, profile: PROFILE, image: IMAGE });
   const parsed = parseWorkflowFinalTree(capability.finalTree.freezeFinalTree(BINDING), BINDING);
   assert.ok(parsed);

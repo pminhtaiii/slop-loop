@@ -30,6 +30,8 @@ const PROFILE: EvaluationGradingProfile = {
   bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 32_768, maxMemoryBytes: 268_435_456, maxProcesses: 8 },
 };
 const IMAGE = { imageId: `sha256:${'b'.repeat(64)}`, platform: 'linux/amd64', user: '1000:1000' };
+// The pinned user is 1000:1000; a fixed host uid keeps success rows independent of the CI runner uid.
+const PINNED_UID = (): number => 1000;
 const BINDING: FinalTreeBinding = {
   taskId: 'task-1',
   runId: 'run-1',
@@ -48,7 +50,7 @@ function makeRoot(): string {
 }
 
 function bound(root: string) {
-  const capability = createRealTierGraderCapability({ executorId: EXECUTOR_ID });
+  const capability = createRealTierGraderCapability({ getuid: PINNED_UID, executorId: EXECUTOR_ID });
   capability.bindCase({ taskId: BINDING.taskId, repositoryRoot: root, profile: PROFILE, image: IMAGE });
   return capability;
 }
@@ -166,6 +168,7 @@ test('C4: a tree containing a symlink or non-file entry returns undefined on fre
   try {
     let injectEntry: 'symlink' | 'other' | 'none' = 'none';
     const capability = createRealTierGraderCapability({
+      getuid: PINNED_UID,
       executorId: EXECUTOR_ID,
       readEntries: (dir: string) => {
         const entries: TreeDirent[] = [...readdirSync(dir, { withFileTypes: true })];
@@ -232,7 +235,7 @@ test('C5: a tree containing an executable regular file returns undefined on POSI
 });
 
 test('createRealTierGraderCapability bundles real-tier authority, executor and finalTree', () => {
-  const capability = createRealTierGraderCapability({ executorId: EXECUTOR_ID });
+  const capability = createRealTierGraderCapability({ getuid: PINNED_UID, executorId: EXECUTOR_ID });
   assert.equal(capability.tier, 'real-tier');
   assert.equal(capability.executor.executorId, EXECUTOR_ID);
   assert.ok(capability.isolationAuthority);
@@ -254,6 +257,7 @@ test('F3: resolvePinnedGrader binds the case, grades through the real authority 
     const assembly = { profile: { catalog: { path: catalogPath }, image: { platform: IMAGE.platform, user: IMAGE.user } }, metadata: { imageId: IMAGE.imageId } } as unknown as RealTierAssembly;
     const runs: string[][] = [];
     const base = createRealTierGraderCapability({
+      getuid: PINNED_UID,
       executorId: EXECUTOR_ID,
       spawn: async (_command, args) => {
         if (args[0] === 'run') runs.push([...args]);

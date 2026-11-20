@@ -182,6 +182,8 @@ export interface RealTierGraderOptions {
   readonly executorId?: string | undefined;
   readonly spawn?: StructuredSpawn | undefined;
   readonly readEntries?: TreeEntryReader | undefined;
+  /** Host uid lookup; a test seam, defaulting to the process uid (POSIX) or none (Windows). */
+  readonly getuid?: (() => number | undefined) | undefined;
 }
 
 /**
@@ -226,7 +228,7 @@ export function createRealTierGraderCapability(options: RealTierGraderOptions = 
   return {
     tier: 'real-tier',
     isolationAuthority: authority,
-    executor: createDockerGraderExecutor({ executorId, spawn: options.spawn, authority, host }),
+    executor: createDockerGraderExecutor({ executorId, spawn: options.spawn, authority, host, getuid: options.getuid }),
     finalTree,
     bindCase(pins: GraderCasePins): void {
       const current: BoundCase = { pins };
