@@ -37,6 +37,8 @@ export function computeCpus(bounds: EvaluationGradingBounds): { readonly cpus: n
   return { cpus, cpusArg: String(cpus) };
 }
 
+const GRADER_TMPFS_BYTES = 64 * 1024 * 1024;
+
 /** Builds the docker run argv for one isolated attempt: no network, read-only root, dropped caps, finite limits. */
 export function buildDockerGraderArgv(spec: DockerGraderArgvSpec): string[] {
   const { cpusArg } = computeCpus(spec.bounds);
@@ -45,6 +47,8 @@ export function buildDockerGraderArgv(spec: DockerGraderArgvSpec): string[] {
     '--rm',
     '--network=none',
     '--read-only',
+    // pytest needs a writable temp dir; tmpfs pages count against --memory, and noexec keeps it data-only.
+    `--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=${GRADER_TMPFS_BYTES}`,
     `--user=${spec.user}`,
     '--cap-drop=ALL',
     '--security-opt=no-new-privileges',

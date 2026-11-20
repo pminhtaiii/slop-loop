@@ -124,6 +124,7 @@ test('buildDockerGraderArgv sets network=none, read-only, cap-drop, mounts and r
   for (const expected of [
     '--network=none',
     '--read-only',
+    '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=67108864',
     '--cap-drop=ALL',
     '--security-opt=no-new-privileges',
     `--memory=${PROFILE.bounds.maxMemoryBytes}`,
