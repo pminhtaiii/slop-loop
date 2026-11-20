@@ -14,7 +14,10 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { executeMockPrivateGrading } from '../../../eval/uc03/grading.ts';
 import { createSnapshotGrader, isSnapshotGradeCurrent, SNAPSHOT_GRADE_LIMITATION, type SnapshotCriterion, type SnapshotCriteria, type SnapshotEvidence } from '../../../eval/uc03/workflow-grade.ts';
+import { realTierGradeLabel } from '../../../eval/uc03/workflow-grade-tier.ts';
+import { createHostIsolationAuthority } from '../../../src/runtime/real-tier-grader.ts';
 import { budgetStopEvidence, deriveWorkflowEvidenceFacts, patchFreeFacts } from '../../../eval/uc03/workflow-evidence-facts.ts';
 import { resolveExpectedTestFiles } from '../../../src/uc03/graph-validation.ts';
 import { computeTestProtectionDigest } from '../../../src/uc03/investigation.ts';
@@ -711,4 +714,139 @@ test('a plan-generation budget stop at Investigate is withheld completion, and w
   // With the derived evidence the same observation earns the exhaustion pass.
   const graded = await grader({ criteria: criteria([criterion('C04', 'exhaustion')]) }).grade('C04', { observation: stopped, snapshot: facts.snapshot, evidence: facts.evidence });
   assert.equal(graded.grade, 'pass');
+});
+
+test('Row (1) and (4): real-route grade produces realTierGradeLabel and neither label claims G-ISOLATION, G-REAL or SC-001', async () => {
+  const hostAuthority = createHostIsolationAuthority({ executorId: 'real-executor-01', executor: () => realExecutor });
+  hostAuthority.bind({ profile: PROFILE, finalSnapshot: () => SNAPSHOT });
+
+  let admittedId: string | undefined;
+  const realExecutor: EvaluationGraderExecutor = {
+    executorId: 'real-executor-01',
+    execute: (request: EvaluationGraderExecutionRequest) => {
+      admittedId = request.admission?.admissionId;
+      return {
+        checkId: request.checkId,
+        finalSnapshot: request.finalSnapshot,
+        profile: request.profile,
+        executorId: request.executorId,
+        status: 'pass',
+        actualOutcome: 'COMPLETED',
+        durationMs: 12,
+        cpuMs: 6,
+        outputBytes: 48,
+        exitReason: 'clean-exit',
+      };
+    },
+  };
+
+  const g = grader({
+    isolationAuthority: hostAuthority,
+    executor: realExecutor,
+  });
+
+  const graded = await g.grade('C01', {
+    observation: observation(),
+    snapshot: SNAPSHOT,
+    evidence: evidence(),
+  });
+
+  assert.equal(graded.grade, 'pass');
+  assert.ok(admittedId);
+  const expectedLabel = realTierGradeLabel(admittedId, 'real-executor-01');
+  assert.ok(graded.limitations.includes(expectedLabel), 'real-route pass must carry realTierGradeLabel');
+  assert.ok(!graded.limitations.includes(SNAPSHOT_GRADE_LIMITATION), 'real-route must not carry mock limitation');
+
+  // Hard rule: neither label may claim G-ISOLATION, G-REAL or SC-001
+  assert.ok(expectedLabel.includes('is not claimed'));
+  assert.ok(!expectedLabel.includes('claims G-ISOLATION'));
+  assert.ok(!expectedLabel.includes('claims G-REAL'));
+  assert.ok(!expectedLabel.includes('claims SC-001'));
+});
+
+test('Row (1) and (4): mock-route grade preserves SNAPSHOT_GRADE_LIMITATION and never receives real label', async () => {
+  const mockExecutor: EvaluationGraderExecutor = {
+    executorId: 'mock-exec-01',
+    execute: (request: EvaluationGraderExecutionRequest) => ({
+      checkId: request.checkId,
+      finalSnapshot: request.finalSnapshot,
+      profile: request.profile,
+      executorId: request.executorId,
+      status: 'pass',
+      actualOutcome: 'COMPLETED',
+      durationMs: 10,
+      cpuMs: 5,
+      outputBytes: 32,
+    }),
+  };
+  const g = grader({ executor: mockExecutor }); // mock authority with passing executor
+  const graded = await g.grade('C01', {
+    observation: observation(),
+    snapshot: SNAPSHOT,
+    evidence: evidence(),
+  });
+
+  assert.equal(graded.grade, 'pass');
+  assert.ok(graded.limitations.includes(SNAPSHOT_GRADE_LIMITATION));
+  assert.ok(!graded.limitations.some(l => l.includes('real-tier')));
+
+  // Mock limitation disclaims acceptance
+  assert.ok(SNAPSHOT_GRADE_LIMITATION.includes('is not established'));
+  assert.ok(!SNAPSHOT_GRADE_LIMITATION.includes('establishes G-ISOLATION'));
+  assert.ok(!SNAPSHOT_GRADE_LIMITATION.includes('establishes G-REAL'));
+  assert.ok(!SNAPSHOT_GRADE_LIMITATION.includes('establishes SC-001'));
+});
+
+test('Row (6): privacy & binding: grade receipt binds all required fields and never contains private grader payload bytes or hints', async () => {
+  const passingExecutor: EvaluationGraderExecutor = {
+    executorId: 'exec-priv-01',
+    execute: (request: EvaluationGraderExecutionRequest) => ({
+      checkId: request.checkId,
+      finalSnapshot: request.finalSnapshot,
+      profile: request.profile,
+      executorId: request.executorId,
+      status: 'pass',
+      actualOutcome: 'COMPLETED',
+      durationMs: 10,
+      cpuMs: 5,
+      outputBytes: 32,
+    }),
+  };
+  const g = grader({ executor: passingExecutor });
+  const graded = await g.grade('C01', {
+    observation: observation(),
+    snapshot: SNAPSHOT,
+    evidence: evidence(),
+  });
+
+  assert.equal(graded.criterionId, 'crit-c01');
+  assert.equal(graded.criteriaDigest, DIGEST);
+  assert.deepEqual(graded.snapshot, SNAPSHOT);
+  assert.equal(graded.evidenceDigest, evidence().digest);
+  assert.ok(Array.isArray(graded.limitations));
+
+  // Privacy verification: no private payload or hints in serialized receipt
+  const serialized = JSON.stringify(graded);
+  assert.ok(!serialized.includes(GRADER_PAYLOAD), 'private payload marker must not leak into receipt');
+  assert.ok(!serialized.includes('PRIVATE_HIDDEN'), 'hints must not leak');
+});
+
+test('F6: the mock route result carries exactly the pre-existing keys and no host-route fields', async () => {
+  const executor: EvaluationGraderExecutor = {
+    executorId: 'mock-exec-keys',
+    execute: (request: EvaluationGraderExecutionRequest) => ({
+      checkId: request.checkId,
+      finalSnapshot: request.finalSnapshot,
+      profile: request.profile,
+      executorId: request.executorId,
+      status: 'pass',
+      actualOutcome: 'COMPLETED',
+      durationMs: 10,
+      cpuMs: 5,
+      outputBytes: 32,
+    }),
+  };
+  const result = await executeMockPrivateGrading({ checkId: 'hidden-c01', finalSnapshot: SNAPSHOT, profile: PROFILE, graderPayload: null, isolationAuthority: authority(), executor });
+  assert.ok(result);
+  assert.deepEqual(Object.keys(result).sort(), ['actualOutcome', 'checkId', 'durationMs', 'executorId', 'finalSnapshot', 'outputBytes', 'profile', 'status']);
 });

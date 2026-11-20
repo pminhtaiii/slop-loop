@@ -8,6 +8,7 @@
  */
 
 import { executeMockPrivateGrading } from './grading.ts';
+import { isRealTierGrade, realTierGradeLabel } from './workflow-grade-tier.ts';
 import { validateWorkflowObservation } from './validation.ts';
 import {
   EVALUATION_CASE_IDS,
@@ -283,8 +284,33 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
       limitations: Object.freeze([SNAPSHOT_GRADE_LIMITATION, ...limitations]),
     });
 
-  const decide = (criterion: SnapshotCriterion, ok: boolean, evidenceIds: readonly string[], snapshot: EvaluationSnapshotIdentity, evidenceDigest: string): SnapshotGradeResult =>
-    judge(criterion.caseId, criterion.criterionId, ok ? 'pass' : 'fail', ok ? 'criteria-satisfied' : 'criteria-violation', evidenceIds, snapshot, evidenceDigest);
+  const judgeReal = (
+    caseId: EvaluationCaseId | null,
+    criterionId: string | null,
+    grade: WorkflowGrade,
+    reason: WorkflowReason,
+    evidenceIds: readonly string[],
+    snapshot: EvaluationSnapshotIdentity | null,
+    evidenceDigest: string | null,
+    tierLabel: string,
+    ...limitations: string[]
+  ): SnapshotGradeResult =>
+    Object.freeze({
+      caseId,
+      criterionId,
+      grade,
+      reason,
+      evidenceIds: Object.freeze([...evidenceIds]),
+      snapshot,
+      evidenceDigest,
+      criteriaDigest: host.criteria.digest,
+      limitations: Object.freeze([tierLabel, ...limitations]),
+    });
+
+  const decide = (criterion: SnapshotCriterion, ok: boolean, evidenceIds: readonly string[], snapshot: EvaluationSnapshotIdentity, evidenceDigest: string, tierLabel?: string): SnapshotGradeResult =>
+    tierLabel
+      ? judgeReal(criterion.caseId, criterion.criterionId, ok ? 'pass' : 'fail', ok ? 'criteria-satisfied' : 'criteria-violation', evidenceIds, snapshot, evidenceDigest, tierLabel)
+      : judge(criterion.caseId, criterion.criterionId, ok ? 'pass' : 'fail', ok ? 'criteria-satisfied' : 'criteria-violation', evidenceIds, snapshot, evidenceDigest);
 
   return {
     async grade(caseId: string, input: unknown): Promise<SnapshotGradeResult> {
@@ -356,7 +382,8 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
             evidence.digest,
             'The independent hidden check lacks admitted isolation or a result bound to its pinned identity.',
           );
-        return decide(criterion, hidden.status === 'pass' && hidden.actualOutcome === 'COMPLETED', [...evidenceIds, hiddenId], snapshot, evidence.digest);
+        const tierLabel = isRealTierGrade(hidden) && hidden.admissionId ? realTierGradeLabel(hidden.admissionId, host.executor.executorId) : undefined;
+        return decide(criterion, hidden.status === 'pass' && hidden.actualOutcome === 'COMPLETED', [...evidenceIds, hiddenId], snapshot, evidence.digest, tierLabel);
       }
 
       if (criterion.predicate === 'clarification') {

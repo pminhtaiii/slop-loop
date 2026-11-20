@@ -173,6 +173,7 @@ async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBound
           result,
           ports: binding.ports,
           model: artifactBinding.model,
+          repositoryRoot: binding.repositoryRoot,
           requiresAdmission: caseId === 'C01',
         });
   const refusal = graded !== undefined && 'refusal' in graded ? graded.refusal : undefined;

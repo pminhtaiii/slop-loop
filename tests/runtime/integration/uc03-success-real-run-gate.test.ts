@@ -37,7 +37,8 @@ import { createCommandOutcomeReceipt, normalizeCommandResult, type NormalizedCom
 import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
-import { parseCampaignArgs, runCampaign, type CampaignOptions } from './uc03-success-real-run.ts';
+import { parseCampaignArgs } from './uc03-success-real-entry.ts';
+import { runCampaign, type CampaignOptions } from './uc03-success-real-run.ts';
 import { runCaseStage } from './uc03-success-real-run-cases.ts';
 import type { DecisionTarget } from './uc03-success-real-operator.ts';
 import type { CaseGradeRequest, GradeOutcome } from './uc03-success-real-grader.ts';

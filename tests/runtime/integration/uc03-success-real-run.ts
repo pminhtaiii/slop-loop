@@ -28,7 +28,7 @@ import type { RealTierEnvironment } from '../../../src/runtime/real-tier-profile
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 
-import { PINS, artifactsOf, runCaseStage as defaultCaseStage, type CaseOutcome, type CaseStageOptions } from './uc03-success-real-run-cases.ts';
+import { artifactsOf, runCaseStage as defaultCaseStage, type CaseOutcome, type CaseStageOptions } from './uc03-success-real-run-cases.ts';
 import {
   SAFE_ID,
   RECEIPT_SCHEMA,
@@ -41,8 +41,8 @@ import {
   type PendingArtifact,
   type StageRecord,
 } from './uc03-success-real-record.ts';
-import { createOperatorDecisionSource, stdioOperator, type OperatorIo } from './uc03-success-real-operator.ts';
-import { resolvePinnedGrader, type GraderCapability } from './uc03-success-real-grader.ts';
+import { createOperatorDecisionSource, type OperatorIo } from './uc03-success-real-operator.ts';
+import { pinnedGraderOf, type GraderCapability } from './uc03-success-real-grader.ts';
 import { PINNED_MODEL } from './uc03-success-real-provider.ts';
 
 const TEMPLATE_PROFILE_ID = 'uc03-runtime-evaluation-v1';
@@ -100,8 +100,6 @@ export interface CampaignOptions {
 }
 
 const RECEIPT = /^conformance-[A-Za-z0-9._-]+\.json$/u;
-/** An owner operation ref, in the canonical safe-reference shape (`uc04-journal:<id>` and friends). */
-const OPERATION_REF = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$/u;
 
 const stage = (name: StageRecord['stage'], outcome: StageRecord['outcome'], reasonCode?: string, extra: Partial<StageRecord> = {}): StageRecord => ({
   stage: name,
@@ -109,10 +107,6 @@ const stage = (name: StageRecord['stage'], outcome: StageRecord['outcome'], reas
   ...(reasonCode === undefined ? {} : { reasonCode }),
   ...extra,
 });
-
-function defaultEvidenceDir(now: number): string {
-  return join('.agent-work', new Date(now).toISOString().slice(0, 10), 'uc03-real-tier', 'evidence', 'T054');
-}
 
 /** Host pins and identity the T057 template derives, so a campaign binds without a host file. */
 function hostPinsOf(assembly: RealTierAssembly): Pick<CaseStageOptions, 'pins' | 'identity'> {
@@ -357,95 +351,11 @@ export async function runCampaign(options: CampaignOptions): Promise<CampaignRes
   return done([stage('preflight', 'pass', undefined, { facts: graderFacts }), conformance, ...records], passed, artifacts);
 }
 
-/**
- * The pinned grader and the facts that explain it. A ready grader yields the seam with no facts; an
- * unavailable one yields no seam and the bounded reason plus the exact missing inputs, which the
- * campaign record then carries so the refusal is visible to an evidence reader (SPEC-W5-102). No
- * grade is ever invented.
- */
-function pinnedGraderOf(options: CampaignOptions, assembly: RealTierAssembly): { grade: CaseStageOptions['grade']; facts: Readonly<Record<string, string>> } {
-  // Each pinned case resolves its own criterion from the same material (C02 has its own).
-  const resolutions = new Map(Object.keys(PINS).map(caseId => [caseId, resolvePinnedGrader(assembly, caseId, options.graderCapability)] as const));
-  const first = resolutions.get('C01');
-  if (first === undefined || first.status === 'unavailable') {
-    const reason = first?.status === 'unavailable' ? first : { reasonCode: 'grader-catalog-entry-missing', missing: ['catalog.grader.path'] };
-    options.operators?.write(`T054: grader unavailable (${reason.reasonCode}); missing: ${reason.missing.join(', ')}.`);
-    return { grade: undefined, facts: { 'grader-status': 'unavailable', 'grader-reason': reason.reasonCode, 'grader-missing': reason.missing.join(',') } };
-  }
-  return {
-    grade: async (_assembly, caseId, request) => {
-      const resolution = resolutions.get(caseId);
-      return resolution?.status === 'ready' ? resolution.grade(request) : undefined;
-    },
-    facts: {},
-  };
-}
-
-/** Flags whose value is the next argument; anything else is rejected rather than defaulted. */
-const FLAGS = new Set(['--campaign', '--case', '--resume', '--evidence']);
-
-export interface ParsedCampaignArgs {
-  readonly mode: CampaignMode;
-  readonly caseId?: string | undefined;
-  readonly resumeRef?: string | undefined;
-  readonly evidenceDir: string;
-}
-
-/** The operator's argv. A malformed invocation is a `refused` reason, never a default campaign. */
-export function parseCampaignArgs(args: readonly string[]): ParsedCampaignArgs | { readonly refused: string } {
-  const values = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index] as string;
-    if (!FLAGS.has(flag)) return { refused: 'arguments' };
-    if (values.has(flag)) return { refused: 'arguments' };
-    if (flag === '--campaign') {
-      values.set(flag, '');
-      continue;
-    }
-    const value = args[index + 1];
-    if (value === undefined || value === '' || value.startsWith('--')) return { refused: 'arguments' };
-    values.set(flag, value);
-    index += 1;
-  }
-  const caseId = values.get('--case');
-  const resumeRef = values.get('--resume');
-  const mode: CampaignMode | undefined = values.has('--campaign') ? 'campaign' : resumeRef !== undefined ? 'resume' : caseId !== undefined ? 'case' : undefined;
-  // Exactly one mode: a campaign with a case/resume flag is ambiguous, and so is a case with a resume ref.
-  const flags = [values.has('--campaign'), caseId !== undefined, resumeRef !== undefined].filter(Boolean).length;
-  if (mode === undefined || flags !== 1) return { refused: 'arguments' };
-  if (mode === 'resume' && !OPERATION_REF.test(resumeRef ?? '')) return { refused: 'arguments' };
-  if (mode === 'case' && !SAFE_ID.test(caseId ?? '')) return { refused: 'arguments' };
-  return {
-    mode,
-    ...(caseId === undefined ? {} : { caseId }),
-    ...(resumeRef === undefined ? {} : { resumeRef }),
-    evidenceDir: values.get('--evidence') ?? defaultEvidenceDir(Date.now()),
-  };
-}
-
 function isDirectExecution(): boolean {
   const invoked = process.argv[1];
   return invoked !== undefined && resolve(invoked) === resolve(fileURLToPath(import.meta.url));
 }
 
 if (isDirectExecution()) {
-  const parsed = parseCampaignArgs(process.argv.slice(2));
-  if ('refused' in parsed) {
-    process.stdout.write(`CAMPAIGN_REFUSED ${parsed.refused}\n`);
-    process.exitCode = 2;
-  } else {
-    // The operator entry wires stdin decisions and the real fetch. The grader's live capabilities are
-    // not wired here because no production isolation authority, grader executor or final-tree port
-    // exists outside the controlled tests; absent them, `pinnedGraderOf` prints the missing inputs and
-    // C01/C02 stay not-run.
-    void runCampaign({
-      ...parsed,
-      env: process.env,
-      repositoryRoot: process.cwd(),
-      operators: stdioOperator(),
-    }).then(result => {
-      process.stdout.write(`${result.output}\n`);
-      process.exitCode = result.exitCode;
-    });
-  }
+  void import('./uc03-success-real-entry.ts').then(entry => entry.runOperatorEntry(process.argv.slice(2)));
 }
