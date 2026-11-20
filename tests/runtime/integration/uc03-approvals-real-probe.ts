@@ -22,9 +22,10 @@ import { computePlanBindingDigest } from '../../../src/approvals/plan-binding.ts
 import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, CONTRACT_VERSION } from '../../../src/contracts/foundation/uc03.ts';
 import type { validateStateTransition } from '../../../src/contracts/foundation/uc03.ts';
 import type { ApplyPatchAction, ApprovalBinding, BugTask, FixPlan, TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import { randomUUID } from 'node:crypto';
 import { computeActionDecisionReceiptDigest, computePolicyEvaluationReceiptDigest } from '../../../src/contracts/approvals/contracts.ts';
 import type { ActionDecisionReceipt, PolicyEvaluationReceipt } from '../../../src/contracts/approvals/contracts.ts';
-import { DockerWorkspaceManager, type DockerLifecycleController } from '../../../src/foundation/docker-workspace.ts';
+import { computeWorkspaceVolumeIds, DockerWorkspaceManager, type DockerLifecycleController } from '../../../src/foundation/docker-workspace.ts';
 import { structuredSpawn } from '../../../src/foundation/docker-spawn.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
 import { createRepositoryReceiverV02 } from '../../../src/foundation/repository-tools.ts';
@@ -38,9 +39,10 @@ import { DurableApprovalStore } from '../../../src/persistence/adapters/approval
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 
+const PROBE_NONCE = randomUUID().slice(0, 8);
 const TASK_ID = 'task-t052-probe';
-const RUN_ID = 'run-t052-probe';
-const WORKSPACE_ID = 'workspace-t052-probe';
+const RUN_ID = `run-t052-probe-${PROBE_NONCE}`;
+const WORKSPACE_ID = `workspace-t052-probe-${PROBE_NONCE}`;
 const REPOSITORY_ID = 'repo-t052-probe';
 const PLAN_DECISION = 'dec-plan-t052-probe';
 const PATCH_DECISION = 'dec-patch-t052-probe';
@@ -51,6 +53,39 @@ const AUTHORITY = { ...POLICY, issuerKeyRef: `host-${CONFIG.configId}`, decision
 const SOURCE = 'def divide(a, b):\n    return a / b\n';
 const PATCHED = 'def divide(a, b):\n    if b == 0:\n        raise ValueError("divisor")\n    return a / b\n';
 const PATCH_TEXT = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,2 +1,4 @@\n def divide(a, b):\n+    if b == 0:\n+        raise ValueError("divisor")\n     return a / b\n';
+const TEST_SOURCE = 'from src.calculator import divide\n\n\ndef test_divide():\n    assert divide(10, 2) == 5\n';
+
+// shortcut: applies a single hunk from line 1 and ignores @@ offsets, enough for PATCH_TEXT; use a real patch tool for multi-hunk patches.
+function applyUnifiedDiff(source: string, diffText: string): string {
+  const orig = source.split(/\r?\n/);
+  const hunkLines = diffText.split(/\r?\n/).filter(l => (l.startsWith(' ') || l.startsWith('+') || l.startsWith('-')) && !l.startsWith('+++') && !l.startsWith('---'));
+  const out: string[] = [];
+  let origIdx = 0;
+  for (const hl of hunkLines) {
+    const tag = hl[0];
+    const line = hl.slice(1);
+    if (tag === ' ' || tag === '-') {
+      // A context or removed line that does not match the file means this is not the admitted patch for it.
+      const nextOrig = orig[origIdx++];
+      if (nextOrig !== line) throw new Error(`PATCH_CONTEXT_MISMATCH at line ${origIdx}`);
+      if (tag === ' ') out.push(nextOrig);
+    } else if (tag === '+') {
+      out.push(line);
+    }
+  }
+  while (origIdx < orig.length) {
+    const nextOrig = orig[origIdx++];
+    if (nextOrig !== undefined) out.push(nextOrig);
+  }
+  return out.join('\n');
+}
+
+async function releaseWorkspaceVolumes(controller: DockerLifecycleController, taskId: string, workspaceId: string): Promise<void> {
+  const { repoVolumeId, scratchVolumeId } = computeWorkspaceVolumeIds(taskId, workspaceId);
+  for (const volumeId of [repoVolumeId, scratchVolumeId]) {
+    if (await controller.hasVolume(volumeId)) await controller.removeVolume(volumeId);
+  }
+}
 
 interface Row {
   readonly case: string;
@@ -75,7 +110,7 @@ function emit(status: 'pass' | 'fail' | 'not-run', payload: Record<string, unkno
 function report(rows: readonly Row[], evidence: Record<string, unknown>): void {
   const failed = rows.filter(entry => !entry.ok).map(entry => entry.case);
   emit(failed.length === 0 ? 'pass' : 'fail', { rows, failed, ...evidence });
-  process.exit(failed.length === 0 ? 0 : 1);
+  process.exitCode = failed.length === 0 ? 0 : 1;
 }
 
 const row = (caseName: string, ok: boolean, detail?: unknown): Row => ({ case: caseName, ok, detail });
@@ -100,11 +135,6 @@ function rejectedRefused(result: RejectedResult): boolean {
   return result.outcome === 'denied' && result.reason?.includes(MISSING_DECISION) === true && result.containerAttempts === 0 && !result.sourceChanged && !result.stateChanged;
 }
 
-if (selfCheck) {
-  // The same `report` path a real failed row takes: this must exit 1, which is the red proof.
-  report([row('SELF-CHECK deliberate red row', false, 'a failed row must never pass')], { selfCheck: true });
-}
-
 interface Domain {
   readonly root: string;
   readonly repositoryRoot: string;
@@ -126,7 +156,7 @@ interface Domain {
 interface Substrate {
   readonly manager: DockerWorkspaceManager;
   readonly profile: Parameters<DockerWorkspaceManager['createWorkspace']>[0]['profile'];
-  readonly edit: (repositoryRoot: string) => Promise<{ readonly exitCode: number | null; readonly stderr: string }>;
+  readonly edit: (repositoryRoot: string, patch: ApplyPatchAction) => Promise<{ readonly exitCode: number | null; readonly stderr: string }>;
 }
 
 function realSubstrate(assembly: RealTierAssembly): Substrate {
@@ -142,7 +172,7 @@ function realSubstrate(assembly: RealTierAssembly): Substrate {
       limits: { timeoutMs: 30_000, maxMemoryBytes: assembly.profile.limits.memoryBytes, maxCpuCores: assembly.profile.limits.cpus, maxPids: assembly.profile.limits.processes },
       mounts: [],
     },
-    edit: async repositoryRoot => await applyPatchInContainer(assembly, repositoryRoot),
+    edit: async (repositoryRoot, patch) => await applyPatchInContainer(assembly, repositoryRoot, patch),
   };
 }
 
@@ -175,8 +205,10 @@ function inertSubstrate(): Substrate {
       limits: { timeoutMs: 30_000, maxMemoryBytes: 536_870_912, maxCpuCores: 1, maxPids: 64 },
       mounts: [],
     },
-    edit: async repositoryRoot => {
-      writeFileSync(join(repositoryRoot, 'src/calculator.py'), PATCHED, 'utf8');
+    edit: async (repositoryRoot, patch) => {
+      const target = join(repositoryRoot, patch.targetPaths[0] ?? 'src/calculator.py');
+      const orig = readFileSync(target, 'utf8');
+      writeFileSync(target, applyUnifiedDiff(orig, patch.patchContent), 'utf8');
       return { exitCode: 0, stderr: '' };
     },
   };
@@ -219,7 +251,7 @@ async function domain(scenario: string): Promise<Domain> {
   mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
   mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
   writeFileSync(join(repositoryRoot, 'src/calculator.py'), SOURCE, 'utf8');
-  writeFileSync(join(repositoryRoot, 'tests/test_calculator.py'), 'from src.calculator import divide\n\n\ndef test_divide():\n    assert divide(10, 2) == 5\n', 'utf8');
+  writeFileSync(join(repositoryRoot, 'tests/test_calculator.py'), TEST_SOURCE, 'utf8');
   const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
   const revision = await filesystem.getCurrentRevisionDigest();
   const task = taskOf(revision);
@@ -411,7 +443,7 @@ function planBindingOf(d: Domain): ApprovalBinding {
   };
 }
 
-function patchFacts(d: Domain, approvedPlan: ApprovalBinding): Record<string, unknown> {
+function patchFacts(d: Domain, approvedPlan: ApprovalBinding, state?: TaskState): Record<string, unknown> {
   return {
     taskId: TASK_ID,
     runId: RUN_ID,
@@ -426,8 +458,8 @@ function patchFacts(d: Domain, approvedPlan: ApprovalBinding): Record<string, un
     patch: { fileCount: 1, addedDeletedLines: 3, dependencyChange: false, deletion: false, structuralChange: false, sensitiveConfiguration: true, productionCode: true },
     command: null,
     plan: { binding: approvedPlan, context: planFreshness(d.task, d.plan, d.revision, d.workspaceId, { actionId: PLAN_DECISION, kind: 'approve_fix_plan' }), materialChange: false, replanSlot: null },
-    taskStateVersion: 1,
-    taskNode: 'AwaitPlan',
+    taskStateVersion: state?.stateVersion ?? 1,
+    taskNode: state?.node ?? 'AwaitPlan',
     planApplicability: 'approved-plan',
     diagnosticPurpose: null,
     taskCriteriaDigest: null,
@@ -530,12 +562,26 @@ function admissionContext(d: Domain, state: TaskState, receipts: { readonly pe: 
  * host repository and prints the checksum, so the revision the receiver verifies is a real container
  * effect. Its argv and exit code are the evidence this row retains.
  */
-async function applyPatchInContainer(assembly: RealTierAssembly, repositoryRoot: string): Promise<{ argv: readonly string[]; exitCode: number | null; stderr: string }> {
+async function applyPatchInContainer(assembly: RealTierAssembly, repositoryRoot: string, patch: ApplyPatchAction): Promise<{ argv: readonly string[]; exitCode: number | null; stderr: string }> {
+  const targetRel = patch.targetPaths[0] ?? 'src/calculator.py';
   const script = [
-    'import base64,hashlib,sys',
-    'path="/workspace/repo/src/calculator.py"',
-    'open(path,"wb").write(base64.b64decode(sys.argv[1]))',
-    'print("sha256:"+hashlib.sha256(open(path,"rb").read()).hexdigest())',
+    'import base64,sys',
+    'diff = base64.b64decode(sys.argv[1]).decode("utf-8")',
+    'target = sys.argv[2]',
+    'path = f"/workspace/repo/{target}"',
+    'with open(path, "r", encoding="utf-8", newline="") as f:',
+    '    orig = f.read().splitlines(keepends=True)',
+    'hunk = [l for l in diff.splitlines(keepends=True) if l.startswith((" ", "+", "-")) and not l.startswith(("+++", "---"))]',
+    'out, idx = [], 0',
+    'for l in hunk:',
+    '    if l[0] in " -":',
+    '        if idx >= len(orig) or orig[idx] != l[1:]: sys.exit("PATCH_CONTEXT_MISMATCH")',
+    '        if l[0] == " ": out.append(orig[idx])',
+    '        idx += 1',
+    '    elif l[0] == "+": out.append(l[1:])',
+    'while idx < len(orig): out.append(orig[idx]); idx += 1',
+    'with open(path, "w", encoding="utf-8", newline="") as f:',
+    '    f.writelines(out)',
   ].join('\n');
   const dockerArgv = [
     'run',
@@ -551,7 +597,8 @@ async function applyPatchInContainer(assembly: RealTierAssembly, repositoryRoot:
     'python3',
     '-c',
     script,
-    Buffer.from(PATCHED, 'utf8').toString('base64'),
+    Buffer.from(patch.patchContent, 'utf8').toString('base64'),
+    targetRel,
   ];
   const result = await structuredSpawn('docker', dockerArgv, { timeoutMs: 60_000, maxOutputBytes: 64 * 1024 });
   return { argv: dockerArgv, exitCode: result.exitCode, stderr: result.stderr.slice(0, 200) };
@@ -599,12 +646,14 @@ async function rejectedScenario(
   const rows: Row[] = [];
   const exitCodes: (number | null)[] = [];
   let decisions = 0;
-  const harness = await guardedHarness(substrate, d, exitCodes);
+  let harness: Awaited<ReturnType<typeof guardedHarness>> | undefined;
   let result: RejectedResult = { outcome: 'not-run', containerAttempts: 0, sourceChanged: false, stateChanged: false };
   try {
+    harness = await guardedHarness(substrate, d, exitCodes);
     await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
     await d.service.requestDecision(planBindingOf(d));
     const planView = await d.service.show(TASK_ID, PLAN_DECISION);
+    const planDecisionResponse = 'approve-plan-t052-probe-rej';
     const planDecision = await d.service.decide({
       taskId: TASK_ID,
       decisionId: PLAN_DECISION,
@@ -612,19 +661,20 @@ async function rejectedScenario(
       requestVersion: 1,
       presentationDigest: planView.presentation.presentationDigest,
       decision: 'approve',
-      responseKey: 'approve-plan-t052-probe-rej',
+      responseKey: planDecisionResponse,
     });
     assert.equal(planDecision.outcome, 'ok', JSON.stringify(planDecision));
     decisions += 1;
     const approvedPlan = await d.service.resolve(PLAN_DECISION);
-    await enterPatch(d, approvedPlan, PLAN_DECISION);
+    const patchState = await enterPatch(d, approvedPlan, PLAN_DECISION);
     const patchAction = patchActionOf(d);
-    await d.source.register({ action: patchAction, facts: patchFacts(d, approvedPlan), elements: PATCH_ELEMENTS });
+    await d.source.register({ action: patchAction, facts: patchFacts(d, approvedPlan, patchState), elements: PATCH_ELEMENTS });
     const evaluation = await d.service.evaluatePolicy(patchAction, { ...POLICY_OPTIONS, planBindingDigest: d.planBindingDigest, planDecisionRef: PLAN_DECISION });
     const pending = await d.service.requestDecision(patchBindingOf(d));
     rows.push(row('T025 the patch action starts as a pending decision', pending.status === 'pending', pending.status));
 
     const pendingView = await d.service.show(TASK_ID, PATCH_DECISION);
+    const rejectPatchResponse = 'reject-patch-t052-probe';
     const rejection = await d.service.decide({
       taskId: TASK_ID,
       decisionId: PATCH_DECISION,
@@ -632,7 +682,7 @@ async function rejectedScenario(
       requestVersion: 1,
       presentationDigest: pendingView.presentation.presentationDigest,
       decision: 'reject',
-      responseKey: 'reject-patch-t052-probe',
+      responseKey: rejectPatchResponse,
     });
     decisions += 1;
     rows.push(row('T025 rejected: the explicit rejection is recorded', rejection.outcome === 'ok', rejection.outcome));
@@ -644,6 +694,7 @@ async function rejectedScenario(
     rows.push(row('T025 rejected: receipt issuance is refused for a rejected decision', issuanceRefused));
 
     // A second, conflicting decision on the same request is refused by the service, not by this probe.
+    const lateDecisionResponse = 'approve-late-t052-probe';
     const conflicting = await d.service
       .decide({
         taskId: TASK_ID,
@@ -652,7 +703,7 @@ async function rejectedScenario(
         requestVersion: 1,
         presentationDigest: pendingView.presentation.presentationDigest,
         decision: 'approve',
-        responseKey: 'approve-late-t052-probe',
+        responseKey: lateDecisionResponse,
       })
       .then(
         () => 'recorded',
@@ -675,9 +726,10 @@ async function rejectedScenario(
     };
     rows.push(row('T025 rejected: the real guard refuses for the missing approval before any container and leaves source, task and journal unchanged', rejectedRefused(result), result));
   } finally {
+    await releaseWorkspaceVolumes(substrate.manager.getController(), TASK_ID, d.workspaceId);
     d.cleanup();
   }
-  return { rows, decisions, exitCodes, containerAttempts: harness.containerAttempts(), result };
+  return { rows, decisions, exitCodes, containerAttempts: harness?.containerAttempts() ?? 0, result };
 }
 
 /**
@@ -690,11 +742,13 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
   const rows: Row[] = [];
   const exitCodes: (number | null)[] = [];
   let decisions = 0;
-  const harness = await guardedHarness(substrate, d, exitCodes);
+  let harness: Awaited<ReturnType<typeof guardedHarness>> | undefined;
   try {
+    harness = await guardedHarness(substrate, d, exitCodes);
     await d.source.register({ action: PLAN_ACTION(d), facts: planFacts(d), elements: PLAN_ELEMENTS });
     await d.service.requestDecision(planBindingOf(d));
     const planView = await d.service.show(TASK_ID, PLAN_DECISION);
+    const approvedPlanResponse = 'approve-plan-t052-probe-app';
     const planDecision = await d.service.decide({
       taskId: TASK_ID,
       decisionId: PLAN_DECISION,
@@ -702,18 +756,19 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
       requestVersion: 1,
       presentationDigest: planView.presentation.presentationDigest,
       decision: 'approve',
-      responseKey: 'approve-plan-t052-probe-app',
+      responseKey: approvedPlanResponse,
     });
     assert.equal(planDecision.outcome, 'ok', JSON.stringify(planDecision));
     decisions += 1;
     const approvedPlan = await d.service.resolve(PLAN_DECISION);
-    await enterPatch(d, approvedPlan, PLAN_DECISION);
+    const patchState = await enterPatch(d, approvedPlan, PLAN_DECISION);
 
     const approvedAction = patchActionOf(d);
-    await d.source.register({ action: approvedAction, facts: patchFacts(d, approvedPlan), elements: PATCH_ELEMENTS });
+    await d.source.register({ action: approvedAction, facts: patchFacts(d, approvedPlan, patchState), elements: PATCH_ELEMENTS });
     const pending = await d.service.requestDecision(patchBindingOf(d));
     rows.push(row('T025 approved: the patch action starts as a pending decision', pending.status === 'pending', pending.status));
     const approvedView = await d.service.show(TASK_ID, PATCH_DECISION);
+    const approvedPatchResponse = 'approve-patch-t052-probe';
     const approvalDecision = await d.service.decide({
       taskId: TASK_ID,
       decisionId: PATCH_DECISION,
@@ -721,7 +776,7 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
       requestVersion: 1,
       presentationDigest: approvedView.presentation.presentationDigest,
       decision: 'approve',
-      responseKey: 'approve-patch-t052-probe',
+      responseKey: approvedPatchResponse,
     });
     decisions += 1;
     rows.push(row('T025 approved: the explicit approval is recorded', approvalDecision.outcome === 'ok', approvalDecision.outcome));
@@ -738,24 +793,26 @@ async function approvedRow(substrate: Substrate): Promise<{ rows: Row[]; decisio
     const after = await new WorkspaceFilesystemPort({ root: d.repositoryRoot }).getCurrentRevisionDigest();
     const calculatorBytes = readFileSync(join(d.repositoryRoot, 'src/calculator.py'), 'utf8');
     const testBytes = readFileSync(join(d.repositoryRoot, 'tests/test_calculator.py'), 'utf8');
-    const expectedTestBytes = 'from src.calculator import divide\n\ndef test_divide():\n    assert divide(10, 2) == 5\n';
+    const expectedTestBytes = TEST_SOURCE;
     const changedPaths = [...(calculatorBytes !== SOURCE ? ['src/calculator.py'] : []), ...(testBytes !== expectedTestBytes ? ['tests/test_calculator.py'] : [])];
     const patchMatches = after !== before && isDeepStrictEqual(changedPaths, approvedAction.targetPaths) && calculatorBytes === PATCHED;
     rows.push(row('T025 approved: the edit landed only after admission', patchMatches, { before, after, changedPaths, matchesExpected: calculatorBytes === PATCHED }));
   } finally {
+    await releaseWorkspaceVolumes(substrate.manager.getController(), TASK_ID, d.workspaceId);
     d.cleanup();
   }
-  return { rows, decisions, exitCodes, containerAttempts: harness.containerAttempts() };
+  return { rows, decisions, exitCodes, containerAttempts: harness?.containerAttempts() ?? 0 };
 }
 
 /** The owner's `AwaitPlan -> Patch` transition after an explicit plan approval. */
-async function enterPatch(d: Awaited<ReturnType<typeof domain>>, approvedPlan: ApprovalBinding, decisionId: string): Promise<void> {
+async function enterPatch(d: Awaited<ReturnType<typeof domain>>, approvedPlan: ApprovalBinding, decisionId: string): Promise<TaskState> {
   const current = (await d.statePort.loadTask(TASK_ID)) as TaskState;
   const next: TaskState = { ...current, stateVersion: current.stateVersion + 1, node: 'Patch', nextAction: 'apply-patch' };
   d.trustedTransitions[next.stateVersion] = {
     approval: { binding: approvedPlan, freshness: planFreshness(d.task, d.plan, d.revision, d.workspaceId, { actionId: decisionId, kind: 'approve_fix_plan' }) },
   };
   await d.statePort.transition(next, current.stateVersion);
+  return next;
 }
 
 /** The production guard/receiver over one domain, counting container attempts at the receiver. */
@@ -770,7 +827,12 @@ async function guardedHarness(
 }> {
   const filesystem = new WorkspaceFilesystemPort({ root: d.repositoryRoot });
   const manager = substrate.manager;
-  await manager.createWorkspace({ taskId: TASK_ID, workspaceId: d.workspaceId, initialRevisionDigest: d.revision, profile: substrate.profile });
+  try {
+    await manager.createWorkspace({ taskId: TASK_ID, workspaceId: d.workspaceId, initialRevisionDigest: d.revision, profile: substrate.profile });
+  } catch (error) {
+    await releaseWorkspaceVolumes(manager.getController(), TASK_ID, d.workspaceId);
+    throw error;
+  }
   let attempts = 0;
   const receiver = createRepositoryReceiverV02({
     guardCapability: { provenance: 'real', capabilityId: `read-${TASK_ID}`, workspaceId: d.workspaceId, taskId: TASK_ID, mediateRead: async operation => await operation.execute() },
@@ -801,9 +863,9 @@ async function guardedHarness(
     },
     // The container edit runs here, after the guard admitted and the receiver began the attempt. The
     // bytes never change before this closure is reached, so a later refusal leaves the tree untouched.
-    patchReceiver: async () => {
+    patchReceiver: async (admittedPatch: ApplyPatchAction) => {
       attempts += 1;
-      const container = await substrate.edit(d.repositoryRoot);
+      const container = await substrate.edit(d.repositoryRoot, admittedPatch);
       exitCodes.push(container.exitCode);
       assert.equal(container.exitCode, 0, `container edit failed: ${container.stderr}`);
       const next = await filesystem.getCurrentRevisionDigest();
@@ -836,12 +898,14 @@ async function redProof(): Promise<void> {
   const bypassed = await rejectedScenario(inertSubstrate(), 'red-bypassed', true);
   if (!rejectedRefused(enforced.result)) {
     emit('fail', { failed: ['red-enforced-row-failed'], detail: `Enforced rejection did not behave as expected: ${JSON.stringify(enforced.result)}` });
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   const witnessLandedEdit = bypassed.result.outcome === 'success' && bypassed.result.containerAttempts === 1 && bypassed.result.sourceChanged;
   if (!witnessLandedEdit) {
     emit('fail', { failed: ['red-witness-row-failed'], detail: `Witness did not land edit as expected: ${JSON.stringify(bypassed.result)}` });
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   report(
     [
@@ -853,7 +917,14 @@ async function redProof(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  if (argv.includes('--red-proof')) await redProof();
+  if (selfCheck) {
+    report([row('SELF-CHECK deliberate red row', false, 'a failed row must never pass')], { selfCheck: true });
+    return;
+  }
+  if (argv.includes('--red-proof')) {
+    await redProof();
+    return;
+  }
   const created = createHostAssembly({
     fetch: (async () => {
       throw new Error('the T052 approval probe makes no model calls');
@@ -861,17 +932,20 @@ async function main(): Promise<void> {
   });
   if (!('host' in created)) {
     emit('not-run', { reason: created.reasonCode, path: created.path, detail: 'operator profile unavailable; see real-tier contract §(d)' });
-    process.exit(3);
+    process.exitCode = 3;
+    return;
   }
   const { assembly, metadata, preflight } = created;
   if (!isSupportedSnapshotPlatform(process.platform)) {
     emit('not-run', { reason: 'host-platform-unsupported', platform: process.platform, imageId: metadata.imageId });
-    process.exit(3);
+    process.exitCode = 3;
+    return;
   }
   const ready = await preflight();
   if (!ready.ok) {
     emit('not-run', { reason: ready.reasonCode, imageId: metadata.imageId, detail: 'Docker daemon or pinned image unavailable' });
-    process.exit(3);
+    process.exitCode = 3;
+    return;
   }
   if (typeof process.getuid === 'function') {
     const configuredUid = Number.parseInt(assembly.profile.image.user.split(':')[0] ?? '', 10);
@@ -881,7 +955,8 @@ async function main(): Promise<void> {
         imageId: metadata.imageId,
         detail: `Host operator UID ${process.getuid()} does not match configured container user ${assembly.profile.image.user}`,
       });
-      process.exit(3);
+      process.exitCode = 3;
+      return;
     }
   }
   let outcome: { rows: readonly Row[]; evidence: Record<string, unknown> };
@@ -889,7 +964,8 @@ async function main(): Promise<void> {
     outcome = await runApprovalRows(assembly);
   } catch (error) {
     emit('fail', { failed: ['probe'], detail: error instanceof Error ? error.message.slice(0, 400) : 'probe failed' });
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   report(outcome.rows, {
     ...outcome.evidence,

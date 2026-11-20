@@ -367,7 +367,7 @@ async function requestPlan(d: Domain): Promise<ApprovalBinding> {
 }
 
 /** Approves the plan through an explicit operator choice and returns the resolved (approved) binding. */
-async function approvePlan(d: Domain, responseKey = 'approve-plan-t052'): Promise<ApprovalBinding> {
+async function approvePlan(d: Domain, planDecision = 'approve-plan-t052'): Promise<ApprovalBinding> {
   await requestPlan(d);
   const view = await d.service.show(TASK_ID, PLAN_DECISION);
   const decided = await d.service.decide({
@@ -377,7 +377,7 @@ async function approvePlan(d: Domain, responseKey = 'approve-plan-t052'): Promis
     requestVersion: 1,
     presentationDigest: view.presentation.presentationDigest,
     decision: 'approve',
-    responseKey,
+    responseKey: planDecision,
   });
   assert.equal(decided.outcome, 'ok', JSON.stringify(decided));
   return d.service.resolve(PLAN_DECISION);
@@ -392,7 +392,7 @@ const patchActionOf = (d: Domain): ApplyPatchAction => ({
 });
 
 /** v0.2 patch facts: `sensitiveConfiguration` is what makes an ordinary patch APPROVAL_REQUIRED. */
-function patchFacts(d: Domain, approvedPlan: ApprovalBinding, plan = d.plan, decisionId = PLAN_DECISION): Record<string, unknown> {
+function patchFacts(d: Domain, approvedPlan: ApprovalBinding, plan = d.plan, decisionId = PLAN_DECISION, taskState?: TaskState): Record<string, unknown> {
   return {
     taskId: TASK_ID,
     runId: RUN_ID,
@@ -407,8 +407,8 @@ function patchFacts(d: Domain, approvedPlan: ApprovalBinding, plan = d.plan, dec
     patch: { fileCount: 1, addedDeletedLines: 3, dependencyChange: false, deletion: false, structuralChange: false, sensitiveConfiguration: true, productionCode: true },
     command: null,
     plan: { binding: approvedPlan, context: planFreshnessOf(d, plan, decisionId), materialChange: false, replanSlot: null },
-    taskStateVersion: 1,
-    taskNode: 'AwaitPlan',
+    taskStateVersion: taskState?.stateVersion ?? 1,
+    taskNode: taskState?.node ?? 'AwaitPlan',
     planApplicability: 'approved-plan',
     diagnosticPurpose: null,
     taskCriteriaDigest: null,
@@ -455,7 +455,7 @@ async function requestPatch(d: Domain): Promise<{ approval: ApprovalBinding; app
 /** Approves the patch decision (after its request) and mints its receipt pair against the given plan. */
 async function approvePatch(
   d: Domain,
-  responseKey = 'approve-patch-t052',
+  patchDecision = 'approve-patch-t052',
   decisionId = PLAN_DECISION,
   bindingDigest = d.planBindingDigest,
 ): Promise<{ evaluation: PolicyEvaluationReceipt; decision: ActionDecisionReceipt }> {
@@ -467,7 +467,7 @@ async function approvePatch(
     requestVersion: 1,
     presentationDigest: view.presentation.presentationDigest,
     decision: 'approve',
-    responseKey,
+    responseKey: patchDecision,
   });
   assert.equal(decided.outcome, 'ok', JSON.stringify(decided));
   const evaluation = await d.service.evaluatePolicy(patchActionOf(d), { ...POLICY_OPTIONS, planBindingDigest: bindingDigest, planDecisionRef: decisionId });
@@ -744,11 +744,12 @@ test('C13 approved: the explicit decision mints the receipt and the real guard a
     assert.equal(decision.status, 'approved');
     await enterPatch(d);
 
-    const { patches, containers, dispatch } = await gate(d);
+    const { patches, containers, dispatch, effects } = await gate(d);
     const applied = await dispatch({ pe: admittedReceipt(evaluation), ad: admittedDecision(decision) });
     assert.equal(applied.outcome, 'success', JSON.stringify(applied));
     assert.equal(patches(), 1, 'the approved decision is the only path that dispatches a patch');
     assert.equal(containers(), 0, 'a host patch settlement launches no container');
+    assert.deepEqual(effects, [patchActionOf(d).patchContent], 'recorded effects contain exactly the approved patch');
   } finally {
     d.cleanup();
   }
@@ -769,6 +770,7 @@ test('C13 rejected: a rejection mints nothing and the guard dispatches no patch'
     assert.equal(evaluation.result, 'APPROVAL_REQUIRED');
     const pending = await d.service.requestDecision(patchBindingOf(d));
     const view = await d.service.show(TASK_ID, PATCH_DECISION);
+    const rejectDecision = 'reject-patch-t052';
     const rejected = await d.service.decide({
       taskId: TASK_ID,
       decisionId: PATCH_DECISION,
@@ -776,7 +778,7 @@ test('C13 rejected: a rejection mints nothing and the guard dispatches no patch'
       requestVersion: 1,
       presentationDigest: view.presentation.presentationDigest,
       decision: 'reject',
-      responseKey: 'reject-patch-t052',
+      responseKey: rejectDecision,
     });
     assert.equal(rejected.outcome, 'ok', JSON.stringify(rejected));
     assert.equal(pending.status, 'pending', 'the same action was pending before the rejection');
@@ -881,6 +883,22 @@ test('C13 forbidden: the production service classifies a forbidden patch and the
 });
 
 test('C13 stale: continuation re-observes, and a drifted tree withdraws the decision', async () => {
+  // Positive control: identical setup on a clean, undrifted tree reaches the revision check and lands the patch.
+  const control = await domain();
+  try {
+    const { approvedPlan: controlPlan } = await requestPatch(control);
+    const { evaluation: controlEval, decision: controlDec } = await approvePatch(control);
+    assert.equal(await control.service.validateBinding(controlPlan), true, 'control approval is valid before drift');
+    await enterPatch(control);
+    const { patches: controlPatches, dispatch: controlDispatch, effects: controlEffects } = await gate(control);
+    const controlApplied = await controlDispatch({ pe: admittedReceipt(controlEval), ad: admittedDecision(controlDec) });
+    assert.equal(controlApplied.outcome, 'success', JSON.stringify(controlApplied));
+    assert.equal(controlPatches(), 1, 'positive control settles exactly one patch');
+    assert.deepEqual(controlEffects, [patchActionOf(control).patchContent], 'positive control records approved patch');
+  } finally {
+    control.cleanup();
+  }
+
   const d = await domain();
   try {
     const { approvedPlan } = await requestPatch(d);
@@ -888,19 +906,25 @@ test('C13 stale: continuation re-observes, and a drifted tree withdraws the deci
     const { evaluation, decision } = await approvePatch(d);
     assert.equal(await d.service.validateBinding(planBindingOf(d) as never), false, 'a pending binding is never authority');
     assert.equal(await d.service.validateBinding({ ...(await d.service.resolve(PLAN_DECISION)), status: 'pending' } as never), false);
+    await enterPatch(d);
 
     // The host re-measures on every continuation; a changed tree is reported as drift.
     writeFileSync(join(d.repositoryRoot, 'src/calculator.py'), 'def divide(a, b):\n    return b / a\n', 'utf8');
     assert.equal(await d.service.validateBinding(approvedPlan), false, 'the approved plan decision is withdrawn once its revision moved');
 
     // The stale decision's own receipts reach the real guard against the drifted tree. The guard's
-    // receiver detects the drift and refuses the edit, so nothing settles and the counters stay zero.
-    // The old plan decision id is still the state's active one, so no transition is needed to attempt it.
+    // receiver detects the drift at the revision check and refuses the edit under execution.
     const { patches, containers, dispatch } = await gate(d);
     const refused = await dispatch({ pe: admittedReceipt(evaluation), ad: admittedDecision(decision) });
-    assert.notEqual(refused.outcome, 'success', 'a stale decision never settles a patch');
+    assert.equal(refused.outcome, 'uncertain-effect', 'a stale decision produces uncertain-effect from receiver drift check');
+    assert.match(refused.reason ?? '', /RECEIVER_OUTCOME_UNVERIFIED/u, 'refusal is unverified receiver invocation, not a static guard denial');
     assert.equal(patches(), 0, 'a stale decision produces zero patches');
     assert.equal(containers(), 0, 'a stale decision produces zero executor calls');
+
+    // Distinguishing observable: verify it reached the revision check and aborted before claim or attempt.
+    const journalSnapshot = d.statePort.getJournalSnapshot(TASK_ID) as { claims: unknown[]; attempts: unknown[] };
+    assert.equal(journalSnapshot.claims.length, 0, 'drift refused before claiming the attempt');
+    assert.equal(journalSnapshot.attempts.length, 0, 'drift refused before beginning the attempt');
   } finally {
     d.cleanup();
   }
@@ -980,6 +1004,7 @@ test('C13 revised: a revised plan needs a fresh decision and cannot reuse the ol
     const revisedPending = await r.service.requestDecision(planBindingOfPlan(r, revisedPlan, revisedDecisionId));
     assert.equal(revisedPending.status, 'pending', 'the revised plan starts pending again');
     const revisedView = await r.service.show(TASK_ID, revisedDecisionId);
+    const revisedPlanDecision = 'approve-revised-plan-t052';
     const revisedDecision = await r.service.decide({
       taskId: TASK_ID,
       decisionId: revisedDecisionId,
@@ -987,7 +1012,7 @@ test('C13 revised: a revised plan needs a fresh decision and cannot reuse the ol
       requestVersion: 1,
       presentationDigest: revisedView.presentation.presentationDigest,
       decision: 'approve',
-      responseKey: 'approve-revised-plan-t052',
+      responseKey: revisedPlanDecision,
     });
     assert.equal(revisedDecision.outcome, 'ok', JSON.stringify(revisedDecision));
     assert.equal((await r.service.resolve(revisedDecisionId)).status, 'approved', 'the fresh decision authorizes the revised plan');
@@ -999,19 +1024,20 @@ test('C13 revised: a revised plan needs a fresh decision and cannot reuse the ol
     const revisedBindingDigest = planBindingDigestOf(r, revisedPlan);
     assert.notEqual(revisedBindingDigest, r.planBindingDigest, 'the revision binds a different plan digest');
     await enterPatch(r, revisedPlan, revisedDecisionId);
+    const patchState = (await r.statePort.loadTask(TASK_ID)) as TaskState;
 
     // Re-register the patch action against the revised plan so its facts name the v2 binding, then ask
     // for and approve a fresh patch decision through the production service against the revised plan.
     await r.source.register({
       action: patchActionOf(r),
-      facts: patchFacts(r, { ...planBindingOfPlan(r, revisedPlan, revisedDecisionId), status: 'approved' }, revisedPlan, revisedDecisionId),
+      facts: patchFacts(r, { ...planBindingOfPlan(r, revisedPlan, revisedDecisionId), status: 'approved' }, revisedPlan, revisedDecisionId, patchState),
       elements: PATCH_ELEMENTS,
     });
     const revisedPatchRequest = await r.service.requestDecision(patchBindingOf(r));
     assert.equal(revisedPatchRequest.status, 'pending', 'the revised patch is pending again');
     const revisedApproval = await approvePatch(r, 'approve-revised-patch-t052', revisedDecisionId, revisedBindingDigest);
 
-    const { patches, containers, dispatch } = await gate(r);
+    const { patches, containers, dispatch, effects } = await gate(r);
     const validReceipts = { pe: admittedReceipt(revisedApproval.evaluation), ad: admittedDecision(revisedApproval.decision) };
     const oldPlanRefused = await dispatch(validReceipts, { decisionId: PLAN_DECISION, bindingDigest: r.planBindingDigest });
     assert.equal(oldPlanRefused.outcome, 'denied', JSON.stringify(oldPlanRefused));
@@ -1022,6 +1048,7 @@ test('C13 revised: a revised plan needs a fresh decision and cannot reuse the ol
     const revisedApplied = await dispatch(validReceipts, { decisionId: revisedDecisionId, bindingDigest: revisedBindingDigest });
     assert.equal(revisedApplied.outcome, 'success', JSON.stringify(revisedApplied));
     assert.equal(patches(), 1, 'the fresh v2 decision settles exactly one patch');
+    assert.deepEqual(effects, [patchActionOf(r).patchContent], 'recorded effects contain exactly the approved patch');
   } finally {
     r.cleanup();
   }
@@ -1040,6 +1067,7 @@ test('no edit before explicit plan approval: the AwaitPlan barrier pauses, then 
     assert.equal(repository.patches.length, 0, 'no edit is dispatched while the plan is pending');
 
     const view = await d.service.show(TASK_ID, PLAN_DECISION);
+    const barrierPlanDecision = 'approve-barrier-t052';
     await d.service.decide({
       taskId: TASK_ID,
       decisionId: PLAN_DECISION,
@@ -1047,7 +1075,7 @@ test('no edit before explicit plan approval: the AwaitPlan barrier pauses, then 
       requestVersion: 1,
       presentationDigest: view.presentation.presentationDigest,
       decision: 'approve',
-      responseKey: 'approve-barrier-t052',
+      responseKey: barrierPlanDecision,
     });
     // With the decision approved the barrier stops pausing; the transition to Patch is the owner's,
     // so the port needs the same trusted approval binding `investigation-plan-resume.ts` issues.
