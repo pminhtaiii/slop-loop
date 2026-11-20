@@ -88,7 +88,10 @@ function hiddenChecks(hostTree: string): Record<string, string> {
       `${HEAD}def test_only_snapshot():\n    assert ${WALK} == ['calc.py', 'tests/test_calc.py']\n` +
       `    assert [f for f in os.listdir('/grader') if f != '__pycache__'] == ['test_hidden.py']\n` +
       `    assert not os.path.exists('/workspace/repo/.git')\n    assert not os.path.exists(${JSON.stringify(hostTree)})\n`,
-    network: `${HEAD}def test_no_network():\n    with pytest.raises(OSError):\n        socket.create_connection(('192.0.2.1', 80), timeout=3)\n`,
+    // A timeout is also an OSError, so require the no-route errno that only --network=none gives.
+    network:
+      `${HEAD}def test_no_network():\n    import errno\n    with pytest.raises(OSError) as raised:\n        socket.create_connection(('192.0.2.1', 80), timeout=3)\n` +
+      `    assert not isinstance(raised.value, TimeoutError)\n    assert raised.value.errno == errno.ENETUNREACH\n`,
     readonly:
       `${HEAD}def test_read_only():\n    for target in ('/workspace/repo/new.txt', '/workspace/repo/calc.py', '/grader/new.txt', '/etc/new.txt'):\n` +
       `        with pytest.raises(OSError):\n            open(target, 'w')\n`,
