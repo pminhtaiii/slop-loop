@@ -99,25 +99,27 @@ function freezeProfile(value: EvaluationGradingProfile): EvaluationGradingProfil
   });
 }
 
+const admissionExecutors = new WeakMap<object, object>();
 const hostAdmissions = new WeakMap<object, WeakSet<object>>();
 
 /** Registers an admission issued by a host isolation authority (module-private registry). */
-export function registerHostAdmission(authority: object, admission: object): void {
+export function registerHostAdmission(authority: object, admission: object, executor?: EvaluationGraderExecutor): void {
   let set = hostAdmissions.get(authority);
   if (!set) {
     set = new WeakSet<object>();
     hostAdmissions.set(authority, set);
   }
   set.add(admission);
+  if (executor !== undefined) admissionExecutors.set(admission, executor);
 }
 
 /** Verifies that an admission was issued by this exact host authority (not forged, copied or from another authority). */
-export function isHostAdmission(authority: object, value: unknown): boolean {
+export function isHostAdmission(authority: object, value: unknown, executor?: EvaluationGraderExecutor): boolean {
   if (typeof value !== 'object' || value === null) return false;
-  return hostAdmissions.get(authority)?.has(value) ?? false;
+  return (hostAdmissions.get(authority)?.has(value) ?? false) && (executor === undefined || admissionExecutors.get(value) === executor);
 }
 
-function isAdmission(value: unknown, request: EvaluationGradingAdmissionRequest, authority: EvaluationIsolationAuthority): value is EvaluationGradingAdmission {
+function isAdmission(value: unknown, request: EvaluationGradingAdmissionRequest, authority: EvaluationIsolationAuthority, executor: EvaluationGraderExecutor): value is EvaluationGradingAdmission {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, gradingKeys(['kind', 'admissionId', 'finalSnapshot', 'profile', 'executorId'], request.checkId)) ||
@@ -134,7 +136,7 @@ function isAdmission(value: unknown, request: EvaluationGradingAdmissionRequest,
     return true;
   }
   if (kind === 'host-isolation-admission') {
-    return isHostAdmission(authority, value);
+    return isHostAdmission(authority, value, executor);
   }
   return false;
 }
@@ -207,7 +209,7 @@ export async function executeMockPrivateGrading(data: unknown): Promise<SafeEval
       executorId: executor.executorId,
     });
     const rawAdmission: unknown = await data.isolationAuthority.admit(request);
-    if (!isAdmission(rawAdmission, request, data.isolationAuthority)) return undefined;
+    if (!isAdmission(rawAdmission, request, data.isolationAuthority, executor)) return undefined;
     const admission: EvaluationGradingAdmission =
       rawAdmission.kind === 'host-isolation-admission' ? rawAdmission : Object.freeze({ ...request, kind: rawAdmission.kind, admissionId: rawAdmission.admissionId });
     const execution: EvaluationGraderExecutionRequest = Object.freeze({

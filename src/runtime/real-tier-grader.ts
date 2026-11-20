@@ -8,12 +8,19 @@
  * registry in `eval/uc03/grading.ts`. A new bind invalidates every earlier admission.
  */
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
-import type { EvaluationGradingAdmission, EvaluationGradingAdmissionRequest, EvaluationGradingProfile, EvaluationIsolationAuthority, EvaluationSnapshotIdentity } from '../../eval/uc03/types.ts';
+import type {
+  EvaluationGraderExecutor,
+  EvaluationGradingAdmission,
+  EvaluationGradingAdmissionRequest,
+  EvaluationGradingProfile,
+  EvaluationIsolationAuthority,
+  EvaluationSnapshotIdentity,
+} from '../../eval/uc03/types.ts';
 import { registerHostAdmission } from '../../eval/uc03/grading.ts';
-import { parseWorkflowFinalTree, type FinalTreeBinding, type TrustedFinalTreeSnapshotPort } from '../../eval/uc03/workflow-evidence-facts.ts';
+import { FINAL_TREE_MAX_FILES, FINAL_TREE_MAX_TOTAL_BYTES, parseWorkflowFinalTree, type FinalTreeBinding, type TrustedFinalTreeSnapshotPort } from '../../eval/uc03/workflow-evidence-facts.ts';
 import { createDockerGraderExecutor, type DockerGraderExecutorInstance, type GraderCaseHost } from '../foundation/docker-grader-executor.ts';
 import type { StructuredSpawn } from '../foundation/docker-controller.ts';
 
@@ -53,8 +60,8 @@ function sameProfile(left: EvaluationGradingProfile, right: EvaluationGradingPro
   return left.profileId === right.profileId && left.digest === right.digest && BOUND_KEYS.every(key => left.bounds[key] === right.bounds[key]);
 }
 
-/** Creates the host-owned authority. With nothing bound it refuses every request; stale, copied or forged admissions refuse. */
-export function createHostIsolationAuthority(options: { readonly executorId: string }): HostIsolationAuthorityInstance {
+/** Creates the host-owned authority. Real grading requires the registered executor instance; an ID alone cannot confer host provenance. */
+export function createHostIsolationAuthority(options: { readonly executorId: string; readonly executor?: () => EvaluationGraderExecutor | undefined }): HostIsolationAuthorityInstance {
   let currentAdmission: EvaluationGradingAdmission | null = null;
   let pinned: { readonly profile: EvaluationGradingProfile; readonly finalSnapshot: AuthorityPins['finalSnapshot'] } | undefined;
 
@@ -74,7 +81,7 @@ export function createHostIsolationAuthority(options: { readonly executorId: str
         kind: 'host-isolation-admission' as const,
         admissionId: `adm-${randomUUID().replace(/-/g, '').slice(0, 16)}`,
       });
-      registerHostAdmission(authority, admission);
+      registerHostAdmission(authority, admission, options.executor?.());
       currentAdmission = admission;
       return admission;
     },
@@ -114,19 +121,44 @@ export type TreeEntryReader = (directory: string) => readonly TreeDirent[];
 /** Walks without following links: fail closed if a symlink, non-file/non-directory entry, or (POSIX) executable regular file is found. `.git` is skipped. */
 function walkTree(rootDir: string, readEntries: TreeEntryReader = (dir: string) => readdirSync(dir, { withFileTypes: true })): readonly TreeFile[] | undefined {
   const files: TreeFile[] = [];
+  let totalBytes = 0;
   function walk(currentDir: string): boolean {
     for (const entry of readEntries(currentDir)) {
       if (entry.name === '.git') continue;
       const fullPath = join(currentDir, entry.name);
       if (entry.isSymbolicLink()) return false;
       if (entry.isDirectory()) {
-        if (!walk(fullPath)) return false;
+        const stat = lstatSync(fullPath, { throwIfNoEntry: false });
+        if (!stat?.isDirectory() || !walk(fullPath)) return false;
       } else if (entry.isFile()) {
-        if (process.platform !== 'win32') {
-          const stat = statSync(fullPath, { throwIfNoEntry: false });
-          if (stat === undefined || (stat.mode & 0o111) !== 0) return false;
+        if (files.length >= FINAL_TREE_MAX_FILES) return false;
+        let fd: number;
+        try {
+          fd = openSync(fullPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && ['ENOENT', 'ENOTDIR', 'ELOOP'].includes(String(error.code))) return false;
+          throw error;
         }
-        files.push({ path: relative(rootDir, fullPath).split(sep).join('/'), content: readFileSync(fullPath) });
+        try {
+          const stat = fstatSync(fd);
+          const remaining = FINAL_TREE_MAX_TOTAL_BYTES - totalBytes;
+          if (!stat.isFile() || (process.platform !== 'win32' && (stat.mode & 0o111) !== 0) || stat.size > remaining) return false;
+          const chunks: Buffer[] = [];
+          let length = 0;
+          // Probe one byte beyond the remaining budget, including when a file grows after fstat.
+          while (true) {
+            const chunk = Buffer.alloc(Math.min(64 * 1024, remaining - length + 1));
+            const count = readSync(fd, chunk, 0, chunk.length, null);
+            if (count === 0) break;
+            length += count;
+            if (length > remaining) return false;
+            chunks.push(chunk.subarray(0, count));
+          }
+          totalBytes += length;
+          files.push({ path: relative(rootDir, fullPath).split(sep).join('/'), content: Buffer.concat(chunks, length) });
+        } finally {
+          closeSync(fd);
+        }
       } else {
         return false;
       }
@@ -163,7 +195,7 @@ function walkBound(
   readEntries?: TreeEntryReader,
 ): { readonly files: readonly TreeFile[]; readonly tree: ReturnType<typeof treeOf> } | undefined {
   if (bound === undefined || bound.pins.taskId !== binding.taskId) return undefined;
-  const stat = statSync(bound.pins.repositoryRoot, { throwIfNoEntry: false });
+  const stat = lstatSync(bound.pins.repositoryRoot, { throwIfNoEntry: false });
   if (stat === undefined || !stat.isDirectory()) return undefined;
   const files = walkTree(bound.pins.repositoryRoot, readEntries);
   if (files === undefined) return undefined;
@@ -192,7 +224,7 @@ export interface RealTierGraderOptions {
  */
 export function createRealTierGraderCapability(options: RealTierGraderOptions = {}): RealTierGraderCapability {
   const executorId = options.executorId ?? 'docker-grader-executor';
-  const authority = createHostIsolationAuthority({ executorId });
+  const authority = createHostIsolationAuthority({ executorId, executor: () => executor });
   let bound: BoundCase | undefined;
 
   const finalTree: TrustedFinalTreeSnapshotPort = {
@@ -205,7 +237,12 @@ export function createRealTierGraderCapability(options: RealTierGraderOptions = 
     },
     // The grader compares the rechecked identity with the expected one, so a drifted tree is returned as-is.
     recheckCurrentFinalTree(binding: FinalTreeBinding) {
-      return walkBound(bound, binding, options.readEntries)?.tree;
+      try {
+        return walkBound(bound, binding, options.readEntries)?.tree;
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP', 'EIO', 'ESTALE'].includes(String(error.code))) return undefined;
+        throw error;
+      }
     },
   };
 
@@ -225,10 +262,11 @@ export function createRealTierGraderCapability(options: RealTierGraderOptions = 
     image: () => bound?.pins.image,
   };
 
+  const executor = createDockerGraderExecutor({ executorId, spawn: options.spawn, authority, host, getuid: options.getuid });
   return {
     tier: 'real-tier',
     isolationAuthority: authority,
-    executor: createDockerGraderExecutor({ executorId, spawn: options.spawn, authority, host, getuid: options.getuid }),
+    executor,
     finalTree,
     bindCase(pins: GraderCasePins): void {
       const current: BoundCase = { pins };

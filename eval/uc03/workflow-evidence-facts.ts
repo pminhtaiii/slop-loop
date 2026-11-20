@@ -24,8 +24,8 @@ import type { EvaluationSnapshotIdentity, WorkflowObservation } from './types.ts
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
-const MAX_FILES = 100_000;
-const MAX_TOTAL_BYTES = 1_073_741_824;
+export const FINAL_TREE_MAX_FILES = 100_000;
+export const FINAL_TREE_MAX_TOTAL_BYTES = 1_073_741_824;
 
 export interface FinalTreeBinding {
   readonly taskId: string;
@@ -94,7 +94,7 @@ export function parseWorkflowFinalTree(value: unknown, binding: FinalTreeBinding
     typeof value['snapshotId'] !== 'string' ||
     !ID.test(value['snapshotId']) ||
     !Array.isArray(value['files']) ||
-    value['files'].length > MAX_FILES
+    value['files'].length > FINAL_TREE_MAX_FILES
   )
     return undefined;
 
@@ -112,7 +112,7 @@ export function parseWorkflowFinalTree(value: unknown, binding: FinalTreeBinding
     seen.add(pathKey);
     const fact = treeContentDigest(content);
     totalBytes += fact.byteLength;
-    if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_TOTAL_BYTES) return undefined;
+    if (!Number.isSafeInteger(totalBytes) || totalBytes > FINAL_TREE_MAX_TOTAL_BYTES) return undefined;
     files.push(Object.freeze({ path, content }));
     digestEntries.push({ path, contentDigest: fact.digest, byteLength: fact.byteLength });
   }

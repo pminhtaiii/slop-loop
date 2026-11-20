@@ -6,7 +6,7 @@
  * freezes the bound root, reports drift, and records symlinks instead of following them.
  */
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -18,8 +18,8 @@ import type { UC03WorkflowResult } from '../../../src/uc03/graph-types.ts';
 import { resolvePinnedGrader, type CaseGradeRequest } from '../integration/uc03-success-real-grader.ts';
 
 import type { EvaluationGradingProfile, EvaluationSnapshotIdentity } from '../../../eval/uc03/types.ts';
-import { isHostAdmission } from '../../../eval/uc03/grading.ts';
-import { parseWorkflowFinalTree, type FinalTreeBinding } from '../../../eval/uc03/workflow-evidence-facts.ts';
+import { executeMockPrivateGrading, isHostAdmission } from '../../../eval/uc03/grading.ts';
+import { FINAL_TREE_MAX_FILES, FINAL_TREE_MAX_TOTAL_BYTES, parseWorkflowFinalTree, type FinalTreeBinding } from '../../../eval/uc03/workflow-evidence-facts.ts';
 import { createHostIsolationAuthority, createRealTierGraderCapability, type TreeDirent } from '../../../src/runtime/real-tier-grader.ts';
 
 const CHECK_ID = 'hidden-c01-check';
@@ -318,5 +318,117 @@ test('F3: resolvePinnedGrader binds the case, grades through the real authority 
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(meta, { recursive: true, force: true });
+  }
+});
+
+test('a different executor instance cannot earn host provenance with the same executorId', async () => {
+  const root = makeRoot();
+  try {
+    const capability = bound(root);
+    const snapshot = snapshotOf(capability.finalTree.freezeFinalTree(BINDING));
+    let executed = false;
+    const result = await executeMockPrivateGrading({
+      checkId: CHECK_ID,
+      finalSnapshot: snapshot,
+      profile: PROFILE,
+      isolationAuthority: capability.isolationAuthority,
+      executor: {
+        executorId: EXECUTOR_ID,
+        execute() {
+          executed = true;
+          return undefined;
+        },
+      },
+      graderPayload: {},
+    });
+    assert.equal(result, undefined);
+    assert.equal(executed, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stale directory and file entries replaced by symlinks fail closed on recheck', () => {
+  for (const name of ['sub', 'file1.txt']) {
+    const root = makeRoot();
+    const outside = makeRoot();
+    try {
+      let replace = false;
+      const capability = createRealTierGraderCapability({
+        readEntries(directory) {
+          const entries = readdirSync(directory, { withFileTypes: true });
+          if (replace && directory === root) {
+            rmSync(join(root, name), { recursive: true });
+            symlinkSync(name === 'sub' ? outside : join(outside, 'file1.txt'), join(root, name));
+          }
+          return entries;
+        },
+      });
+      capability.bindCase({ taskId: BINDING.taskId, repositoryRoot: root, profile: PROFILE, image: IMAGE });
+      const snapshot = snapshotOf(capability.finalTree.freezeFinalTree(BINDING));
+      replace = true;
+      assert.equal(capability.finalTree.recheckCurrentFinalTree(BINDING, snapshot), undefined);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  }
+});
+
+test('recheck translates filesystem failures and propagates programming errors', () => {
+  const root = makeRoot();
+  try {
+    let failure: Error | undefined;
+    const capability = createRealTierGraderCapability({
+      readEntries(directory) {
+        if (failure) throw failure;
+        return readdirSync(directory, { withFileTypes: true });
+      },
+    });
+    capability.bindCase({ taskId: BINDING.taskId, repositoryRoot: root, profile: PROFILE, image: IMAGE });
+    const snapshot = snapshotOf(capability.finalTree.freezeFinalTree(BINDING));
+    for (const code of ['ENOENT', 'EACCES', 'EIO']) {
+      failure = Object.assign(new Error('filesystem failure'), { code });
+      assert.equal(capability.finalTree.recheckCurrentFinalTree(BINDING, snapshot), undefined);
+    }
+    failure = new TypeError('programming error');
+    assert.throws(() => capability.finalTree.recheckCurrentFinalTree(BINDING, snapshot), failure);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('oversized sparse files and excess empty files are refused before retaining contents', () => {
+  const root = mkdtempSync(join(tmpdir(), 'tree-limits-'));
+  try {
+    const file = join(root, 'empty');
+    writeFileSync(file, '');
+    truncateSync(file, FINAL_TREE_MAX_TOTAL_BYTES + 1);
+    assert.equal(bound(root).finalTree.freezeFinalTree(BINDING), undefined);
+    truncateSync(file, 0);
+    const capability = createRealTierGraderCapability({
+      readEntries: () => Array.from({ length: FINAL_TREE_MAX_FILES + 1 }, () => ({ name: 'empty', isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false })),
+    });
+    capability.bindCase({ taskId: BINDING.taskId, repositoryRoot: root, profile: PROFILE, image: IMAGE });
+    assert.equal(capability.finalTree.freezeFinalTree(BINDING), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a listed file removed before opening is refused on freeze', () => {
+  const root = makeRoot();
+  try {
+    const capability = createRealTierGraderCapability({
+      readEntries(directory) {
+        const entries = readdirSync(directory, { withFileTypes: true });
+        if (directory === root) rmSync(join(root, 'file1.txt'));
+        return entries;
+      },
+    });
+    capability.bindCase({ taskId: BINDING.taskId, repositoryRoot: root, profile: PROFILE, image: IMAGE });
+    assert.equal(capability.finalTree.freezeFinalTree(BINDING), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

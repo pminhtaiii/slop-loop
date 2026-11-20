@@ -717,7 +717,7 @@ test('a plan-generation budget stop at Investigate is withheld completion, and w
 });
 
 test('Row (1) and (4): real-route grade produces realTierGradeLabel and neither label claims G-ISOLATION, G-REAL or SC-001', async () => {
-  const hostAuthority = createHostIsolationAuthority({ executorId: 'real-executor-01' });
+  const hostAuthority = createHostIsolationAuthority({ executorId: 'real-executor-01', executor: () => realExecutor });
   hostAuthority.bind({ profile: PROFILE, finalSnapshot: () => SNAPSHOT });
 
   let admittedId: string | undefined;
