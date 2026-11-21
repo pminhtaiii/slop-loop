@@ -688,3 +688,21 @@ test('v0.2 repository policy binds pre-plan diagnostics to Investigate criteria 
   assert.equal(policy().value.evaluatePolicyV02(patch, approvedFacts, { decisionAuthorityGeneration: 1, planDecisionRef: 'foreign-plan' }).ok, false);
   assert.equal(policy().value.evaluatePolicyV02(patch, approvedFacts, { decisionAuthorityGeneration: 1, planApplicability: 'pre-plan-diagnostic' }).ok, false);
 });
+
+for (const [modelId, accepted] of [
+  ['cmc/deepseek/deepseek-v4.1-flash', true],
+  ['model-1', true],
+  ['/x', false],
+  ['x/', false],
+  ['a//b', false],
+  ['a/../b', false],
+  ['..', false],
+  ['', false],
+  ['x'.repeat(128), false],
+] as const) {
+  test(`v0.2 provider admission model id ${JSON.stringify(modelId)}`, () => {
+    const request = providerRequest({ modelId });
+    const result = policy().value.evaluateProviderAdmissionV02(request, providerFacts(request, 'pre-plan-diagnostic'), { decisionAuthorityGeneration: 1 });
+    assert.equal(result.ok, accepted);
+  });
+}

@@ -1,3 +1,4 @@
+import { isModelId } from '../contracts/approvals/v01/validation.ts';
 import type { NormalizedAction, PermissionClass, ProviderRequest } from '../contracts/foundation/uc03.ts';
 import { computeActionDigest, computeCanonicalSha256, computeRequestContentDigest, validateNormalizedAction, validateProviderRequest } from '../contracts/foundation/uc03.ts';
 import type { PolicyEvaluationReceipt, PolicyIdentity, PolicyProfile, ProviderAdmissionReceipt, ProviderRole } from '../contracts/approvals/contracts.ts';
@@ -228,7 +229,8 @@ function providerRequestIsCurrent(request: ProviderRequest, facts: PolicyFactsV0
     request.runId !== facts.runId ||
     request.role !== facts.role ||
     request.configId !== profile.policyIdentity.configId ||
-    ![request.providerRequestId, request.taskId, request.runId, request.providerId, request.modelId, request.configId, request.pricingPolicyId, request.reservationRef].every(isId) ||
+    ![request.providerRequestId, request.taskId, request.runId, request.providerId, request.configId, request.pricingPolicyId, request.reservationRef].every(isId) ||
+    !isModelId(request.modelId) ||
     !isSha(request.contextDigest) ||
     !currentIdentity(facts, profile) ||
     !safetyFactsPass(facts) ||

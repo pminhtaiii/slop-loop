@@ -915,3 +915,22 @@ test('v0.2 DispatchClaimV02 validator rejects v0.1 claims, cross-branch fields, 
     assert.equal(validateDispatchClaimV02(candidate).ok, false);
   }
 });
+
+for (const [modelId, accepted] of [
+  ['cmc/deepseek/deepseek-v4.1-flash', true],
+  ['model-1', true],
+  ['/x', false],
+  ['x/', false],
+  ['a//b', false],
+  ['a/../b', false],
+  ['..', false],
+  ['', false],
+  ['x'.repeat(128), false],
+] as const) {
+  test(`v0.2 provider receipt model id ${JSON.stringify(modelId)}`, () => {
+    const receipt = redigestRecord({ ...validProviderAdmissionReceiptCoder, modelId }, 'receiptDigest', computeProviderAdmissionReceiptDigest);
+    assert.equal(validateProviderAdmissionReceipt(receipt).ok, accepted);
+    const foreignProvider = redigestRecord({ ...validProviderAdmissionReceiptCoder, providerId: 'a/b' }, 'receiptDigest', computeProviderAdmissionReceiptDigest);
+    assert.equal(validateProviderAdmissionReceipt(foreignProvider).ok, false);
+  });
+}

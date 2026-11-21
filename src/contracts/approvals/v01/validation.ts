@@ -80,6 +80,15 @@ export function isIdentifier(input: unknown): input is string {
   return typeof input === 'string' && IDENTIFIER_PATTERN.test(input);
 }
 
+/** Model identifiers additionally support bounded provider namespaces separated by slashes. */
+export function isModelId(input: unknown): input is string {
+  return typeof input === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,126}$/.test(input) && !input.endsWith('/') && !input.includes('//') && !input.split('/').includes('..');
+}
+
+export function validateModelId(input: unknown, path: string, errors: ValidationError[]): void {
+  if (!isModelId(input)) addError(errors, path, 'INVALID_ID', `${path} must be a bounded model identifier`);
+}
+
 /** Accumulate an error when a field is not a bounded contract identifier. */
 export function validateId(input: unknown, path: string, errors: ValidationError[]): void {
   if (!isIdentifier(input)) addError(errors, path, 'INVALID_ID', `${path} must be a bounded identifier`);
