@@ -1,14 +1,12 @@
 /**
- * Real-tier assembly (real-tier contract §(a), §(i); host contract §1 first stage; T050 + T061).
+ * Real-tier assembly (contract §(a), §(i); host contract §1 first stage; T050 + T061).
  *
  * `createHostAssembly()` takes no arguments because the operator CLI calls it that way
  * (`src/cli/evaluate.ts`), and returns `{ host, metadata[ , preflight] }` for the CLI loader. It is
  * synchronous and effect-free: it loads the profile, reads the credential, pins the endpoint and model,
  * and builds the real adapters. It never fetches, spawns, writes a task or touches the filesystem.
  *
- * The host is assembly-ready: the task-bound producers and per-task host ports are unbound (full
- * surface, `TASK_UNBOUND` on every call) and the config names no task, so `prepareUC03Host` is `ready`
- * while nothing can act. Binding them to one task is T061 (`real-tier-task-binding.ts`).
+ * The host is assembly-ready but task-less; T061 (`real-tier-task-binding.ts`) binds its refusing producers.
  *
  * `dependencies` is the test seam: `{ env, fetch, spawn, stateRoot, revision, components }`, each
  * defaulting to the real value. Every refusal is a `RealTierUnavailable` with a bounded reason code,
@@ -21,7 +19,7 @@ import { DEEPSEEK_REVIEW_PROMPT } from '../foundation/deepseek-review-profile.ts
 import { createRuntimeReviewer, type RuntimeReviewer } from '../foundation/reviewer.ts';
 import { HostModelPortV02, type DispatchAuthorityFacts } from '../foundation/model-v02.ts';
 import { authorityFor, equal } from '../persistence/adapters/state-port-v02-admission.ts';
-import { createRunUsageLimiter } from '../foundation/run-usage-limit.ts';
+import { createRunUsageLimiter, type RunUsageLimiter } from '../foundation/run-usage-limit.ts';
 import { createDeepSeekTransport } from '../foundation/deepseek-transport.ts';
 import type { StructuredCommandExecutor } from '../foundation/docker-command-executor.ts';
 import { DockerLifecycleController, type StructuredSpawn } from '../foundation/docker-controller.ts';
@@ -100,6 +98,8 @@ function mockSwap(candidate: Partial<RealTierComponents>): RealTierUnavailable |
 
 /** The built half. Everything below `owners` is task-independent. */
 export interface RealTierAssembly {
+  readonly runUsageCountersFor: RunUsageLimiter['countersFor'];
+  readonly providerIdentity: Readonly<{ providerId: string; modelId: string }>;
   readonly status: 'assembly-ready';
   readonly profile: RealTierProfile;
   readonly metadata: RealTierMetadata;
@@ -154,7 +154,7 @@ export function hostDeliveries(owner: RealTierOwners['deliveries'], components: 
 }
 
 /** The profile's image as the pinned Docker profile the controller and executor both validate. */
-function dockerProfileOf(profile: RealTierProfile): DockerProfile | RealTierUnavailable {
+export function dockerProfileOf(profile: RealTierProfile): DockerProfile | RealTierUnavailable {
   const candidate: DockerProfile = {
     profileId: profile.image.label,
     image: profile.image.base,
@@ -226,17 +226,18 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
   const revision = dependencies.revision ?? gitHead(dependencies.repositoryRoot ?? process.cwd());
   // No catch here: the profile already validated the credential, the endpoint, the pricing and both
   // run limits, so anything that throws is a programming error and must surface, not be relabelled.
+  const runLimiter = createRunUsageLimiter({
+    totalModelCalls: profile.limits.totalModelCalls,
+    perRunInputTokens: profile.runLimits.perRunInputTokens,
+    perRunOutputTokens: profile.runLimits.perRunOutputTokens,
+  });
   const transport = createDeepSeekTransport({
     apiKey: profile.credential,
     endpoint: profile.endpoint.href,
     allowInsecureHttp: profile.endpoint.insecureHttpAcknowledged,
     pricing: profile.pricing,
     reviewPrompt: REVIEW_PROMPT,
-    runLimiter: createRunUsageLimiter({
-      totalModelCalls: profile.limits.totalModelCalls,
-      perRunInputTokens: profile.runLimits.perRunInputTokens,
-      perRunOutputTokens: profile.runLimits.perRunOutputTokens,
-    }),
+    runLimiter,
     ...(dependencies.fetch === undefined ? {} : { fetch: dependencies.fetch }),
   });
   const owners = createRealTierOwners({
@@ -290,6 +291,8 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
 
   return Object.freeze({
     status: 'assembly-ready',
+    runUsageCountersFor: runLimiter.countersFor,
+    providerIdentity: Object.freeze({ providerId: 'provider-deepseek', modelId: profile.endpoint.model }),
     profile,
     metadata: metadataOf(profile),
     owners,

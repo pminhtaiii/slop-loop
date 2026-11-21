@@ -98,16 +98,17 @@ test('MERGE: an endpoint introduced by a merge resolution and removed later stay
 
 test('TEMPLATE: the host template refuses to echo an endpoint, credential or digest key', async () => {
   const dir = repoWith({ 'a.txt': 'clean\n' });
-  const rows: readonly (readonly [string, string])[] = [
-    ['endpoint-model', HREF],
-    ['credential-model', KEY],
-    ['digest-key-model', DIGEST_KEY],
-  ];
-  for (const [row, model] of rows) {
+  const rows = [
+    ['endpoint-url-model', HREF, 'model-invalid'],
+    ['endpoint-model', HREF.replace(/^https?:\/\//u, ''), 'template-needle'],
+    ['credential-model', KEY, 'template-needle'],
+    ['digest-key-model', DIGEST_KEY, 'template-needle'],
+  ] as const;
+  for (const [row, model, reason] of rows) {
     const env = envOf({ provider: { ...PROVIDER, model } });
     const result = await runRealTierScanCli(['--print-host-template'], { env, cwd: dir, repositoryRoot: dir });
     assert.equal(result.exitCode, 2, row);
-    assert.equal(result.output, 'SCAN_ERROR template-needle', row);
+    assert.equal(result.output, `SCAN_ERROR ${reason}`, row);
     quiet(result, [model, '192.0.2.10', '54321']);
   }
 

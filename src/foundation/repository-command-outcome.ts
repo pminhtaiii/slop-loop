@@ -153,6 +153,7 @@ interface PendingRepositoryOutcomeV02 {
   readonly outcome: RepositoryActionOutcomeReceiptV02;
   recovering: boolean;
   reconciliationReceipt?: AttemptReconciliationReceiptV02 | undefined;
+  reconciledPatchRevision?: string;
   settledReceiptId?: string | undefined;
 }
 
@@ -179,6 +180,16 @@ export class RepositoryOutcomeRecoveryV02 {
     if (!statePort) throw new Error('STATE_PORT_REQUIRED: StatePortV02 is required for repository receiver execution');
     try {
       const recorded = validateOutcomeRecordResult(await statePort.recordOutcome(outcome), outcome.receiptId);
+      if (outcome.outcome === 'observed' && recorded.outcome === 'settled' && outcome.repositoryOperation === 'apply-patch') {
+        try {
+          await this.mirrorSettledPatch(outcome.observedResultRevisionDigest);
+        } catch (error) {
+          this.hold(lease, context, claim, attempt, outcome);
+          const pending = this.pending.get(attempt.attemptId);
+          if (pending) pending.settledReceiptId = recorded.receiptId;
+          throw error;
+        }
+      }
       if (outcome.outcome !== 'observed' || recorded.outcome !== 'settled') this.hold(lease, context, claim, attempt, outcome);
       return recorded;
     } catch (error: unknown) {
@@ -197,8 +208,7 @@ export class RepositoryOutcomeRecoveryV02 {
     pending.recovering = true;
     try {
       if (pending.settledReceiptId !== undefined) {
-        await pending.lease.release();
-        this.pending.delete(attemptId);
+        await this.finishSettlement(attemptId, pending);
         return { outcome: 'settled', receiptId: pending.settledReceiptId };
       }
       let receipt = pending.reconciliationReceipt;
@@ -214,21 +224,36 @@ export class RepositoryOutcomeRecoveryV02 {
         // A thrown owner reply is ambiguous: its journal may already have committed this exact receipt.
         if (receipt.reconciliationKind === 'observed-unsettled') pending.reconciliationReceipt = receipt;
       }
+      const needsRevision =
+        !!this.options.onSettledPatch &&
+        pending.outcome.repositoryOperation === 'apply-patch' &&
+        receipt.reconciliationKind === 'uncertain-attempt' &&
+        receipt.disposition === 'observed-and-accounted';
+      if (needsRevision) pending.reconciliationReceipt = receipt;
       const result = validateReconciliationResult(
-        receipt.reconciliationKind === 'observed-unsettled' ? await statePort.reconcileObservedOutcome(receipt) : await statePort.reconcileUncertain(receipt),
+        receipt.reconciliationKind === 'observed-unsettled' ? await statePort.reconcileObservedOutcome(receipt) : await statePort.reconcileUncertain(receipt, needsRevision),
         receipt.reconciliationId,
+        needsRevision,
       );
       if (result.outcome === 'settled') {
+        if (result.observedRevisionDigest) pending.reconciledPatchRevision = result.observedRevisionDigest;
         pending.settledReceiptId = result.receiptId;
-        await pending.lease.release();
-        this.pending.delete(attemptId);
-      } else if (receipt.reconciliationKind === 'observed-unsettled') {
+        await this.finishSettlement(attemptId, pending);
+      } else {
         pending.reconciliationReceipt = undefined;
       }
       return result;
     } finally {
       pending.recovering = false;
     }
+  }
+
+  private async finishSettlement(attemptId: string, pending: PendingRepositoryOutcomeV02): Promise<void> {
+    if (pending.reconciledPatchRevision || (pending.outcome.outcome === 'observed' && pending.outcome.repositoryOperation === 'apply-patch')) {
+      await this.mirrorSettledPatch(pending.reconciledPatchRevision ?? pending.outcome.observedResultRevisionDigest);
+    }
+    await pending.lease.release();
+    this.pending.delete(attemptId);
   }
 
   private hold(lease: WorkspaceLease, context: RepositoryAdmissionContextV02, claim: ClaimReceiptV02, attempt: AttemptReceiptV02, outcome: RepositoryActionOutcomeReceiptV02): void {
@@ -246,6 +271,12 @@ export class RepositoryOutcomeRecoveryV02 {
         recovering: false,
       });
   }
+
+  private async mirrorSettledPatch(revision: string | undefined): Promise<void> {
+    if (!this.options.onSettledPatch) return;
+    if (typeof revision !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(revision)) throw new Error('MIRROR_PATCH_REVISION_REQUIRED');
+    await this.options.onSettledPatch(revision);
+  }
 }
 
 export function validateOutcomeRecordResult(input: unknown, receiptId: string): OutcomeRecordResultV02 {
@@ -260,10 +291,12 @@ export function validateOutcomeRecordResult(input: unknown, receiptId: string): 
   return input as unknown as OutcomeRecordResultV02;
 }
 
-export function validateReconciliationResult(input: unknown, receiptId: string): ReconciliationResultV02 {
+export function validateReconciliationResult(input: unknown, receiptId: string, needsRevision = false): ReconciliationResultV02 {
   if (
     !isPlainRecord(input) ||
-    Object.keys(input).length !== 2 ||
+    (needsRevision && input['outcome'] === 'settled'
+      ? Object.keys(input).length !== 3 || typeof input['observedRevisionDigest'] !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(input['observedRevisionDigest'])
+      : Object.keys(input).length !== 2) ||
     (input['outcome'] !== 'settled' && input['outcome'] !== 'blocked' && input['outcome'] !== 'conflict') ||
     input['receiptId'] !== receiptId
   ) {

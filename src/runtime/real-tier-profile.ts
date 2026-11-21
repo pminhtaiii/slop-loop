@@ -17,6 +17,7 @@
 import { createHmac } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isModelId } from '../contracts/approvals/v01/validation.ts';
 import { sha256Text, type Validation } from '../uc01/contracts.ts';
 import { collect, deny, IMAGE_DIGEST, keysOf, limitsOf, positiveInteger, pricingOf, text } from './evaluation-profile-primitives.ts';
 import type { EvaluationLimits, EvaluationPricing } from './evaluation-profile-types.ts';
@@ -25,7 +26,6 @@ import type { EvaluationLimits, EvaluationPricing } from './evaluation-profile-t
 export const DEFAULT_REAL_TIER_ENDPOINT = 'https://api.deepseek.com/anthropic/v1/messages';
 export const PROFILE_SCHEMA = 'uc03-real-tier-profile/1';
 
-const MODEL_ID = /^[A-Za-z0-9._:/@-]{1,256}$/u;
 const PINNED_BASE = /^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/u;
 const DIGEST_KEY = /^[a-f0-9]{64}$/u;
 const DEFAULT_HREF = new URL(DEFAULT_REAL_TIER_ENDPOINT).href;
@@ -212,14 +212,13 @@ function checkProfile(raw: unknown, root: string, env: RealTierEnvironment): Rea
     deny('endpoint-ambiguous', '$.provider.endpoint');
   }
 
-  // The model id follows the host-file identifier rule (src/cli/evaluate.ts:69).
-  const profileModel = provider.model === undefined ? undefined : text(provider.model, '$.provider.model', 256);
-  if (profileModel !== undefined && !MODEL_ID.test(profileModel)) deny('model-invalid', '$.provider.model');
+  const profileModel = provider.model;
+  if (profileModel !== undefined && !isModelId(profileModel)) deny('model-invalid', '$.provider.model');
   const environmentModel = defined(env, 'ANTHROPIC_MODEL');
   if (profileModel !== undefined && environmentModel !== undefined && profileModel !== environmentModel) deny('model-ambiguous', '$.provider.model');
   const model = profileModel ?? environmentModel;
   if (model === undefined) deny('model-missing', '$.provider.model');
-  if (!MODEL_ID.test(model)) deny('model-invalid', '$.provider.model');
+  if (!isModelId(model)) deny('model-invalid', '$.provider.model');
 
   const digestKey = digestKeyOf(provider.endpointDigestKey);
   const endpoint = endpointOf(profileEndpoint ?? environmentEndpoint ?? DEFAULT_REAL_TIER_ENDPOINT, allowInsecureHttp, model, digestKey);

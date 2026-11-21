@@ -7,13 +7,15 @@
  * measurable against the initial bytes rather than against themselves.
  */
 import { randomUUID } from 'node:crypto';
+import { createRealTierAdmissions } from './real-tier-admissions.ts';
+import { realTierPlanApproval } from './real-tier-plan-approval.ts';
 import { cpSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeFileDigest } from '../foundation/docker-workspace-policy.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
 import type { TrustedFilesystemPort } from '../foundation/repository-types.ts';
 import type { RepositoryBaselineManifestEntry, RepositoryBaselineSource, RepositoryDiffSourceOptions } from '../foundation/repository-diff-types.ts';
-import { computeCanonicalSha256, computeCheckSetDigest } from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCheckSetDigest, isProtectedPath } from '../contracts/foundation/uc03.ts';
 import type { BugTask, PolicyAuthorityRefV02 } from '../contracts/foundation/uc03.ts';
 import { createGuardedReadCapability } from '../foundation/guarded-read-capability.ts';
 import { createExecutionGuardV02 } from '../foundation/execution-guard.ts';
@@ -27,6 +29,7 @@ import type { UC03HostProducers } from './uc03-host-bootstrap.ts';
 import { createRepositoryBaselineSource } from './repository-baseline-source.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import type { SeededTaskIds } from './real-tier-task-seed.ts';
+import { mirrorRealTierWorkspace } from './real-tier-workspace.ts';
 
 /** The one refusal an unbound producer makes: named, bounded, and with no effect. */
 export const TASK_UNBOUND = 'TASK_UNBOUND' as const;
@@ -98,6 +101,7 @@ async function measureManifest(port: TrustedFilesystemPort, maxFileBytes: number
   const walk = async (dir: string): Promise<void> => {
     for (const entry of await port.readDir(dir)) {
       const child = dir === '' ? entry.name : `${dir}/${entry.name}`;
+      if (isProtectedPath(child)) continue;
       if (entry.isSymbolicLink) throw new Error('RETAINED_LINK: the retained tree must not contain symbolic links');
       if (entry.isDirectory) await walk(child);
       else if (entry.isFile) {
@@ -204,10 +208,11 @@ export async function buildBoundCapabilities(
   assembly: RealTierAssembly,
   task: BugTask,
   ids: SeededTaskIds,
-  filesystem: TrustedFilesystemPort,
+  filesystem: WorkspaceFilesystemPort,
   owners: ReturnType<RealTierAssembly['owners']['taskOwners']>,
   contextSource: UC03GraphPortsV02['contextSource'],
   bounds: Readonly<{
+    currentRevision: string;
     authorityRef: PolicyAuthorityRefV02;
     repositoryRoot: string;
     policyDigest: string;
@@ -223,7 +228,7 @@ export async function buildBoundCapabilities(
     taskId: ids.taskId,
     workspaceId: ids.workspaceId,
     repositoryId: task.repositoryId,
-    expectedRevisionDigest: task.initialRevisionDigest,
+    expectedRevisionDigest: bounds.currentRevision,
     policyDigest: bounds.policyDigest,
     bounds: { maxPathLength: bounds.maxReadPathLength, maxQueryLength: bounds.maxQueryLength },
     provenance: 'real',
@@ -253,10 +258,11 @@ export async function buildBoundCapabilities(
     guardCapability: guardedRead,
     fsPort: filesystem,
     limits: { maxExcerptBytes: Math.min(task.limits.maxOutputBytes, 65_536), maxResultCount: 32 },
-    expectedRevisionDigest: task.initialRevisionDigest,
+    expectedRevisionDigest: bounds.currentRevision,
     provenance: 'real',
     workspaceRoot: bounds.repositoryRoot,
     statePort: owners.statePort,
+    taskControl: { getJournalSnapshot: () => owners.statePort.getJournalSnapshot(ids.taskId) },
     commandExecutor: assembly.executor,
     workspaceManager: assembly.workspaceManager,
     trustedCommandResourcePolicy: { isolationProfileRef: assembly.profile.image.label, limits: task.limits },
@@ -266,11 +272,14 @@ export async function buildBoundCapabilities(
     unattemptedClaimClosureHandoff: createDurableUnattemptedClaimClosureHandoff(owners.statePort),
     attemptStartRecoveryHandoff: createDurableAttemptStartRecoveryHandoff(owners.statePort),
     patchRecoveryHandoff: createRefusingPatchRecoveryHandoff(),
+    onSettledPatch: revision => mirrorRealTierWorkspace(assembly, ids, filesystem, revision, bounds.maxFileBytes),
     repositoryDiff: diff.source,
   });
   const executionGuard = createExecutionGuardV02({ ports: { statePort: owners.statePort, repositoryPort }, config: { provenance: 'real' } });
   const configPort = { provenance: 'real' as const, loadConfig: () => ({ configId: task.configId, configVersion: task.configVersion }) };
+  const admissions = createRealTierAdmissions(assembly, task, owners.statePort);
   const trustedExpectedContext: TrustedHostExpectedContext = {
+    admissionContextForCheck: admissions.admissionContextForCheck,
     taskId: ids.taskId,
     workspaceId: ids.workspaceId,
     repositoryId: task.repositoryId,
@@ -281,10 +290,20 @@ export async function buildBoundCapabilities(
     executionGuard,
     statePort: owners.statePort,
   };
-  const ports: UC03GraphPortsV02 = { ...assembly.components, statePort: owners.statePort, guardedRead, hostAuthority, contextSource, repositoryPort, executionGuard, configPort };
+  const ports: UC03GraphPortsV02 = {
+    ...assembly.components,
+    approvalPort: realTierPlanApproval(owners),
+    statePort: owners.statePort,
+    guardedRead,
+    hostAuthority,
+    contextSource,
+    repositoryPort,
+    executionGuard,
+    configPort,
+  };
   return {
     ports,
-    config: { trustedExpectedContext },
+    config: { trustedExpectedContext, coderAdmission: admissions.coderAdmission },
     hostPorts: { repositoryPort, executionGuard, configPort: configPort as UC03GraphPortsV02['configPort'] },
     guardedRead,
     hostAuthority,

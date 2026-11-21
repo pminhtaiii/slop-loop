@@ -21,7 +21,9 @@ import type {
   SettledPatchAncestryV02,
   StatePortV02,
   TaskState,
+  VerificationAuthoritySnapshotV02,
 } from '../../contracts/foundation/uc03.ts';
+import { isVerificationAuthoritySnapshotV02 } from '../../contracts/foundation/uc03.ts';
 import type { validateStateTransition } from '../../contracts/foundation/uc03.ts';
 import type { DurableStore } from '../store.ts';
 import { registerProductionJournal } from '../../foundation/production-journal-registry.ts';
@@ -134,8 +136,8 @@ export class DurableStatePortV02 implements StatePortV02 {
     return reconcile.reconcileObservedOutcome(this.statePort, receipt);
   }
 
-  reconcileUncertain(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
-    return reconcile.reconcileUncertain(this.statePort, receipt);
+  reconcileUncertain(receipt: AttemptReconciliationReceiptV02, includePatchRevision?: boolean): Promise<ReconciliationResultV02> {
+    return reconcile.reconcileUncertain(this.statePort, receipt, includePatchRevision);
   }
 
   closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> {
@@ -165,6 +167,47 @@ export class DurableStatePortV02 implements StatePortV02 {
    */
   readControlHead(taskId: string): ControlRecordV02 | null {
     return this.statePort.readControlHead(taskId);
+  }
+
+  /** Reads owner facts under the task lock, from the same effective head (persisted, else seed) that claims admit against. */
+  async readVerificationAuthoritySnapshot(taskId: string): Promise<VerificationAuthoritySnapshotV02 | null> {
+    if (taskId !== this.boundTaskId) return null;
+    return this.statePort.locked(taskId, async () => {
+      const head = await this.statePort.readControl(taskId, this.controlSeed);
+      const task = await this.loadTask(taskId);
+      const authority = head?.activeAuthorityRef;
+      if (!task || task.taskId !== this.boundTaskId || !head || !authority || !task.repositoryRevisionDigest) return null;
+      const fields = ['policyId', 'policyVersion', 'configId', 'configVersion', 'issuerKeyRef', 'decisionAuthorityGeneration'];
+      if (
+        Object.getPrototypeOf(authority) !== Object.prototype ||
+        Object.keys(authority).length !== fields.length ||
+        Object.keys(authority).some(field => !fields.includes(field)) ||
+        ![authority.policyId, authority.policyVersion, authority.configId, authority.configVersion, authority.issuerKeyRef].every(value => typeof value === 'string' && value.trim().length > 0) ||
+        !Number.isSafeInteger(authority.decisionAuthorityGeneration) ||
+        authority.decisionAuthorityGeneration <= 0
+      )
+        return null;
+      const snapshot: VerificationAuthoritySnapshotV02 = {
+        taskId: task.taskId,
+        runId: task.runId,
+        stateVersion: task.stateVersion,
+        repositoryRevisionDigest: task.repositoryRevisionDigest,
+        controlVersion: head.controlVersion,
+        epoch: head.epoch,
+        decisionAuthorityGeneration: authority.decisionAuthorityGeneration,
+        policyIdentity: {
+          policyId: authority.policyId,
+          policyVersion: authority.policyVersion,
+          configId: authority.configId,
+          configVersion: authority.configVersion,
+          issuerKeyRef: authority.issuerKeyRef,
+        },
+        controlMode: head.mode,
+        holdRef: head.holdRef,
+        activeClaimId: head.activeClaimId,
+      };
+      return isVerificationAuthoritySnapshotV02(snapshot) ? snapshot : null;
+    });
   }
 
   /* ---------------- adapter-specific journal control ---------------- */

@@ -1,3 +1,4 @@
+import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
 /** Bound production coder/reviewer dispatch: current control permits one fetch; a late pause permits none. Controlled ports only. */
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -112,9 +113,10 @@ function catalogFor(t: TestContext, fixture: ScanFixture, task = taskOf(), extra
 }
 
 function spawnDouble(effects: Effects): StructuredSpawn {
-  return async (): Promise<StructuredSpawnResult> => {
+  const docker = createVolumeSpawn();
+  return async (command, args, options): Promise<StructuredSpawnResult> => {
     effects.spawn += 1;
-    return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+    return docker.spawn(command, args, options);
   };
 }
 

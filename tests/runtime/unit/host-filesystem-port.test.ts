@@ -43,6 +43,8 @@ test(
     assert.equal(await port.realpath(''), '', 'the workspace root resolves to the empty canonical path');
     assert.equal(await port.realpath('src/a.py'), 'src/a.py');
     assert.equal(await port.readTextFile('src/a.py'), 'x = 1\n');
+    assert.deepEqual(await port.readBytes('src/a.py', 6), Buffer.from('x = 1\n'));
+    await assert.rejects(port.readBytes('src', 6), /regular file/);
   }),
 );
 

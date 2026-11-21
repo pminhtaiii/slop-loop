@@ -23,6 +23,7 @@ import {
   validateBoundedText,
   validateDigest,
   validateId,
+  validateModelId,
   validatePositiveInteger,
   validateVersionString,
 } from '../v01/validation.ts';
@@ -135,7 +136,7 @@ export function validateProviderAdmissionReceipt(input: unknown): ValidationResu
   validateId(input['policyVersion'], `${path}.policyVersion`, errors);
   validateDigest(input['requestContentDigest'], `${path}.requestContentDigest`, errors);
   validateId(input['providerId'], `${path}.providerId`, errors);
-  validateId(input['modelId'], `${path}.modelId`, errors);
+  validateModelId(input['modelId'], `${path}.modelId`, errors);
   validateId(input['configId'], `${path}.configId`, errors);
   validateId(input['configVersion'], `${path}.configVersion`, errors);
   validatePositiveInteger(input['decisionAuthorityGeneration'], `${path}.decisionAuthorityGeneration`, errors);

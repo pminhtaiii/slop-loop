@@ -1,3 +1,4 @@
+import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
 /**
  * T051 — controlled proof for the real containment probe's admission and kill-witness logic.
  *
@@ -160,9 +161,10 @@ async function harness(t: TestContext): Promise<Harness> {
   );
 
   let spawns = 0;
-  const spawn: StructuredSpawn = async (): Promise<StructuredSpawnResult> => {
+  const docker = createVolumeSpawn();
+  const spawn: StructuredSpawn = async (command, args, options): Promise<StructuredSpawnResult> => {
     spawns += 1;
-    return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+    return docker.spawn(command, args, options);
   };
   const stateRoot = join(root, 'state');
   mkdirSync(stateRoot, { recursive: true });
@@ -322,7 +324,7 @@ test('the probe hostile admission is CLAIMED by the bound task port through the 
   assert.equal(admitted.receiverCalls, 1, 'the admitted hostile command reaches the receiver exactly once');
   assert.equal(admitted.claimed?.status, 'claimed', JSON.stringify(admitted.claimed));
   assert.equal(admitted.claimed?.claimId, 'claim-act-guarded-hostile');
-  assert.equal(h.spawns(), 0, 'no Docker process was started');
+  assert.equal(h.spawns(), 3, 'only the controlled workspace setup runs; no command process starts');
 });
 
 test('the pre-fix constructions are not claimed, so the positive row discriminates', async t => {
