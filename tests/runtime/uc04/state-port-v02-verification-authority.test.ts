@@ -18,6 +18,7 @@ import type {
   TaskState,
   VerificationApprovalContextV02,
 } from '../../../src/contracts/foundation/uc03.ts';
+import type { TrustedOperatorIdentity } from '../../../src/contracts/approvals/contracts.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import { decisionDir, taskDir } from '../../../src/persistence/adapters/approval-types.ts';
@@ -36,6 +37,7 @@ const POLICY: PolicyAuthorityRefV02 = {
   issuerKeyRef: `host-${TASK.configId}`,
   decisionAuthorityGeneration: 3,
 };
+const OPERATOR: TrustedOperatorIdentity = { actorId: 'host-operator', channelRef: 'host-console', provenance: 'real' };
 const BASELINE_REF = `uc04-baseline://${'a'.repeat(64)}`;
 const ORIGINAL = `dec-plan-${'c'.repeat(64)}`;
 const STRATEGY = 'Guard the zero denominator';
@@ -154,22 +156,37 @@ function contextOf(decisionId = ORIGINAL): VerificationApprovalContextV02 {
 
 interface Fixture {
   readonly port: DurableStatePortV02;
+  readonly store: DurableStore;
+  readonly approvals: string;
   readonly record: (decisionId: string, status: 'approved' | 'pending' | 'rejected') => void;
 }
 
-async function fixture(): Promise<Fixture> {
+/** The seeded task paused at AwaitPlan with the original plan awaiting its human decision. */
+function awaitPlanState(): TaskState {
+  return { ...verifyState(), stateVersion: 6, node: 'AwaitPlan', activeDecisionId: ORIGINAL, nextAction: 'await-plan-approval' };
+}
+
+async function fixture(state: TaskState = verifyState()): Promise<Fixture> {
   const base = mkdtempSync(join(tmpdir(), 'va-unit-'));
   const approvals = join(base, 'approvals');
   const store = new DurableStore(join(base, 'store'));
-  const port = new DurableStatePortV02({ store, taskId: TASK.taskId, approvalStorageDir: approvals, initialControl: { controlVersion: 2, epoch: 1, mode: 'runnable', activeAuthorityRef: POLICY } });
-  // Seed the durable task record at the target Verify version directly, through the store's own write
-  // path: the graph's `transition` requires one step per call, which is unrelated to what this unit
+  const port = new DurableStatePortV02({
+    store,
+    taskId: TASK.taskId,
+    approvalStorageDir: approvals,
+    trustedOperator: OPERATOR,
+    initialControl: { controlVersion: 2, epoch: 1, mode: 'runnable', activeAuthorityRef: POLICY },
+  });
+  // Seed the durable task record at the target version directly, through the store's own write path:
+  // the graph's `transition` requires one step per call, which is unrelated to what this unit
   // exercises (the authority methods read the persisted task, not how it arrived).
   const stateStore = new StatePortStore(store);
-  await stateStore.writeTask(TASK.taskId, verifyState());
+  await stateStore.writeTask(TASK.taskId, state);
   await stateStore.writeControl(TASK.taskId, { controlVersion: 2, epoch: 1, mode: 'runnable', holdRef: null, holdEventDigest: null, activeAuthorityRef: POLICY, activeClaimId: null });
   return {
     port,
+    store,
+    approvals,
     record(decisionId, status) {
       const dir = decisionDir(approvals, decisionId);
       mkdirSync(dir, { recursive: true });
@@ -196,23 +213,40 @@ async function fixture(): Promise<Fixture> {
       writeFileSync(join(dir, 'request.json'), JSON.stringify(request));
       const historyDir = taskDir(approvals, TASK.taskId);
       mkdirSync(historyDir, { recursive: true });
-      const resolutions =
-        status === 'pending'
-          ? []
-          : [
-              {
-                schemaVersion: 'uc05-approval/0.1-draft',
-                decisionId,
-                responseKey: `key-${decisionId}`,
-                expectedRequestVersion: 1,
-                operatorChannelRef: 'host-console',
-                decision: status,
-                safeReasonCode: status === 'approved' ? 'developer-approved' : 'developer-rejected',
-                decidedAt: new Date(0).toISOString(),
-                eventId: `evt-${decisionId}`,
-              },
-            ];
-      writeFileSync(join(historyDir, 'history.json'), JSON.stringify({ resolutions }));
+      if (status === 'pending') {
+        writeFileSync(join(historyDir, 'history.json'), JSON.stringify({ resolutions: [] }));
+        writeFileSync(join(historyDir, 'events.json'), JSON.stringify([]));
+        return;
+      }
+      const decidedAt = new Date(0).toISOString();
+      const resolution = {
+        schemaVersion: 'uc05-approval/0.1-draft',
+        decisionId,
+        responseKey: `key-${decisionId}`,
+        expectedRequestVersion: 1,
+        operatorChannelRef: 'host-console',
+        decision: status,
+        safeReasonCode: status === 'approved' ? 'developer-approved' : 'developer-rejected',
+        decidedAt,
+        eventId: `evt-${decisionId}`,
+      };
+      // The committed journal event the validated UC-05 reader requires beside the terminal row.
+      const event = {
+        schemaVersion: 'uc05-approval/0.1-draft',
+        eventId: resolution.eventId,
+        taskId: TASK.taskId,
+        runId: IDS.runId,
+        decisionId,
+        directionId: null,
+        claimId: null,
+        type: 'human-resolution-recorded',
+        outcome: status === 'approved' ? 'ok' : 'paused',
+        policyRef: { policyId: POLICY.policyId, policyVersion: POLICY.policyVersion, configId: POLICY.configId, configVersion: POLICY.configVersion },
+        safeReasonCode: resolution.safeReasonCode,
+        timestamp: decidedAt,
+      };
+      writeFileSync(join(historyDir, 'history.json'), JSON.stringify({ resolutions: [resolution] }));
+      writeFileSync(join(historyDir, 'events.json'), JSON.stringify([event]));
     },
   };
 }
@@ -273,20 +307,63 @@ test('recordVerificationApproval: an approved decision applies the exact one-fie
 
 test('resolvePlanDecisionInContext: a recorded approval resolves only in its exact context', async () => {
   const f = await fixture();
-  const { decisionId } = verificationRequest();
+  const { request, decisionId } = verificationRequest();
   f.record(decisionId, 'approved');
+  // A decision carries authority only once this owner consumed it at its issuing authority.
+  assert.equal((await f.port.recordVerificationApproval(request)).outcome, 'approved');
   assert.equal((await f.port.resolvePlanDecisionInContext(decisionId, contextOf(decisionId))).outcome, 'resolved');
   assert.equal((await f.port.resolvePlanDecisionInContext(decisionId, { ...contextOf(decisionId), expectedDecisionAuthorityGeneration: POLICY.decisionAuthorityGeneration + 1 })).outcome, 'stale');
   assert.equal((await f.port.resolvePlanDecisionInContext(`dec-verify-${'2'.repeat(64)}`, contextOf(decisionId))).outcome, 'stale');
 });
 
 test('planDecisionIsApproved: only a recorded approval at the current authority passes', async () => {
-  const f = await fixture();
-  const approved = `dec-plan-${'3'.repeat(64)}`;
+  const f = await fixture(awaitPlanState());
+  const approved = ORIGINAL;
   f.record(approved, 'approved');
+  // The AwaitPlan→Patch trusted plan approval is where this owner consumes the plan decision.
+  assert.ok(await f.port.trustedPlanApproval(TASK.taskId));
   assert.equal(await f.port.planDecisionIsApproved(approved, contextOf(approved)), true);
   const rejected = `dec-plan-${'4'.repeat(64)}`;
   f.record(rejected, 'rejected');
   assert.equal(await f.port.planDecisionIsApproved(rejected, contextOf(rejected)), false);
   assert.equal(await f.port.planDecisionIsApproved(approved, { ...contextOf(approved), expectedDecisionAuthorityGeneration: POLICY.decisionAuthorityGeneration + 1 }), false);
+});
+
+test('F-211-05: a malformed history row cannot confer a human approval', async () => {
+  const f = await fixture();
+  const { request, decisionId } = verificationRequest();
+  f.record(decisionId, 'pending');
+  const before = await f.port.loadTask(TASK.taskId);
+  // Exactly the merger probe: a bare row with no schema, response key, operator or committed event.
+  writeFileSync(join(taskDir(f.approvals, TASK.taskId), 'history.json'), JSON.stringify({ resolutions: [{ decisionId, decision: 'approved' }] }));
+  const result = await f.port.recordVerificationApproval(request);
+  assert.notEqual(result.outcome, 'approved', JSON.stringify(result));
+  const after = await f.port.loadTask(TASK.taskId);
+  assert.equal(after?.plan?.decisionRef, before?.plan?.decisionRef, 'the task is unchanged');
+  assert.equal(after?.activeDecisionId, before?.activeDecisionId);
+});
+
+test('F-211-06: a resolution is refused once the durable plan no longer matches the approved one', async () => {
+  const f = await fixture();
+  const { request, decisionId } = verificationRequest();
+  f.record(decisionId, 'approved');
+  assert.equal((await f.port.recordVerificationApproval(request)).outcome, 'approved', 'the approved decision applies');
+  // Change the durable plan strategy behind the recorded decision's back, keeping the caller's old
+  // context: the owner-reconstructed context no longer matches, so the approval is stale.
+  const stateStore = new StatePortStore(f.store);
+  const current = await stateStore.readTask(TASK.taskId);
+  assert.ok(current?.plan);
+  const drifted = 'A different, unapproved strategy';
+  await stateStore.writeTask(TASK.taskId, { ...current, plan: { ...current.plan, strategy: drifted, strategyDigest: computeCanonicalSha256(drifted) } });
+  assert.equal((await f.port.resolvePlanDecisionInContext(decisionId, contextOf(decisionId))).outcome, 'stale');
+});
+
+test('F-211-07: a decision consumed at one generation is refused once the generation advances', async () => {
+  const f = await fixture(awaitPlanState());
+  f.record(ORIGINAL, 'approved');
+  // Consuming the plan decision at the AwaitPlan→Patch edge binds it to generation 3.
+  assert.ok(await f.port.trustedPlanApproval(TASK.taskId), 'the recorded decision is a trusted plan approval at generation 3');
+  // Publishing the same policy at generation 4 is a successor authority; the old decision does not carry over.
+  assert.equal((await f.port.publishAuthority({ authorityRef: { ...POLICY, decisionAuthorityGeneration: POLICY.decisionAuthorityGeneration + 1 } })).status, 'published');
+  assert.equal(await f.port.planDecisionIsApproved(ORIGINAL, { ...contextOf(ORIGINAL), expectedDecisionAuthorityGeneration: POLICY.decisionAuthorityGeneration + 1 }), false);
 });

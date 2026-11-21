@@ -29,6 +29,7 @@ import type {
 } from '../../contracts/foundation/uc03.ts';
 import { isVerificationAuthoritySnapshotV02 } from '../../contracts/foundation/uc03.ts';
 import type { validateStateTransition } from '../../contracts/foundation/uc03.ts';
+import type { TrustedOperatorIdentity } from '../../contracts/approvals/contracts.ts';
 import type { DurableStore } from '../store.ts';
 import { registerProductionJournal } from '../../foundation/production-journal-registry.ts';
 import { loadAdmission, publishAuthority } from './state-port-v02-authority.ts';
@@ -76,6 +77,11 @@ export interface DurableStatePortV02Options {
    * decisions. Absent, the verification-authority methods fail closed rather than guessing one.
    */
   readonly approvalStorageDir?: string | undefined;
+  /**
+   * The trusted operator channel whose resolution rows the verification authority accepts. Absent,
+   * no persisted resolution is ever treated as a human approval.
+   */
+  readonly trustedOperator?: TrustedOperatorIdentity | undefined;
 }
 
 /** Durable UC-03 v0.2 state port. Missing optional methods fail closed by absence. */
@@ -98,7 +104,11 @@ export class DurableStatePortV02 implements StatePortV02 {
     this.statePort = new StatePortStore(options.store);
     this.boundTaskId = options.taskId;
     this.executionProfile = options.executionProfile;
-    this.verificationAuthority = new DurableVerificationAuthority({ store: this.statePort, approvalStorageDir: options.approvalStorageDir });
+    this.verificationAuthority = new DurableVerificationAuthority({
+      store: this.statePort,
+      approvalStorageDir: options.approvalStorageDir,
+      operator: options.trustedOperator,
+    });
     this.taskOptions = {
       store: this.statePort,
       trustedTransitions: { ...(options.trustedTransitions ?? {}) },

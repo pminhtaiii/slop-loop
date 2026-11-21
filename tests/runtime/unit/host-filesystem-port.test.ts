@@ -3,7 +3,7 @@
  * The overflow probe is the contract that keeps an oversized file from ever being loaded.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -145,5 +145,63 @@ test(
     );
     const limits = { maxEntries: 2, maxFiles: 1, maxBytes: 256 };
     assert.equal(await port.getCurrentRevisionDigestBounded(limits, control), await port.getCurrentRevisionDigest());
+  }),
+);
+
+test(
+  'F-211-01: a parent link out of the workspace is refused with zero effects, and no directory is created',
+  withWorkspace(async root => {
+    const port = new WorkspaceFilesystemPort({ root });
+    const outside = mkdtempSync(join(tmpdir(), 'uc03-fs-port-outside-'));
+    try {
+      symlinkSync(outside, join(root, 'parent'), process.platform === 'win32' ? 'junction' : 'dir');
+      await assert.rejects(() => port.writeFile('parent/created/file.py', 'x', 1024), /WORKSPACE_ESCAPE/);
+      assert.equal(existsSync(join(outside, 'created')), false, 'no directory may be created outside the workspace');
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  }),
+);
+
+test(
+  'F-211-01: a final-component link is refused instead of followed to its target',
+  withWorkspace(async root => {
+    const port = new WorkspaceFilesystemPort({ root });
+    const outside = join(mkdtempSync(join(tmpdir(), 'uc03-fs-port-target-')), 'outside.py');
+    writeFileSync(outside, 'old\n');
+    try {
+      // A file symlink may need elevation on Windows; only a created link is exercised.
+      try {
+        symlinkSync(outside, join(root, 'link.py'), 'file');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EPERM') return;
+        throw error;
+      }
+      await assert.rejects(() => port.writeFile('link.py', 'changed\n', 1024), /WORKSPACE_ESCAPE/);
+      assert.equal(readFileSync(outside, 'utf8'), 'old\n', 'the link target outside the workspace is never written');
+    } finally {
+      rmSync(join(outside, '..'), { recursive: true, force: true });
+    }
+  }),
+);
+
+test(
+  'F-211-01: a nested missing parent is created under the root, one contained level at a time',
+  withWorkspace(async root => {
+    const port = new WorkspaceFilesystemPort({ root });
+    await port.writeFile('pkg/nested/new.py', 'value = 1\n', 1024);
+    assert.equal(readFileSync(join(root, 'pkg/nested/new.py'), 'utf8'), 'value = 1\n');
+    assert.equal(existsSync(join(root, 'pkg/nested')), true);
+  }),
+);
+
+test(
+  'F-211-02: removeFile undoes a created file and refuses a directory target',
+  withWorkspace(async root => {
+    const port = new WorkspaceFilesystemPort({ root });
+    await port.writeFile('undo/created.py', 'x\n', 1024);
+    await port.removeFile('undo/created.py');
+    assert.equal(existsSync(join(root, 'undo/created.py')), false);
+    await assert.rejects(() => port.removeFile('src'), /WORKSPACE_ESCAPE/);
   }),
 );

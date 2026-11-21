@@ -1,10 +1,18 @@
 /**
  * Shared reads and records for the durable verification-approval authority
  * (`state-port-v02-verification-authority.ts`). They are split out only to keep each file within
- * the source-size budget; they hold no authority and perform no write.
+ * the source-size budget; they hold no authority and perform no write except the decision-binding
+ * record the owner itself issues when it consumes a human decision.
+ *
+ * Two rules keep this file honest:
+ * - A persisted resolution is used only after the same validation the UC-05 reader applies: the
+ *   terminal row, the trusted operator channel, the request version, and the committed journal event.
+ * - A persisted decision is bound to the owner authority and generation that consumed it, so an
+ *   advanced generation cannot re-label the old record as current.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { computeCanonicalSha256 } from '../../contracts/foundation/uc03.ts';
 import type {
   ApprovalBinding,
@@ -14,10 +22,16 @@ import type {
   VerificationApprovalContextV02,
   VerificationPolicyIdentityV02,
 } from '../../contracts/foundation/uc03.ts';
-import type { ApprovalRequestRecord, HumanResolution } from '../../contracts/approvals/contracts.ts';
-import { validateApprovalRequestRecord } from '../../contracts/approvals/contracts.ts';
+import type { ApprovalRequestRecord, HumanResolution, TrustedOperatorIdentity } from '../../contracts/approvals/contracts.ts';
+import { validateApprovalRequestRecord, validateHumanResolution } from '../../contracts/approvals/contracts.ts';
+import { readEvents } from './approval-events.ts';
 import { decisionDir, taskDir } from './approval-types.ts';
+import type { StatePortStore } from './state-port-v02-storage.ts';
 import type { ControlRecordV02 } from './state-port-v02-types.ts';
+
+const DECISION_BINDINGS_FILE = 'verification-decisions.json';
+const SHA256 = /^sha256:[0-9a-f]{64}$/u;
+const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 export function readJson<T>(path: string): T | null {
   if (!existsSync(path)) return null;
@@ -34,9 +48,53 @@ export function requestRecord(approvalStorageDir: string, decisionId: string): A
   return checked.ok ? checked.value : null;
 }
 
-export function recordedResolution(approvalStorageDir: string, taskId: string, decisionId: string): HumanResolution | null {
-  const history = readJson<{ readonly resolutions?: readonly HumanResolution[] }>(join(taskDir(approvalStorageDir, taskId), 'history.json'));
-  return history?.resolutions?.find(row => row.decisionId === decisionId) ?? null;
+function dataRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+/**
+ * The recorded terminal resolution for `decisionId`: `absent` when the history has no row for it,
+ * `invalid` when any row fails the UC-05 validation (a malformed row fails closed), and `recorded`
+ * only for a fully validated row whose committed journal event agrees. Every history row is checked
+ * before any row is selected, exactly as `readApprovalResolution` does.
+ */
+export type RecordedResolutionV02 = { readonly status: 'absent' } | { readonly status: 'invalid' } | { readonly status: 'recorded'; readonly resolution: HumanResolution };
+
+export function recordedResolution(approvalStorageDir: string, taskId: string, decisionId: string, operator: TrustedOperatorIdentity | undefined): RecordedResolutionV02 {
+  if (!operator) return { status: 'invalid' };
+  const history = readJson<unknown>(join(taskDir(approvalStorageDir, taskId), 'history.json'));
+  if (history === null) return { status: 'absent' };
+  if (!dataRecord(history)) return { status: 'invalid' };
+  const rows = history['resolutions'];
+  if (!Array.isArray(rows) || rows.length > 128) return { status: 'invalid' };
+  const events = readEvents(approvalStorageDir, taskId);
+  if (events.safe.outcome !== 'ok' || !Array.isArray(events.value)) return { status: 'invalid' };
+  const unique = new Set<string>();
+  let selected: HumanResolution | undefined;
+  for (const row of rows) {
+    if (!dataRecord(row) || typeof row['decisionId'] !== 'string' || unique.has(row['decisionId'])) return { status: 'invalid' };
+    unique.add(row['decisionId']);
+    const record = requestRecord(approvalStorageDir, row['decisionId']);
+    if (!record) return { status: 'invalid' };
+    const checked = validateHumanResolution(row, { expectedDecisionId: record.decisionId, expectedRequestVersion: record.requestVersion, trustedOperator: operator });
+    if (!checked.ok) return { status: 'invalid' };
+    const resolution = checked.value;
+    const event = events.value.find(entry => entry.eventId === resolution.eventId);
+    if (
+      !event ||
+      event.type !== 'human-resolution-recorded' ||
+      event.decisionId !== resolution.decisionId ||
+      event.claimId !== null ||
+      event.directionId !== null ||
+      event.timestamp !== resolution.decidedAt ||
+      event.safeReasonCode !== resolution.safeReasonCode ||
+      event.outcome !== (resolution.decision === 'approved' ? 'ok' : 'paused') ||
+      !isDeepStrictEqual(event.policyRef, { policyId: record.policyId, policyVersion: record.policyVersion, configId: record.configId, configVersion: record.configVersion })
+    )
+      return { status: 'invalid' };
+    if (resolution.decisionId === decisionId) selected = resolution;
+  }
+  return selected ? { status: 'recorded', resolution: selected } : { status: 'absent' };
 }
 
 export function bindingMatchesContext(binding: ApprovalBinding, context: CompleteApprovalBindingContextV02): boolean {
@@ -63,6 +121,17 @@ export function policyIdentityOf(authority: PolicyAuthorityRefV02): Verification
 
 /** The exact context a plan decision is re-issued in; same fields as `createVerificationApprovalContext`. */
 export function approvalContextOf(decisionId: string, plan: NonNullable<TaskState['plan']>, task: TaskState, authority: PolicyAuthorityRefV02): VerificationApprovalContextV02 {
+  return verificationContextOf(decisionId, plan, task, authority, 'current-verification');
+}
+
+/** The owner-derived context for either purpose; the historical branch reuses the same fields. */
+export function verificationContextOf(
+  decisionId: string,
+  plan: NonNullable<TaskState['plan']>,
+  task: TaskState,
+  authority: PolicyAuthorityRefV02,
+  purpose: VerificationApprovalContextV02['purpose'],
+): VerificationApprovalContextV02 {
   const action = {
     actionId: decisionId,
     kind: 'approve_fix_plan' as const,
@@ -72,7 +141,7 @@ export function approvalContextOf(decisionId: string, plan: NonNullable<TaskStat
     checkSetDigest: plan.checkSetDigest,
   };
   return {
-    purpose: 'current-verification',
+    purpose,
     expectedIssuerKeyRef: authority.issuerKeyRef,
     expectedDecisionAuthorityGeneration: authority.decisionAuthorityGeneration,
     approvalContext: {
@@ -145,4 +214,61 @@ export function currentVerificationMatches(task: TaskState, decisionId: string):
   const pendingBeforeRebind = task.node === 'Verify' && task.activeDecisionId === undefined;
   const currentPointer = task.plan.decisionRef === decisionId && (task.activeDecisionId === undefined || task.activeDecisionId === decisionId);
   return pendingBeforeRebind || currentPointer;
+}
+
+/** A decision's identity, independent of its terminal status and reason. */
+export function bindingIdentityDigest(binding: ApprovalBinding): string {
+  const identity: Record<string, unknown> = { ...binding };
+  delete identity['status'];
+  delete identity['reason'];
+  return computeCanonicalSha256(identity);
+}
+
+/** The owner authority and generation that consumed one persisted human decision. */
+export interface IssuedDecisionBindingV02 {
+  readonly decisionId: string;
+  readonly issuerKeyRef: string;
+  readonly decisionAuthorityGeneration: number;
+  readonly bindingDigest: string;
+}
+
+/** Every bound decision, or `null` when the file is present but malformed (fail closed). */
+export function readDecisionBindings(store: StatePortStore, taskId: string): ReadonlyMap<string, IssuedDecisionBindingV02> | null {
+  if (!SAFE_TASK_ID.test(taskId)) return null;
+  const raw = readJson<unknown>(store.statePath(taskId, DECISION_BINDINGS_FILE));
+  if (raw === null) return new Map();
+  if (!dataRecord(raw) || raw['schemaVersion'] !== 1 || !Array.isArray(raw['decisions'])) return null;
+  const bindings = new Map<string, IssuedDecisionBindingV02>();
+  for (const row of raw['decisions']) {
+    if (!dataRecord(row)) return null;
+    const { decisionId, issuerKeyRef, decisionAuthorityGeneration, bindingDigest } = row;
+    if (typeof decisionId !== 'string' || typeof issuerKeyRef !== 'string') return null;
+    if (!Number.isSafeInteger(decisionAuthorityGeneration) || (decisionAuthorityGeneration as number) <= 0) return null;
+    if (typeof bindingDigest !== 'string' || !SHA256.test(bindingDigest) || bindings.has(decisionId)) return null;
+    bindings.set(decisionId, { decisionId, issuerKeyRef, decisionAuthorityGeneration: decisionAuthorityGeneration as number, bindingDigest });
+  }
+  return bindings;
+}
+
+/**
+ * Binds one consumed decision to the owner authority/generation that issued it. An identical replay
+ * is a no-op; a different binding under the same decision id, or an unreadable record, refuses.
+ */
+export async function bindIssuedDecision(store: StatePortStore, taskId: string, binding: IssuedDecisionBindingV02): Promise<boolean> {
+  const bindings = readDecisionBindings(store, taskId);
+  if (!bindings) return false;
+  const prior = bindings.get(binding.decisionId);
+  if (prior) {
+    return prior.issuerKeyRef === binding.issuerKeyRef && prior.decisionAuthorityGeneration === binding.decisionAuthorityGeneration && prior.bindingDigest === binding.bindingDigest;
+  }
+  const decisions = [...bindings.values(), binding].sort((left, right) => (left.decisionId < right.decisionId ? -1 : left.decisionId > right.decisionId ? 1 : 0));
+  await store.writeJson(store.statePath(taskId, DECISION_BINDINGS_FILE), { schemaVersion: 1, decisions });
+  return true;
+}
+
+/** Whether the persisted binding for `decisionId` names the same authority, generation and identity. */
+export function issuedBindingMatches(store: StatePortStore, taskId: string, decisionId: string, issuerKeyRef: string, generation: number, binding: ApprovalBinding): boolean {
+  const bindings = readDecisionBindings(store, taskId);
+  const issued = bindings?.get(decisionId);
+  return !!issued && issued.issuerKeyRef === issuerKeyRef && issued.decisionAuthorityGeneration === generation && issued.bindingDigest === bindingIdentityDigest(binding);
 }
