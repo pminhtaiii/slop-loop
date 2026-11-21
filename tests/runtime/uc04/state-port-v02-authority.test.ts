@@ -258,3 +258,43 @@ function sourceFiles(dir: string): string[] {
     .filter(entry => entry.isFile() && entry.name.endsWith('.ts'))
     .map(entry => join(entry.parentPath, entry.name));
 }
+
+test('verification snapshot reads the published durable authority and follows generation changes', () =>
+  withDir(async baseDir => {
+    const port = openPort(baseDir);
+    const task = seedTask(commandContext);
+    assert.equal(await port.readVerificationAuthoritySnapshot(task.taskId), null);
+    await port.transition(task, 0);
+    // The seed is the head claims admit against, so the snapshot reads it before anything is persisted.
+    assert.equal((await port.readVerificationAuthoritySnapshot(task.taskId))?.controlVersion, ((await port.getJournalSnapshot(task.taskId)) as { controlVersion: number }).controlVersion);
+    const authority = authorityAfter(commandContext.policyAuthorityRef);
+    assert.equal((await port.publishAuthority({ authorityRef: authority })).status, 'published');
+    const { decisionAuthorityGeneration, ...policyIdentity } = authority;
+    const snapshot = await openPort(baseDir).readVerificationAuthoritySnapshot(task.taskId);
+    assert.deepEqual(snapshot, {
+      taskId: task.taskId,
+      runId: task.runId,
+      stateVersion: task.stateVersion,
+      repositoryRevisionDigest: task.repositoryRevisionDigest,
+      controlVersion: commandContext.expectedControlVersion + 1,
+      epoch: commandContext.expectedEpoch,
+      decisionAuthorityGeneration,
+      policyIdentity,
+      controlMode: 'runnable',
+      holdRef: null,
+      activeClaimId: null,
+    });
+    assert.equal(await port.readVerificationAuthoritySnapshot('foreign-task'), null);
+    const next = authorityAfter(authority);
+    assert.equal((await port.publishAuthority({ authorityRef: next })).status, 'published');
+    assert.equal((await port.readVerificationAuthoritySnapshot(task.taskId))?.decisionAuthorityGeneration, next.decisionAuthorityGeneration);
+  }));
+
+test('verification snapshot refuses a persisted head without authority', () =>
+  withDir(async baseDir => {
+    const port = openPort(baseDir);
+    await port.transition(seedTask(commandContext), 0);
+    const storage = new StatePortStore(new DurableStore(baseDir));
+    await storage.writeControl(commandContext.taskId, DEFAULT_CONTROL);
+    assert.equal(await port.readVerificationAuthoritySnapshot(commandContext.taskId), null);
+  }));

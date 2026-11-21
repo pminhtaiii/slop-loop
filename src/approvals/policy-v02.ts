@@ -1,3 +1,5 @@
+import { matchesPytestFileArgument } from '../contracts/foundation/uc03/pytest-selector.ts';
+import { isModelId } from '../contracts/approvals/v01/validation.ts';
 import type { NormalizedAction, PermissionClass, ProviderRequest } from '../contracts/foundation/uc03.ts';
 import { computeActionDigest, computeCanonicalSha256, computeRequestContentDigest, validateNormalizedAction, validateProviderRequest } from '../contracts/foundation/uc03.ts';
 import type { PolicyEvaluationReceipt, PolicyIdentity, PolicyProfile, ProviderAdmissionReceipt, ProviderRole } from '../contracts/approvals/contracts.ts';
@@ -185,7 +187,7 @@ function repositoryBranchAllows(action: NormalizedAction, facts: PolicyFactsV02,
   if (facts.plan !== null || !facts.safety.isolated) return false;
   if (action.kind === 'run_command') {
     const command = facts.command;
-    if (!command || facts.patch !== null || !action.argv.includes(facts.testPath ?? '')) return false;
+    if (!command || facts.patch !== null || !action.argv.some(arg => matchesPytestFileArgument(arg, facts.testPath ?? ''))) return false;
     const configured = profile.commandRules.some(
       rule =>
         rule.executableRef === command.executableRef &&
@@ -228,7 +230,8 @@ function providerRequestIsCurrent(request: ProviderRequest, facts: PolicyFactsV0
     request.runId !== facts.runId ||
     request.role !== facts.role ||
     request.configId !== profile.policyIdentity.configId ||
-    ![request.providerRequestId, request.taskId, request.runId, request.providerId, request.modelId, request.configId, request.pricingPolicyId, request.reservationRef].every(isId) ||
+    ![request.providerRequestId, request.taskId, request.runId, request.providerId, request.configId, request.pricingPolicyId, request.reservationRef].every(isId) ||
+    !isModelId(request.modelId) ||
     !isSha(request.contextDigest) ||
     !currentIdentity(facts, profile) ||
     !safetyFactsPass(facts) ||

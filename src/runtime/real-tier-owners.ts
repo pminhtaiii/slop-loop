@@ -17,7 +17,8 @@ import { ApprovalServiceError } from '../approvals/service.ts';
 import type { ApprovalServiceV02 } from '../approvals/service-v02.ts';
 import { createApprovalService } from '../approvals/service.ts';
 import { createRealContextProvider, type RealContextSource } from '../approvals/real-context-provider.ts';
-import type { ApprovalPort, TaskState } from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, type ApprovalPort, type TaskState } from '../contracts/foundation/uc03.ts';
+import type { ApprovalContext } from '../approvals/service-data.ts';
 import type { PolicyAuthorityRefV02 } from '../contracts/foundation/uc03.ts';
 import type { GuardedReadOwnerPort } from '../foundation/guarded-read-capability.ts';
 import { isProductionJournal } from '../foundation/production-journal-registry.ts';
@@ -107,12 +108,32 @@ const unbound = (): never => {
  * decision id, and no request record exists yet when it is first made. The stored record stays
  * primary; only its absence falls back to that same observed action.
  */
-function realContext(provider: ReturnType<typeof createRealContextProvider>, taskId: string): ReturnType<typeof createRealContextProvider> {
+function realContext(provider: ReturnType<typeof createRealContextProvider>, taskId: string, statePort: DurableStatePortV02): ReturnType<typeof createRealContextProvider> {
+  const observedPlan = async (input: unknown): Promise<unknown> => {
+    // The provider has admitted this context; persisted plan facts complete its approval freshness.
+    const context = input as ApprovalContext;
+    if (context.action.kind !== 'approve_fix_plan') return input;
+    const state = await statePort.loadTask(taskId);
+    const plan = state?.plan;
+    if (!state || !plan || state.node !== 'AwaitPlan' || plan.decisionRef !== context.action.actionId) return unbound();
+    return {
+      ...context,
+      freshness: {
+        ...context.freshness,
+        currentPlanVersion: plan.planVersion,
+        currentStrategyDigest: plan.strategyDigest,
+        currentBaselineRef: plan.baselineRef,
+        currentEvidenceRefs: plan.evidenceRefs,
+        currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+        currentCheckSetDigest: plan.checkSetDigest,
+      },
+    };
+  };
   return {
-    loadForAction: (task, actionId) => provider.loadForAction(task, actionId),
+    loadForAction: async (task, actionId) => observedPlan(await provider.loadForAction(task, actionId)),
     loadForDecision: async decisionId => {
       const stored = await provider.loadForDecision(decisionId).catch(() => undefined);
-      return stored === undefined ? provider.loadForAction(taskId, decisionId) : stored;
+      return observedPlan(stored === undefined ? await provider.loadForAction(taskId, decisionId) : stored);
     },
   };
 }
@@ -181,7 +202,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
     const context =
       created === undefined
         ? { loadForAction: async () => unbound(), loadForDecision: async () => unbound() }
-        : realContext(createRealContextProvider({ durable: { loadTask: id => taskStatePort.loadTask(id) as never }, approvals: approvalStore, source: created }), binding.taskId);
+        : realContext(createRealContextProvider({ durable: { loadTask: id => taskStatePort.loadTask(id) as never }, approvals: approvalStore, source: created }), binding.taskId, taskStatePort);
     const approvalService = createApprovalService({ taskId: binding.taskId, profile, store: approvalStore, provenance: 'real', context });
     const owners: RealTierBoundOwners = {
       statePort: taskStatePort,

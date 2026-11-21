@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path';
 import type { RealTierAssembly, resolveRealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
 import { bindRealTierTask, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
+import { createHostCoderGeneration } from '../../../src/runtime/host-coder.ts';
 import { runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
 import type { SnapshotPredicate } from '../../../eval/uc03/workflow-grade.ts';
 import type { UC03HostInputs } from '../../../src/runtime/uc03-host-bootstrap.ts';
@@ -151,7 +152,19 @@ export function findSettledCommandAdmission(
 
 async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBoundTask, caseId: string, attempt: number, options: CaseStageOptions): Promise<CaseOutcome> {
   const runGraph = options.runGraph ?? runUC03GraphV02;
-  let result = await runGraph(binding.task, binding.ports, binding.config);
+  // The binding carries no coder generation; the entry supplies the production one, as evaluation-graph.ts does.
+  const { limits } = assembly.profile;
+  const config = {
+    ...binding.config,
+    generation: createHostCoderGeneration({
+      model: binding.ports.modelPort,
+      repository: binding.ports.repositoryPort,
+      guardedRead: binding.ports.guardedRead,
+      admissionContextForCheck: binding.config.trustedExpectedContext.admissionContextForCheck,
+      budget: { maxModelCalls: limits.totalModelCalls, maxActiveMs: limits.activeExecutionMs, maxRepairs: limits.repairs, maxReplans: limits.materialReplans },
+    }),
+  };
+  let result = await runGraph(binding.task, binding.ports, config);
   let approval: CaseEvidence['approval'];
   if (result.outcome === 'pending-approval' && !options.clarificationHold?.(caseId)) {
     // Nothing approves automatically: an absent source leaves the pause recorded, not passed.
@@ -160,7 +173,7 @@ async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBound
       return { record: { stage: 'case', outcome: 'fail', reasonCode: 'approval-required', caseId, facts: { attempt, workflow: result.outcome, node: result.state?.node ?? 'none' } } };
     approval = { decisionId: result.state?.activeDecisionId ?? '', decided: decision };
     // A rejection ends the case on its own hold; only approval continues the bound task.
-    if (decision === 'approve') result = await runGraph(binding.task, binding.ports, binding.config, result.state ?? undefined);
+    if (decision === 'approve') result = await runGraph(binding.task, binding.ports, config, result.state ?? undefined);
   }
   const accounting = accountingOf(assembly, binding.ids);
   const artifactBinding = options.binding ?? UNBOUND;
