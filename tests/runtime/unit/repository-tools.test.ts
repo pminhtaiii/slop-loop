@@ -2281,6 +2281,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         limits: defaultLimits,
         statePort: journal,
         workspaceManager: manager,
+        onSettledPatch: async () => assert.fail('proven-not-dispatched cannot mirror a patch'),
         adapterIdentity: 'patch-postbegin-fence',
         processIncarnation: 'inc-patch-postbegin-fence',
         fencingGeneration: 1,

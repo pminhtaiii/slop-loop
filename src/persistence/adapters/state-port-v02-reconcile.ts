@@ -186,7 +186,7 @@ export async function reconcileObservedOutcome(store: StatePortStore, receipt: A
   });
 }
 
-export async function reconcileUncertain(store: StatePortStore, receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
+export async function reconcileUncertain(store: StatePortStore, receipt: AttemptReconciliationReceiptV02, includePatchRevision?: boolean): Promise<ReconciliationResultV02> {
   let snapshot: AttemptReconciliationReceiptV02;
   try {
     snapshot = structuredClone(receipt);
@@ -200,7 +200,17 @@ export async function reconcileUncertain(store: StatePortStore, receipt: Attempt
   return store.locked(taskId, async () => {
     const control = await store.readControl(taskId, DEFAULT_CONTROL);
     const replay = await reconciliationReplay(store, taskId, snapshot);
-    if (replay) return replay;
+    if (replay) {
+      if (!includePatchRevision || replay.outcome !== 'settled' || snapshot.reconciliationKind !== 'uncertain-attempt' || snapshot.disposition !== 'observed-and-accounted') return replay;
+      const evidence = await store.readRecovery(taskId, snapshot.predecessorReceiptId);
+      // A receipt file can precede the final claim/control writes after an interrupted settlement.
+      const claim = await store.readClaim(taskId, snapshot.claimId);
+      if (control.activeClaimId === snapshot.claimId || claim?.status !== 'settled' || !claim.settlement || !equal(claim.settlement, settlementBinding(snapshot)))
+        return { outcome: 'conflict', receiptId: snapshot.reconciliationId };
+      if (!evidence || !isValidRecoveryEvidence(evidence, claim) || evidence.effectEvidenceRef.digest !== snapshot.effectEvidenceRef.digest || !evidence.observedRevisionDigest)
+        return { outcome: 'conflict', receiptId: snapshot.reconciliationId };
+      return { ...replay, observedRevisionDigest: evidence.observedRevisionDigest };
+    }
     const conflict: ReconciliationResultV02 = { outcome: 'conflict', receiptId: snapshot.reconciliationId };
     const predecessor = await store.readOutcome(taskId, snapshot.predecessorReceiptId);
     const claim = await store.readClaim(taskId, snapshot.claimId);
@@ -275,7 +285,7 @@ export async function reconcileUncertain(store: StatePortStore, receipt: Attempt
       controlVersion: control.controlVersion + 1,
       activeClaimId: control.activeClaimId === snapshot.claimId ? null : control.activeClaimId,
     });
-    return { outcome: 'settled', receiptId: snapshot.reconciliationId };
+    return { outcome: 'settled', receiptId: snapshot.reconciliationId, ...(includePatchRevision && nextTask ? { observedRevisionDigest: nextTask.repositoryRevisionDigest } : {}) };
   });
 }
 

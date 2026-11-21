@@ -275,6 +275,7 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
     await bindRealTierWorkspace(assembly, ids, filesystem, seeded.repositoryRevisionDigest, maxFileBytes);
     bound = await buildBoundCapabilities(assembly, task, ids, filesystem, owners, contextSource, {
       authorityRef,
+      currentRevision: seeded.repositoryRevisionDigest,
       repositoryRoot,
       policyDigest,
       maxReadPathLength,
