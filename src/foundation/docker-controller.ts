@@ -3,6 +3,7 @@ import { isCanonicalRelativePath, isProtectedPath } from '../contracts/foundatio
 import type { ExecutionLimits } from '../contracts/foundation/uc03.ts';
 import { computeFileDigest, DEFAULT_MAX_OUTPUT_BYTES, SHA256_HEX_REGEX, truncateUtf8, validateDockerProfile } from './docker-workspace-policy.ts';
 import { assertPlan, assertVolumeName, runArguments, type RunArgumentSpec } from './docker-controller-argv.ts';
+import { confirmedContainerRemoval, mirrorRepositoryVolume, runRepositoryHelper } from './docker-repository-mirror.ts';
 import type {
   CanonicalRepositorySnapshot,
   CanonicalSnapshotEntry,
@@ -88,6 +89,8 @@ interface ContainerRecord {
   readonly kind: 'execution' | 'helper';
   /** Unknown effects (timeout / no exit code): preserved for reconciliation instead of deleted. */
   uncertain: boolean;
+  readonly mirrorVolume?: string;
+  mirrorRunning?: boolean;
 }
 
 function failureDetail(stderr: string): string {
@@ -131,7 +134,7 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
   private readonly createdVolumes = new Set<string>();
   private readonly volumeOwners = new Map<string, string>();
   private readonly uncertainWorkspaces = new Set<string>();
-  private readonly containers: ContainerRecord[] = [];
+  private readonly containers = new Set<ContainerRecord>();
   private readonly supersededVolumes = new Set<string>();
   private readonly currentViewVolume = new Map<string, string>();
   private unattributedUncertainty = false;
@@ -153,6 +156,21 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
 
   get platformPin(): string {
     return this.platform;
+  }
+
+  /** Mirrors trusted host files into a canonical volume and returns its measured tree revision. */
+  mirrorRepository(volumeId: string, files: Readonly<Record<string, Uint8Array>>): Promise<string> {
+    assertVolumeName(volumeId);
+    return mirrorRepositoryVolume(volumeId, files, this.trustedProfile, async (spec, options) => {
+      if ([...this.containers].some(record => record.mirrorVolume === volumeId)) throw new Error('MIRROR_HELPER_PENDING');
+      const record = this.trackContainer('helper', volumeId);
+      record.mirrorRunning = true;
+      try {
+        return await runRepositoryHelper(this.spawnProcess, this.runArguments({ ...spec, name: record.name }), options, () => this.containers.delete(record));
+      } finally {
+        record.mirrorRunning = false;
+      }
+    });
   }
 
   /** Workspaces whose last execution ended with unknown effects; their containers and volumes are preserved. */
@@ -324,18 +342,12 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
 
   /** Removes containers it created and superseded view volumes; preserves anything tied to unknown effects. */
   async cleanup(): Promise<void> {
-    const preserved: ContainerRecord[] = [];
-    for (const container of this.containers) {
-      if (container.uncertain) {
-        preserved.push(container);
-        continue;
-      }
+    for (const container of [...this.containers]) {
+      if (container.uncertain || container.mirrorRunning) continue;
       const result = await this.spawnProcess('docker', ['rm', '-f', container.name], VOLUME_OP_OPTIONS);
       // A failed removal keeps the record so the next cleanup retries instead of leaking the container.
-      if (result.timedOut || result.exitCode !== 0) preserved.push(container);
+      if (confirmedContainerRemoval(result, container.name)) this.containers.delete(container);
     }
-    this.containers.length = 0;
-    this.containers.push(...preserved);
 
     for (const volumeId of [...this.supersededVolumes]) {
       const owner = this.volumeOwners.get(volumeId);
@@ -349,9 +361,9 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
     }
   }
 
-  private trackContainer(kind: ContainerRecord['kind']): ContainerRecord {
-    const record: ContainerRecord = { name: `${kind === 'execution' ? 'ctr' : 'helper'}-${randomUUID()}`, kind, uncertain: false };
-    this.containers.push(record);
+  private trackContainer(kind: ContainerRecord['kind'], mirrorVolume?: string): ContainerRecord {
+    const record: ContainerRecord = { name: `${kind === 'execution' ? 'ctr' : 'helper'}-${randomUUID()}`, kind, uncertain: false, ...(mirrorVolume === undefined ? {} : { mirrorVolume }) };
+    this.containers.add(record);
     return record;
   }
 

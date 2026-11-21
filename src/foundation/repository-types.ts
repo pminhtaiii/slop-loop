@@ -205,6 +205,8 @@ export interface ControlledRepositoryToolsOptions {
   readonly patchReceiver?:
     ((patch: ApplyPatchAction, context: RepositoryAdmissionContextV02, attempt: AttemptReceiptV02) => Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }>) | undefined;
   readonly patchRecoveryHandoff?: PatchRecoveryHandoffV02 | undefined;
+  /** Runs under the held writer lease after owner settlement, including recovery. Failure keeps the lease held. */
+  readonly onSettledPatch?: ((revision: string) => Promise<void>) | undefined;
   readonly attemptStartRecoveryHandoff?: RepositoryAttemptStartRecoveryHandoffV02 | undefined;
   readonly unattemptedClaimClosureHandoff?: UnattemptedClaimClosureHandoffV02 | undefined;
   /** Absent means `inspectDiff` stays fail-closed: no baseline, no measurement. */

@@ -393,6 +393,8 @@ export interface OutcomeRecordResultV02 {
 }
 
 export interface ReconciliationResultV02 {
+  /** Returned on request for a settled, observed-and-accounted patch only. */
+  readonly observedRevisionDigest?: string;
   readonly outcome: 'settled' | 'blocked' | 'conflict';
   readonly receiptId: string;
 }
@@ -413,7 +415,7 @@ export interface StatePortV02 extends PortIdentity {
   beginAttempt(claimId: string, executor: ExecutorIdentityV02): Promise<AttemptReceiptV02>;
   recordOutcome(receipt: AttemptOutcomeReceiptV02): Promise<OutcomeRecordResultV02>;
   reconcileObservedOutcome(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02>;
-  reconcileUncertain(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02>;
+  reconcileUncertain(receipt: AttemptReconciliationReceiptV02, includePatchRevision?: boolean): Promise<ReconciliationResultV02>;
   closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02>;
   checkpoint(state: TaskState): Promise<void>;
   recover(taskId: string): Promise<TaskState>;

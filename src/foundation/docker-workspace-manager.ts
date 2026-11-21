@@ -306,7 +306,24 @@ export class DockerWorkspaceManager {
 
   setCanonicalRevision(workspaceId: string, newRevisionDigest: string): void {
     this.canonicalRevisions.set(workspaceId, newRevisionDigest);
+    const workspace = this.workspaces.get(workspaceId);
+    if (workspace) this.workspaces.set(workspaceId, { ...workspace, expectedRepoState: newRevisionDigest });
     this.invalidateViews(workspaceId);
+  }
+
+  /** Releases failed setup, including a partially allocated pair of canonical volumes. */
+  async releaseWorkspace(taskId: string, workspaceId: string): Promise<void> {
+    this.invalidateViews(workspaceId);
+    this.workspaces.delete(workspaceId);
+    this.canonicalVolumes.delete(workspaceId);
+    this.canonicalRevisions.delete(workspaceId);
+    const volumes = computeWorkspaceVolumeIds(taskId, workspaceId);
+    const results = await Promise.allSettled(
+      Object.values(volumes).map(async volume => {
+        if (await this.controller.hasVolume(volume)) await this.controller.removeVolume(volume);
+      }),
+    );
+    if (results.some(result => result.status === 'rejected')) throw new Error('WORKSPACE_RELEASE_FAILED');
   }
 
   invalidateViews(workspaceId: string): void {

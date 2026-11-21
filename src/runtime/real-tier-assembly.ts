@@ -154,7 +154,7 @@ export function hostDeliveries(owner: RealTierOwners['deliveries'], components: 
 }
 
 /** The profile's image as the pinned Docker profile the controller and executor both validate. */
-function dockerProfileOf(profile: RealTierProfile): DockerProfile | RealTierUnavailable {
+export function dockerProfileOf(profile: RealTierProfile): DockerProfile | RealTierUnavailable {
   const candidate: DockerProfile = {
     profileId: profile.image.label,
     image: profile.image.base,

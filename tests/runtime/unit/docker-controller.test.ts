@@ -465,3 +465,42 @@ test('getCanonicalSnapshot computes real byte digests and refuses missing or emp
 });
 
 // These unit checks exercise an injected fake spawn only; they do not replace the UC-03 T024 containment proof.
+
+test('an unconfirmed mirror helper blocks another writer until cleanup retries its removal', async () => {
+  const { calls, spawn } = recorder((call, index) => {
+    if (index === 0) return { timedOut: true, exitCode: null };
+    if (index === 1) return { exitCode: 1 };
+    if (call.args[0] === 'run') return { stdout: '{"entries":[]}' };
+    return {};
+  });
+  const controller = makeController(spawn);
+  await assert.rejects(controller.mirrorRepository(REPO_VOLUME, {}), /MIRROR_HELPER_CLEANUP_FAILED/);
+  await assert.rejects(controller.mirrorRepository(REPO_VOLUME, {}), /MIRROR_HELPER_PENDING/);
+  assert.equal(calls.length, 2);
+  await controller.cleanup();
+  assert.deepEqual(calls[2]?.args, calls[1]?.args);
+  await controller.mirrorRepository(REPO_VOLUME, {});
+  await controller.cleanup();
+  assert.equal(calls.length, 4);
+});
+
+test('client errors require removal and only the named helper being absent confirms termination', async () => {
+  for (const staleName of [true, false]) {
+    const { calls, spawn } = recorder((call, index) => {
+      if (index === 0) return { exitCode: 125 };
+      if (call.args[0] === 'rm') {
+        const name = staleName && index === 1 ? 'another-helper' : call.args[2];
+        return { exitCode: 1, stderr: `Error response from daemon: No such container: ${name}\n` };
+      }
+      return { stdout: '{"entries":[]}' };
+    });
+    const controller = makeController(spawn);
+    await assert.rejects(controller.mirrorRepository(REPO_VOLUME, {}), staleName ? /MIRROR_HELPER_CLEANUP_FAILED/ : /MIRROR_HELPER_FAILED/);
+    if (staleName) {
+      await assert.rejects(controller.mirrorRepository(REPO_VOLUME, {}), /MIRROR_HELPER_PENDING/);
+      await controller.cleanup();
+    }
+    await controller.mirrorRepository(REPO_VOLUME, {});
+    assert.equal(calls.length, staleName ? 4 : 3);
+  }
+});
