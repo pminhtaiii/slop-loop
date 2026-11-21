@@ -101,7 +101,7 @@ export class DurableStatePortV02 implements StatePortV02 {
     this.verificationAuthority = new DurableVerificationAuthority({ store: this.statePort, approvalStorageDir: options.approvalStorageDir });
     this.taskOptions = {
       store: this.statePort,
-      trustedTransitions: options.trustedTransitions ?? {},
+      trustedTransitions: { ...(options.trustedTransitions ?? {}) },
       ...(options.approvalStorageDir === undefined ? {} : { trustedApproval: (taskId: string) => this.verificationAuthority.trustedPlanApproval(taskId) }),
     };
     const seed = options.initialControl ?? {};
@@ -183,6 +183,20 @@ export class DurableStatePortV02 implements StatePortV02 {
   /** The AwaitPlan→Patch trusted approval, derived from the recorded human decision. */
   trustedPlanApproval(taskId: string): ReturnType<DurableVerificationAuthority['trustedPlanApproval']> {
     return this.verificationAuthority.trustedPlanApproval(taskId);
+  }
+
+  /**
+   * Stage the owner-issued completion facts for the one Review→Deliver transition this task is about
+   * to make. The caller supplies them only after the owner `completionContextFor` resolver and the
+   * deterministic predicate both passed; the transition validator still re-checks every field against
+   * the persisted task, plan and review refs. A later transition without a fresh stage refuses.
+   */
+  async stageCompletionReceipt(trusted: NonNullable<NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>): Promise<boolean> {
+    if (!this.boundTaskId) return false;
+    const task = await this.loadTask(this.boundTaskId);
+    if (!task) return false;
+    this.taskOptions.trustedTransitions[task.stateVersion + 1] = trusted;
+    return true;
   }
 
   /** Whether the recorded plan decision still stands as a human approval at the named authority. */

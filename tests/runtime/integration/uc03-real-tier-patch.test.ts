@@ -140,7 +140,9 @@ async function setup(overrides: SetupOverrides = {}) {
     admissionContextForCheck: bound.config.trustedExpectedContext.admissionContextForCheck,
     budget: { maxModelCalls: 6, maxActiveMs: 60000, maxRepairs: 2, maxReplans: 3 },
   });
-  const config = { ...bound.config, generation };
+  // #211 owns the patch and Verify boundary and stops at the reviewer dispatch point: the reviewer
+  // admission and the owner completion context are #212's (see `uc03-real-tier-deliver.test.ts`).
+  const config = { ...bound.config, generation, reviewerAdmission: undefined };
   const owners = assembly.owners.taskOwners({ ...bound.ids, repositoryId: task.repositoryId });
   const setPlanRef = (ref: string): void => {
     approvedPlanRef = ref;

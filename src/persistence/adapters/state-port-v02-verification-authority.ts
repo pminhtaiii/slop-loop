@@ -96,12 +96,17 @@ export class DurableVerificationAuthority {
     };
   }
 
-  /** The authority the one settled approved-plan patch ending at the pre-rebind Verify state ran under. */
+  /**
+   * The authority the settled approved-plan patch ending at the current revision ran under. The
+   * ancestry itself names the decision, so a later node (Review/Deliver, or a repair round) can still
+   * re-read the patch's own authority; `null` when no single settled patch ends at this revision or it
+   * names a different decision.
+   */
   private async historicalAuthority(taskId: string, decisionId: string): Promise<PolicyAuthorityRefV02 | null> {
     const task = await this.options.store.readTask(taskId);
-    if (!task || task.plan?.decisionRef !== decisionId || task.node !== 'Verify') return null;
+    if (!task) return null;
     const ancestry = await readSettledPatchAncestry(this.options.store, { taskId, runId: task.runId, resultingRepositoryRevisionDigest: task.repositoryRevisionDigest });
-    return ancestry?.originalAuthorityRef ?? null;
+    return ancestry?.originalTaskState.plan?.decisionRef === decisionId ? ancestry.originalAuthorityRef : null;
   }
 
   /** The pre-patch check: one recorded plan decision is still a human approval at the named authority. */

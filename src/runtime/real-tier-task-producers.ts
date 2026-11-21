@@ -32,6 +32,8 @@ import type { SeededTaskIds } from './real-tier-task-seed.ts';
 import { mirrorRealTierWorkspace } from './real-tier-workspace.ts';
 import { patchAdmission } from './real-tier-patch-admission.ts';
 import { applyAdmittedPatch } from './real-tier-patch-receiver.ts';
+import { realTierReviewerAdmission } from './real-tier-reviewer-admission.ts';
+import { realTierCompletionContext } from './real-tier-completion-context.ts';
 
 /** The one refusal an unbound producer makes: named, bounded, and with no effect. */
 export const TASK_UNBOUND = 'TASK_UNBOUND' as const;
@@ -323,6 +325,10 @@ export async function buildBoundCapabilities(
       trustedExpectedContext,
       coderAdmission: admissions.coderAdmission,
       admissionContext: request => patchAdmission(assembly, task, owners.statePort, request),
+      // The unbound reviewer admission and the owner completion context are the two seams #212 adds.
+      reviewerAdmission: ({ task: requested, state, diff, evidence }) =>
+        computeCanonicalSha256(requested) === computeCanonicalSha256(task) ? realTierReviewerAdmission(assembly, task, owners.statePort, { task, state, diff, evidence: evidence ?? [] }) : undefined,
+      completionContextFor: realTierCompletionContext(assembly, task, owners.statePort, repositoryPort),
     },
     hostPorts: { repositoryPort, executionGuard, configPort: configPort as UC03GraphPortsV02['configPort'] },
     guardedRead,
