@@ -55,7 +55,10 @@ export interface QuestionIndex {
   /** Reopen does not serve until synchronize explicitly revalidates the active snapshot. */
   read(request: QuestionIndexReference & { readonly maxChunks: number }, control: QuestionRepositoryOperationControl): Promise<QuestionIndexReadResult>;
   validateCurrent(request: QuestionIndexReference, control: QuestionRepositoryOperationControl): Promise<{ readonly status: 'ok' } | QuestionIndexFailure>;
-  /** Invalidates pending publication and serving synchronously, then removes inaccessible derived rows. */
+  /**
+   * Immediately denies publication/serving, then attempts bounded persistent reclamation.
+   * Rejects if cleanup cannot be confirmed; local denial remains in force. Closed indexes are a no-op.
+   */
   revoke(): Promise<void>;
   close(): Promise<void>;
 }
