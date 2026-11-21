@@ -351,7 +351,7 @@ export function planRetrievalQuery(profile: QuestionBudgetProfileV1, available: 
   return plan('retrieval-query', counters, { scannedVectors }, profile.retrieval.maxRetrievalDeadlineMs);
 }
 
-export function planIndexBatch(profile: QuestionBudgetProfileV1, input: unknown): BudgetReservationPlanResultV1 {
+export function planIndexBatch(profile: QuestionBudgetProfileV1, input: unknown, availableForReplayFallback?: BudgetCounters): BudgetReservationPlanResultV1 {
   if (!isRecord(input)) return denied('invalid-work', false);
   const expectedKeys = ['batchSize', 'cacheBytes', 'chunks', 'diskBytes', 'files', 'scannedBytes', 'scannedFiles', 'vectorDimensions', 'workerMemoryBytes'];
   if (!hasExactKeys(input, expectedKeys)) return denied('invalid-work', false);
@@ -390,7 +390,8 @@ export function planIndexBatch(profile: QuestionBudgetProfileV1, input: unknown)
   if (
     bounds.batchSize === 0 ||
     bounds.batchSize > profile.retrieval.maxBatchSize ||
-    bounds.files === 0 ||
+    // A receipt-only replay can account for disk without reserving new scan or indexing work.
+    (bounds.files === 0 && (!availableForReplayFallback || bounds.chunks !== 0 || bounds.scannedBytes !== 0)) ||
     bounds.files > profile.retrieval.maxFiles ||
     bounds.chunks > profile.retrieval.maxChunks ||
     bounds.diskBytes > profile.retrieval.maxIndexDiskBytes ||
@@ -399,24 +400,25 @@ export function planIndexBatch(profile: QuestionBudgetProfileV1, input: unknown)
     bounds.vectorDimensions === 0 ||
     bounds.vectorDimensions > profile.retrieval.maxVectorDimensions ||
     bounds.scannedFiles > bounds.files ||
-    bounds.scannedBytes > profile.runtime.maxScannedBytes
+    (!availableForReplayFallback && bounds.scannedBytes > profile.runtime.maxScannedBytes)
   )
     return denied('scan-limit');
   const counters = emptyCounters();
-  counters['indexedFiles'] = bounds.files;
-  counters['indexedChunks'] = bounds.chunks;
+  const replayOnly = availableForReplayFallback && (bounds.scannedBytes > availableForReplayFallback.scannedBytes || bounds.scannedFiles > availableForReplayFallback.scannedFiles);
+  counters['indexedFiles'] = replayOnly ? 0 : bounds.files;
+  counters['indexedChunks'] = replayOnly ? 0 : bounds.chunks;
   counters['indexDiskBytes'] = bounds.diskBytes;
-  counters['scannedFiles'] = bounds.scannedFiles;
-  counters['scannedBytes'] = bounds.scannedBytes;
+  counters['scannedFiles'] = replayOnly ? 0 : bounds.scannedFiles;
+  counters['scannedBytes'] = replayOnly ? 0 : bounds.scannedBytes;
   return plan(
     'retrieval-index',
     counters,
     {
-      indexedFiles: bounds.files,
-      indexedChunks: bounds.chunks,
-      indexDiskBytes: bounds.diskBytes,
-      scannedFiles: bounds.scannedFiles,
-      scannedBytes: bounds.scannedBytes,
+      indexedFiles: counters['indexedFiles'],
+      indexedChunks: counters['indexedChunks'],
+      indexDiskBytes: counters['indexDiskBytes'],
+      scannedFiles: counters['scannedFiles'],
+      scannedBytes: counters['scannedBytes'],
     },
     profile.retrieval.maxIndexDeadlineMs,
   );

@@ -1,3 +1,4 @@
+import { matchesPytestFileArgument } from '../contracts/foundation/uc03/pytest-selector.ts';
 import { isModelId } from '../contracts/approvals/v01/validation.ts';
 import type { NormalizedAction, PermissionClass, ProviderRequest } from '../contracts/foundation/uc03.ts';
 import { computeActionDigest, computeCanonicalSha256, computeRequestContentDigest, validateNormalizedAction, validateProviderRequest } from '../contracts/foundation/uc03.ts';
@@ -186,7 +187,7 @@ function repositoryBranchAllows(action: NormalizedAction, facts: PolicyFactsV02,
   if (facts.plan !== null || !facts.safety.isolated) return false;
   if (action.kind === 'run_command') {
     const command = facts.command;
-    if (!command || facts.patch !== null || !action.argv.includes(facts.testPath ?? '')) return false;
+    if (!command || facts.patch !== null || !action.argv.some(arg => matchesPytestFileArgument(arg, facts.testPath ?? ''))) return false;
     const configured = profile.commandRules.some(
       rule =>
         rule.executableRef === command.executableRef &&

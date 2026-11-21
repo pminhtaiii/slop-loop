@@ -99,13 +99,13 @@
 - [X] T020 [US1] Implement guarded corpus segmentation and coverage in src/questions/chunks.ts and tests/runtime/unit/question-chunks.test.ts.
   - **Dependencies**: T004, T005, T019, T022.
   - **Acceptance**: Python class/function/method and decorator/nested names, logical-unit splits with original-definition linkage, deterministic whole-line fallback, complete provenance, 60 lines/4096 bytes, exact model token counts and no silent truncation.
-- [ ] T021 [US1] Persist and incrementally synchronize vector generations in src/questions/index.ts and tests/runtime/integration/question-index.test.ts.
+- [X] T021 [US1] Persist and incrementally synchronize vector generations in src/questions/index.ts and tests/runtime/integration/question-index.test.ts.
   - **Dependencies**: T019, T020, T022.
   - **Acceptance**: Atomic commit, new snapshot ID with unchanged corpus reuse, concurrent readers, add/edit/delete/rename, interrupted update, revocation and stage reclamation, budget and stale-generation checks.
 - [X] T022 [US1] Implement versioned controlled/local embedding adapters in src/questions/embedding.ts and tests/runtime/unit/question-embedding.test.ts.
   - **Dependencies**: T001, T005, T019.
   - **Acceptance**: Pinned tokenizer/profile, complete input checks, finite normalized vectors, typed cancellation/overflow, no external source transport.
-- [ ] T023 [US1] Implement hybrid retrieval and coverage receipts in src/questions/retrieval.ts and tests/runtime/unit/question-retrieval.test.ts.
+- [X] T023 [US1] Implement hybrid retrieval and coverage receipts in src/questions/retrieval.ts and tests/runtime/unit/question-retrieval.test.ts.
   - **Dependencies**: T021, T006.
   - **Acceptance**: Stable rank/ties, exact-name semantics, no stale candidates, guarded re-admission and bounded complete coverage for scoped absence.
 - [ ] T024 [US2] Integrate host-issued absence and changed-source/restart verification in src/questions/graph.ts, src/questions/presentation.ts and tests/runtime/integration/question-runtime.test.ts.

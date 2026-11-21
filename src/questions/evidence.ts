@@ -19,7 +19,8 @@ import { validateQuestionDecision, validateQuestionIdentity, validateSourceSnaps
 import { containsProtectedContent, computeFileDigest } from '../foundation/docker-workspace-policy.ts';
 import { computeSourceManifestDigest } from '../foundation/question-repository-primitives.ts';
 import { isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
-import type { QuestionRepositoryOperationControl, QuestionRepositoryWork, QuestionRepositoryWorkMeter } from '../foundation/repository-types.ts';
+import type { QuestionRepositoryOperationControl, QuestionRepositoryWorkMeter } from '../foundation/repository-types.ts';
+import { retrievalInterruption, trackRepositoryWork, withRetrievalControl } from './retrieval-control.ts';
 import type { QuestionRepositoryPort } from './repository.ts';
 import { renderValidatedQuestionPresentation, type QuestionPresentationResultV1, type ValidatedQuestionPresentationV1 } from './presentation.ts';
 import type { QuestionBudgetAccountingReceiptV1, QuestionBudgetLedger, QuestionBudgetRefusalCodeV1, QuestionBudgetWorkV1 } from './budget.ts';
@@ -75,14 +76,22 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
     if (!admission.ok) return budgetRefusal(admission.reasonCode);
 
     const operation = admission.value;
-    const work = trackWork(operation.maximumWork);
+    const work = trackRepositoryWork(operation.maximumWork, control.work);
     const execution = await operation.execute(
       async context => {
         const safeControl = combineControl(control, context.signal, context.remainingMs, work.meter);
-        const binding = await repository.checkBinding(safeControl);
-        if (binding.status !== 'ok') return binding;
-        if (!sameBinding(binding.binding, identity.binding)) return { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
-        return await repository.readSpan(decision, safeControl);
+        return withRetrievalControl(
+          safeControl,
+          async bounded => {
+            const binding = await repository.checkBinding(bounded);
+            const stop = retrievalInterruption(bounded);
+            if (stop) return stop;
+            if (binding.status !== 'ok') return binding;
+            if (!sameBinding(binding.binding, identity.binding)) return { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
+            return repository.readSpan(decision, bounded);
+          },
+          failure => failure,
+        );
       },
       result => repositoryReceipt(result, work.consumed),
     );
@@ -102,6 +111,8 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
     }
     const admissionFailure = validateIssuedSpan(span, identity, snapshot, manifestByPath, issued);
     if (admissionFailure) return admissionFailure;
+    const stop = retrievalInterruption(control);
+    if (stop) return stop;
     issued.set(span.evidenceId, span);
     return Object.freeze({ status: 'ok', span });
   }
@@ -121,7 +132,7 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
     const admission = budget.reserveFinalValidation();
     if (!admission.ok) return Object.freeze({ kind: 'budget-exhausted', reasonCode: admission.reasonCode });
     const operation = admission.value;
-    const work = trackWork(operation.maximumWork);
+    const work = trackRepositoryWork(operation.maximumWork, control.work);
     const finalByteLimit = operation.maximumWork.finalBytes;
     if (finalByteLimit === undefined || Buffer.byteLength(preview, 'utf8') > finalByteLimit) {
       operation.releaseBeforeDispatch();
@@ -132,9 +143,15 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
       async context => {
         const safeControl = combineControl(control, context.signal, context.remainingMs, work.meter);
         if (containsProtectedAnswer(safe.value)) return { status: 'protected' as const };
-        const binding = await repository.checkBinding(safeControl);
-        if (binding.status !== 'ok') return { status: 'binding-failure' as const, binding };
-        return sameBinding(binding.binding, identity.binding) ? { status: 'ok' as const } : { status: 'stale' as const };
+        return withRetrievalControl(
+          safeControl,
+          async bounded => {
+            const binding = await repository.checkBinding(bounded);
+            if (binding.status !== 'ok') return { status: 'binding-failure' as const, binding };
+            return sameBinding(binding.binding, identity.binding) ? { status: 'ok' as const } : { status: 'stale' as const };
+          },
+          binding => ({ status: 'binding-failure' as const, binding }),
+        );
       },
       result => repositoryReceipt(result.status === 'binding-failure' ? result.binding : result, { ...work.consumed, finalBytes: Buffer.byteLength(preview, 'utf8') }),
     );
@@ -142,6 +159,8 @@ export function createQuestionEvidenceRegistry(options: CreateQuestionEvidenceRe
     if (execution.value.status === 'protected') return Object.freeze({ kind: 'failed', reasonCode: 'protected-content' });
     if (execution.value.status === 'stale') return Object.freeze({ kind: 'stale-repository', reasonCode: 'binding-mismatch' });
     if (execution.value.status === 'binding-failure') return bindingPresentationFailure(execution.value.binding);
+    const stop = retrievalInterruption(control);
+    if (stop) return bindingPresentationFailure(stop);
     return Object.freeze({
       kind: 'delivered',
       claims: safe.value.claims,
@@ -306,27 +325,6 @@ function combineControl(control: QuestionRepositoryOperationControl, reservation
     signal: AbortSignal.any([control.signal, reservationSignal]),
     deadlineEpochMs: Math.min(control.deadlineEpochMs, Date.now() + remainingMs),
   });
-}
-
-function trackWork(maximum: QuestionRepositoryWork) {
-  const keys = ['scannedFiles', 'scannedBytes', 'returnedBytes'] as const;
-  const consumed = { scannedFiles: 0, scannedBytes: 0, returnedBytes: 0 };
-  const remaining: QuestionRepositoryWorkMeter['remaining'] = key => (maximum[key] ?? 0) - consumed[key];
-  const meter: QuestionRepositoryWorkMeter = Object.freeze({
-    remaining,
-    charge(work: QuestionRepositoryWork) {
-      if (
-        keys.some(key => {
-          const amount = work[key] ?? 0;
-          return !Number.isSafeInteger(amount) || amount < 0 || amount > remaining(key);
-        })
-      )
-        return false;
-      for (const key of keys) consumed[key] += work[key] ?? 0;
-      return true;
-    },
-  });
-  return { meter, consumed };
 }
 
 function validControl(input: unknown): input is QuestionRepositoryOperationControl {
