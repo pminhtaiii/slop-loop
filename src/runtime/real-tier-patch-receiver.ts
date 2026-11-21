@@ -19,6 +19,7 @@ import { containsProtectedContent } from '../foundation/docker-workspace-policy.
 import type { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
+const NO_NEWLINE_MARKER = '\\ No newline at end of file';
 
 interface Hunk {
   readonly oldStart: number;
@@ -56,7 +57,7 @@ function parseSections(diff: string): FileHunks[] | null {
   for (const line of lines) {
     if (open !== null) {
       const marker = line[0];
-      if (marker === '\\') continue;
+      if (line.replace(/\r$/u, '') === NO_NEWLINE_MARKER) continue;
       const advancesOld = marker === ' ' || marker === '-';
       const advancesNew = marker === ' ' || marker === '+';
       if (advancesOld || advancesNew) {
@@ -97,7 +98,7 @@ function parseSections(diff: string): FileHunks[] | null {
     }
     if (line.length === 0) continue;
     // A `\ No newline at end of file` marker follows the hunk line it annotates, so it can trail a closed hunk.
-    if (line.startsWith('\\') && current !== null && current.hunks.length > 0) continue;
+    if (line.replace(/\r$/u, '') === NO_NEWLINE_MARKER && current !== null && current.hunks.length > 0) continue;
     return null;
   }
   if (current) sections.push(current);
