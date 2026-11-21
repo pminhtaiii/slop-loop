@@ -136,8 +136,8 @@ export class DurableStatePortV02 implements StatePortV02 {
     return reconcile.reconcileObservedOutcome(this.statePort, receipt);
   }
 
-  reconcileUncertain(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
-    return reconcile.reconcileUncertain(this.statePort, receipt);
+  reconcileUncertain(receipt: AttemptReconciliationReceiptV02, includePatchRevision?: boolean): Promise<ReconciliationResultV02> {
+    return reconcile.reconcileUncertain(this.statePort, receipt, includePatchRevision);
   }
 
   closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> {

@@ -12,7 +12,7 @@ import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v0
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { createScanFixture } from '../unit/real-tier-scan-fixtures.ts';
 import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
-import { mirrorRealTierWorkspace } from '../../../src/runtime/real-tier-workspace.ts';
+import { bindRealTierWorkspace, mirrorRealTierWorkspace } from '../../../src/runtime/real-tier-workspace.ts';
 import { ControlledRepositoryTools } from '../../../src/foundation/repository-tools.ts';
 import { createRefusingPatchRecoveryHandoff } from '../../../src/foundation/durable-recovery-handoffs.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
@@ -20,12 +20,16 @@ import { createTestAdmissionTaskStateV02, createTestRepositoryAdmissionContextV0
 
 const fixture = createScanFixture('mirror-', 'mirror-profile-fixture');
 
-async function setup(fault?: 'timeout' | 'truncated' | 'measurement' | 'allocation', binary = false) {
+async function setup(fault?: 'timeout' | 'truncated' | 'measurement' | 'allocation', binary = false, protectedFiles = false) {
   const root = mkdtempSync(join(tmpdir(), 'mirror-case-'));
   const repositoryRoot = join(root, 'repository');
   mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
   writeFileSync(join(repositoryRoot, 'src/calc.py'), 'value = 1\n');
   if (binary) writeFileSync(join(repositoryRoot, 'asset.bin'), Buffer.from([0, 255, 128, 10]));
+  if (protectedFiles) {
+    writeFileSync(join(repositoryRoot, '.env'), 'excluded fixture');
+    writeFileSync(join(repositoryRoot, 'notes.txt'), ['MARKER', 'SECRET'].join('_'));
+  }
   const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
   const revision = await filesystem.getCurrentRevisionDigest();
   const task: BugTask = {
@@ -132,16 +136,55 @@ test('drift refuses binding and releases both volumes', async () => {
 });
 
 test('protected paths and protected content never enter a helper payload', async () => {
-  const h = await setup();
-  writeFileSync(join(h.repositoryRoot, '.env'), 'excluded fixture');
-  writeFileSync(join(h.repositoryRoot, 'notes.txt'), ['MARKER', 'SECRET'].join('_'));
-  assert.equal((await bindRealTierTask(h.assembly, h.options)).status, 'unavailable');
+  const h = await setup(undefined, false, true);
+  assert.equal((await bindRealTierTask(h.assembly, h.options)).status, 'task-bound');
   const payloads = h.docker.calls.flatMap(call => (call.options.stdin === undefined ? [] : [JSON.parse(call.options.stdin) as { files: { path: string }[] }]));
   assert.deepEqual(
     payloads.flatMap(payload => payload.files.map(file => file.path)),
     ['src/calc.py'],
   );
+});
+
+test('a bind during a failed initial fill shares the failure and a later retry can allocate', async () => {
+  const h = await setup();
+  const ids = { taskId: h.task.taskId, runId: 'run-race', workspaceId: 'ws-race' };
+  const entered = Promise.withResolvers<undefined>();
+  const release = Promise.withResolvers<undefined>();
+  const original = h.assembly.controller.mirrorRepository.bind(h.assembly.controller);
+  h.assembly.controller.mirrorRepository = async () => {
+    entered.resolve(undefined);
+    await release.promise;
+    throw new Error('controlled failure');
+  };
+  const bind = () => bindRealTierWorkspace(h.assembly, ids, h.filesystem, h.revision, 1_048_576);
+  const first = bind();
+  await entered.promise;
+  const second = bind();
+  const results = Promise.all([assert.rejects(first, /controlled failure/), assert.rejects(second, /controlled failure/)]);
+  release.resolve(undefined);
+  await results;
   assert.equal(h.docker.volumes.size, 0);
+  h.assembly.controller.mirrorRepository = original;
+  await bind();
+  assert.equal(h.assembly.workspaceManager.getCanonicalRevision(ids.workspaceId), h.revision);
+});
+
+test('rebound repository reads use the persisted revision after a patch', async () => {
+  const h = await setup();
+  const first = await bindRealTierTask(h.assembly, h.options);
+  assert.equal(first.status, 'task-bound');
+  if (first.status !== 'task-bound') return;
+  writeFileSync(join(h.repositoryRoot, 'src/calc.py'), 'value = 3\n');
+  const revision = await h.filesystem.getCurrentRevisionDigest();
+  const statePort = h.assembly.owners.components.statePort;
+  const state = await statePort.loadTask(first.ids.taskId);
+  assert.ok(state);
+  await statePort.transition({ ...state, stateVersion: state.stateVersion + 1, node: 'Investigate', repositoryRevisionDigest: revision }, state.stateVersion);
+  await mirrorRealTierWorkspace(h.assembly, first.ids, h.filesystem, revision, 1_048_576);
+  const rebound = await bindRealTierTask(h.assembly, h.options);
+  assert.equal(rebound.status, 'task-bound');
+  if (rebound.status !== 'task-bound') return;
+  assert.match((await rebound.ports.repositoryPort.readFile('src/calc.py')).boundedExcerpt, /value = 3/);
 });
 
 for (const failMirror of [false, true])
@@ -211,6 +254,11 @@ for (const failMirror of [false, true])
     if (failMirror) {
       const error = await tools.applyPatch(patch, context).catch((error: unknown) => error);
       assert.ok(error instanceof PatchOutcomePendingError);
+      // The receiver has advanced the host revision; the writer lease fences the stale volume.
+      const hostRevision = await h.filesystem.getCurrentRevisionDigest();
+      assert.notEqual(hostRevision, h.revision);
+      assert.equal(h.assembly.workspaceManager.getCanonicalRevision(bound.ids.workspaceId), hostRevision);
+      assert.equal(h.assembly.workspaceManager.getWorkspace(bound.ids.workspaceId)?.expectedRepoState, hostRevision);
       assert.equal(h.assembly.workspaceManager.hasActiveWriterLease(bound.ids.workspaceId), true);
       assert.deepEqual((await tools.recoverPatchOutcome(error.attemptId)).outcome, 'settled');
       assert.equal(journal.getJournalSnapshot().outcomes.length, 1);

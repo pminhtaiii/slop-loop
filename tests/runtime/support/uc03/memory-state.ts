@@ -2305,7 +2305,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
     });
   }
 
-  async reconcileUncertain(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
+  async reconcileUncertain(receipt: AttemptReconciliationReceiptV02, includePatchRevision?: boolean): Promise<ReconciliationResultV02> {
     let snapshot: AttemptReconciliationReceiptV02;
     try {
       snapshot = structuredClone(receipt);
@@ -2317,7 +2317,14 @@ export class MemoryStatePortV02 implements StatePortV02 {
       receipt = snapshot;
       if (this.neutral) return NEUTRAL_RECONCILIATION_RESULT_V02;
       const replay = this.reconciliationReplay(receipt);
-      if (replay) return replay;
+      if (replay) {
+        if (!includePatchRevision || replay.outcome !== 'settled' || receipt.reconciliationKind !== 'uncertain-attempt' || receipt.disposition !== 'observed-and-accounted') return replay;
+        const evidence = this.recoveryEvidence.get(receipt.predecessorReceiptId);
+        const claim = this.claims.get(receipt.claimId);
+        if (!claim || !evidence || !this.isValidRecoveryEvidence(evidence) || evidence.effectEvidenceRef.digest !== receipt.effectEvidenceRef.digest || !evidence.observedRevisionDigest)
+          return { outcome: 'conflict', receiptId: receipt.reconciliationId };
+        return { ...replay, observedRevisionDigest: evidence.observedRevisionDigest };
+      }
       const predecessor = this.outcomeReceipts.get(receipt.predecessorReceiptId);
       const claim = this.claims.get(receipt.claimId);
       const attempt = claim?.attemptId ? this.attempts.get(claim.attemptId) : undefined;
@@ -2391,7 +2398,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
       attempt.status = 'settled';
       if (this.activeClaimId === receipt.claimId) this.activeClaimId = undefined;
       this.reconciliationReceipts.set(receipt.reconciliationId, structuredClone(receipt));
-      return { outcome: 'settled', receiptId: receipt.reconciliationId };
+      return { outcome: 'settled', receiptId: receipt.reconciliationId, ...(includePatchRevision && nextTask ? { observedRevisionDigest: nextTask.repositoryRevisionDigest } : {}) };
     });
   }
 

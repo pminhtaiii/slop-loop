@@ -44,23 +44,31 @@ const MIRROR_SCRIPT = [
 
 export type RepositoryHelperRunner = (spec: Omit<RunArgumentSpec, 'name'>, options: StructuredSpawnOptions) => Promise<StructuredSpawnResult>;
 
+/** Only a completed removal or an explicit daemon response for this exact name proves absence. */
+export function confirmedContainerRemoval(result: StructuredSpawnResult, name: string): boolean {
+  if (result.timedOut || result.exitCode === null) return false;
+  return result.exitCode === 0 || (result.truncated !== true && result.stderr.trim() === `Error response from daemon: No such container: ${name}`);
+}
+
 /** Force-removal also stops a helper whose Docker client timed out before setup is rolled back. */
-export async function runRepositoryHelper(spawn: StructuredSpawn, args: readonly string[], options: StructuredSpawnOptions): Promise<StructuredSpawnResult> {
+export async function runRepositoryHelper(spawn: StructuredSpawn, args: readonly string[], options: StructuredSpawnOptions, onTerminated: () => void): Promise<StructuredSpawnResult> {
   const name = args.find(arg => arg.startsWith('--name='))?.slice(7);
   if (!name) throw new Error('MIRROR_HELPER_NAME_REQUIRED');
   const remove = async (): Promise<void> => {
     const removed = await spawn('docker', ['rm', '-f', name], { timeoutMs: 30_000, maxOutputBytes: 4096 });
-    if (removed.timedOut || removed.exitCode !== 0) throw new Error('MIRROR_HELPER_CLEANUP_FAILED');
+    if (!confirmedContainerRemoval(removed, name)) throw new Error('MIRROR_HELPER_CLEANUP_FAILED');
   };
   let result: StructuredSpawnResult;
   try {
     result = await spawn('docker', args, options);
   } catch (error) {
     await remove();
+    onTerminated();
     throw error;
   }
   // Completed helpers remove themselves through --rm; an indeterminate client needs force-removal.
-  if (result.timedOut || result.exitCode === null) await remove();
+  if (result.timedOut || result.exitCode === null || [125, 126, 127].includes(result.exitCode)) await remove();
+  onTerminated();
   return result;
 }
 

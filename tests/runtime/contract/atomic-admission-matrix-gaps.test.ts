@@ -40,6 +40,7 @@ import {
   createTestRepositoryAdmissionContextV02,
   createTestRepositoryCommandAdmissionContextV02,
   createTestRepositoryOutcomeReceiptV02,
+  createTestUncertainReconciliationReceiptV02,
 } from '../support/uc03/state-fixtures.ts';
 
 const patchContext: RepositoryAdmissionContextV02 = createTestRepositoryAdmissionContextV02();
@@ -209,6 +210,22 @@ test('trusted evidence invalidation: recovery evidence binds its invalidated ref
       await third.publishRecoveryEvidence(patchContext.taskId, { ...evidence, effectEvidenceRef: { ...effectEvidenceRef, digest: computeCanonicalSha256('gap-invalidation-forged') } }),
       false,
     );
+    const reconciliation = createTestUncertainReconciliationReceiptV02(uncertain, claim, attempt, patchContext, {
+      disposition: 'observed-and-accounted',
+      effectEvidenceRef,
+      accountingEvidenceRefs,
+      evidenceRefs: [effectEvidenceRef, ...accountingEvidenceRefs],
+      expectedCurrentTaskStateVersion: attempt.postBeginTaskStateVersion,
+      expectedCurrentControlVersion: snapshot.controlVersion,
+    });
+    const expected = { outcome: 'settled', receiptId: reconciliation.reconciliationId, observedRevisionDigest };
+    assert.deepEqual(await third.reconcileUncertain(reconciliation, true), expected);
+    assert.deepEqual(await openReceiver(baseDir, patchContext).reconcileUncertain(reconciliation, true), expected);
+    const storage = new StatePortStore(third.store);
+    const settledClaim = await storage.readClaim(patchContext.taskId, claim.claimId);
+    assert.ok(settledClaim);
+    await storage.writeClaim(patchContext.taskId, { ...settledClaim, status: 'uncertain', settlement: undefined });
+    assert.equal((await third.reconcileUncertain(reconciliation, true)).outcome, 'conflict', 'a partial settlement cannot authorize a mirror');
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }
