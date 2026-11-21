@@ -49,6 +49,8 @@ async function resolveAdmission(assembly: RealTierAssembly, task: BugTask, port:
   if (!plan || !decisionRef || !planBindingDigest) return undefined;
   const owner = await currentAuthority(port, state);
   if (!owner) return undefined;
+  const issued = port.readIssuedDecisionBinding(state.taskId, decisionRef);
+  if (!issued || issued.decisionAuthorityGeneration !== owner.decisionAuthorityGeneration) return undefined;
   const { limits, pricing, runLimits } = assembly.profile;
   const current = await port.loadTask(state.taskId);
   if (!current?.budgetLedgers) return undefined;

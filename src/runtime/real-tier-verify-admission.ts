@@ -13,7 +13,7 @@ import type { BugTask, TaskState } from '../contracts/foundation/uc03.ts';
 import { admissionCommandView } from '../foundation/repository-admission.ts';
 import type { DurableStatePortV02 } from '../persistence/adapters/state-port-v02.ts';
 import type { TrustedHostExpectedContext } from '../uc03/investigation-types.ts';
-import { currentAuthority, policyFacts } from './real-tier-admissions.ts';
+import { currentAuthority, pinnedTestPath, policyFacts } from './real-tier-admissions.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import { executionProfileOf } from './real-tier-execution-profile.ts';
 
@@ -49,7 +49,7 @@ export async function verifyCheckAdmission(
   const planBindingDigest = decisionRef === undefined ? undefined : approvedPlanBindingDigest(task, state, decisionRef);
   if (!plan || !decisionRef || !planBindingDigest) return undefined;
   const pinned = task.requiredChecks.find(candidate => computeCanonicalSha256(candidate) === computeCanonicalSha256(check));
-  const testPath = pinned?.argv.find(arg => arg.startsWith('tests/') && arg.endsWith('.py'));
+  const testPath = pinned && pinnedTestPath(pinned.argv);
   if (
     !pinned ||
     !testPath ||

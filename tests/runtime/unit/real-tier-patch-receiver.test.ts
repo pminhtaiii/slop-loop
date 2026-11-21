@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
-import { applyAdmittedPatch } from '../../../src/runtime/real-tier-patch-receiver.ts';
+import { applyAdmittedPatch, countPatchEdits } from '../../../src/runtime/real-tier-patch-receiver.ts';
 import type { ApplyPatchAction } from '../../../src/contracts/foundation/uc03.ts';
 
 const BASE = `sha256:${'a'.repeat(64)}`;
@@ -41,7 +41,7 @@ test(
   withTree({ 'mark.py': 'old\n' }, async root => {
     const filesystem = new WorkspaceFilesystemPort({ root });
     await applyAdmittedPatch(filesystem, patch(['mark.py'], '--- a/mark.py\n+++ b/mark.py\n@@ -1 +1 @@\n-old\n+new\n\\ No newline at end of file\n'), 1024);
-    assert.match(readFileSync(join(root, 'mark.py'), 'utf8'), /^new/);
+    assert.equal(readFileSync(join(root, 'mark.py'), 'utf8'), 'new');
   }),
 );
 
@@ -134,3 +134,96 @@ test(
     assert.equal(readFileSync(join(root, 'second.py'), 'utf8'), 'two\n', 'the failed file is untouched');
   }),
 );
+
+test(
+  'CR-4652881427: a truncated final hunk is rejected with PATCH_UNPARSEABLE, while complete hunk passes with or without newline',
+  withTree({ 'trunc.py': 'line1\nline2\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    // Truncated: declares 2 lines in hunk but only supplies 1
+    const truncated = '--- a/trunc.py\n+++ b/trunc.py\n@@ -1,2 +1,2 @@\n-line1\n+mod1';
+    await assert.rejects(() => applyAdmittedPatch(filesystem, patch(['trunc.py'], truncated), 1024), /PATCH_UNPARSEABLE/);
+    const truncatedWithNl = '--- a/trunc.py\n+++ b/trunc.py\n@@ -1,2 +1,2 @@\n-line1\n+mod1\n';
+    await assert.rejects(() => applyAdmittedPatch(filesystem, patch(['trunc.py'], truncatedWithNl), 1024), /PATCH_UNPARSEABLE/);
+
+    // Complete without trailing newline passes
+    const completeNoNl = '--- a/trunc.py\n+++ b/trunc.py\n@@ -1,2 +1,2 @@\n-line1\n-line2\n+new1\n+new2';
+    await applyAdmittedPatch(filesystem, patch(['trunc.py'], completeNoNl), 1024);
+    assert.equal(readFileSync(join(root, 'trunc.py'), 'utf8'), 'new1\nnew2\n');
+  }),
+);
+
+test(
+  'CR-4652881423: no-newline marker on old side removes EOF marker, and context line marker affects both sides',
+  withTree({ 'old_nonl.py': 'old', 'context.py': 'context' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    // Old file had no newline; patch replaces it with new that has a newline
+    const diff1 = '--- a/old_nonl.py\n+++ b/old_nonl.py\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n';
+    await applyAdmittedPatch(filesystem, patch(['old_nonl.py'], diff1), 1024);
+    assert.equal(readFileSync(join(root, 'old_nonl.py'), 'utf8'), 'new\n');
+
+    // Context line with no newline marker preserves no trailing newline
+    const diff2 = '--- a/context.py\n+++ b/context.py\n@@ -1 +1 @@\n context\n\\ No newline at end of file\n';
+    await applyAdmittedPatch(filesystem, patch(['context.py'], diff2), 1024);
+    assert.equal(readFileSync(join(root, 'context.py'), 'utf8'), 'context');
+  }),
+);
+
+test(
+  'CR-4652881439: rollback attempts every restore even if one fails and attaches unrecovered paths to original error',
+  withTree({ 'first.py': 'one\n', 'second.py': 'two\n', 'third.py': 'three\n' }, async root => {
+    class FailingRollbackPort extends WorkspaceFilesystemPort {
+      private writes = 0;
+      override async writeFile(path: string, content: string, maxBytes: number): Promise<void> {
+        this.writes += 1;
+        // Writes 1 and 2 succeed; write 3 fails (commit error)
+        if (this.writes === 3) throw new Error('COMMIT_WRITE_3_FAILED');
+        // During rollback, second.py restore fails
+        if (this.writes > 3 && path === 'second.py') throw new Error('RESTORE_SECOND_FAILED');
+        return super.writeFile(path, content, maxBytes);
+      }
+    }
+    const filesystem = new FailingRollbackPort({ root });
+    const diff =
+      '--- a/first.py\n+++ b/first.py\n@@ -1 +1 @@\n-one\n+ONE\n' + '--- a/second.py\n+++ b/second.py\n@@ -1 +1 @@\n-two\n+TWO\n' + '--- a/third.py\n+++ b/third.py\n@@ -1 +1 @@\n-three\n+THREE\n';
+    let caught: unknown;
+    try {
+      await applyAdmittedPatch(filesystem, patch(['first.py', 'second.py', 'third.py'], diff), 1024);
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof Error);
+    assert.match(caught.message, /COMMIT_WRITE_3_FAILED/);
+    assert.match(caught.message, /second\.py/);
+    const withUnrecovered = caught as { unrecoveredPaths?: readonly string[] };
+    assert.deepEqual(withUnrecovered.unrecoveredPaths, ['second.py']);
+    // first.py restore was still attempted and succeeded!
+    assert.equal(readFileSync(join(root, 'first.py'), 'utf8'), 'one\n');
+  }),
+);
+
+test(
+  'CR-4652881433: non-UTF-8 target is refused with PATCH_UNPARSEABLE before any write',
+  withTree({ 'valid.py': 'valid\n' }, async root => {
+    // Write invalid UTF-8 bytes to nonutf8.py
+    writeFileSync(join(root, 'nonutf8.py'), Buffer.from([0xff, 0xfe, 0x80, 0x81]));
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    const diff = '--- a/valid.py\n+++ b/valid.py\n@@ -1 +1 @@\n-valid\n+VALID\n' + '--- a/nonutf8.py\n+++ b/nonutf8.py\n@@ -1 +1 @@\n-x\n+y\n';
+    await assert.rejects(() => applyAdmittedPatch(filesystem, patch(['valid.py', 'nonutf8.py'], diff), 1024), /PATCH_UNPARSEABLE/);
+    // valid.py was never written
+    assert.equal(readFileSync(join(root, 'valid.py'), 'utf8'), 'valid\n');
+  }),
+);
+
+test('CR-4652881417: countPatchEdits counts added and deleted lines from hunks and returns null for unparseable diff', () => {
+  const valid = '--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,3 @@\n-a\n-b\n+c\n+d\n+e\n';
+  assert.equal(countPatchEdits(valid), 5);
+
+  const contextOnly = '--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n c\n';
+  assert.equal(countPatchEdits(contextOnly), 0);
+
+  const unparseable = 'not a valid diff';
+  assert.equal(countPatchEdits(unparseable), null);
+
+  const truncated = '--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,2 @@\n-a\n';
+  assert.equal(countPatchEdits(truncated), null);
+});

@@ -21,12 +21,18 @@ import type { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
 const NO_NEWLINE_MARKER = '\\ No newline at end of file';
 
+interface HunkLine {
+  readonly marker: ' ' | '-' | '+';
+  readonly text: string;
+  noNewline?: boolean;
+}
+
 interface Hunk {
   readonly oldStart: number;
   readonly oldCount: number;
   readonly newCount: number;
   /** Filled as the body is parsed, then treated as immutable by `applyHunks`. */
-  readonly body: string[];
+  readonly body: HunkLine[];
 }
 
 interface FileHunks {
@@ -51,37 +57,45 @@ function parseSections(diff: string): FileHunks[] | null {
   let oldPath: string | null = null;
   let current: { oldPath: string | null; newPath: string | null; hunks: Hunk[] } | null = null;
   let open: { readonly hunk: Hunk; readonly oldCount: number; readonly newCount: number } | null = null;
+  let lastLine: HunkLine | null = null;
   let oldSeen = 0;
   let newSeen = 0;
   const lines = diff.split('\n');
   for (const line of lines) {
+    if (line.startsWith('\\')) {
+      if (line.replace(/\r$/u, '') !== NO_NEWLINE_MARKER) return null;
+      if (!lastLine || lastLine.noNewline) return null;
+      lastLine.noNewline = true;
+      continue;
+    }
     if (open !== null) {
       const marker = line[0];
-      if (line.replace(/\r$/u, '') === NO_NEWLINE_MARKER) continue;
       const advancesOld = marker === ' ' || marker === '-';
       const advancesNew = marker === ' ' || marker === '+';
       if (advancesOld || advancesNew) {
         if (advancesOld) oldSeen += 1;
         if (advancesNew) newSeen += 1;
         if (oldSeen > open.oldCount || newSeen > open.newCount) return null;
-        open.hunk.body.push(line);
+        const hunkLine: HunkLine = { marker, text: line.slice(1), noNewline: false };
+        open.hunk.body.push(hunkLine);
+        lastLine = hunkLine;
         if (oldSeen === open.oldCount && newSeen === open.newCount) open = null;
         continue;
       }
-      // A body that ends early is malformed; the section headers below are parsed from the same line.
-      if (oldSeen !== open.oldCount || newSeen !== open.newCount) return null;
-      open = null;
+      return null;
     }
     if (line.startsWith('--- ')) {
       if (current) sections.push(current);
       oldPath = diffPath(line.slice(4), 'a/');
       current = { oldPath, newPath: null, hunks: [] };
+      lastLine = null;
       continue;
     }
     if (line.startsWith('+++ ')) {
       if (!current) return null;
       // The explicit null destination of a deletion is kept so the deletion refusal sees it first.
       current = { oldPath, newPath: diffPath(line.slice(4), 'b/'), hunks: current.hunks };
+      lastLine = null;
       continue;
     }
     const header = HUNK.exec(line);
@@ -94,13 +108,13 @@ function parseSections(diff: string): FileHunks[] | null {
       oldSeen = 0;
       newSeen = 0;
       open = { hunk, oldCount, newCount };
+      lastLine = null;
       continue;
     }
     if (line.length === 0) continue;
-    // A `\ No newline at end of file` marker follows the hunk line it annotates, so it can trail a closed hunk.
-    if (line.replace(/\r$/u, '') === NO_NEWLINE_MARKER && current !== null && current.hunks.length > 0) continue;
     return null;
   }
+  if (open !== null) return null;
   if (current) sections.push(current);
   return sections;
 }
@@ -119,33 +133,56 @@ function applyHunks(source: string | null, hunks: readonly Hunk[]): string {
   const { lines: sourceLines, trailingNewline } = source === null ? { lines: [], trailingNewline: true } : linesOf(source);
   const output: string[] = [];
   let cursor = 0;
-  let newlineMarker = false;
+  let lastNewSideNoNewline: boolean | undefined = undefined;
   for (const hunk of hunks) {
     const start = source === null && hunk.oldStart === 0 ? 0 : hunk.oldStart - 1;
     if (start < cursor || start > sourceLines.length) throw new Error('PATCH_CONTEXT_MISMATCH: hunk start is outside the current file');
     while (cursor < start) output.push(sourceLines[cursor++] as string);
-    for (const raw of hunk.body) {
-      const marker = raw[0] ?? ' ';
-      const text = raw.slice(1);
-      if (marker === '\\') {
-        newlineMarker = true;
-        continue;
-      }
-      if (marker === ' ' || marker === '-') {
-        if (sourceLines[cursor] !== text) throw new Error('PATCH_CONTEXT_MISMATCH: hunk line does not match the current file');
+    for (const line of hunk.body) {
+      if (line.marker === ' ' || line.marker === '-') {
+        if (sourceLines[cursor] !== line.text) throw new Error('PATCH_CONTEXT_MISMATCH: hunk line does not match the current file');
+        if (line.noNewline) {
+          if (cursor !== sourceLines.length - 1 || trailingNewline) {
+            throw new Error('PATCH_CONTEXT_MISMATCH: hunk specifies no newline at EOF but file has newline or more lines');
+          }
+        }
         cursor += 1;
-        if (marker === ' ') output.push(text);
-      } else if (marker === '+') {
-        output.push(text);
+        if (line.marker === ' ') output.push(line.text);
+      } else if (line.marker === '+') {
+        output.push(line.text);
       } else {
         throw new Error('PATCH_CONTEXT_MISMATCH: unknown hunk line marker');
       }
+      if (line.marker === '+' || line.marker === ' ') {
+        lastNewSideNoNewline = line.noNewline ?? false;
+      }
     }
   }
+  const hadRemainingSource = cursor < sourceLines.length;
   while (cursor < sourceLines.length) output.push(sourceLines[cursor++] as string);
-  const finalNewline = source === null ? true : trailingNewline;
+  const finalNewline = hadRemainingSource ? trailingNewline : lastNewSideNoNewline !== undefined ? !lastNewSideNoNewline : source === null ? true : trailingNewline;
   const text = output.join('\n');
-  return output.length === 0 ? '' : newlineMarker ? text : finalNewline ? `${text}\n` : text;
+  return output.length === 0 ? '' : finalNewline ? `${text}\n` : text;
+}
+
+/**
+ * Counts the total added and deleted lines across all hunks of a unified diff.
+ * Returns null if the diff is unparseable or contains no sections.
+ */
+export function countPatchEdits(diff: string): number | null {
+  const sections = parseSections(diff);
+  if (!sections || sections.length === 0) return null;
+  let edits = 0;
+  for (const section of sections) {
+    for (const hunk of section.hunks) {
+      for (const line of hunk.body) {
+        if (line.marker === '+' || line.marker === '-') {
+          edits += 1;
+        }
+      }
+    }
+  }
+  return edits;
 }
 
 interface PlannedWrite {
@@ -175,12 +212,20 @@ async function planWrites(filesystem: WorkspaceFilesystemPort, patch: ApplyPatch
     if (seen.has(path)) throw new Error(`PATCH_PATH_REFUSED: '${path}' appears in more than one section`);
     seen.add(path);
     if (section.hunks.length === 0) throw new Error(`PATCH_UNPARSEABLE: '${path}' has no hunks`);
-    let current: string | null;
+    let rawBytes: Buffer | null;
     try {
-      current = await filesystem.readTextFile(path, maxFileBytes);
+      rawBytes = await filesystem.readBytes(path, maxFileBytes);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      current = null;
+      rawBytes = null;
+    }
+    let current: string | null = null;
+    if (rawBytes !== null) {
+      try {
+        current = new TextDecoder('utf-8', { fatal: true }).decode(rawBytes);
+      } catch {
+        throw new Error(`PATCH_UNPARSEABLE: '${path}' is not valid UTF-8`);
+      }
     }
     // The same content exclusions the workspace mirror and view builder apply: a file whose current
     // bytes would be excluded from a command view is never rewritten by a patch.
@@ -203,14 +248,25 @@ export async function applyAdmittedPatch(filesystem: WorkspaceFilesystemPort, pa
       await filesystem.writeFile(write.path, write.content, maxFileBytes);
       committed.push(write);
     }
+    const newRevisionDigest = await filesystem.getCurrentRevisionDigest(maxFileBytes);
+    return { applied: true, newRevisionDigest };
   } catch (error) {
     // Restore every already-written file to its original bytes (or remove a newly created one).
+    const unrecoveredPaths: string[] = [];
     for (const done of committed.reverse()) {
-      if (done.original === undefined) await filesystem.removeFile(done.path);
-      else await filesystem.writeFile(done.path, done.original, maxFileBytes);
+      try {
+        if (done.original === undefined) await filesystem.removeFile(done.path);
+        else await filesystem.writeFile(done.path, done.original, maxFileBytes);
+      } catch {
+        unrecoveredPaths.push(done.path);
+      }
+    }
+    if (unrecoveredPaths.length > 0) {
+      (error as { unrecoveredPaths?: readonly string[] }).unrecoveredPaths = Object.freeze([...unrecoveredPaths]);
+      if (error instanceof Error) {
+        error.message = `${error.message} (unrecovered paths: ${unrecoveredPaths.join(', ')})`;
+      }
     }
     throw error;
   }
-  const newRevisionDigest = await filesystem.getCurrentRevisionDigest(maxFileBytes);
-  return { applied: true, newRevisionDigest };
 }

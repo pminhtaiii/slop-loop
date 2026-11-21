@@ -104,16 +104,6 @@ export class DurableStatePortV02 implements StatePortV02 {
     this.statePort = new StatePortStore(options.store);
     this.boundTaskId = options.taskId;
     this.executionProfile = options.executionProfile;
-    this.verificationAuthority = new DurableVerificationAuthority({
-      store: this.statePort,
-      approvalStorageDir: options.approvalStorageDir,
-      operator: options.trustedOperator,
-    });
-    this.taskOptions = {
-      store: this.statePort,
-      trustedTransitions: { ...(options.trustedTransitions ?? {}) },
-      ...(options.approvalStorageDir === undefined ? {} : { trustedApproval: (taskId: string) => this.verificationAuthority.trustedPlanApproval(taskId) }),
-    };
     const seed = options.initialControl ?? {};
     this.controlSeed = {
       ...DEFAULT_CONTROL,
@@ -124,6 +114,17 @@ export class DurableStatePortV02 implements StatePortV02 {
       ...(seed.activeAuthorityRef !== undefined ? { activeAuthorityRef: seed.activeAuthorityRef } : {}),
     };
     if (!CONTROL_MODES.includes(this.controlSeed.mode)) throw new Error('Invalid initial control mode');
+    this.verificationAuthority = new DurableVerificationAuthority({
+      store: this.statePort,
+      approvalStorageDir: options.approvalStorageDir,
+      operator: options.trustedOperator,
+      controlSeed: this.controlSeed,
+    });
+    this.taskOptions = {
+      store: this.statePort,
+      trustedTransitions: { ...(options.trustedTransitions ?? {}) },
+      ...(options.approvalStorageDir === undefined ? {} : { trustedApproval: (taskId: string) => this.verificationAuthority.trustedPlanApproval(taskId) }),
+    };
     // Construction, not the `provenance` string, is what the production brand attests (contract §(b)5).
     if (this.provenance === 'real') registerProductionJournal(this);
   }
@@ -212,6 +213,11 @@ export class DurableStatePortV02 implements StatePortV02 {
   /** Whether the recorded plan decision still stands as a human approval at the named authority. */
   planDecisionIsApproved(decisionId: string, context: VerificationApprovalContextV02): Promise<boolean> {
     return this.verificationAuthority.planDecisionIsApproved(decisionId, context);
+  }
+
+  /** The recorded decision binding the owner issued when it consumed the decision. */
+  readIssuedDecisionBinding(taskId: string, decisionId: string): ReturnType<DurableVerificationAuthority['readIssuedDecisionBinding']> {
+    return this.verificationAuthority.readIssuedDecisionBinding(taskId, decisionId);
   }
 
   /* ---------------- journal snapshot ---------------- */

@@ -16,6 +16,7 @@ import type { UC03RepositoryAdmission } from '../uc03/graph-types.ts';
 import { currentAuthority, policyFacts } from './real-tier-admissions.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import { executionProfileOf } from './real-tier-execution-profile.ts';
+import { countPatchEdits } from './real-tier-patch-receiver.ts';
 import { approvedPlanBindingDigest } from './real-tier-verify-admission.ts';
 
 export interface PatchAdmissionRequest {
@@ -86,6 +87,8 @@ export async function patchAdmission(assembly: RealTierAssembly, task: BugTask, 
   const scoped = new Set(plan.scopedChanges);
   const targets = [...targetPaths];
   if (targets.length === 0 || new Set(targets).size !== targets.length || targets.some(path => !scoped.has(path))) return undefined;
+  const edits = countPatchEdits(patchContent);
+  if (edits === null) return undefined;
   const ownerIdentity = owner.policyIdentity;
   const actionId = request.actionId ?? `patch-${computeCanonicalSha256([state.taskId, state.stateVersion, planBindingDigest]).slice('sha256:'.length, 'sha256:'.length + 24)}`;
   const action = { actionId, kind: 'apply_patch' as const, patchContent, targetPaths: targets, baseRevisionDigest: state.repositoryRevisionDigest };
@@ -119,7 +122,7 @@ export async function patchAdmission(assembly: RealTierAssembly, task: BugTask, 
     registeredActionDigest: computeActionDigest(action),
     patch: {
       fileCount: targets.length,
-      addedDeletedLines: addedDeletedLines(patchContent),
+      addedDeletedLines: edits,
       dependencyChange: false,
       deletion: false,
       structuralChange: false,
@@ -230,9 +233,4 @@ export async function patchAdmission(assembly: RealTierAssembly, task: BugTask, 
     allowedDiagnosticTestPaths: [],
   };
   return { context, trustedContext } as unknown as UC03RepositoryAdmission;
-}
-
-/** Added plus deleted diff lines, as the policy's risky-patch breadth reads them. */
-function addedDeletedLines(diff: string): number {
-  return diff.split('\n').filter(line => (line.startsWith('+') || line.startsWith('-')) && !line.startsWith('+++') && !line.startsWith('---')).length;
 }
