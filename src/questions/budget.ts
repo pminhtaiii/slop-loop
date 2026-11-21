@@ -52,7 +52,8 @@ export interface QuestionBudgetLedger {
   reserveFinalValidation(): QuestionBudgetReservationResultV1;
   reserveModelCall(compiledInputTokens: number): QuestionBudgetReservationResultV1;
   reserveRetrievalQuery(): QuestionBudgetReservationResultV1;
-  reserveIndexBatch(input: unknown): QuestionBudgetReservationResultV1;
+  /** With replay fallback, insufficient scan capacity permits only a receipt check and disk settlement. */
+  reserveIndexBatch(input: unknown, allowReplayFallback?: boolean): QuestionBudgetReservationResultV1;
   reserveSummary(projectedBytes: number): QuestionBudgetReservationResultV1;
   reserveClarification(): QuestionBudgetReservationResultV1;
   cancel(): void;

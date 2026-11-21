@@ -37,6 +37,15 @@ function withTree(files: Readonly<Record<string, string>>, run: (root: string) =
 }
 
 test(
+  'F-211-08: a no-newline marker after the last hunk line is accepted',
+  withTree({ 'mark.py': 'old\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    await applyAdmittedPatch(filesystem, patch(['mark.py'], '--- a/mark.py\n+++ b/mark.py\n@@ -1 +1 @@\n-old\n+new\n\\ No newline at end of file\n'), 1024);
+    assert.match(readFileSync(join(root, 'mark.py'), 'utf8'), /^new/);
+  }),
+);
+
+test(
   'F-211-03: a /dev/null destination is a deletion and is refused with the original bytes kept',
   withTree({ 'delete.py': 'old\n' }, async root => {
     const filesystem = new WorkspaceFilesystemPort({ root });

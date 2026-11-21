@@ -246,6 +246,18 @@ test('refuses unknown keys at any depth without echoing the file', () => {
   assert.equal(JSON.stringify(result).includes(KEY), false);
 });
 
+test('uses the same bounded model identifier for profile and environment values', () => {
+  const fromProfile = (model: string) => load(profileOf({ provider: { ...PROVIDER, model } }));
+  const fromEnvironment = (model: string) => load(profileOf({ provider: { ...PROVIDER, model: undefined } }), { ANTHROPIC_MODEL: model });
+  const longest = `vendor/${'m'.repeat(120)}`;
+  for (const resolveModel of [fromProfile, fromEnvironment]) {
+    assert.equal(loaded(resolveModel(longest)).endpoint.model, longest);
+    for (const invalid of [`${longest}m`, '/vendor/model', 'vendor/model/', 'vendor//model', 'vendor/../model', 'vendor/model@version']) {
+      assert.equal(reasonOf(resolveModel(invalid)), 'model-invalid', invalid);
+    }
+  }
+});
+
 test('refuses malformed numbers, unpinned images and retained raw streams', () => {
   const mutations: readonly (readonly [string, Record<string, unknown>])[] = [
     ['retained raw streams', { artifacts: { retainRoot: join(outsideRoot, 'artifacts'), retainRawStreams: true } }],

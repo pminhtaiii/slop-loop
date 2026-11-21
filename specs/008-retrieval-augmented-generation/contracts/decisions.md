@@ -36,3 +36,9 @@ T007 onward, live owner/provider composition, production defaults, durable stora
 The user requested T019, T020 and T022 and selected the `feat/rag-retrieval-foundation` branch. The selected scope covers pinned dependency and SQLite compatibility checks, the controlled and local embedding adapters, and guarded corpus segmentation. Execute T019, then T022, then T020 in dependency order. The existing Ubuntu CI verifies the SQLite extension in the emitted build. Verify Windows on a Windows checkout.
 
 T021, serving and runtime composition, real embedding quality measurement, production defaults and merge remain separately gated.
+
+## 2026-11-20 — T021 and T023 implementation release
+
+The user explicitly requested implementation of T021 and T023 in the canonical task ledger and selected `feat/rag-persistent-hybrid-retrieval`. Execute T021 before T023, retaining T019, T020 and T022 as prerequisites. The release covers the persistent incremental index, hybrid retrieval, guarded evidence re-admission and scoped coverage receipts under the existing retrieval contract, with disposable local storage and controlled embedding tests.
+
+This release does not authorize successor graph/runtime composition, production defaults, real embedding quality measurement under T026, live-provider experiments or a protected-branch merge. Store restart checks establish only the exercised index behavior, not durable question-session recovery or real-model answer quality. Contributor publication follows the existing paired PR workflow and human merge decision.

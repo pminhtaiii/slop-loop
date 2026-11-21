@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { evaluatePolicyV02, evaluateProviderAdmissionV02, type PolicyFactsV02 } from '../approvals/policy.ts';
 import { computeActionDigest, computeCanonicalSha256, computeCheckSetDigest, computeRequestContentDigest } from '../contracts/foundation/uc03.ts';
 import type { BugTask, ProviderAdmissionContextV02, ProviderAdmissionTrustedContextV02, ProviderRequest, TaskState, VerificationAuthoritySnapshotV02 } from '../contracts/foundation/uc03.ts';
+import { normalizePytestSelector } from '../contracts/foundation/uc03/pytest-selector.ts';
 import { computeContextDigest } from '../foundation/model.ts';
 import { microUsd } from '../foundation/deepseek-transport-request.ts';
 import { admissionCommandView } from '../foundation/repository-admission.ts';
@@ -46,6 +47,15 @@ export async function currentAuthority(port: DurableStatePortV02, state: TaskSta
   return owner;
 }
 
+function pinnedTestPath(argv: readonly string[]): string | undefined {
+  for (const arg of argv) {
+    if (!arg.startsWith('tests/')) continue;
+    const selector = normalizePytestSelector(arg);
+    if (selector?.filePath.endsWith('.py')) return selector.filePath;
+  }
+  return undefined;
+}
+
 export function policyFacts(task: BugTask, state: TaskState, owner: VerificationAuthoritySnapshotV02, purpose: string): PolicyFactsV02 {
   const { policyId, policyVersion, configId, configVersion } = owner.policyIdentity;
   return {
@@ -70,7 +80,7 @@ export function policyFacts(task: BugTask, state: TaskState, owner: Verification
     diagnosticPurpose: purpose,
     taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
     checkSetDigest: computeCheckSetDigest(task.requiredChecks),
-    testPath: task.requiredChecks.flatMap(check => check.argv).find(arg => arg.startsWith('tests/') && arg.endsWith('.py')) ?? null,
+    testPath: pinnedTestPath(task.requiredChecks.flatMap(check => check.argv)) ?? null,
     checkId: task.requiredChecks[0]?.checkId ?? null,
     planBindingDigest: null,
     planDecisionRef: null,
@@ -99,7 +109,7 @@ export function createRealTierAdmissions(assembly: RealTierAssembly, boundTask: 
     admissionContextForCheck: async ({ check, action, currentState: state }) => {
       if (state.taskId !== task.taskId || state.node !== 'Investigate' || action.kind !== 'run_command') return undefined;
       const pinned = task.requiredChecks.find(candidate => computeCanonicalSha256(candidate) === computeCanonicalSha256(check));
-      const testPath = pinned?.argv.find(arg => arg.startsWith('tests/') && arg.endsWith('.py'));
+      const testPath = pinned && pinnedTestPath(pinned.argv);
       if (
         !pinned ||
         !testPath ||
@@ -223,8 +233,11 @@ export function createRealTierAdmissions(assembly: RealTierAssembly, boundTask: 
       const remainingCost = Math.min(
         ...current.budgetLedgers.filter(ledger => ledger.kind === 'cost').map(ledger => ledger.limit - ledger.consumed - ledger.reservations.reduce((sum, reservation) => sum + reservation.amount, 0)),
       );
-      const maxInputTokens = Math.min(limits.inputTokensPerRequest, runLimits.perRunInputTokens, task.budgetLimits.maxTokens);
-      const maxOutputTokens = Math.min(limits.outputTokensPerRequest, runLimits.perRunOutputTokens, task.budgetLimits.maxTokens);
+      // The transport charges pending calls at their maxima and replaces those charges on settlement.
+      const usage = assembly.runUsageCountersFor(state.taskId, state.runId);
+      const maxInputTokens = Math.min(limits.inputTokensPerRequest, runLimits.perRunInputTokens - (usage?.inputTokensCharged ?? 0), task.budgetLimits.maxTokens);
+      const maxOutputTokens = Math.min(limits.outputTokensPerRequest, runLimits.perRunOutputTokens - (usage?.outputTokensCharged ?? 0), task.budgetLimits.maxTokens);
+      if (maxInputTokens <= 0 || maxOutputTokens <= 0) return undefined;
       const maxBillableTokens = maxInputTokens + maxOutputTokens;
       const maxCostUsd = Math.min(remainingCost, task.budgetLimits.maxCostUsd, microUsd(pricing, maxInputTokens, maxOutputTokens, maxInputTokens) / 1_000_000);
       const providerRequestId = `coder-${randomUUID()}`;
