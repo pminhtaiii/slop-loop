@@ -92,16 +92,18 @@ export function createIndexClient(
     if (!started || !worker) return unavailable();
     if (control.signal.aborted) return { status: 'cancelled', reasonCode: 'cancelled' };
     if (Date.now() >= control.deadlineEpochMs) return { status: 'exhausted', reasonCode: 'deadline' };
+    const dispatched = worker;
     const id = nextId++;
     const result = await waitForIndexControl(
       new Promise<IndexReply>(resolve => {
         pending.set(id, resolve);
-        worker?.postMessage({ id, command });
+        dispatched.postMessage({ id, command });
       }),
       control,
     );
     pending.delete(id);
-    if (result.status === 'cancelled' || (result.status === 'exhausted' && result.reasonCode === 'deadline')) await stop();
+    if (worker === dispatched && command.kind !== 'inspect' && command.kind !== 'current' && (result.status === 'cancelled' || (result.status === 'exhausted' && result.reasonCode === 'deadline')))
+      await stop();
     return result;
   }
   return { rpc, stop, running: () => worker !== undefined };

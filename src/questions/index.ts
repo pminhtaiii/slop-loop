@@ -57,8 +57,8 @@ export function createQuestionIndex(input: QuestionIndexOptions): QuestionIndex 
       if (result.status !== 'ok') return result;
       if (!validView(result, options)) return unavailable();
       if (!result.generation || result.generation.generationId !== request.generationId || !matches(result.generation, snapshot, options)) return failure('stale', 'binding-mismatch');
-      const after = await guard(snapshot, control);
-      if (after) return after;
+      const current = await confirmCurrent(snapshot, result.generation.generationId, control);
+      if (current.status !== 'ok') return current;
       return Object.freeze({
         status: 'ok',
         generation: Object.freeze({ ...result.generation, binding: Object.freeze(result.generation.binding) }),
@@ -87,11 +87,20 @@ export function createQuestionIndex(input: QuestionIndexOptions): QuestionIndex 
     if (result.status !== 'ok') return result;
     if (!result.generation || !validateQuestionIndexGeneration(result.generation).ok) return unavailable();
     if (result.generation.generationId !== request.generationId || !matches(result.generation, snapshot, options)) return failure('stale', 'binding-mismatch');
+    return confirmCurrent(snapshot, request.generationId, control);
+  }
+  async function confirmCurrent(snapshot: SourceSnapshotV1, generationId: string, control: QuestionRepositoryOperationControl): Promise<{ readonly status: 'ok' } | QuestionIndexFailure> {
     const after = await guard(snapshot, control);
     if (after) return after;
     const current = await rpc({ kind: 'current' }, control);
     if (current.status !== 'ok') return current;
-    if (admitted !== request.generationId || !current.generation || current.generation.generationId !== request.generationId || !matches(current.generation, snapshot, options))
+    if (
+      admitted !== generationId ||
+      !current.generation ||
+      !validateQuestionIndexGeneration(current.generation).ok ||
+      current.generation.generationId !== generationId ||
+      !matches(current.generation, snapshot, options)
+    )
       return failure('stale', 'binding-mismatch');
     return { status: 'ok' };
   }

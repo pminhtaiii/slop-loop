@@ -1,16 +1,16 @@
 /** One scored question turn: host-bound ranking is frozen before guarded evidence admission or absence checks. */
-import type { QuestionRankedChunkV1, QuestionRetrievalResultV1 } from '../contracts/questions/contracts.ts';
+import type { QuestionRankedChunkV1, QuestionRetrievalResultV1, RepositoryToolFailureV1 } from '../contracts/questions/contracts.ts';
 import { validateAdmittedSpan, validateQuestionRetrievalRequest } from '../contracts/questions/validation.ts';
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import type { QuestionIndexFailure, QuestionIndexView } from './index.ts';
-import { admittedView, retrievalOptions, sameIdentity } from './retrieval-admission.ts';
+import { admittedView, retrievalOptions, sameBinding, sameIdentity } from './retrieval-admission.ts';
 import { recognizeQuestionSymbols } from './retrieval-symbols.ts';
 import { computeFileDigest } from '../foundation/docker-workspace-policy.ts';
 import { createQuestionEvidenceRegistry } from './evidence.ts';
 import type { QuestionIndexedChunkV1 } from '../contracts/questions/contracts.ts';
 import type { QuestionPresentationResultV1 } from './presentation.ts';
 import type { QuestionRetrievalAdmission } from './retrieval-types.ts';
-import { withRetrievalControl } from './retrieval-control.ts';
+import { retrievalInterruption, withRetrievalControl } from './retrieval-control.ts';
 import { createAbsenceAuthority } from './retrieval-absence.ts';
 import type { QuestionRetrieval, QuestionRetrievalOptions } from './retrieval-types.ts';
 export type { QuestionRetrieval, QuestionRetrievalOptions, QuestionRetrievalAdmission, QuestionAbsenceResult } from './retrieval-types.ts';
@@ -49,21 +49,36 @@ export function createQuestionRetrieval(input: QuestionRetrievalOptions): Questi
       ...options.repository,
       async checkBinding(control) {
         if (closed) return { status: 'unavailable', reasonCode: 'unsupported-adapter' };
-        const current = await options.index.validateCurrent({ snapshot: options.snapshot, generationId: options.generationId }, control);
-        if (current.status !== 'ok')
-          return current.status === 'stale'
-            ? { status: 'stale', reasonCode: 'binding-mismatch' }
-            : current.status === 'cancelled'
-              ? { status: 'cancelled', reasonCode: 'cancelled' }
-              : current.status === 'exhausted'
-                ? { status: 'exhausted', reasonCode: current.reasonCode === 'deadline' ? 'deadline' : 'scan-limit' }
-                : { status: 'unavailable', reasonCode: 'unsupported-adapter' };
-        return options.repository.checkBinding(control);
+        const validateBinding = async (): Promise<RepositoryToolFailureV1 | undefined> => {
+          const current = await options.index.validateCurrent({ snapshot: options.snapshot, generationId: options.generationId }, control);
+          if (current.status !== 'ok')
+            return current.status === 'stale'
+              ? { status: 'stale', reasonCode: 'binding-mismatch' }
+              : current.status === 'cancelled'
+                ? { status: 'cancelled', reasonCode: 'cancelled' }
+                : current.status === 'exhausted'
+                  ? { status: 'exhausted', reasonCode: current.reasonCode === 'deadline' ? 'deadline' : 'scan-limit' }
+                  : { status: 'unavailable', reasonCode: 'unsupported-adapter' };
+          return undefined;
+        };
+        const before = await validateBinding();
+        const stop = retrievalInterruption(control);
+        if (stop) return stop;
+        if (before) return before;
+        const binding = await options.repository.checkBinding(control);
+        const after = retrievalInterruption(control);
+        if (after) return after;
+        if (binding.status !== 'ok') return binding;
+        const checkedBinding = { ...binding.binding };
+        if (!sameBinding(checkedBinding, options.identity.binding)) return { status: 'stale', reasonCode: 'binding-mismatch' };
+        return (await validateBinding()) ?? { status: 'ok', binding: checkedBinding };
       },
       async readSpan(request, control) {
         const target = expected;
         if (!target) return { status: 'invalid', reasonCode: 'invalid-request' };
         const result = await options.repository.readSpan(request, control);
+        const stop = retrievalInterruption(control);
+        if (stop) return stop;
         if (result.status !== 'ok') return result;
         const checkedSpan = validateAdmittedSpan(result.span, options.repositoryLimits);
         if (!checkedSpan.ok) return { status: 'unavailable', reasonCode: 'unsupported-adapter' };
@@ -81,7 +96,7 @@ export function createQuestionRetrieval(input: QuestionRetrievalOptions): Questi
           return { status: 'stale', reasonCode: 'source-mismatch' };
         const current = await options.index.validateCurrent({ snapshot: options.snapshot, generationId: options.generationId }, control);
         if (current.status !== 'ok') return { status: 'stale', reasonCode: 'binding-mismatch' };
-        return result;
+        return { status: 'ok', span };
       },
     },
   });
@@ -166,6 +181,7 @@ export function createQuestionRetrieval(input: QuestionRetrievalOptions): Questi
             if (afterEmbedding) return response(afterEmbedding);
             if (
               embedded.tokens !== counted.tokens ||
+              !Array.isArray(embedded.vector) ||
               embedded.vector.length !== options.embedding.profile.dimension ||
               Array.from(embedded.vector).some(value => !Number.isFinite(value)) ||
               Math.abs(embedded.vector.reduce((sum, value) => sum + value * value, 0) - 1) > 1e-5
@@ -290,6 +306,8 @@ export function createQuestionRetrieval(input: QuestionRetrievalOptions): Questi
     admit,
     async present(proposal: unknown, control: QuestionRepositoryOperationControl): Promise<QuestionPresentationResultV1> {
       if (closed) return { kind: 'cancelled', reasonCode: 'cancelled' };
+      const stop = stopped(control);
+      if (stop) return stop.reasonCode === 'deadline' ? { kind: 'budget-exhausted', reasonCode: 'elapsed-deadline' } : { kind: 'cancelled', reasonCode: 'cancelled' };
       const result = await registry.present(proposal, { ...control, signal: AbortSignal.any([control.signal, lifecycle.signal]) });
       return closed && result.kind === 'delivered' ? { kind: 'cancelled', reasonCode: 'cancelled' } : result;
     },

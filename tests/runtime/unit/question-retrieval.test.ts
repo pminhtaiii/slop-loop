@@ -871,3 +871,130 @@ test('host deadline bounds an uncooperative index read and ignores its late rows
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.counts().embeds, 0);
 });
+
+test('a successful embedding payload without a vector is an invalid retrieval input', async () => {
+  const f = fixture(['alpha']);
+  const retrieval = createQuestionRetrieval({
+    ...f.options,
+    embedding: {
+      ...f.options.embedding,
+      async embed() {
+        return { status: 'ok', tokens: 2, vector: undefined as unknown as readonly number[] };
+      },
+    },
+  });
+  const result = await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'alpha', limits }, control());
+  assert.equal(result.status, 'invalid');
+});
+
+test('presentation checks generation after the binding adapter and honours the caller meter', async () => {
+  const f = fixture(['alpha']);
+  let presenting = false;
+  let callerCharges = 0;
+  let remainingAtBinding: number | undefined;
+  const retrieval = createQuestionRetrieval({
+    ...f.options,
+    repository: {
+      ...f.options.repository,
+      async checkBinding(bounded) {
+        remainingAtBinding = bounded.work?.remaining('scannedBytes');
+        assert.equal(bounded.work?.charge({ scannedBytes: 1 }), true);
+        const result = await f.options.repository.checkBinding();
+        if (presenting) f.stale();
+        return result;
+      },
+    },
+  });
+  const metered = () => ({
+    ...control(),
+    work: {
+      remaining: () => 2 - callerCharges,
+      charge: () => {
+        callerCharges++;
+        return true;
+      },
+    },
+  });
+  const ranked = await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'alpha', limits }, control());
+  const admitted = await retrieval.admit(ranked, 'chunk-0', metered());
+  assert.equal(admitted.status, 'ok');
+  if (admitted.status !== 'ok') return;
+  assert.equal(remainingAtBinding, 2);
+  presenting = true;
+  const result = await retrieval.present(
+    {
+      kind: 'answer',
+      claims: [{ claimId: 'claim', kind: 'observation', text: 'alpha returns one', evidence: [{ evidenceId: admitted.span.evidenceId, range: { startLine: 1, endLine: 2 } }] }],
+      limitations: [],
+    },
+    metered(),
+  );
+  assert.equal(result.kind, 'stale-repository');
+  assert.equal(remainingAtBinding, 1);
+  assert.equal(callerCharges, 2);
+  assert.equal(f.budget.snapshot().consumed.scannedBytes, 2);
+});
+
+test('an uncooperative binding cannot finish admission after caller cancellation', { timeout: 2000 }, async () => {
+  const f = fixture(['alpha']);
+  const started = Promise.withResolvers<undefined>();
+  const unblock = Promise.withResolvers<undefined>();
+  const retrieval = createQuestionRetrieval({
+    ...f.options,
+    repository: {
+      ...f.options.repository,
+      async checkBinding(bounded) {
+        assert.equal(bounded.work?.charge({ scannedBytes: 1 }), true);
+        started.resolve(undefined);
+        await unblock.promise;
+        assert.equal(bounded.work?.charge({ scannedBytes: 1 }), false);
+        return f.options.repository.checkBinding();
+      },
+    },
+  });
+  const ranked = await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'alpha', limits }, control());
+  const abort = new AbortController();
+  const pending = retrieval.admit(ranked, 'chunk-0', { ...control(), signal: abort.signal });
+  await started.promise;
+  abort.abort();
+  try {
+    assert.equal((await pending).status, 'cancelled');
+    assert.equal(f.budget.snapshot().consumed.scannedBytes, 1);
+  } finally {
+    unblock.resolve(undefined);
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(f.counts().reads, 0);
+});
+
+test('a timed out absence page settles charged work and permits a new proof', { timeout: 2500 }, async () => {
+  const f = fixture(['alpha']);
+  const unblock = Promise.withResolvers<undefined>();
+  let first = true;
+  const retrieval = createQuestionRetrieval({
+    ...f.options,
+    staticLookup: 'missing',
+    repository: {
+      ...f.options.repository,
+      async readSpan(request, bounded) {
+        assert.equal(bounded.work?.charge({ scannedBytes: 1 }), true);
+        if (first) {
+          first = false;
+          await unblock.promise;
+          assert.equal(bounded.work?.charge({ scannedBytes: 1 }), false);
+        }
+        return f.options.repository.readSpan(request);
+      },
+    },
+  });
+  await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'missing', limits }, control());
+  try {
+    assert.deepEqual(await retrieval.proveAbsence({ ...control(), deadlineEpochMs: Date.now() + 150 }), { status: 'exhausted', reasonCode: 'deadline' });
+    assert.equal(f.budget.snapshot().consumed.scannedBytes, 1);
+    assert.equal((await retrieval.proveAbsence(control())).status, 'ok');
+  } finally {
+    unblock.resolve(undefined);
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(f.budget.snapshot().consumed.scannedBytes, 2);
+});

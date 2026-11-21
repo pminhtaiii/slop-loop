@@ -4,6 +4,7 @@ import type { QuestionIndexGenerationV1, SourceSnapshotV1 } from '../contracts/q
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import { buildQuestionChunks } from './chunks.ts';
 import { admittedSnapshot, compatible, trackIndexWork, validView } from './index-admission.ts';
+import { waitForIndexControl } from './index-client.ts';
 import { publicationMatches, validOperationId } from './index-recovery.ts';
 import type { QuestionBudgetWorkV1 } from './budget.ts';
 import type { IndexCommand, IndexReply, QuestionIndex, QuestionIndexFailure, QuestionIndexOptions, QuestionIndexRow, QuestionIndexSyncResult } from './index-types.ts';
@@ -18,12 +19,16 @@ interface RefreshLifecycle {
   readonly running: () => boolean;
   readonly admit: (generationId: string | undefined) => void;
 }
+/** Credit only disk settled by this ledger for the generation named by a durable receipt. */
+const settledDisk = new WeakMap<QuestionIndexOptions['budget'], Map<string, number>>();
+
 export function createIndexRefresh(
   options: QuestionIndexOptions,
   lifecycle: RefreshLifecycle,
 ): { readonly synchronize: QuestionIndex['synchronize']; readonly activeAttempt: () => string | undefined } {
   const limits = options.limits;
   const { guard, rpc, stop } = lifecycle;
+  const diskChargeKey = (generationId: string) => JSON.stringify([options.databasePath, generationId]);
   let writing = false;
   let activeAttempt: string | undefined;
   async function synchronize(request: Parameters<QuestionIndex['synchronize']>[0], control: QuestionRepositoryOperationControl): Promise<QuestionIndexSyncResult> {
@@ -62,23 +67,30 @@ export function createIndexRefresh(
     const diskBound = Math.max(0, limits.maxIndexDiskBytes - ledger.consumed.indexDiskBytes - ledger.reserved.indexDiskBytes);
     const chunkBound = Math.max(0, limits.maxChunks - ledger.consumed.indexedChunks - ledger.reserved.indexedChunks);
     const fileBound = Math.max(0, limits.maxFiles - ledger.consumed.indexedFiles - ledger.reserved.indexedFiles);
-    const reservation = options.budget.reserveIndexBatch({
-      batchSize: limits.maxBatchSize,
-      cacheBytes: limits.maxSqliteCacheBytes,
-      chunks: chunkBound,
-      diskBytes: diskBound,
-      files: fileBound,
-      scannedBytes: snapshot.admissionLimits.maxBytes,
-      scannedFiles: fileBound,
-      vectorDimensions: options.embedding.profile.dimension,
-      workerMemoryBytes: limits.maxWorkerMemoryBytes,
-    });
+    const scannedBytes = fileBound === 0 ? 0 : snapshot.admissionLimits.maxBytes;
+    const reservation = options.budget.reserveIndexBatch(
+      {
+        batchSize: limits.maxBatchSize,
+        cacheBytes: limits.maxSqliteCacheBytes,
+        chunks: fileBound === 0 ? 0 : chunkBound,
+        diskBytes: diskBound,
+        files: fileBound,
+        scannedBytes,
+        scannedFiles: fileBound,
+        vectorDimensions: options.embedding.profile.dimension,
+        workerMemoryBytes: limits.maxWorkerMemoryBytes,
+      },
+      true,
+    );
     if (!reservation.ok) {
       writing = false;
+      activeAttempt = undefined;
       return failure(reservation.reasonCode === 'cancelled' ? 'cancelled' : 'exhausted', reservation.reasonCode === 'cancelled' ? 'cancelled' : 'scan-limit');
     }
     let work: QuestionBudgetWorkV1 = { indexedFiles: 0, indexedChunks: 0, indexDiskBytes: 0, scannedFiles: 0, scannedBytes: 0 };
-    const tracked = trackIndexWork(fileBound, snapshot.admissionLimits.maxBytes, control.work);
+    const maximum = reservation.value.maximumWork;
+    const tracked = trackIndexWork(maximum.scannedFiles ?? 0, maximum.scannedBytes ?? 0, control.work);
+    let chargedGeneration: string | undefined;
     const execution = await reservation.value.execute(
       async context => {
         const bounded = {
@@ -99,13 +111,23 @@ export function createIndexRefresh(
             if (options.budget.snapshot().status !== 'open') return failure('cancelled', 'cancelled');
             const confirmed = await rpc({ kind: 'current' }, bounded);
             if (confirmed.status !== 'ok') return confirmed;
-            if (lifecycle.closed() || lifecycle.revoked() || publicationMatches(confirmed, operationId, expectedGenerationId, snapshot, options) !== 'match')
+            if (
+              lifecycle.closed() ||
+              lifecycle.revoked() ||
+              confirmed.generation?.generationId !== current.generation.generationId ||
+              publicationMatches(confirmed, operationId, expectedGenerationId, snapshot, options) !== 'match'
+            )
               return failure('stale', 'binding-mismatch');
-            lifecycle.admit(current.generation.generationId);
-            work = { ...work, indexDiskBytes: current.diskBytes };
+            chargedGeneration = current.generation.generationId;
+            const alreadyCharged = settledDisk.get(options.budget)?.get(diskChargeKey(chargedGeneration)) ?? 0;
+            const additionalDisk = Math.max(0, confirmed.diskBytes - alreadyCharged);
+            if (additionalDisk > diskBound) return failure('exhausted', 'scan-limit');
+            work = { ...work, indexDiskBytes: additionalDisk };
+            lifecycle.admit(chargedGeneration);
             return { status: 'ok' as const, generation: current.generation, vectorWrites: 0, reusedChunks: current.chunks.length };
           }
           if ((current.generation?.generationId ?? null) !== expectedGenerationId) return failure('stale', 'binding-mismatch');
+          if (!maximum.indexedFiles) return failure('exhausted', 'scan-limit');
           const begin = await rpc({ kind: 'begin', attempt, leaseUntil: bounded.deadlineEpochMs, diskBytes: diskBound }, bounded);
           if (begin.status !== 'ok') return begin;
           const reuse = !!current.generation && compatible(current.generation, snapshot, options);
@@ -135,13 +157,17 @@ export function createIndexRefresh(
             for (const chunk of built.chunks) {
               const check = await guard(snapshot, bounded);
               if (check) return check;
-              const vector = await options.embedding.embed(chunk.embeddingInput, bounded.signal);
+              const vector = await waitForIndexControl(options.embedding.embed(chunk.embeddingInput, bounded.signal), bounded);
+              if ('reasonCode' in vector) return vector;
+              if (bounded.signal.aborted) return failure('cancelled', 'cancelled');
+              if (Date.now() >= bounded.deadlineEpochMs) return failure('exhausted', 'deadline');
               if (vector.status !== 'ok')
                 return failure(
                   vector.status === 'cancelled' ? 'cancelled' : vector.status === 'overflow' ? 'exhausted' : 'unavailable',
                   vector.status === 'cancelled' ? 'cancelled' : vector.status === 'overflow' ? 'scan-limit' : 'store-unavailable',
                 );
-              rows.push({ metadata: chunk.metadata, embeddingInputTokens: vector.tokens, vector: vector.vector });
+              if (!Array.isArray(vector.vector) || vector.vector.length !== options.embedding.profile.dimension) return failure('invalid', 'invalid-request');
+              rows.push({ metadata: chunk.metadata, embeddingInputTokens: vector.tokens, vector: [...vector.vector] });
               if ((writes + reused + rows.length) * (options.embedding.profile.dimension * 8 + 2048) > limits.maxWorkerMemoryBytes / 2) return failure('exhausted', 'scan-limit');
             }
             if (!validView({ status: 'ok', generation: null, files: [built.file], chunks: rows, diskBytes: 0 }, options)) return failure('invalid', 'invalid-request');
@@ -177,6 +203,7 @@ export function createIndexRefresh(
           // unless an authorized result/reopen establishes the observed allocation.
           const stagedDiskBytes = work.indexDiskBytes ?? 0;
           work = { ...work, indexDiskBytes: diskBound };
+          chargedGeneration = generation.generationId;
           const published = await rpc(
             {
               kind: 'publish',
@@ -209,6 +236,7 @@ export function createIndexRefresh(
                   lifecycle.closed() ||
                   lifecycle.revoked() ||
                   options.budget.snapshot().status !== 'open' ||
+                  confirmed.generation?.generationId !== reopened.generation.generationId ||
                   publicationMatches(confirmed, operationId, expectedGenerationId, snapshot, options) !== 'match'
                 )
                   return failure('stale', 'binding-mismatch');
@@ -228,6 +256,7 @@ export function createIndexRefresh(
             lifecycle.closed() ||
             lifecycle.revoked() ||
             options.budget.snapshot().status !== 'open' ||
+            confirmed.generation?.generationId !== generation.generationId ||
             publicationMatches(confirmed, operationId, expectedGenerationId, snapshot, options) !== 'match'
           )
             return failure('stale', 'binding-mismatch');
@@ -248,6 +277,12 @@ export function createIndexRefresh(
     if (!execution.ok) {
       lifecycle.admit(undefined);
       return failure(execution.reasonCode === 'cancelled' ? 'cancelled' : 'exhausted', execution.reasonCode === 'cancelled' ? 'cancelled' : 'deadline');
+    }
+    if (chargedGeneration && work.indexDiskBytes) {
+      const charged = settledDisk.get(options.budget) ?? new Map<string, number>();
+      const key = diskChargeKey(chargedGeneration);
+      charged.set(key, (charged.get(key) ?? 0) + work.indexDiskBytes);
+      settledDisk.set(options.budget, charged);
     }
     return execution.value;
   }

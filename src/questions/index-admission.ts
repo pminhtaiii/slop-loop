@@ -109,6 +109,10 @@ export function indexOptions(input: QuestionIndexOptions): QuestionIndexOptions 
     typeof input.embedding?.embed !== 'function' ||
     typeof input.embedding?.count !== 'function' ||
     !input.embedding.profile ||
+    typeof input.embedding.profile.id !== 'string' ||
+    !input.embedding.profile.id.trim() ||
+    !Number.isSafeInteger(input.embedding.profile.maxTokens) ||
+    input.embedding.profile.maxTokens < 1 ||
     !Number.isSafeInteger(input.embedding.profile.dimension) ||
     input.embedding.profile.dimension < 1 ||
     input.embedding.profile.dimension > input.limits.maxVectorDimensions ||

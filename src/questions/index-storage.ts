@@ -66,7 +66,8 @@ export function openIndexStorage(path: string, roots: readonly string[], limits:
   };
   return command => {
     try {
-      if (diskBytes() > limits.maxIndexDiskBytes) return { status: 'exhausted', reasonCode: 'scan-limit' };
+      // Revocation can reclaim an oversized store under the worker's time and memory bounds.
+      if (!(command.kind === 'cleanup' && command.revoke) && diskBytes() > limits.maxIndexDiskBytes) return { status: 'exhausted', reasonCode: 'scan-limit' };
       if (command.kind === 'current') return empty();
       if (command.kind === 'begin') {
         const bound = Math.floor((Math.min(command.diskBytes, limits.maxIndexDiskBytes) - 8192) / 8192);
@@ -176,6 +177,7 @@ export function openIndexStorage(path: string, roots: readonly string[], limits:
         }
         database.exec('COMMIT');
         if (command.revoke || command.attempt === null) database.exec('VACUUM');
+        if (command.revoke && diskBytes() > limits.maxIndexDiskBytes) return { status: 'exhausted', reasonCode: 'scan-limit' };
         return empty();
       } finally {
         if (database.isTransaction) database.exec('ROLLBACK');

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,7 +29,7 @@ const limits = {
 };
 const control = () => ({ signal: new AbortController().signal, deadlineEpochMs: Date.now() + 20_000 });
 
-function budget(retrieval = limits) {
+function budget(retrieval = limits, maxScannedBytes = 10_000_000) {
   const result = createQuestionBudgetLedger(
     {
       schemaVersion: 'question-budget/1',
@@ -37,7 +37,7 @@ function budget(retrieval = limits) {
         maxToolCalls: 200,
         maxModelCalls: 10,
         maxScannedFiles: 1000,
-        maxScannedBytes: 10_000_000,
+        maxScannedBytes,
         maxReturnedBytes: 1_000_000,
         maxInputTokensPerCall: 2000,
         maxOutputTokensPerCall: 500,
@@ -253,7 +253,10 @@ test('operation identity reconciles a committed refresh after reopen without dup
   const directory = await fixture();
   let embedded = 0;
   let authorized = true;
+  const oneFile = { ...limits, maxFiles: 1 };
   const options = configuration(directory, {
+    limits: oneFile,
+    budget: budget(oneFile),
     authorize: async () => authorized,
     embedding: createControlledQuestionEmbedding(
       { id: 'controlled/1', dimension: 2, maxTokens: 512 },
@@ -271,13 +274,22 @@ test('operation identity reconciles a committed refresh after reopen without dup
     const saved = await index.synchronize(request, control());
     assert.equal(saved.status, 'ok');
     if (saved.status !== 'ok') return;
+    const charged = options.budget.snapshot().consumed.indexDiskBytes;
+    assert.ok(charged > 0);
     await index.close();
-    index = createQuestionIndex({ ...options, budget: budget() });
+    index = createQuestionIndex(options);
+    const sameLedger = await index.synchronize(request, control());
+    assert.equal(sameLedger.status, 'ok');
+    assert.equal(options.budget.snapshot().consumed.indexDiskBytes, charged);
+    await index.close();
+    const freshBudget = budget(oneFile);
+    index = createQuestionIndex({ ...options, budget: freshBudget });
     const recovered = await index.synchronize(request, control());
     assert.equal(recovered.status, 'ok');
     if (recovered.status !== 'ok') return;
     assert.equal(recovered.generation.generationId, saved.generation.generationId);
     assert.equal(recovered.vectorWrites, 0);
+    assert.equal(freshBudget.snapshot().consumed.indexDiskBytes, charged);
     assert.equal(embedded, 1);
     assert.equal((await index.read({ snapshot: initial.snapshot, generationId: recovered.generation.generationId, maxChunks: 200 }, control())).status, 'ok');
     assert.equal((await index.synchronize({ ...request, operationId: 'foreign-operation' }, control())).status, 'stale');
@@ -355,6 +367,10 @@ test('malformed embedding profiles and noncallable ports fail before binding', a
   try {
     for (const embedding of [
       { ...options.embedding, profile: undefined },
+      { ...options.embedding, profile: { ...options.embedding.profile, id: undefined } },
+      { ...options.embedding, profile: { ...options.embedding.profile, id: ' ' } },
+      { ...options.embedding, profile: { ...options.embedding.profile, maxTokens: undefined } },
+      { ...options.embedding, profile: { ...options.embedding.profile, maxTokens: 1.5 } },
       { ...options.embedding, profile: { ...options.embedding.profile, dimension: NaN } },
       { ...options.embedding, profile: { ...options.embedding.profile, dimension: 0 } },
       { ...options.embedding, count: true },
@@ -368,53 +384,55 @@ test('malformed embedding profiles and noncallable ports fail before binding', a
   }
 });
 
-test('a durable head changed during final authority approval cannot validate the predecessor', async () => {
-  const directory = await fixture();
-  let pause = false;
-  let calls = 0;
-  let enter: (() => void) | undefined;
-  let release: (() => void) | undefined;
-  const entered = new Promise<void>(resolve => {
-    enter = resolve;
+for (const operation of ['validateCurrent', 'read'] as const)
+  test(`a durable head changed during final authority approval cannot ${operation} the predecessor`, async () => {
+    const directory = await fixture();
+    let pause = false;
+    let calls = 0;
+    let enter: (() => void) | undefined;
+    let release: (() => void) | undefined;
+    const entered = new Promise<void>(resolve => {
+      enter = resolve;
+    });
+    const options = configuration(directory, {
+      authorize: async () => {
+        if (pause && ++calls === 2) {
+          enter?.();
+          await new Promise<void>(resolve => {
+            release = resolve;
+          });
+        }
+        return true;
+      },
+    });
+    const index = createQuestionIndex(options);
+    const rival = createQuestionIndex({ ...options, budget: budget(), authorize: async () => true });
+    try {
+      const initial = source({ 'a.py': 'def first():\n    pass' });
+      const saved = await index.synchronize({ ...initial, expectedGenerationId: null }, control());
+      assert.equal(saved.status, 'ok');
+      if (saved.status !== 'ok') return;
+      pause = true;
+      const reference = { snapshot: initial.snapshot, generationId: saved.generation.generationId, maxChunks: 200 };
+      const checking = index[operation](reference, control());
+      await bounded(
+        Promise.race([
+          entered,
+          checking.then(() => {
+            throw new Error('validation completed before authority gate');
+          }),
+        ]),
+      );
+      const next = source({ 'a.py': 'def newer():\n    pass' }, 'next');
+      assert.equal((await rival.synchronize({ ...next, expectedGenerationId: saved.generation.generationId }, control())).status, 'ok');
+      release?.();
+      assert.equal((await bounded(checking)).status, 'stale');
+    } finally {
+      release?.();
+      await Promise.all([index.close(), rival.close()]);
+      await rm(directory, { recursive: true, force: true });
+    }
   });
-  const options = configuration(directory, {
-    authorize: async () => {
-      if (pause && ++calls === 2) {
-        enter?.();
-        await new Promise<void>(resolve => {
-          release = resolve;
-        });
-      }
-      return true;
-    },
-  });
-  const index = createQuestionIndex(options);
-  const rival = createQuestionIndex({ ...options, budget: budget(), authorize: async () => true });
-  try {
-    const initial = source({ 'a.py': 'def first():\n    pass' });
-    const saved = await index.synchronize({ ...initial, expectedGenerationId: null }, control());
-    assert.equal(saved.status, 'ok');
-    if (saved.status !== 'ok') return;
-    pause = true;
-    const checking = index.validateCurrent({ snapshot: initial.snapshot, generationId: saved.generation.generationId }, control());
-    await bounded(
-      Promise.race([
-        entered,
-        checking.then(() => {
-          throw new Error('validation completed before authority gate');
-        }),
-      ]),
-    );
-    const next = source({ 'a.py': 'def newer():\n    pass' }, 'next');
-    assert.equal((await rival.synchronize({ ...next, expectedGenerationId: saved.generation.generationId }, control())).status, 'ok');
-    release?.();
-    assert.equal((await bounded(checking)).status, 'stale');
-  } finally {
-    release?.();
-    await Promise.all([index.close(), rival.close()]);
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 
 test('final serialized generation memory quota refusal keeps the complete predecessor', async () => {
   const directory = await fixture();
@@ -448,6 +466,147 @@ test('final serialized generation memory quota refusal keeps the complete predec
         read.chunks.map(row => row.metadata.symbolName),
         ['predecessor'],
       );
+  } finally {
+    await index.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('revocation reclaims an oversized index that refuses ordinary reads', async () => {
+  const directory = await fixture();
+  const small = { ...limits, maxIndexDiskBytes: 200_000 };
+  const options = configuration(directory, { limits: small, budget: budget(small) });
+  const index = createQuestionIndex(options);
+  try {
+    const initial = source({ 'a.py': 'def first():\n    pass' });
+    const saved = await index.synchronize({ ...initial, expectedGenerationId: null }, control());
+    assert.equal(saved.status, 'ok');
+    if (saved.status !== 'ok') return;
+    const database = new DatabaseSync(options.databasePath);
+    try {
+      database.exec('CREATE TABLE fixture_padding (data BLOB); INSERT INTO fixture_padding VALUES(zeroblob(400000)); DROP TABLE fixture_padding');
+    } finally {
+      database.close();
+    }
+    assert.ok((await stat(options.databasePath)).size > small.maxIndexDiskBytes);
+    assert.equal((await index.read({ snapshot: initial.snapshot, generationId: saved.generation.generationId, maxChunks: 200 }, control())).status, 'exhausted');
+    await index.revoke();
+    assert.ok((await stat(options.databasePath)).size < small.maxIndexDiskBytes);
+    const reopened = createQuestionIndex({ ...options, budget: budget(small) });
+    try {
+      assert.equal((await reopened.synchronize({ ...initial, expectedGenerationId: null }, control())).status, 'ok');
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await index.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('cancelled embedding settles promptly and cannot stage into a retry', async () => {
+  const directory = await fixture();
+  const options = configuration(directory);
+  const embeddingStarted = Promise.withResolvers<undefined>();
+  const late = Promise.withResolvers<{ status: 'ok'; tokens: number; vector: number[] }>();
+  let calls = 0;
+  const index = createQuestionIndex({
+    ...options,
+    embedding: {
+      ...options.embedding,
+      async embed() {
+        if (++calls !== 1) return { status: 'ok', tokens: 1, vector: [1, 0] };
+        embeddingStarted.resolve(undefined);
+        return late.promise;
+      },
+    },
+  });
+  const abort = new AbortController();
+  try {
+    const request = { ...source({ 'a.py': 'def first():\n    pass' }), expectedGenerationId: null };
+    const pending = index.synchronize(request, { ...control(), signal: abort.signal });
+    await bounded(embeddingStarted.promise);
+    abort.abort();
+    assert.equal((await bounded(pending)).status, 'cancelled');
+    const retry = index.synchronize(request, control());
+    late.resolve({ status: 'ok', tokens: 1, vector: [0, 1] });
+    const saved = await bounded(retry);
+    assert.equal(saved.status, 'ok');
+    if (saved.status !== 'ok') return;
+    const read = await index.read({ snapshot: request.snapshot, generationId: saved.generation.generationId, maxChunks: 200 }, control());
+    assert.equal(read.status, 'ok');
+    if (read.status === 'ok')
+      assert.deepEqual(
+        read.chunks.map(row => row.vector),
+        [[1, 0]],
+      );
+  } finally {
+    abort.abort();
+    await index.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('replay refuses a replacement head with the same operation identity', async () => {
+  const directory = await fixture();
+  const entered = Promise.withResolvers<undefined>();
+  const release = Promise.withResolvers<undefined>();
+  let calls = 0;
+  let replaying = false;
+  const first = configuration(directory, {
+    async authorize() {
+      if (replaying && ++calls === 2) {
+        entered.resolve(undefined);
+        await release.promise;
+      }
+      return true;
+    },
+  });
+  const index = createQuestionIndex(first);
+  const revoker = createQuestionIndex(configuration(directory));
+  const replacement = createQuestionIndex(configuration(directory));
+  const request = { ...source({ 'a.py': 'def first():\n    pass' }), expectedGenerationId: null, operationId: 'repeated-operation' };
+  try {
+    const saved = await index.synchronize(request, control());
+    assert.equal(saved.status, 'ok');
+    if (saved.status !== 'ok') return;
+    const charged = first.budget.snapshot().consumed.indexDiskBytes;
+    replaying = true;
+    const pending = index.synchronize(request, control());
+    await bounded(entered.promise);
+    await revoker.revoke();
+    const newer = await replacement.synchronize(request, control());
+    assert.equal(newer.status, 'ok');
+    if (newer.status !== 'ok') return;
+    assert.notEqual(newer.generation.generationId, saved.generation.generationId);
+    release.resolve(undefined);
+    assert.equal((await bounded(pending)).status, 'stale');
+    assert.equal(first.budget.snapshot().consumed.indexDiskBytes, charged);
+  } finally {
+    release.resolve(undefined);
+    await Promise.all([index.close(), revoker.close(), replacement.close()]);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('replay does not require a second source scan reservation', async () => {
+  const directory = await fixture();
+  const ledger = budget(limits, 100_000);
+  const index = createQuestionIndex(configuration(directory, { budget: ledger }));
+  const request = { ...source({ 'a.py': 'def first():\n    pass' }), expectedGenerationId: null, operationId: 'without-rescan' };
+  try {
+    const saved = await index.synchronize(request, control());
+    assert.equal(saved.status, 'ok');
+    const consumed = ledger.snapshot().consumed;
+    assert.ok(consumed.scannedBytes > 0);
+    const replay = await index.synchronize(request, control());
+    assert.equal(replay.status, 'ok');
+    assert.equal(ledger.snapshot().consumed.scannedBytes, consumed.scannedBytes);
+    assert.equal(ledger.snapshot().consumed.indexDiskBytes, consumed.indexDiskBytes);
+    if (saved.status !== 'ok') return;
+    const next = { ...source({ 'a.py': 'def second():\n    pass' }, 'other'), expectedGenerationId: saved.generation.generationId };
+    assert.equal((await index.synchronize(next, control())).status, 'exhausted');
+    assert.equal(ledger.snapshot().consumed.scannedBytes, consumed.scannedBytes);
   } finally {
     await index.close();
     await rm(directory, { recursive: true, force: true });

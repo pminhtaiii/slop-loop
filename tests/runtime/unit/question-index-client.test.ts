@@ -104,3 +104,30 @@ test('authority waits release abort listeners after successful and cancelled wai
   assert.deepEqual(await pending, { status: 'cancelled', reasonCode: 'cancelled' });
   assert.equal(listeners, 0);
 });
+
+test('cancelling a dispatched inspect leaves the writer lease intact', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'question-client-'));
+  await mkdir(join(directory, 'target'));
+  let stops = 0;
+  const client = createIndexClient({ databasePath: join(directory, 'index.sqlite'), targetRoots: [join(directory, 'target')], limits }, () => {
+    stops++;
+  });
+  const control = { signal: new AbortController().signal, deadlineEpochMs: Date.now() + 5000 };
+  const abort = new AbortController();
+  try {
+    assert.equal((await client.rpc({ kind: 'begin', attempt: 'writer', leaseUntil: control.deadlineEpochMs, diskBytes: limits.maxIndexDiskBytes }, control)).status, 'ok');
+    const add = abort.signal.addEventListener.bind(abort.signal);
+    let waits = 0;
+    abort.signal.addEventListener = (...args) => {
+      add(...args);
+      if (++waits === 2) abort.abort();
+    };
+    assert.deepEqual(await client.rpc({ kind: 'inspect', maxChunks: 1 }, { ...control, signal: abort.signal }), { status: 'cancelled', reasonCode: 'cancelled' });
+    assert.equal(stops, 0);
+    assert.equal((await client.rpc({ kind: 'current' }, control)).status, 'ok');
+    assert.equal((await client.rpc({ kind: 'cleanup', attempt: 'writer', revoke: false }, control)).status, 'ok');
+  } finally {
+    await client.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

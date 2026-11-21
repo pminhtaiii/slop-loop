@@ -2,32 +2,12 @@
 import type { QuestionAbsenceReceiptV1 } from '../contracts/questions/contracts.ts';
 import { scanExactFilePage } from './retrieval-file-scan.ts';
 import { computeFileDigest } from '../foundation/docker-workspace-policy.ts';
-import type { QuestionRepositoryOperationControl, QuestionRepositoryWork } from '../foundation/repository-types.ts';
+import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import type { QuestionIndexFailure, QuestionIndexView } from './index.ts';
 import { sameBinding } from './retrieval-admission.ts';
 import type { QuestionAbsenceResult, QuestionRetrievalOptions } from './retrieval-types.ts';
-import type { QuestionBudgetWorkV1 } from './budget.ts';
+import { retrievalInterruption as stopped, trackRepositoryWork, withRetrievalControl } from './retrieval-control.ts';
 
-function track(maximum: QuestionBudgetWorkV1, control: QuestionRepositoryOperationControl) {
-  const consumed = { scannedFiles: 0, scannedBytes: 0, returnedBytes: 0 };
-  const meter = {
-    remaining(key: keyof typeof consumed) {
-      return Math.max(0, Math.min((maximum[key] ?? 0) - consumed[key], control.work?.remaining(key) ?? Number.MAX_SAFE_INTEGER));
-    },
-    charge(work: QuestionRepositoryWork) {
-      const keys = ['scannedFiles', 'scannedBytes', 'returnedBytes'] as const;
-      if (keys.some(key => !Number.isSafeInteger(work[key] ?? 0) || (work[key] ?? 0) < 0 || (work[key] ?? 0) > meter.remaining(key))) return false;
-      if (control.work && !control.work.charge(work)) return false;
-      for (const key of keys) consumed[key] += work[key] ?? 0;
-      return true;
-    },
-  };
-  return { consumed, meter };
-}
-
-function stopped(control: QuestionRepositoryOperationControl): QuestionIndexFailure | undefined {
-  return control.signal.aborted ? { status: 'cancelled', reasonCode: 'cancelled' } : Date.now() >= control.deadlineEpochMs ? { status: 'exhausted', reasonCode: 'deadline' } : undefined;
-}
 export interface QuestionAbsenceAuthority {
   prove(view: QuestionIndexView | undefined, query: string | undefined, eligible: boolean, matched: boolean, control: QuestionRepositoryOperationControl): Promise<QuestionAbsenceResult>;
   validate(receipt: unknown, control: QuestionRepositoryOperationControl): Promise<{ readonly status: 'ok' } | QuestionIndexFailure>;
@@ -74,7 +54,7 @@ export function createAbsenceAuthority(options: QuestionRetrievalOptions, isClos
           if (stop) return stop;
           const admission = options.budget.reserveRepositoryOperation('read');
           if (!admission.ok) return { status: admission.reasonCode === 'cancelled' ? 'cancelled' : 'exhausted', reasonCode: admission.reasonCode === 'cancelled' ? 'cancelled' : 'scan-limit' };
-          const work = track(admission.value.maximumWork, control);
+          const work = trackRepositoryWork(admission.value.maximumWork, control.work);
           const execution = await admission.value.execute(
             async context => {
               const bounded = {
@@ -82,20 +62,26 @@ export function createAbsenceAuthority(options: QuestionRetrievalOptions, isClos
                 deadlineEpochMs: Math.floor(Math.min(control.deadlineEpochMs, Date.now() + context.remainingMs)),
                 work: work.meter,
               };
-              const fresh = await current(bounded);
-              if (fresh.status !== 'ok') return fresh;
-              const binding = await options.repository.checkBinding(bounded);
-              const stop = stopped(bounded);
-              if (stop) return stop;
-              if (isClosed()) return { status: 'unavailable' as const, reasonCode: 'store-unavailable' as const };
-              if (binding.status !== 'ok')
-                return binding.status === 'cancelled'
-                  ? { status: 'cancelled' as const, reasonCode: 'cancelled' as const }
-                  : binding.status === 'stale'
-                    ? { status: 'stale' as const, reasonCode: 'binding-mismatch' as const }
-                    : { status: 'insufficient' as const, reasonCode: 'incomplete-coverage' as const };
-              if (!sameBinding(binding.binding, options.identity.binding)) return { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
-              return scanExactFilePage(options, path, nextLine ?? 1, bounded);
+              return withRetrievalControl(
+                bounded,
+                async bounded => {
+                  const fresh = await current(bounded);
+                  if (fresh.status !== 'ok') return fresh;
+                  const binding = await options.repository.checkBinding(bounded);
+                  const stop = stopped(bounded);
+                  if (stop) return stop;
+                  if (isClosed()) return { status: 'unavailable' as const, reasonCode: 'store-unavailable' as const };
+                  if (binding.status !== 'ok')
+                    return binding.status === 'cancelled'
+                      ? { status: 'cancelled' as const, reasonCode: 'cancelled' as const }
+                      : binding.status === 'stale'
+                        ? { status: 'stale' as const, reasonCode: 'binding-mismatch' as const }
+                        : { status: 'insufficient' as const, reasonCode: 'incomplete-coverage' as const };
+                  if (!sameBinding(binding.binding, options.identity.binding)) return { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
+                  return scanExactFilePage(options, path, nextLine ?? 1, bounded);
+                },
+                failure => failure,
+              );
             },
             () => ({ kind: 'work', work: work.consumed }),
           );
@@ -107,6 +93,8 @@ export function createAbsenceAuthority(options: QuestionRetrievalOptions, isClos
       }
       const after = await confirm(control);
       if (after.status !== 'ok') return after;
+      const interrupted = stopped(control);
+      if (interrupted) return interrupted;
       issued = Object.freeze({
         schemaVersion: 'question-retrieval/1',
         binding: options.identity.binding,
@@ -136,7 +124,7 @@ export function createAbsenceAuthority(options: QuestionRetrievalOptions, isClos
     if (isClosed()) return { status: 'unavailable', reasonCode: 'store-unavailable' };
     const admission = options.budget.reserveFinalValidation();
     if (!admission.ok) return { status: admission.reasonCode === 'cancelled' ? 'cancelled' : 'exhausted', reasonCode: admission.reasonCode === 'cancelled' ? 'cancelled' : 'scan-limit' };
-    const work = track(admission.value.maximumWork, control);
+    const work = trackRepositoryWork(admission.value.maximumWork, control.work);
     const execution = await admission.value.execute(
       async context => {
         const bounded = {
@@ -144,16 +132,23 @@ export function createAbsenceAuthority(options: QuestionRetrievalOptions, isClos
           deadlineEpochMs: Math.floor(Math.min(control.deadlineEpochMs, Date.now() + context.remainingMs)),
           work: work.meter,
         };
-        const fresh = await current(bounded);
-        if (fresh.status !== 'ok') return fresh;
-        const binding = await options.repository.checkBinding(bounded);
-        const after = await current(bounded);
-        if (after.status !== 'ok') return after;
-        return binding.status === 'ok' && sameBinding(binding.binding, options.identity.binding)
-          ? { status: 'ok' as const }
-          : binding.status === 'cancelled'
-            ? { status: 'cancelled' as const, reasonCode: 'cancelled' as const }
-            : { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
+        return withRetrievalControl(
+          bounded,
+          async bounded => {
+            const fresh = await current(bounded);
+            if (fresh.status !== 'ok') return fresh;
+            const binding = await options.repository.checkBinding(bounded);
+            const matched = binding.status === 'ok' && sameBinding(binding.binding, options.identity.binding);
+            const after = await current(bounded);
+            if (after.status !== 'ok') return after;
+            return matched
+              ? { status: 'ok' as const }
+              : binding.status === 'cancelled'
+                ? { status: 'cancelled' as const, reasonCode: 'cancelled' as const }
+                : { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
+          },
+          failure => failure,
+        );
       },
       () => ({ kind: 'work', work: work.consumed }),
     );
