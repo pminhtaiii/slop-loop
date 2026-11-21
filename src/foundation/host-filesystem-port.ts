@@ -5,8 +5,8 @@
  * ControlledRepositoryReader's containment check directly: a link that leaves the
  * workspace resolves to an absolute path and is refused there.
  */
-import { realpathSync } from 'node:fs';
-import { mkdir, open, lstat, opendir, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { constants, realpathSync } from 'node:fs';
+import { mkdir, open, lstat, opendir, readdir, readlink, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { PortProvenance } from '../contracts/foundation/uc03.ts';
 import { computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
@@ -102,11 +102,11 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     return absoluteTarget.startsWith(prefix) ? toPosix(absoluteTarget.slice(prefix.length)) : toPosix(absoluteTarget);
   }
 
-  private async checkedAbsolute(canonicalPath: string, control: QuestionRepositoryOperationControl): Promise<string> {
+  private async checkedAbsolute(canonicalPath: string, control?: QuestionRepositoryOperationControl): Promise<string> {
     const expected = this.absolute(canonicalPath);
-    checkControl(control);
+    if (control) checkControl(control);
     const resolved = await realpath(expected);
-    checkControl(control);
+    if (control) checkControl(control);
     if (resolved !== expected) throw new Error('WORKSPACE_ESCAPE: Controlled traversal must stay on canonical workspace paths');
     return resolved;
   }
@@ -205,7 +205,11 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     return computeCanonicalSha256(lines.join(''));
   }
 
-  async getCurrentRevisionDigestBounded(limits: Readonly<{ maxEntries: number; maxFiles: number; maxBytes: number }>, control: QuestionRepositoryOperationControl): Promise<string> {
+  async getCurrentRevisionDigestBounded(
+    limits: Readonly<{ maxEntries: number; maxFiles: number; maxBytes: number }>,
+    control: QuestionRepositoryOperationControl,
+    observeFile?: (path: string, bytes: Buffer, digest: string) => void,
+  ): Promise<string> {
     if (!limits || !positiveLimit(limits.maxEntries) || !positiveLimit(limits.maxFiles) || !positiveLimit(limits.maxBytes)) {
       throw new Error('INVALID_LIMITS: bounded digest limits must be positive safe integers');
     }
@@ -244,7 +248,9 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
         byteCount += bytes.byteLength + digestBytes;
         if (byteCount > limits.maxBytes) throw new Error('SCAN_LIMIT: Revision digest exceeded its byte allowance');
         fileCount += 1;
-        lines.push(`${child}\0${computeFileDigest(bytes)}\n`);
+        const digest = computeFileDigest(bytes);
+        lines.push(`${child}\0${digest}\n`);
+        observeFile?.(child, bytes, digest);
       }
     }
     lines.sort();
@@ -254,9 +260,18 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
 
   /** Raw bytes for trusted host mirroring; shares the bounded read and controlled containment checks. */
   async readBytes(canonicalPath: string, maxBytes?: number, control?: QuestionRepositoryOperationControl): Promise<Buffer> {
-    const path = control ? await this.checkedAbsolute(canonicalPath, control) : this.absolute(canonicalPath);
-    const handle = await open(path, 'r');
+    const path = await this.checkedAbsolute(canonicalPath, control);
+    const expected = await lstat(path, { bigint: true });
+    if (!expected.isFile()) throw new Error('WORKSPACE_ESCAPE: Byte reads require a regular file');
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
+      const opened = await handle.stat({ bigint: true });
+      // Linux can resolve the descriptor itself without traversing mutable parents a second time.
+      if (process.platform === 'linux' && (await readlink(`/proc/self/fd/${handle.fd}`)) !== path) throw new Error('WORKSPACE_ESCAPE: Byte read descriptor is outside its canonical path');
+      const current = await lstat(await this.checkedAbsolute(canonicalPath, control), { bigint: true });
+      if (!opened.isFile() || !current.isFile() || opened.dev !== expected.dev || opened.ino !== expected.ino || opened.dev !== current.dev || opened.ino !== current.ino) {
+        throw new Error('WORKSPACE_ESCAPE: Byte read source changed');
+      }
       if (control) checkControl(control);
       if (maxBytes === undefined) {
         if (control) throw new Error('UNBOUNDED_READ_DENIED: A controlled byte read needs maxBytes');

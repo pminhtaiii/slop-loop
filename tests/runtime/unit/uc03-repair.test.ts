@@ -299,7 +299,7 @@ function forwardPublicStatePort(statePort: StatePort | StatePortV02): StatePort 
       beginAttempt: (claimId, executor) => v02Port.beginAttempt(claimId, executor),
       recordOutcome: receipt => v02Port.recordOutcome(receipt),
       reconcileObservedOutcome: receipt => v02Port.reconcileObservedOutcome(receipt),
-      reconcileUncertain: receipt => v02Port.reconcileUncertain(receipt),
+      reconcileUncertain: v02Port.reconcileUncertain.bind(v02Port),
       closeUnattemptedClaim: receipt => v02Port.closeUnattemptedClaim(receipt),
       checkpoint: state => v02Port.checkpoint(state),
       recover: taskId => v02Port.recover(taskId),
@@ -328,7 +328,7 @@ function forwardPublicStatePort(statePort: StatePort | StatePortV02): StatePort 
     reserve: (scope, kind, amount, actionId) => statePort.reserve(scope, kind, amount, actionId),
     reserveMany: (reservations, requestId, transactionRef) => statePort.reserveMany(reservations, requestId, transactionRef),
     settle: (actionId, usage) => statePort.settle(actionId, usage),
-    reconcileUncertain: (requestId, reconciliation) => statePort.reconcileUncertain(requestId, reconciliation),
+    reconcileUncertain: statePort.reconcileUncertain.bind(statePort),
     checkpoint: state => statePort.checkpoint(state),
     recover: taskId => statePort.recover(taskId),
   };

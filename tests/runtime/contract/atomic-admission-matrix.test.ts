@@ -192,6 +192,7 @@ function asProviderOutcome(receipt: AttemptOutcomeReceiptV02) {
 async function createIntegratedPatchHarness(options?: {
   readonly context?: RepositoryAdmissionContextV02;
   readonly statePort?: MemoryStatePortV02;
+  readonly onSettledPatch?: (revision: string) => Promise<void>;
   readonly beforePatch?: (input: {
     readonly patch: ApplyPatchAction;
     readonly context: RepositoryAdmissionContextV02;
@@ -299,6 +300,7 @@ async function createIntegratedPatchHarness(options?: {
     statePort: journal,
     taskControl: journal,
     workspaceManager: manager,
+    onSettledPatch: options?.onSettledPatch,
     adapterIdentity: 'matrix-patch-receiver',
     processIncarnation: 'matrix-patch-actor-1',
     fencingGeneration: 1,
@@ -1748,8 +1750,14 @@ test('Section 10 Case 8: Stale executor actor after fencing refuses execution', 
 // ---------------------------------------------------------------------------
 
 test('Section 10 Case 9: Crash or lost response rereads journal state; replaying outcome is idempotent with no blind retry', async () => {
+  const mirrored: string[] = [];
   const harness: Awaited<ReturnType<typeof createIntegratedPatchHarness>> = await createIntegratedPatchHarness({
     uncertainEvidence: 'observed-patch',
+    onSettledPatch: async revision => {
+      assert.ok(harness.manager.hasActiveWriterLease(harness.context.workspaceId));
+      mirrored.push(revision);
+      if (mirrored.length === 1) throw new Error('mirror failed');
+    },
     beforePatch: async ({ apply }) => {
       apply();
       throw new Error('simulated lost receiver response after patch dispatch');
@@ -1768,7 +1776,11 @@ test('Section 10 Case 9: Crash or lost response rereads journal state; replaying
   assert.equal(pending.attempts[0]?.attemptId, attempt.attemptId);
   assert.equal(pending.attempts[0]?.status, 'uncertain');
   assert.equal(pending.outcomes[0]?.receiptId, uncertainOutcome.receiptId);
+  await assert.rejects(harness.tools.recoverPatchOutcome(attempt.attemptId), /mirror failed/);
+  assert.ok(harness.manager.hasActiveWriterLease(harness.context.workspaceId));
   const recovered = await harness.tools.recoverPatchOutcome(attempt.attemptId);
+  const revision = (await harness.journal.loadTask(harness.context.taskId))?.repositoryRevisionDigest;
+  assert.deepEqual(mirrored, [revision, revision]);
   assert.equal(recovered.outcome, 'settled');
   const replay = await harness.journal.recordOutcome(uncertainOutcome);
   assert.deepEqual(replay, { outcome: 'already-recorded', receiptId: uncertainOutcome.receiptId });
