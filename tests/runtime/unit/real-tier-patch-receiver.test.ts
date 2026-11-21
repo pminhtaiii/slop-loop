@@ -46,6 +46,17 @@ test(
 );
 
 test(
+  'F-211-09: a backslash line that is not the exact no-newline marker is refused',
+  withTree({ 'mark.py': 'old\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    for (const diff of ['--- a/mark.py\n+++ b/mark.py\n@@ -1 +1 @@\n-old\n+new\n\\ arbitrary malformed content\n', '--- a/mark.py\n+++ b/mark.py\n@@ -1,2 +1,2 @@\n-old\n\\ arbitrary\n+new\n']) {
+      await assert.rejects(() => applyAdmittedPatch(filesystem, patch(['mark.py'], diff), 1024), /PATCH_UNPARSEABLE/);
+    }
+    assert.equal(readFileSync(join(root, 'mark.py'), 'utf8'), 'old\n');
+  }),
+);
+
+test(
   'F-211-03: a /dev/null destination is a deletion and is refused with the original bytes kept',
   withTree({ 'delete.py': 'old\n' }, async root => {
     const filesystem = new WorkspaceFilesystemPort({ root });
