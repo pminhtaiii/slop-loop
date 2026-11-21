@@ -35,6 +35,8 @@ interface SetupOverrides {
   readonly patchProposal?: (planRef: string) => Record<string, unknown>;
   /** Overrides the plan's `scopedPaths`, to test a plan whose scope excludes the patch target. */
   readonly scopedPaths?: readonly string[];
+  /** Overrides the required checks for the task. */
+  readonly requiredChecks?: BugTask['requiredChecks'];
 }
 
 async function setup(overrides: SetupOverrides = {}) {
@@ -55,7 +57,7 @@ async function setup(overrides: SetupOverrides = {}) {
     reproduction: 'pytest -q tests/test_calculator.py',
     acceptanceCriteria: ['divide(1, 0) raises ValueError'],
     constraints: [],
-    requiredChecks: [
+    requiredChecks: overrides.requiredChecks ?? [
       { checkId: 'check-zero', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: '/workspace/repo', timeoutMs: 1000, maxOutputBytes: 4096 },
     ],
     limits: { timeoutMs: 1000, maxOutputBytes: 4096, maxCpuCores: 1, maxMemoryBytes: 1048576, maxPids: 16 },
@@ -277,4 +279,31 @@ test('removing the Verify check admission stops the run before Review', async ()
   delete (withoutCheck as { admissionContextForCheck?: unknown }).admissionContextForCheck;
   const result = await runUC03GraphV02(h.bound.task, h.bound.ports, { ...h.config, trustedExpectedContext: withoutCheck }, patched.state ?? undefined);
   assert.notEqual(result.state?.node, 'Review', JSON.stringify(result.reasons));
+});
+
+test('Verify check admission accepts node-ID selector check (tests/test_x.py::test_y)', async () => {
+  const h = await setup({
+    requiredChecks: [
+      {
+        checkId: 'check-zero',
+        executable: 'pytest',
+        argv: ['-q', 'tests/test_calculator.py::test_divide_zero'],
+        purpose: 'reproduction',
+        workingDirectory: '/workspace/repo',
+        timeoutMs: 1000,
+        maxOutputBytes: 4096,
+      },
+    ],
+  });
+  const paused = await runUC03GraphV02(h.bound.task, h.bound.ports, h.config);
+  assert.equal(paused.outcome, 'pending-approval', JSON.stringify(paused.reasons));
+  h.setPlanRef(paused.state?.plan?.decisionRef ?? 'unused');
+  await decide(h, 'approve');
+  const patched = await runUC03GraphV02(h.bound.task, h.bound.ports, h.config, paused.state ?? undefined);
+  assert.equal(patched.outcome, 'pending-approval', JSON.stringify(patched.reasons));
+  assert.equal(patched.state?.node, 'Verify', JSON.stringify(patched.reasons));
+  await decide(h, 'approve');
+  const result = await runUC03GraphV02(h.bound.task, h.bound.ports, h.config, patched.state ?? undefined);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED', JSON.stringify(result.reasons));
+  assert.equal(result.state?.node, 'Review', JSON.stringify(result.reasons));
 });

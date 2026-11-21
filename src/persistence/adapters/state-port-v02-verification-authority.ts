@@ -19,7 +19,6 @@ import { computeCanonicalSha256, isRecordVerificationApprovalRequestV02, isVerif
 import type {
   ApprovalBinding,
   ApprovalBindingContext,
-  PolicyAuthorityRefV02,
   RecordVerificationApprovalRequestV02,
   RecordVerificationApprovalResultV02,
   TaskState,
@@ -30,22 +29,23 @@ import type { TrustedOperatorIdentity } from '../../contracts/approvals/contract
 import type { StatePortStore } from './state-port-v02-storage.ts';
 import type { ControlRecordV02 } from './state-port-v02-types.ts';
 import { DEFAULT_CONTROL } from './state-port-v02-types.ts';
-import { readSettledPatchAncestry } from './state-port-v02-journal.ts';
 import {
   approvalContextOf,
   authorityOf,
   bindIssuedDecision,
   bindingIdentityDigest,
   bindingMatchesContext,
-  currentVerificationMatches,
   holdEventDigest,
   issuedBindingMatches,
+  ownerContext,
   planMaterialDigest,
   policyIdentityOf,
+  readDecisionBindings,
+  readIssuedDecisionBinding,
   recordedResolution,
   rejectionHoldRef,
+  requestMatchesAuthority,
   requestRecord,
-  verificationContextOf,
 } from './state-port-v02-verification-records.ts';
 
 export interface DurableVerificationAuthorityOptions {
@@ -54,6 +54,8 @@ export interface DurableVerificationAuthorityOptions {
   readonly approvalStorageDir: string | undefined;
   /** The trusted operator whose channel recorded resolutions; absent, no resolution is ever accepted. */
   readonly operator: TrustedOperatorIdentity | undefined;
+  /** The fallback control head when no head has been persisted yet (matching readVerificationAuthoritySnapshot). */
+  readonly controlSeed?: ControlRecordV02 | undefined;
 }
 
 export class DurableVerificationAuthority {
@@ -61,6 +63,14 @@ export class DurableVerificationAuthority {
 
   constructor(options: DurableVerificationAuthorityOptions) {
     this.options = options;
+  }
+
+  private controlFallback(): ControlRecordV02 {
+    return this.options.controlSeed ?? DEFAULT_CONTROL;
+  }
+
+  readIssuedDecisionBinding(taskId: string, decisionId: string): ReturnType<typeof readIssuedDecisionBinding> {
+    return readIssuedDecisionBinding(this.options.store, taskId, decisionId);
   }
 
   private resolutionOf(storageDir: string, taskId: string, decisionId: string) {
@@ -90,17 +100,18 @@ export class DurableVerificationAuthority {
     const record = requestRecord(storageDir, decisionId);
     if (!record || record.decisionId !== decisionId) return { outcome: 'stale', reasonCode: 'UNKNOWN_DECISION' };
     if (record.taskId !== snapshot.approvalContext.currentTaskId) return { outcome: 'stale', reasonCode: 'CROSS_TASK_DECISION' };
-    const ownerContext = await this.ownerContext(record.taskId, decisionId, snapshot.purpose);
-    if (!ownerContext) return { outcome: 'stale', reasonCode: 'OWNER_CONTEXT_CHANGED' };
+    const owner = await ownerContext(this.options.store, record.taskId, decisionId, snapshot.purpose, this.controlFallback());
+    if (!owner) return { outcome: 'stale', reasonCode: 'OWNER_CONTEXT_CHANGED' };
     // Both the authority and the full owner-derived context must equal what the caller named, and the
     // binding must match the owner's own reconstruction — a caller-supplied stale context is never used.
-    const authority = ownerContext.authority;
+    const authority = owner.authority;
     if (authority.issuerKeyRef !== snapshot.expectedIssuerKeyRef || authority.decisionAuthorityGeneration !== snapshot.expectedDecisionAuthorityGeneration)
       return { outcome: 'stale', reasonCode: 'OWNER_AUTHORITY_CHANGED' };
+    if (!requestMatchesAuthority(record, authority)) return { outcome: 'stale', reasonCode: 'OWNER_AUTHORITY_CHANGED' };
     if (snapshot.purpose === 'current-verification' && !decisionId.startsWith('dec-verify-')) return { outcome: 'denied', reasonCode: 'NOT_A_VERIFICATION_DECISION' };
     if (
-      !bindingMatchesContext({ ...record.binding, status: 'pending' }, ownerContext.context.approvalContext) ||
-      computeCanonicalSha256(ownerContext.context.approvalContext) !== computeCanonicalSha256(snapshot.approvalContext)
+      !bindingMatchesContext({ ...record.binding, status: 'pending' }, owner.context.approvalContext) ||
+      computeCanonicalSha256(owner.context.approvalContext) !== computeCanonicalSha256(snapshot.approvalContext)
     )
       return { outcome: 'stale', reasonCode: 'OWNER_CONTEXT_CHANGED' };
     const recordedResolution = this.resolutionOf(storageDir, record.taskId, decisionId);
@@ -134,40 +145,16 @@ export class DurableVerificationAuthority {
     };
   }
 
-  /**
-   * The complete owner-derived context for one decision: the current head and plan for a current
-   * verification, or the plan and authority the one settled approved-plan patch ran under for the
-   * historical branch.
-   */
-  private async ownerContext(
-    taskId: string,
-    decisionId: string,
-    purpose: VerificationApprovalContextV02['purpose'],
-  ): Promise<{ readonly authority: PolicyAuthorityRefV02; readonly context: VerificationApprovalContextV02 } | null> {
-    const task = await this.options.store.readTask(taskId);
-    if (purpose === 'historical-patch') {
-      if (!task || task.plan?.decisionRef !== decisionId || task.node !== 'Verify') return null;
-      const ancestry = await readSettledPatchAncestry(this.options.store, { taskId, runId: task.runId, resultingRepositoryRevisionDigest: task.repositoryRevisionDigest });
-      const original = ancestry?.originalTaskState;
-      const authority = ancestry?.originalAuthorityRef;
-      if (!original?.plan || !authority || original.plan.decisionRef !== decisionId) return null;
-      return { authority, context: verificationContextOf(decisionId, original.plan, original, authority, 'historical-patch') };
-    }
-    const control = await this.options.store.readControl(taskId, DEFAULT_CONTROL);
-    const authority = authorityOf(control);
-    if (!task || !authority || !currentVerificationMatches(task, decisionId) || !task.plan) return null;
-    return { authority, context: approvalContextOf(decisionId, task.plan, task, authority) };
-  }
-
   /** The pre-patch check: one recorded plan decision is still a human approval at the named authority. */
   async planDecisionIsApproved(decisionId: string, context: VerificationApprovalContextV02): Promise<boolean> {
     const storageDir = this.options.approvalStorageDir;
     if (!storageDir || !isVerificationApprovalContextV02(context)) return false;
     const record = requestRecord(storageDir, decisionId);
     if (!record || record.decisionId !== decisionId || record.taskId !== context.approvalContext.currentTaskId) return false;
-    const control = await this.options.store.readControl(record.taskId, DEFAULT_CONTROL);
+    const control = await this.options.store.readControl(record.taskId, this.controlFallback());
     const authority = authorityOf(control);
     if (!authority || authority.issuerKeyRef !== context.expectedIssuerKeyRef || authority.decisionAuthorityGeneration !== context.expectedDecisionAuthorityGeneration) return false;
+    if (!requestMatchesAuthority(record, authority)) return false;
     const recordedResolution = this.resolutionOf(storageDir, record.taskId, decisionId);
     if (recordedResolution.status !== 'recorded' || recordedResolution.resolution.decision !== 'approved') return false;
     // The decision must still be the one this owner consumed at this authority; an advanced
@@ -184,11 +171,12 @@ export class DurableVerificationAuthority {
     const state = await this.options.store.readTask(taskId);
     const decisionId = state?.activeDecisionId;
     if (!state || !state.plan || state.node !== 'AwaitPlan' || !decisionId || state.plan.decisionRef !== decisionId) return undefined;
-    const authority = authorityOf(await this.options.store.readControl(taskId, DEFAULT_CONTROL));
+    const authority = authorityOf(await this.options.store.readControl(taskId, this.controlFallback()));
     if (!authority) return undefined;
     const record = requestRecord(storageDir, decisionId);
     const recorded = record ? this.resolutionOf(storageDir, record.taskId, decisionId) : { status: 'invalid' as const };
     if (!record || recorded.status !== 'recorded' || recorded.resolution.decision !== 'approved' || record.taskId !== taskId) return undefined;
+    if (!requestMatchesAuthority(record, authority)) return undefined;
     const context = approvalContextOf(decisionId, state.plan, state, authority);
     const binding: ApprovalBinding = { ...record.binding, status: 'approved' };
     if (!validateApprovalBinding(binding, context.approvalContext).ok || !bindingMatchesContext(binding, context.approvalContext)) return undefined;
@@ -219,7 +207,7 @@ export class DurableVerificationAuthority {
 
   private async recordLocked(storageDir: string, request: RecordVerificationApprovalRequestV02): Promise<RecordVerificationApprovalResultV02> {
     const state = await this.options.store.readTask(request.taskId);
-    const control = await this.options.store.readControl(request.taskId, DEFAULT_CONTROL);
+    const control = await this.options.store.readControl(request.taskId, this.controlFallback());
     const authority = authorityOf(control);
     const fail = (outcome: 'stale' | 'blocked' | 'unavailable' | 'conflict', reasonCode: string): RecordVerificationApprovalResultV02 => ({
       outcome,
@@ -243,8 +231,14 @@ export class DurableVerificationAuthority {
       state.activeDecisionId === request.decisionId &&
       (state.approvalDecisionRefs ?? []).includes(request.decisionId) &&
       planMaterialDigest(state) === request.expectedPlanMaterialDigest
-    )
+    ) {
+      const bindings = readDecisionBindings(this.options.store, request.taskId);
+      const issued = bindings?.get(request.decisionId);
+      if (!issued || issued.decisionAuthorityGeneration !== authority.decisionAuthorityGeneration || issued.issuerKeyRef !== authority.issuerKeyRef) {
+        return fail('stale', 'OWNER_AUTHORITY_CHANGED');
+      }
       return result('approved', state, control);
+    }
     if (control.mode === 'rejected' && control.holdRef === rejectionHoldRef(request.requestIdentity) && plan?.decisionRef === request.originalDecisionId) return result('rejected', state, control);
     if (state.node !== 'Verify' || !plan || plan.decisionRef !== request.originalDecisionId || state.activeDecisionId !== undefined) return fail('stale', 'VERIFY_STATE_MISMATCH');
     if (

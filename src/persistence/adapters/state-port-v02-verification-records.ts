@@ -26,6 +26,7 @@ import type { ApprovalRequestRecord, HumanResolution, TrustedOperatorIdentity } 
 import { validateApprovalRequestRecord, validateHumanResolution } from '../../contracts/approvals/contracts.ts';
 import { readEvents } from './approval-events.ts';
 import { decisionDir, taskDir } from './approval-types.ts';
+import { readSettledPatchAncestry } from './state-port-v02-journal.ts';
 import type { StatePortStore } from './state-port-v02-storage.ts';
 import type { ControlRecordV02 } from './state-port-v02-types.ts';
 
@@ -232,12 +233,18 @@ export interface IssuedDecisionBindingV02 {
   readonly bindingDigest: string;
 }
 
-/** Every bound decision, or `null` when the file is present but malformed (fail closed). */
+/** Every bound decision, or `null` when the file is present but malformed or parsed null (fail closed). */
 export function readDecisionBindings(store: StatePortStore, taskId: string): ReadonlyMap<string, IssuedDecisionBindingV02> | null {
   if (!SAFE_TASK_ID.test(taskId)) return null;
-  const raw = readJson<unknown>(store.statePath(taskId, DECISION_BINDINGS_FILE));
-  if (raw === null) return new Map();
-  if (!dataRecord(raw) || raw['schemaVersion'] !== 1 || !Array.isArray(raw['decisions'])) return null;
+  const filePath = store.statePath(taskId, DECISION_BINDINGS_FILE);
+  if (!existsSync(filePath)) return new Map();
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (raw === null || !dataRecord(raw) || raw['schemaVersion'] !== 1 || !Array.isArray(raw['decisions'])) return null;
   const bindings = new Map<string, IssuedDecisionBindingV02>();
   for (const row of raw['decisions']) {
     if (!dataRecord(row)) return null;
@@ -266,9 +273,53 @@ export async function bindIssuedDecision(store: StatePortStore, taskId: string, 
   return true;
 }
 
+/** Read one issued decision binding from the durable owner record, or null when absent or malformed. */
+export function readIssuedDecisionBinding(store: StatePortStore, taskId: string, decisionId: string): IssuedDecisionBindingV02 | null {
+  return readDecisionBindings(store, taskId)?.get(decisionId) ?? null;
+}
+
 /** Whether the persisted binding for `decisionId` names the same authority, generation and identity. */
 export function issuedBindingMatches(store: StatePortStore, taskId: string, decisionId: string, issuerKeyRef: string, generation: number, binding: ApprovalBinding): boolean {
   const bindings = readDecisionBindings(store, taskId);
   const issued = bindings?.get(decisionId);
   return !!issued && issued.issuerKeyRef === issuerKeyRef && issued.decisionAuthorityGeneration === generation && issued.bindingDigest === bindingIdentityDigest(binding);
+}
+
+/** Compare the request's full policy identity (policyId, policyVersion, configId, configVersion, issuerKeyRef) with the authority. */
+export function requestMatchesAuthority(record: ApprovalRequestRecord, authority: PolicyAuthorityRefV02): boolean {
+  if (record.policyId !== authority.policyId || record.policyVersion !== authority.policyVersion || record.configId !== authority.configId || record.configVersion !== authority.configVersion) {
+    return false;
+  }
+  const issuerKeyRef = (record as { issuerKeyRef?: unknown })['issuerKeyRef'];
+  if (typeof issuerKeyRef === 'string' && issuerKeyRef !== authority.issuerKeyRef) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * The complete owner-derived context for one decision: the current head and plan for a current
+ * verification, or the plan and authority the one settled approved-plan patch ran under for the
+ * historical branch.
+ */
+export async function ownerContext(
+  store: StatePortStore,
+  taskId: string,
+  decisionId: string,
+  purpose: VerificationApprovalContextV02['purpose'],
+  controlFallback: ControlRecordV02,
+): Promise<{ readonly authority: PolicyAuthorityRefV02; readonly context: VerificationApprovalContextV02 } | null> {
+  const task = await store.readTask(taskId);
+  if (purpose === 'historical-patch') {
+    if (!task || task.plan?.decisionRef !== decisionId || task.node !== 'Verify') return null;
+    const ancestry = await readSettledPatchAncestry(store, { taskId, runId: task.runId, resultingRepositoryRevisionDigest: task.repositoryRevisionDigest });
+    const original = ancestry?.originalTaskState;
+    const authority = ancestry?.originalAuthorityRef;
+    if (!original?.plan || !authority || original.plan.decisionRef !== decisionId) return null;
+    return { authority, context: verificationContextOf(decisionId, original.plan, original, authority, 'historical-patch') };
+  }
+  const control = await store.readControl(taskId, controlFallback);
+  const authority = authorityOf(control);
+  if (!task || !authority || !currentVerificationMatches(task, decisionId) || !task.plan) return null;
+  return { authority, context: approvalContextOf(decisionId, task.plan, task, authority) };
 }

@@ -47,7 +47,7 @@ export async function currentAuthority(port: DurableStatePortV02, state: TaskSta
   return owner;
 }
 
-function pinnedTestPath(argv: readonly string[]): string | undefined {
+export function pinnedTestPath(argv: readonly string[]): string | undefined {
   for (const arg of argv) {
     if (!arg.startsWith('tests/')) continue;
     const selector = normalizePytestSelector(arg);
