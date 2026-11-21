@@ -1,5 +1,6 @@
 /** Public v0.2 admission boundary. Trusted facts are supplied independently by the caller. */
 
+import { matchesPytestFileArgument } from '../pytest-selector.ts';
 import { computeActionDigest, computeCommandViewDigest, computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../identity.ts';
 import { computeRequestContentDigest, validateProviderAdmissionV02 as validateProviderAdmissionBodyV02 } from './admission/provider.ts';
 import { checkProviderAdmissionBindingsV02, isProviderAdmissionTrustedContextV02 } from './admission/trusted-provider.ts';
@@ -115,7 +116,7 @@ function trustedRepositoryContext(value: unknown): value is RepositoryAdmissionT
     return (
       validAction.ok &&
       validAction.value.kind === 'run_command' &&
-      validAction.value.argv.includes(item['testPath'] as string) &&
+      validAction.value.argv.some(arg => matchesPytestFileArgument(arg, item['testPath'] as string)) &&
       (validAction.value.purpose === undefined || validAction.value.purpose === item['diagnosticPurpose'])
     );
   });

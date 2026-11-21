@@ -17,7 +17,8 @@ import { createScanFixture } from '../unit/real-tier-scan-fixtures.ts';
 
 const fixture = createScanFixture('investigate-', 'investigate-profile-fixture');
 
-async function setup() {
+async function setup(nodeId = false) {
+  const target = nodeId ? 'tests/test_calculator.py::test_divide_zero' : 'tests/test_calculator.py';
   const root = mkdtempSync(join(tmpdir(), 'investigate-case-'));
   const repositoryRoot = join(root, 'repository');
   mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
@@ -33,12 +34,10 @@ async function setup() {
     goal: 'Handle zero denominator',
     observedBehavior: 'ZeroDivisionError',
     expectedBehavior: 'CalculationError',
-    reproduction: 'pytest -q tests/test_calculator.py',
+    reproduction: `pytest -q ${target}`,
     acceptanceCriteria: ['divide(1, 0) raises CalculationError'],
     constraints: [],
-    requiredChecks: [
-      { checkId: 'check-zero', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: '/workspace/repo', timeoutMs: 1000, maxOutputBytes: 4096 },
-    ],
+    requiredChecks: [{ checkId: 'check-zero', executable: 'pytest', argv: ['-q', target], purpose: 'reproduction', workingDirectory: '/workspace/repo', timeoutMs: 1000, maxOutputBytes: 4096 }],
     limits: { timeoutMs: 1000, maxOutputBytes: 4096, maxCpuCores: 1, maxMemoryBytes: 1048576, maxPids: 16 },
     budgetLimits: { maxReplanCount: 3, maxTokens: 100000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
     configId: 'config-investigate',
@@ -66,12 +65,13 @@ async function setup() {
     },
   ];
   const assembly = resolveRealTierAssembly({
-    env: fixture.envOf({ catalog: { path: catalogPath } }),
+    env: fixture.envOf({ catalog: { path: catalogPath }, runLimits: { perRunInputTokens: 32768, perRunOutputTokens: 8192 } }),
     stateRoot: join(root, 'state'),
     revision: 'a'.repeat(40),
     spawn: async (command, args, options) => {
       if (args[0] === 'run' && args.includes('pytest')) {
         baselineCalls++;
+        assert.equal(args.at(-1), target);
         const mount = args.find(arg => arg.includes('target=/workspace/repo'));
         const volume = docker.volumes.get(mount?.match(/source=([^,]+)/u)?.[1] ?? '');
         assert.equal(volume?.get('src/calculator.py')?.toString(), source);
@@ -116,6 +116,9 @@ async function setup() {
       const validated = validateProviderAdmissionV02(admission.context, admission.trustedContext);
       assert.equal(validated.ok, true, JSON.stringify(validated));
       const request = admission.request;
+      assert.equal(request.maxInputTokens, admissions === 0 ? 32768 : 32668);
+      assert.equal(request.maxOutputTokens, admissions === 0 ? 8192 : 8142);
+      assert.equal(request.maxBillableTokens, admissions === 0 ? 40960 : 40810);
       assert.equal(request.maxCostUsd, microUsd(assembly.profile.pricing, request.maxInputTokens, request.maxOutputTokens, request.maxInputTokens) / 1_000_000);
       admissions++;
     }
@@ -142,6 +145,13 @@ test('bound C01 investigates the mirrored repository and pauses for its calculat
   const result = await runUC03GraphV02(h.bound.task, h.bound.ports, h.config);
   assert.equal(result.outcome, 'pending-approval', JSON.stringify(result.reasons));
   assert.deepEqual(result.state?.plan?.scopedChanges, ['src/calculator.py']);
+  assert.deepEqual(h.counts(), { baselineCalls: 1, fetches: 2, admissions: 2 });
+});
+
+test('bound C01 admits a pytest node ID and keeps the exact pinned selector at execution', async () => {
+  const h = await setup(true);
+  const result = await runUC03GraphV02(h.bound.task, h.bound.ports, h.config);
+  assert.equal(result.outcome, 'pending-approval', JSON.stringify(result.reasons));
   assert.deepEqual(h.counts(), { baselineCalls: 1, fetches: 2, admissions: 2 });
 });
 
