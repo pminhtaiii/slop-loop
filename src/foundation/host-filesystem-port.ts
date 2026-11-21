@@ -252,7 +252,8 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     return computeCanonicalSha256(lines.join(''));
   }
 
-  private async readBytes(canonicalPath: string, maxBytes?: number, control?: QuestionRepositoryOperationControl): Promise<Buffer> {
+  /** Raw bytes for trusted host mirroring; shares the bounded read and controlled containment checks. */
+  async readBytes(canonicalPath: string, maxBytes?: number, control?: QuestionRepositoryOperationControl): Promise<Buffer> {
     const path = control ? await this.checkedAbsolute(canonicalPath, control) : this.absolute(canonicalPath);
     const handle = await open(path, 'r');
     try {

@@ -1,3 +1,4 @@
+import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
 /**
  * T059 round-3 gate: the findings the first gate file does not cover (real-tier contract §(f) T028
  * row; host contract §7).
@@ -111,7 +112,7 @@ function resolveOrThrow(env: RealTierEnvironment, overrides: Partial<RealTierDep
     env,
     revision: REV,
     stateRoot,
-    spawn: async () => ({ exitCode: 0, stdout: '', stderr: '', timedOut: false }),
+    spawn: createVolumeSpawn().spawn,
     fetch: async () => {
       throw new Error('this stage must never fetch');
     },

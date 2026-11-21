@@ -14,6 +14,8 @@ Provider credentials are trusted runtime configuration available only through th
 
 For the first local Docker slice, repository commands run in fresh per-task containers with networking disabled and dependencies prepared before execution. Missing dependencies are reported as environment prerequisites rather than downloaded during a task. Enforce the repository and scratch write boundary, controlled read-only runtime resources, and denial of other host files. Provider access stays on the trusted host. Do not expose agent files, checkpoints, credentials, hidden grading, or Docker control to repository code. Refuse execution when required isolation cannot be established. Container lifecycle and recovery integration must preserve the same task workspace identity on resume; exact storage and teardown mechanics remain open.
 
+In the real tier, binding a task fills its canonical repository volume from the bound host repository with only permitted regular files, and refuses unless the measured volume revision equals the task revision. After each settled patch, changed files are re-copied while the writer lease is held, so later commands see the patched tree ([workspace mirror](../src/runtime/real-tier-workspace.ts)). Controlled tests use fake Docker, and the real tier has no production patch receiver yet.
+
 ## Approval identity
 
 Bind each approval to the exact normalized action, repository identity and relevant revision/worktree state, and policy identity/version. Persist that binding with the approval decision. On resume, revalidate all bound identities before execution; a materially changed action, repository state, or policy invalidates the approval and requires a new decision. Approval authorizes only that action.

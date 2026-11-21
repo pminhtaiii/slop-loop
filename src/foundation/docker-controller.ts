@@ -3,6 +3,7 @@ import { isCanonicalRelativePath, isProtectedPath } from '../contracts/foundatio
 import type { ExecutionLimits } from '../contracts/foundation/uc03.ts';
 import { computeFileDigest, DEFAULT_MAX_OUTPUT_BYTES, SHA256_HEX_REGEX, truncateUtf8, validateDockerProfile } from './docker-workspace-policy.ts';
 import { assertPlan, assertVolumeName, runArguments, type RunArgumentSpec } from './docker-controller-argv.ts';
+import { mirrorRepositoryVolume, runRepositoryHelper } from './docker-repository-mirror.ts';
 import type {
   CanonicalRepositorySnapshot,
   CanonicalSnapshotEntry,
@@ -153,6 +154,14 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
 
   get platformPin(): string {
     return this.platform;
+  }
+
+  /** Mirrors trusted host files into a canonical volume and returns its measured tree revision. */
+  mirrorRepository(volumeId: string, files: Readonly<Record<string, Uint8Array>>): Promise<string> {
+    assertVolumeName(volumeId);
+    return mirrorRepositoryVolume(volumeId, files, this.trustedProfile, (spec, options) =>
+      runRepositoryHelper(this.spawnProcess, this.runArguments({ ...spec, name: `helper-${randomUUID()}` }), options),
+    );
   }
 
   /** Workspaces whose last execution ended with unknown effects; their containers and volumes are preserved. */

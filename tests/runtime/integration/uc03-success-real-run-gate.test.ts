@@ -1,3 +1,4 @@
+import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
 /**
  * T059 campaign gate: the T028 runner, its conformance receipt, the evidence checker and the three
  * PR-195 review rows (real-tier contract §(f) T028 row, §(h); host contract §1).
@@ -122,9 +123,10 @@ function catalogFor(task = taskOf(), extraCases: readonly string[] = []): Catalo
 }
 
 function spawnDouble(effects: Effects): StructuredSpawn {
-  return async (): Promise<StructuredSpawnResult> => {
+  const docker = createVolumeSpawn();
+  return async (command, args, options): Promise<StructuredSpawnResult> => {
     effects.spawn += 1;
-    return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+    return docker.spawn(command, args, options);
   };
 }
 
