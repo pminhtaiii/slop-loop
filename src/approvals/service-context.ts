@@ -148,14 +148,15 @@ export function freshnessContext(value: unknown): value is ApprovalBindingContex
   const planDigests = ['currentStrategyDigest', 'currentCriteriaDigest', 'currentCheckSetDigest'];
   const optional = [...planDigests, 'currentPlanVersion', 'currentBaselineRef', 'currentEvidenceRefs'];
   const sha = (digest: unknown): boolean => typeof digest === 'string' && /^sha256:[0-9a-f]{64}$/.test(digest);
+  const evidenceRef = (ref: unknown): boolean => identifier(ref) || (typeof ref === 'string' && /^uc04-baseline:\/\/[0-9a-f]{64}$/.test(ref));
   return (
     Object.keys(value).every(key => [...ids, ...digests, ...optional].includes(key)) &&
     ids.every(key => identifier(value[key])) &&
     digests.every(key => sha(value[key])) &&
     planDigests.every(key => !Object.hasOwn(value, key) || sha(value[key])) &&
-    (!Object.hasOwn(value, 'currentBaselineRef') || identifier(value['currentBaselineRef'])) &&
+    (!Object.hasOwn(value, 'currentBaselineRef') || evidenceRef(value['currentBaselineRef'])) &&
     (!Object.hasOwn(value, 'currentPlanVersion') || (typeof value['currentPlanVersion'] === 'number' && Number.isSafeInteger(value['currentPlanVersion']) && value['currentPlanVersion'] > 0)) &&
-    (!Object.hasOwn(value, 'currentEvidenceRefs') || (Array.isArray(value['currentEvidenceRefs']) && value['currentEvidenceRefs'].length > 0 && value['currentEvidenceRefs'].every(identifier)))
+    (!Object.hasOwn(value, 'currentEvidenceRefs') || (Array.isArray(value['currentEvidenceRefs']) && value['currentEvidenceRefs'].length > 0 && value['currentEvidenceRefs'].every(evidenceRef)))
   );
 }
 

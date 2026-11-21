@@ -7,6 +7,8 @@
  * measurable against the initial bytes rather than against themselves.
  */
 import { randomUUID } from 'node:crypto';
+import { createRealTierAdmissions } from './real-tier-admissions.ts';
+import { realTierPlanApproval } from './real-tier-plan-approval.ts';
 import { cpSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeFileDigest } from '../foundation/docker-workspace-policy.ts';
@@ -258,6 +260,7 @@ export async function buildBoundCapabilities(
     provenance: 'real',
     workspaceRoot: bounds.repositoryRoot,
     statePort: owners.statePort,
+    taskControl: { getJournalSnapshot: () => owners.statePort.getJournalSnapshot(ids.taskId) },
     commandExecutor: assembly.executor,
     workspaceManager: assembly.workspaceManager,
     trustedCommandResourcePolicy: { isolationProfileRef: assembly.profile.image.label, limits: task.limits },
@@ -272,7 +275,9 @@ export async function buildBoundCapabilities(
   });
   const executionGuard = createExecutionGuardV02({ ports: { statePort: owners.statePort, repositoryPort }, config: { provenance: 'real' } });
   const configPort = { provenance: 'real' as const, loadConfig: () => ({ configId: task.configId, configVersion: task.configVersion }) };
+  const admissions = createRealTierAdmissions(assembly, task, owners.statePort);
   const trustedExpectedContext: TrustedHostExpectedContext = {
+    admissionContextForCheck: admissions.admissionContextForCheck,
     taskId: ids.taskId,
     workspaceId: ids.workspaceId,
     repositoryId: task.repositoryId,
@@ -283,10 +288,20 @@ export async function buildBoundCapabilities(
     executionGuard,
     statePort: owners.statePort,
   };
-  const ports: UC03GraphPortsV02 = { ...assembly.components, statePort: owners.statePort, guardedRead, hostAuthority, contextSource, repositoryPort, executionGuard, configPort };
+  const ports: UC03GraphPortsV02 = {
+    ...assembly.components,
+    approvalPort: realTierPlanApproval(owners),
+    statePort: owners.statePort,
+    guardedRead,
+    hostAuthority,
+    contextSource,
+    repositoryPort,
+    executionGuard,
+    configPort,
+  };
   return {
     ports,
-    config: { trustedExpectedContext },
+    config: { trustedExpectedContext, coderAdmission: admissions.coderAdmission },
     hostPorts: { repositoryPort, executionGuard, configPort: configPort as UC03GraphPortsV02['configPort'] },
     guardedRead,
     hostAuthority,

@@ -1,14 +1,12 @@
 /**
- * Real-tier assembly (real-tier contract §(a), §(i); host contract §1 first stage; T050 + T061).
+ * Real-tier assembly (contract §(a), §(i); host contract §1 first stage; T050 + T061).
  *
  * `createHostAssembly()` takes no arguments because the operator CLI calls it that way
  * (`src/cli/evaluate.ts`), and returns `{ host, metadata[ , preflight] }` for the CLI loader. It is
  * synchronous and effect-free: it loads the profile, reads the credential, pins the endpoint and model,
  * and builds the real adapters. It never fetches, spawns, writes a task or touches the filesystem.
  *
- * The host is assembly-ready: the task-bound producers and per-task host ports are unbound (full
- * surface, `TASK_UNBOUND` on every call) and the config names no task, so `prepareUC03Host` is `ready`
- * while nothing can act. Binding them to one task is T061 (`real-tier-task-binding.ts`).
+ * The host is assembly-ready but task-less; T061 (`real-tier-task-binding.ts`) binds its refusing producers.
  *
  * `dependencies` is the test seam: `{ env, fetch, spawn, stateRoot, revision, components }`, each
  * defaulting to the real value. Every refusal is a `RealTierUnavailable` with a bounded reason code,
@@ -100,6 +98,7 @@ function mockSwap(candidate: Partial<RealTierComponents>): RealTierUnavailable |
 
 /** The built half. Everything below `owners` is task-independent. */
 export interface RealTierAssembly {
+  readonly providerIdentity: Readonly<{ providerId: string; modelId: string }>;
   readonly status: 'assembly-ready';
   readonly profile: RealTierProfile;
   readonly metadata: RealTierMetadata;
@@ -290,6 +289,7 @@ function build(profile: RealTierProfile, dependencies: RealTierDependencies, sta
 
   return Object.freeze({
     status: 'assembly-ready',
+    providerIdentity: Object.freeze({ providerId: 'provider-deepseek', modelId: profile.endpoint.model }),
     profile,
     metadata: metadataOf(profile),
     owners,

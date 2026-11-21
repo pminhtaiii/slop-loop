@@ -248,3 +248,5 @@ On 2026-11-20 the operator, acting as the single-attesting owner for the Feature
 - the same length cap.
 
 Every other identifier field keeps the unchanged rule. No model id reaches a filesystem path. This correction is traced by paired ticket #210 (UC-03 real-tier investigation). It releases no T008–T022 work and no production, real, restart or G-OWNERS acceptance.
+
+Under the same ticket #210, approval freshness accepts the durable UC-04 baseline reference form `uc04-baseline://<64 hex>` for `currentBaselineRef` and `currentEvidenceRefs`, besides plain identifiers. The real-tier plan approval completes a plan decision's freshness from the persisted plan, and only while the task is at `AwaitPlan` with a matching decision. These are wiring corrections for the bound real tier. They grant no new authority.
