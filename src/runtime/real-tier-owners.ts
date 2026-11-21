@@ -20,6 +20,7 @@ import { createRealContextProvider, type RealContextSource } from '../approvals/
 import { computeCanonicalSha256, type ApprovalPort, type TaskState } from '../contracts/foundation/uc03.ts';
 import type { ApprovalContext } from '../approvals/service-data.ts';
 import type { PolicyAuthorityRefV02 } from '../contracts/foundation/uc03.ts';
+import type { TrustedOperatorIdentity } from '../contracts/approvals/contracts.ts';
 import type { GuardedReadOwnerPort } from '../foundation/guarded-read-capability.ts';
 import { isProductionJournal } from '../foundation/production-journal-registry.ts';
 import type { ExecutionProfileSourceV02 } from '../persistence/adapters/state-port-v02-admission.ts';
@@ -84,6 +85,12 @@ export interface RealTierOwnersOptions {
   readonly verifyDirection?: ((state: TaskState, direction: TrustedReplanDirection) => boolean | Promise<boolean>) | undefined;
   /** Real-tier approval profile version; the canonical `profileId` literal is unchanged (§(c)4). */
   readonly approvalProfileVersion: string;
+  /**
+   * The human operator the approval service records decisions for. Without one, `decide` refuses, so
+   * a plan can be presented but no decision is ever fabricated; the console forwards the operator's
+   * own explicit approve/reject to this identity.
+   */
+  readonly operator?: TrustedOperatorIdentity | undefined;
 }
 
 export interface RealTierOwners {
@@ -103,6 +110,9 @@ const unbound = (): never => {
   throw new ApprovalServiceError('unavailable');
 };
 
+/** The host console's operator identity; a decision is only ever recorded when an operator submits one. */
+const HOST_OPERATOR: TrustedOperatorIdentity = Object.freeze({ actorId: 'host-operator', channelRef: 'host-console', provenance: 'real' });
+
 /**
  * The durable provider, with the graph's first-request convention: a decision's action id is its
  * decision id, and no request record exists yet when it is first made. The stored record stays
@@ -115,7 +125,12 @@ function realContext(provider: ReturnType<typeof createRealContextProvider>, tas
     if (context.action.kind !== 'approve_fix_plan') return input;
     const state = await statePort.loadTask(taskId);
     const plan = state?.plan;
-    if (!state || !plan || state.node !== 'AwaitPlan' || plan.decisionRef !== context.action.actionId) return unbound();
+    if (!state || !plan) return unbound();
+    // The first plan is requested from AwaitPlan; the post-patch verification approval is requested
+    // from Verify (no active decision yet) against the same recorded plan. Both are the plan decision.
+    const firstPlan = state.node === 'AwaitPlan' && plan.decisionRef === context.action.actionId;
+    const verification = state.node === 'Verify' && state.activeDecisionId === undefined && plan.strategyDigest === context.action.strategyDigest;
+    if (!firstPlan && !verification) return unbound();
     return {
       ...context,
       freshness: {
@@ -130,17 +145,90 @@ function realContext(provider: ReturnType<typeof createRealContextProvider>, tas
     };
   };
   return {
-    loadForAction: async (task, actionId) => observedPlan(await provider.loadForAction(task, actionId)),
+    loadForAction: async (task, actionId) => {
+      const raw = await provider.loadForAction(task, actionId).catch(() => undefined);
+      return raw === undefined ? observedSyntheticPlan(taskId, actionId, statePort) : observedPlan(raw);
+    },
     loadForDecision: async decisionId => {
       const stored = await provider.loadForDecision(decisionId).catch(() => undefined);
-      return observedPlan(stored === undefined ? await provider.loadForAction(taskId, decisionId) : stored);
+      // A verification D1 (`dec-verify-…`) has no stored request and was never a registered action.
+      if (decisionId.startsWith('dec-verify-')) return observedSyntheticPlan(taskId, decisionId, statePort);
+      const fallback = stored === undefined ? await provider.loadForAction(taskId, decisionId) : stored;
+      return observedPlan(fallback);
     },
   };
+}
+
+/**
+ * A plan decision the host never registered as an action (the post-patch verification D1): the
+ * durable task already records the exact plan, so the observed action and facts are reconstructed
+ * from it — the provider's own freshness fields still come from `observedPlan`.
+ */
+async function observedSyntheticPlan(taskId: string, actionId: string, statePort: DurableStatePortV02): Promise<unknown> {
+  const state = await statePort.loadTask(taskId);
+  const plan = state?.plan;
+  if (!state || !plan || state.node !== 'Verify' || state.activeDecisionId !== undefined) return unbound();
+  const action = {
+    actionId,
+    kind: 'approve_fix_plan' as const,
+    planVersion: plan.planVersion,
+    strategyDigest: plan.strategyDigest,
+    diagnosisEvidenceRefs: plan.evidenceRefs,
+    checkSetDigest: plan.checkSetDigest,
+  };
+  const built = {
+    action,
+    facts: {
+      taskId: state.taskId,
+      workspaceId: state.workspaceId,
+      repositoryId: state.repositoryId,
+      repositoryRevisionDigest: state.repositoryRevisionDigest,
+      policyIdentity: {
+        policyId: state.taskContext?.configId ?? '',
+        policyVersion: state.taskContext?.configVersion ?? '',
+        configId: state.taskContext?.configId ?? '',
+        configVersion: state.taskContext?.configVersion ?? '',
+      },
+      registeredActionDigest: computeCanonicalSha256(action),
+      continuationRef: actionId,
+      role: 'coder',
+      safety: { workspaceContained: true, protectedContentAbsent: true, hiddenGradingAbsent: true, policyBypassAbsent: true, testsPreserved: true, commandSourceWritesAbsent: true, isolated: true },
+      patch: null,
+      command: null,
+      plan: null,
+    },
+    elements: {
+      action: plan.strategy,
+      necessity: plan.diagnosis,
+      targets: plan.scopedChanges,
+      consequences: 'Approval permits verification of the scoped repair',
+      verificationStatus: 'Patch applied; verification pending',
+    },
+    runId: state.runId,
+    freshness: {
+      currentTaskId: state.taskId,
+      currentWorkspaceId: state.workspaceId,
+      currentRepositoryRevisionDigest: state.repositoryRevisionDigest,
+      currentPolicyId: state.taskContext?.configId ?? '',
+      currentPolicyVersion: state.taskContext?.configVersion ?? '',
+      currentNormalizedActionDigest: computeCanonicalSha256(action),
+      currentPlanVersion: plan.planVersion,
+      currentStrategyDigest: plan.strategyDigest,
+      currentBaselineRef: plan.baselineRef,
+      currentEvidenceRefs: plan.evidenceRefs,
+      currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+      currentCheckSetDigest: plan.checkSetDigest,
+    },
+  };
+  return built;
 }
 
 export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOwners {
   const { stateRoot, revision } = options;
   const verifyDirection = options.verifyDirection ?? ((): false => false);
+  // The host operator channel: an explicit approve/reject forwarded by the console records under this
+  // fixed identity; no decision is fabricated, and omitting it leaves `decide` refusing.
+  const operator = options.operator ?? HOST_OPERATOR;
   const store = new DurableStore(join(stateRoot, 'store'));
   const statePort = new DurableStatePortV02({ store });
   const baselineStore = createBaselineEvidenceStore({ store });
@@ -183,6 +271,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
     const taskStatePort = new DurableStatePortV02({
       store,
       taskId: binding.taskId,
+      approvalStorageDir: join(stateRoot, 'approvals'),
       ...(binding.authorityRef === undefined ? {} : { initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable' as const, activeAuthorityRef: binding.authorityRef } }),
       ...(binding.executionProfile === undefined ? {} : { executionProfile: binding.executionProfile }),
     });
@@ -203,7 +292,14 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
       created === undefined
         ? { loadForAction: async () => unbound(), loadForDecision: async () => unbound() }
         : realContext(createRealContextProvider({ durable: { loadTask: id => taskStatePort.loadTask(id) as never }, approvals: approvalStore, source: created }), binding.taskId, taskStatePort);
-    const approvalService = createApprovalService({ taskId: binding.taskId, profile, store: approvalStore, provenance: 'real', context });
+    const approvalService = createApprovalService({
+      taskId: binding.taskId,
+      profile,
+      store: approvalStore,
+      provenance: 'real',
+      context,
+      operator: { identity: operator },
+    });
     const owners: RealTierBoundOwners = {
       statePort: taskStatePort,
       readFence: createStateReadFence(taskStatePort, binding),

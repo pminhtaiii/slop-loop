@@ -12,14 +12,18 @@ import type { UC03CoderAdmissionResolver } from '../uc03/graph-types.ts';
 import type { TrustedHostExpectedContext } from '../uc03/investigation-types.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import { executionProfileOf } from './real-tier-execution-profile.ts';
+import { verifyCheckAdmission } from './real-tier-verify-admission.ts';
+import { approvedPlanCoderAdmission } from './real-tier-coder-admission.ts';
 
 interface Admissions {
   readonly admissionContextForCheck: NonNullable<TrustedHostExpectedContext['admissionContextForCheck']>;
   readonly coderAdmission: UC03CoderAdmissionResolver;
+  /** The approved-plan (`Verify`) check admission; `Repair` re-checks resolve through the Verify branch. */
+  readonly admissionContextForVerifyCheck: NonNullable<TrustedHostExpectedContext['admissionContextForCheck']>;
 }
 
 /** Bind only to current, runnable, idle owner authority and the same journal/state head. */
-async function currentAuthority(port: DurableStatePortV02, state: TaskState): Promise<VerificationAuthoritySnapshotV02 | undefined> {
+export async function currentAuthority(port: DurableStatePortV02, state: TaskState): Promise<VerificationAuthoritySnapshotV02 | undefined> {
   const owner = await port.readVerificationAuthoritySnapshot(state.taskId);
   if (!owner || owner.controlMode !== 'runnable' || owner.activeClaimId || owner.holdRef) return undefined;
   const journal = port.getJournalSnapshot(state.taskId) as { readonly controlVersion?: unknown; readonly epoch?: unknown } | null;
@@ -42,7 +46,7 @@ async function currentAuthority(port: DurableStatePortV02, state: TaskState): Pr
   return owner;
 }
 
-function policyFacts(task: BugTask, state: TaskState, owner: VerificationAuthoritySnapshotV02, purpose: string): PolicyFactsV02 {
+export function policyFacts(task: BugTask, state: TaskState, owner: VerificationAuthoritySnapshotV02, purpose: string): PolicyFactsV02 {
   const { policyId, policyVersion, configId, configVersion } = owner.policyIdentity;
   return {
     taskId: state.taskId,
@@ -91,6 +95,7 @@ export function createRealTierAdmissions(assembly: RealTierAssembly, boundTask: 
     })),
   });
   return {
+    admissionContextForVerifyCheck: ({ check, action, currentState }) => verifyCheckAdmission(task, policyFor, assembly, port, { check, action, currentState }),
     admissionContextForCheck: async ({ check, action, currentState: state }) => {
       if (state.taskId !== task.taskId || state.node !== 'Investigate' || action.kind !== 'run_command') return undefined;
       const pinned = task.requiredChecks.find(candidate => computeCanonicalSha256(candidate) === computeCanonicalSha256(check));
@@ -206,7 +211,10 @@ export function createRealTierAdmissions(assembly: RealTierAssembly, boundTask: 
       };
     },
     coderAdmission: async ({ task: requestedTask, state, purpose, evidence }) => {
-      if (state.taskId !== task.taskId || computeCanonicalSha256(requestedTask) !== computeCanonicalSha256(task) || state.node !== 'Investigate' || purpose !== 'propose-plan') return undefined;
+      if (computeCanonicalSha256(requestedTask) !== computeCanonicalSha256(task)) return undefined;
+      // Once the plan is approved the coder still needs an owner admission to propose its patch.
+      if (purpose !== 'propose-plan') return approvedPlanCoderAdmission(assembly, task, port, { task, state, purpose, evidence });
+      if (state.taskId !== task.taskId || state.node !== 'Investigate') return undefined;
       const owner = await currentAuthority(port, state);
       if (!owner) return undefined;
       const { limits, pricing, runLimits } = assembly.profile;

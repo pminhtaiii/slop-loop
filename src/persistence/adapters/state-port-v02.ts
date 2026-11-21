@@ -21,7 +21,11 @@ import type {
   SettledPatchAncestryV02,
   StatePortV02,
   TaskState,
+  VerificationApprovalContextV02,
+  VerificationApprovalResolutionV02,
   VerificationAuthoritySnapshotV02,
+  RecordVerificationApprovalRequestV02,
+  RecordVerificationApprovalResultV02,
 } from '../../contracts/foundation/uc03.ts';
 import { isVerificationAuthoritySnapshotV02 } from '../../contracts/foundation/uc03.ts';
 import type { validateStateTransition } from '../../contracts/foundation/uc03.ts';
@@ -40,6 +44,7 @@ import type { ExecutionProfileSourceV02 } from './state-port-v02-admission.ts';
 import * as control from './state-port-v02-control.ts';
 import * as journal from './state-port-v02-journal.ts';
 import * as tasks from './state-port-v02-task.ts';
+import { DurableVerificationAuthority } from './state-port-v02-verification-authority.ts';
 
 export {
   NEUTRAL_CLAIM_RECEIPT_V02,
@@ -66,6 +71,11 @@ export interface DurableStatePortV02Options {
    * the port applies its synthetic admission constants.
    */
   readonly executionProfile?: ExecutionProfileSourceV02;
+  /**
+   * The approval store directory the real UC-05 service writes: the durable record of plan
+   * decisions. Absent, the verification-authority methods fail closed rather than guessing one.
+   */
+  readonly approvalStorageDir?: string | undefined;
 }
 
 /** Durable UC-03 v0.2 state port. Missing optional methods fail closed by absence. */
@@ -79,6 +89,7 @@ export class DurableStatePortV02 implements StatePortV02 {
   private readonly boundTaskId: string | undefined;
   private readonly taskOptions: tasks.TaskOperationOptions;
   private readonly executionProfile: ExecutionProfileSourceV02 | undefined;
+  private readonly verificationAuthority: DurableVerificationAuthority;
 
   constructor(options: DurableStatePortV02Options) {
     this.provenance = options.provenance ?? 'real';
@@ -87,7 +98,12 @@ export class DurableStatePortV02 implements StatePortV02 {
     this.statePort = new StatePortStore(options.store);
     this.boundTaskId = options.taskId;
     this.executionProfile = options.executionProfile;
-    this.taskOptions = { store: this.statePort, trustedTransitions: options.trustedTransitions ?? {} };
+    this.verificationAuthority = new DurableVerificationAuthority({ store: this.statePort, approvalStorageDir: options.approvalStorageDir });
+    this.taskOptions = {
+      store: this.statePort,
+      trustedTransitions: options.trustedTransitions ?? {},
+      ...(options.approvalStorageDir === undefined ? {} : { trustedApproval: (taskId: string) => this.verificationAuthority.trustedPlanApproval(taskId) }),
+    };
     const seed = options.initialControl ?? {};
     this.controlSeed = {
       ...DEFAULT_CONTROL,
@@ -152,6 +168,26 @@ export class DurableStatePortV02 implements StatePortV02 {
 
   readSettledPatchAncestry(request: SettledPatchAncestryRequestV02): Promise<SettledPatchAncestryV02 | null> {
     return journal.readSettledPatchAncestry(this.statePort, request);
+  }
+
+  /** The recorded plan decision re-issued only in the caller's exact current authority context. */
+  resolvePlanDecisionInContext(decisionId: string, context: VerificationApprovalContextV02): Promise<VerificationApprovalResolutionV02> {
+    return this.verificationAuthority.resolvePlanDecisionInContext(decisionId, context);
+  }
+
+  /** The owner's one write for the post-patch D1; the current control head is the advisory lock. */
+  recordVerificationApproval(request: RecordVerificationApprovalRequestV02): Promise<RecordVerificationApprovalResultV02> {
+    return this.verificationAuthority.recordVerificationApproval(request);
+  }
+
+  /** The AwaitPlan→Patch trusted approval, derived from the recorded human decision. */
+  trustedPlanApproval(taskId: string): ReturnType<DurableVerificationAuthority['trustedPlanApproval']> {
+    return this.verificationAuthority.trustedPlanApproval(taskId);
+  }
+
+  /** Whether the recorded plan decision still stands as a human approval at the named authority. */
+  planDecisionIsApproved(decisionId: string, context: VerificationApprovalContextV02): Promise<boolean> {
+    return this.verificationAuthority.planDecisionIsApproved(decisionId, context);
   }
 
   /* ---------------- journal snapshot ---------------- */

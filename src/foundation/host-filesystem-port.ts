@@ -6,10 +6,10 @@
  * workspace resolves to an absolute path and is refused there.
  */
 import { realpathSync } from 'node:fs';
-import { open, lstat, opendir, readdir, realpath, stat } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { mkdir, open, lstat, opendir, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve, sep } from 'node:path';
 import type { PortProvenance } from '../contracts/foundation/uc03.ts';
-import { computeCanonicalSha256, isCanonicalRelativePath } from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
 import { computeFileDigest } from './docker-workspace-policy.ts';
 import type { FileStat, QuestionRepositoryOperationControl, TrustedFilesystemEntry, TrustedFilesystemPort } from './repository-types.ts';
 
@@ -268,5 +268,23 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     } finally {
       await handle.close();
     }
+  }
+
+  /**
+   * Writes one admitted patch target's bytes to the host tree, creating no parent that is not under
+   * the root. It refuses a protected path and any parent that resolves off the canonical tree. This is
+   * the real-tier patch receiver's only write: the caller has already admitted the path and measured
+   * the base revision.
+   */
+  async writeFile(canonicalPath: string, content: string, maxBytes: number): Promise<void> {
+    if (!isCanonicalRelativePath(canonicalPath) || isProtectedPath(canonicalPath)) throw new Error(`WORKSPACE_ESCAPE: '${canonicalPath}' is not a writable canonical path`);
+    if (!positiveLimit(maxBytes) || Buffer.byteLength(content, 'utf8') > maxBytes) throw new Error('FILE_TOO_LARGE: Patch target exceeds its byte limit');
+    const target = this.absolute(canonicalPath);
+    await mkdir(dirname(target), { recursive: true });
+    const resolvedParent = await realpath(dirname(target));
+    if (resolvedParent !== dirname(target) || !target.startsWith(this.root.endsWith(sep) ? this.root : `${this.root}${sep}`)) {
+      throw new Error('WORKSPACE_ESCAPE: Patch target parent leaves the canonical workspace');
+    }
+    await writeFile(this.absolute(canonicalPath), content, 'utf8');
   }
 }

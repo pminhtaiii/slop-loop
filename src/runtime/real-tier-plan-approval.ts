@@ -15,6 +15,14 @@ export function realTierPlanApproval(owners: RealTierBoundOwners): ApprovalPort 
       const state = await owners.statePort.loadTask(binding.taskId);
       const owner = await owners.statePort.readVerificationAuthoritySnapshot(binding.taskId);
       const plan = state?.plan;
+      // The post-patch verification approval (node Verify, activeDecisionId still the original plan)
+      // is requested and recorded by the durable owner itself; no host registration is involved, so
+      // it goes straight to the service, which keeps its own stale/binding refusals.
+      if (state?.node === 'Verify' && owner && state.activeDecisionId === undefined) {
+        const pending = { ...binding };
+        delete pending.reason;
+        return service.requestDecision(pending);
+      }
       if (
         !state ||
         !owner ||

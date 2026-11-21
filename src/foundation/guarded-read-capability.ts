@@ -56,6 +56,13 @@ export interface GuardedReadCapabilityOptions {
   readonly workspaceId: string;
   readonly repositoryId: string;
   readonly expectedRevisionDigest: string;
+  /**
+   * Bind-time revision check. Default `true` pins the exact revision above. `false` accepts the
+   * owner-observed revision instead, which is required only where the same task owns and patches its
+   * tree (a bound repair); the owner fence still re-reads and matches the whole observation under the
+   * writers' lock, so a read executes only against the head it was admitted for.
+   */
+  readonly pinRevision?: boolean | undefined;
   readonly policyDigest: string;
   readonly bounds: GuardedReadBounds;
   readonly owner: GuardedReadOwnerPort;
@@ -94,6 +101,7 @@ class FencedGuardedReadCapability implements ExecutionGuardReadCapability {
   readonly workspaceId: string;
   private readonly repositoryId: string;
   private readonly expectedRevisionDigest: string;
+  private readonly pinRevision: boolean;
   private readonly policyDigest: string;
   private readonly maxPathLength: number;
   private readonly maxQueryLength: number;
@@ -129,6 +137,7 @@ class FencedGuardedReadCapability implements ExecutionGuardReadCapability {
     this.workspaceId = options.workspaceId;
     this.repositoryId = options.repositoryId;
     this.expectedRevisionDigest = options.expectedRevisionDigest;
+    this.pinRevision = options.pinRevision !== false;
     this.policyDigest = options.policyDigest;
     // Freeze the scalars so later mutation of the supplied options cannot widen the bounds.
     this.maxPathLength = bounds.maxPathLength;
@@ -216,7 +225,7 @@ class FencedGuardedReadCapability implements ExecutionGuardReadCapability {
     if (observation.taskId !== this.taskId || observation.workspaceId !== this.workspaceId || observation.repositoryId !== this.repositoryId) {
       throw deny('READ_CONTROL_MISMATCH', 'Observed control does not belong to this task/workspace/repository');
     }
-    if (observation.revisionDigest !== this.expectedRevisionDigest) {
+    if (this.pinRevision && observation.revisionDigest !== this.expectedRevisionDigest) {
       throw deny('READ_REVISION_MISMATCH', `Observed revision '${observation.revisionDigest}' does not match the bound revision`);
     }
     if (observation.policyDigest !== this.policyDigest) throw deny('READ_POLICY_MISMATCH', 'Observed read policy differs from the accepted policy');

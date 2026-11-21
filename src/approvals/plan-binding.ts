@@ -21,6 +21,8 @@ export interface PlanBindingDigestInput {
 const PLAN_DIGEST_KEYS = ['taskId', 'planVersion', 'strategyDigest', 'baselineRef', 'evidenceRefs', 'criteriaDigest', 'checkSetDigest', 'decisionRef'] as const;
 
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
+/** The durable UC-04 baseline id is a reference, not a bare id; `service-context.ts` accepts it too. */
+const validBaselineRef = (value: unknown): value is string => validId(value) || (typeof value === 'string' && /^uc04-baseline:\/\/[0-9a-f]{64}$/.test(value));
 
 export function computePlanBindingDigest(input: unknown): string {
   if (
@@ -39,11 +41,11 @@ export function computePlanBindingDigest(input: unknown): string {
     !Number.isSafeInteger(record['planVersion']) ||
     Number(record['planVersion']) < 1 ||
     !isSha(record['strategyDigest']) ||
-    !validId(record['baselineRef']) ||
+    !validBaselineRef(record['baselineRef']) ||
     !Array.isArray(record['evidenceRefs']) ||
     record['evidenceRefs'].length === 0 ||
     record['evidenceRefs'].length > 128 ||
-    !record['evidenceRefs'].every(validId) ||
+    !record['evidenceRefs'].every(validBaselineRef) ||
     new Set(record['evidenceRefs']).size !== record['evidenceRefs'].length ||
     !isSha(record['criteriaDigest']) ||
     !isSha(record['checkSetDigest']) ||
