@@ -18,7 +18,7 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { computeCanonicalSha256, validateBugTask } from '../contracts/foundation/uc03.ts';
 import type { BugTask, PolicyAuthorityRefV02, TaskState } from '../contracts/foundation/uc03.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
-import type { TrustedFilesystemPort } from '../foundation/repository-types.ts';
+import { bindRealTierWorkspace } from './real-tier-workspace.ts';
 import type { ExecutionProfileV02 } from '../persistence/adapters/state-port-v02-admission.ts';
 import { stateReadPolicyDigest } from '../persistence/adapters/state-port-v02-read-fence.ts';
 import { MAX_TASK_REPLANS } from '../uc03/replan-accounting.ts';
@@ -223,7 +223,8 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   if (existing !== null) {
     if (existing.taskContext !== undefined && computeCanonicalSha256(existing.taskContext) !== computeCanonicalSha256(task)) return refused('task-identity-mismatch', '$.task');
     if (existing.repositoryId !== task.repositoryId) return refused('task-repository-mismatch', '$.task.repositoryId');
-    if (existing.repositoryRevisionDigest !== task.initialRevisionDigest) return refused('task-revision-mismatch', '$.task.initialRevisionDigest');
+    if (existing.repositoryRevisionDigest !== task.initialRevisionDigest && assembly.workspaceManager.getCanonicalRevision(existing.workspaceId) !== existing.repositoryRevisionDigest)
+      return refused('task-revision-mismatch', '$.task.initialRevisionDigest');
   }
   const allocate = options.ids ?? defaultIds;
   const ids: SeededTaskIds =
@@ -240,7 +241,7 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
 
   // The observed-action source is built lazily by the owners, once per task: `taskOwners` caches by
   // task id, so a second bind must reuse the first bind's source rather than orphan its registry.
-  const filesystem: TrustedFilesystemPort = new WorkspaceFilesystemPort({ root: repositoryRoot });
+  const filesystem = new WorkspaceFilesystemPort({ root: repositoryRoot });
   const createContext = (): RealContextSource => createHostActionContext({ filesystem, workspaceId: ids.workspaceId, repositoryId: task.repositoryId, policyIdentity: policy, ttlMs: actionTtlMs });
   // The profile the real view will carry: the same isolation label the resource policy and the view
   // builder's owner measurement name, so the port admits the view the tier actually builds. It is
@@ -271,6 +272,7 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   // recover/translate case: a bounded refusal, never a rejection, and never a silent success.
   let bound: BoundCapabilities;
   try {
+    await bindRealTierWorkspace(assembly, ids, filesystem, seeded.repositoryRevisionDigest, maxFileBytes);
     bound = await buildBoundCapabilities(assembly, task, ids, filesystem, owners, contextSource, {
       authorityRef,
       repositoryRoot,

@@ -1,3 +1,4 @@
+import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
 /**
  * T059 round-4 gate: one doubled successful campaign, end to end (real-tier contract §(f) T028 row).
  *
@@ -274,6 +275,7 @@ async function doubledCampaign(state = { drift: false, facts: true, hidden: 'pas
   let dispatched = 0;
   const result = await runCampaign({
     mode: 'campaign',
+    spawn: createVolumeSpawn().spawn,
     env: catalogEnv(),
     repositoryRoot: tempRoot('repo'),
     evidenceDir: root,
@@ -414,7 +416,7 @@ test('a grade is not-run, never a pass, when the run cannot supply or hold its s
         env,
         revision: REV,
         stateRoot: tempRoot('state'),
-        spawn: async () => ({ exitCode: 0, stdout: '', stderr: '', timedOut: false }),
+        spawn: createVolumeSpawn().spawn,
         fetch: async () => allowedProviderResponse(PINNED_RETURNED_MODEL),
       });
     const first = assemble();

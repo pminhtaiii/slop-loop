@@ -27,6 +27,7 @@ import type { UC03HostProducers } from './uc03-host-bootstrap.ts';
 import { createRepositoryBaselineSource } from './repository-baseline-source.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import type { SeededTaskIds } from './real-tier-task-seed.ts';
+import { mirrorRealTierWorkspace } from './real-tier-workspace.ts';
 
 /** The one refusal an unbound producer makes: named, bounded, and with no effect. */
 export const TASK_UNBOUND = 'TASK_UNBOUND' as const;
@@ -204,7 +205,7 @@ export async function buildBoundCapabilities(
   assembly: RealTierAssembly,
   task: BugTask,
   ids: SeededTaskIds,
-  filesystem: TrustedFilesystemPort,
+  filesystem: WorkspaceFilesystemPort,
   owners: ReturnType<RealTierAssembly['owners']['taskOwners']>,
   contextSource: UC03GraphPortsV02['contextSource'],
   bounds: Readonly<{
@@ -266,6 +267,7 @@ export async function buildBoundCapabilities(
     unattemptedClaimClosureHandoff: createDurableUnattemptedClaimClosureHandoff(owners.statePort),
     attemptStartRecoveryHandoff: createDurableAttemptStartRecoveryHandoff(owners.statePort),
     patchRecoveryHandoff: createRefusingPatchRecoveryHandoff(),
+    onSettledPatch: revision => mirrorRealTierWorkspace(assembly, ids, filesystem, revision, bounds.maxFileBytes),
     repositoryDiff: diff.source,
   });
   const executionGuard = createExecutionGuardV02({ ports: { statePort: owners.statePort, repositoryPort }, config: { provenance: 'real' } });

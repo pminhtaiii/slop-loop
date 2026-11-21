@@ -1,3 +1,4 @@
+import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
 /**
  * T061 — per-task real-tier binding (host contract §1 second stage, real-tier contract §(a)
  * "Production task binding").
@@ -71,9 +72,10 @@ function storeFingerprint(root: string): string {
 function dependencies(overrides: Partial<RealTierDependencies> = {}): { readonly deps: RealTierDependencies; readonly effects: Effects; readonly stateRoot: string } {
   const effects: Effects = { fetch: 0, spawn: 0 };
   const stateRoot = tempRoot('state');
-  const spawn: StructuredSpawn = async (): Promise<StructuredSpawnResult> => {
+  const docker = createVolumeSpawn();
+  const spawn: StructuredSpawn = async (command, args, options): Promise<StructuredSpawnResult> => {
     effects.spawn += 1;
-    return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+    return docker.spawn(command, args, options);
   };
   const fetchDouble: typeof globalThis.fetch = async () => {
     effects.fetch += 1;
@@ -263,7 +265,7 @@ test('(b) every unbound producer refuses with TASK_UNBOUND and no effect', async
   assert.throws(() => (assembly.hostPorts.configPort.loadConfig as (taskId: string) => unknown)('task-1'), /TASK_UNBOUND/u);
 });
 
-test('(c) binding is ready, the context is accepted, and no fetch or spawn happens', async () => {
+test('(c) binding is ready, the context is accepted, and only workspace setup spawns happen', async () => {
   const catalog = fixtureOf();
   const { assembly, effects } = assemblyFor(catalog);
   const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog)));
@@ -274,7 +276,7 @@ test('(c) binding is ready, the context is accepted, and no fetch or spawn happe
   const seeded = await assembly.owners.taskOwners({ taskId: binding.ids.taskId, workspaceId: binding.ids.workspaceId, repositoryId: binding.task.repositoryId }).statePort.loadTask(binding.ids.taskId);
   assert.ok(seeded);
   assert.equal(trustedExpectedContext({ trustedExpectedContext: binding.config.trustedExpectedContext } as never, binding.task, seeded as TaskState)?.taskId, binding.ids.taskId);
-  assert.deepEqual(effects, { fetch: 0, spawn: 0 });
+  assert.deepEqual(effects, { fetch: 0, spawn: 3 });
   assertNoSecrets({ ids: binding.ids, evidenceTier: binding.evidenceTier, status: binding.status });
 });
 

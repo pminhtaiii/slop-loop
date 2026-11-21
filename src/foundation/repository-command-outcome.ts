@@ -179,6 +179,16 @@ export class RepositoryOutcomeRecoveryV02 {
     if (!statePort) throw new Error('STATE_PORT_REQUIRED: StatePortV02 is required for repository receiver execution');
     try {
       const recorded = validateOutcomeRecordResult(await statePort.recordOutcome(outcome), outcome.receiptId);
+      if (outcome.outcome === 'observed' && recorded.outcome === 'settled' && outcome.repositoryOperation === 'apply-patch') {
+        try {
+          await this.mirrorSettledPatch(outcome);
+        } catch (error) {
+          this.hold(lease, context, claim, attempt, outcome);
+          const pending = this.pending.get(attempt.attemptId);
+          if (pending) pending.settledReceiptId = recorded.receiptId;
+          throw error;
+        }
+      }
       if (outcome.outcome !== 'observed' || recorded.outcome !== 'settled') this.hold(lease, context, claim, attempt, outcome);
       return recorded;
     } catch (error: unknown) {
@@ -197,6 +207,7 @@ export class RepositoryOutcomeRecoveryV02 {
     pending.recovering = true;
     try {
       if (pending.settledReceiptId !== undefined) {
+        await this.mirrorSettledPatch(pending.outcome);
         await pending.lease.release();
         this.pending.delete(attemptId);
         return { outcome: 'settled', receiptId: pending.settledReceiptId };
@@ -220,6 +231,7 @@ export class RepositoryOutcomeRecoveryV02 {
       );
       if (result.outcome === 'settled') {
         pending.settledReceiptId = result.receiptId;
+        await this.mirrorSettledPatch(pending.outcome);
         await pending.lease.release();
         this.pending.delete(attemptId);
       } else if (receipt.reconciliationKind === 'observed-unsettled') {
@@ -245,6 +257,13 @@ export class RepositoryOutcomeRecoveryV02 {
         outcome,
         recovering: false,
       });
+  }
+
+  private async mirrorSettledPatch(outcome: RepositoryActionOutcomeReceiptV02): Promise<void> {
+    if (outcome.outcome !== 'observed' || outcome.repositoryOperation !== 'apply-patch' || !this.options.onSettledPatch) return;
+    const revision = outcome.observedResultRevisionDigest;
+    if (typeof revision !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(revision)) throw new Error('MIRROR_PATCH_REVISION_REQUIRED');
+    await this.options.onSettledPatch(revision);
   }
 }
 
