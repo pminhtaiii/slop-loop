@@ -96,6 +96,8 @@ function parseSections(diff: string): FileHunks[] | null {
       continue;
     }
     if (line.length === 0) continue;
+    // A `\ No newline at end of file` marker follows the hunk line it annotates, so it can trail a closed hunk.
+    if (line.startsWith('\\') && current !== null && current.hunks.length > 0) continue;
     return null;
   }
   if (current) sections.push(current);

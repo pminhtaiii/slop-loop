@@ -86,9 +86,9 @@ export interface RealTierOwnersOptions {
   /** Real-tier approval profile version; the canonical `profileId` literal is unchanged (§(c)4). */
   readonly approvalProfileVersion: string;
   /**
-   * The human operator the approval service records decisions for. Without one, `decide` refuses, so
-   * a plan can be presented but no decision is ever fabricated; the console forwards the operator's
-   * own explicit approve/reject to this identity.
+   * The human operator the approval service records decisions for; defaults to the fixed host operator.
+   * `decide` still records only the operator's own explicit approve/reject the console forwards, so no
+   * decision is ever fabricated.
    */
   readonly operator?: TrustedOperatorIdentity | undefined;
 }
@@ -227,7 +227,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
   const { stateRoot, revision } = options;
   const verifyDirection = options.verifyDirection ?? ((): false => false);
   // The host operator channel: an explicit approve/reject forwarded by the console records under this
-  // fixed identity; no decision is fabricated, and omitting it leaves `decide` refusing.
+  // fixed identity (the host default when none is given); no decision is ever fabricated.
   const operator = options.operator ?? HOST_OPERATOR;
   const store = new DurableStore(join(stateRoot, 'store'));
   const statePort = new DurableStatePortV02({ store });
