@@ -10,7 +10,8 @@ import { equal } from './state-port-v02-admission.ts';
 
 export interface TaskOperationOptions {
   readonly store: StatePortStore;
-  readonly trustedTransitions: Readonly<Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>>;
+  /** Host-supplied trusted facts keyed by the candidate state version; the owner may stage one. */
+  readonly trustedTransitions: Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>;
   /** The owner's own AwaitPlan→Patch approval, derived from the recorded human decision; absent, no patch transition. */
   readonly trustedApproval?: ((taskId: string) => Promise<NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted'] | undefined>) | undefined;
 }
