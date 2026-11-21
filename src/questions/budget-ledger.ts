@@ -177,8 +177,8 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     return this.admit(() => planRetrievalQuery(this.profile, this.available()));
   }
 
-  public reserveIndexBatch(input: unknown): QuestionBudgetReservationResultV1 {
-    return this.admit(() => planIndexBatch(this.profile, input));
+  public reserveIndexBatch(input: unknown, allowReplayFallback = false): QuestionBudgetReservationResultV1 {
+    return this.admit(() => planIndexBatch(this.profile, input, allowReplayFallback ? this.available() : undefined));
   }
 
   public cancel(): void {
