@@ -1,6 +1,6 @@
 /** Host-only scoped static absence authority, with complete guarded scans and per-task accounting. */
 import type { QuestionAbsenceReceiptV1 } from '../contracts/questions/contracts.ts';
-import { validateSearchPage } from '../contracts/questions/validation.ts';
+import { scanExactFilePage } from './retrieval-file-scan.ts';
 import { computeFileDigest } from '../foundation/docker-workspace-policy.ts';
 import type { QuestionRepositoryOperationControl, QuestionRepositoryWork } from '../foundation/repository-types.ts';
 import type { QuestionIndexFailure, QuestionIndexView } from './index.ts';
@@ -68,41 +68,42 @@ export function createAbsenceAuthority(options: QuestionRetrievalOptions, isClos
     proving = true;
     try {
       for (const path of scope) {
-        const stop = stopped(control);
-        if (stop) return stop;
-        const admission = options.budget.reserveRepositoryOperation('search');
-        if (!admission.ok) return { status: admission.reasonCode === 'cancelled' ? 'cancelled' : 'exhausted', reasonCode: admission.reasonCode === 'cancelled' ? 'cancelled' : 'scan-limit' };
-        const work = track(admission.value.maximumWork, control);
-        const execution = await admission.value.execute(
-          async context => {
-            const bounded = {
-              signal: AbortSignal.any([context.signal, control.signal]),
-              deadlineEpochMs: Math.floor(Math.min(control.deadlineEpochMs, Date.now() + context.remainingMs)),
-              work: work.meter,
-            };
-            const fresh = await current(bounded);
-            if (fresh.status !== 'ok') return fresh;
-            const binding = await options.repository.checkBinding(bounded);
-            const stop = stopped(bounded);
-            if (stop) return stop;
-            if (isClosed()) return { status: 'unavailable' as const, reasonCode: 'store-unavailable' as const };
-            if (binding.status !== 'ok') return binding;
-            if (!sameBinding(binding.binding, options.identity.binding)) return { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
-            return options.repository.searchLiteral({ query: options.staticLookup ?? '', pathPrefix: path }, bounded);
-          },
-          () => ({ kind: 'work', work: work.consumed }),
-        );
-        if (!execution.ok) return { status: execution.reasonCode === 'cancelled' ? 'cancelled' : 'exhausted', reasonCode: execution.reasonCode === 'cancelled' ? 'cancelled' : 'scan-limit' };
-        const parsed = validateSearchPage(execution.value, options.repositoryLimits);
-        if (!parsed.ok) return { status: 'unavailable', reasonCode: 'store-unavailable' };
-        if (parsed.value.status !== 'ok')
-          return parsed.value.status === 'stale'
-            ? { status: 'stale', reasonCode: 'binding-mismatch' }
-            : parsed.value.status === 'cancelled'
-              ? { status: 'cancelled', reasonCode: 'cancelled' }
-              : { status: 'insufficient', reasonCode: 'incomplete-coverage' };
-        if (parsed.value.hits.length) return { status: 'insufficient', reasonCode: 'matches-found' };
-        if (parsed.value.coverage !== 'complete' || parsed.value.omissionReasons.length || parsed.value.nextCursor !== undefined) return { status: 'insufficient', reasonCode: 'incomplete-coverage' };
+        let nextLine: number | undefined = 1;
+        while (nextLine !== undefined) {
+          const stop = stopped(control);
+          if (stop) return stop;
+          const admission = options.budget.reserveRepositoryOperation('read');
+          if (!admission.ok) return { status: admission.reasonCode === 'cancelled' ? 'cancelled' : 'exhausted', reasonCode: admission.reasonCode === 'cancelled' ? 'cancelled' : 'scan-limit' };
+          const work = track(admission.value.maximumWork, control);
+          const execution = await admission.value.execute(
+            async context => {
+              const bounded = {
+                signal: AbortSignal.any([context.signal, control.signal]),
+                deadlineEpochMs: Math.floor(Math.min(control.deadlineEpochMs, Date.now() + context.remainingMs)),
+                work: work.meter,
+              };
+              const fresh = await current(bounded);
+              if (fresh.status !== 'ok') return fresh;
+              const binding = await options.repository.checkBinding(bounded);
+              const stop = stopped(bounded);
+              if (stop) return stop;
+              if (isClosed()) return { status: 'unavailable' as const, reasonCode: 'store-unavailable' as const };
+              if (binding.status !== 'ok')
+                return binding.status === 'cancelled'
+                  ? { status: 'cancelled' as const, reasonCode: 'cancelled' as const }
+                  : binding.status === 'stale'
+                    ? { status: 'stale' as const, reasonCode: 'binding-mismatch' as const }
+                    : { status: 'insufficient' as const, reasonCode: 'incomplete-coverage' as const };
+              if (!sameBinding(binding.binding, options.identity.binding)) return { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
+              return scanExactFilePage(options, path, nextLine ?? 1, bounded);
+            },
+            () => ({ kind: 'work', work: work.consumed }),
+          );
+          if (!execution.ok) return { status: execution.reasonCode === 'cancelled' ? 'cancelled' : 'exhausted', reasonCode: execution.reasonCode === 'cancelled' ? 'cancelled' : 'scan-limit' };
+          const result = execution.value;
+          if (result.status !== 'ok') return result;
+          nextLine = result.nextLine;
+        }
       }
       const after = await confirm(control);
       if (after.status !== 'ok') return after;
@@ -146,6 +147,8 @@ export function createAbsenceAuthority(options: QuestionRetrievalOptions, isClos
         const fresh = await current(bounded);
         if (fresh.status !== 'ok') return fresh;
         const binding = await options.repository.checkBinding(bounded);
+        const after = await current(bounded);
+        if (after.status !== 'ok') return after;
         return binding.status === 'ok' && sameBinding(binding.binding, options.identity.binding)
           ? { status: 'ok' as const }
           : binding.status === 'cancelled'

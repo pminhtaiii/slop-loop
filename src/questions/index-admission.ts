@@ -104,8 +104,13 @@ export function indexOptions(input: QuestionIndexOptions): QuestionIndexOptions 
     !/^sha256:[a-f0-9]{64}$/.test(input.configDigest) ||
     !/^sha256:[a-f0-9]{64}$/.test(input.embeddingDigest) ||
     typeof input.authorize !== 'function' ||
-    !input.budget?.reserveIndexBatch ||
-    !input.embedding?.embed ||
+    typeof input.budget?.reserveIndexBatch !== 'function' ||
+    typeof input.budget?.snapshot !== 'function' ||
+    typeof input.embedding?.embed !== 'function' ||
+    typeof input.embedding?.count !== 'function' ||
+    !input.embedding.profile ||
+    !Number.isSafeInteger(input.embedding.profile.dimension) ||
+    input.embedding.profile.dimension < 1 ||
     input.embedding.profile.dimension > input.limits.maxVectorDimensions ||
     input.limits.maxWorkerMemoryBytes < 16 * 1024 * 1024 ||
     input.limits.maxIndexDiskBytes < 139264 ||

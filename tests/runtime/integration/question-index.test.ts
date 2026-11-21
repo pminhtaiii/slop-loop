@@ -73,6 +73,23 @@ test('reopened index revocation reclaims persisted data before its lazy worker s
   }
 });
 
+async function awaitEmbedding(entered: Promise<void>, refreshing: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      entered,
+      refreshing.then(() => {
+        throw new Error('refresh completed before embedding gate');
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('embedding gate timed out')), 5000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function budget() {
   const result = createQuestionBudgetLedger(
     {
@@ -320,7 +337,7 @@ test('readers see the complete predecessor while update embedding is pending; st
     hold = true;
     const next = source({ 'a.py': 'def next():\n    pass' }, 'next');
     const updating = index.synchronize({ ...next, expectedGenerationId: saved.generation.generationId }, control());
-    await blocked;
+    await awaitEmbedding(blocked, updating);
     const observed = await index.read({ snapshot: first.snapshot, generationId: saved.generation.generationId, maxChunks: 200 }, control());
     assert.equal(observed.status, 'ok');
     if (observed.status === 'ok')
@@ -431,7 +448,7 @@ test('revocation during embedding invalidates pending publication and reclaims d
     hold = true;
     const next = source({ 'a.py': 'def next():\n    pass' }, 'next');
     const updating = index.synchronize({ ...next, expectedGenerationId: saved.generation.generationId }, control());
-    await blocked;
+    await awaitEmbedding(blocked, updating);
     await index.revoke();
     hold = false;
     release?.();
@@ -494,7 +511,7 @@ test('interrupted staged refresh is invisible and a reopened host can reclaim an
     if (saved.status !== 'ok') return;
     const next = source({ 'a.py': 'def next():\n    pass', 'b.py': 'def later():\n    pass' }, 'next');
     const updating = index.synchronize({ ...next, expectedGenerationId: saved.generation.generationId }, control());
-    await blocked;
+    await awaitEmbedding(blocked, updating);
     await index.close();
     release?.();
     assert.equal((await updating).status, 'unavailable');

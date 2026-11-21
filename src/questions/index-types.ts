@@ -46,8 +46,10 @@ export interface QuestionIndexOptions {
   readonly authorize: (snapshot: SourceSnapshotV1) => Promise<boolean>;
 }
 export interface QuestionIndex {
+  /** A caller-known operationId permits authorized reconciliation after a lost commit reply.
+   * Receipts are retained only for the current head; a superseded operation is stale. */
   synchronize(
-    request: { readonly snapshot: SourceSnapshotV1; readonly sources: readonly QuestionChunkSource[]; readonly expectedGenerationId: string | null },
+    request: { readonly snapshot: SourceSnapshotV1; readonly sources: readonly QuestionChunkSource[]; readonly expectedGenerationId: string | null; readonly operationId?: string },
     control: QuestionRepositoryOperationControl,
   ): Promise<QuestionIndexSyncResult>;
   /** Reopen does not serve until synchronize explicitly revalidates the active snapshot. */
@@ -63,7 +65,15 @@ export type IndexCommand =
   | { readonly kind: 'begin'; readonly attempt: string; readonly leaseUntil: number; readonly diskBytes: number }
   | { readonly kind: 'inspect'; readonly maxChunks: number }
   | { readonly kind: 'stage'; readonly attempt: string; readonly file: QuestionIndexedFileV1; readonly rows: readonly QuestionIndexRow[] }
-  | { readonly kind: 'publish'; readonly attempt: string; readonly expected: string | null; readonly generation: QuestionIndexGenerationV1; readonly paths: readonly string[]; readonly reuse: boolean }
+  | {
+      readonly kind: 'publish';
+      readonly attempt: string;
+      readonly operationId: string;
+      readonly expected: string | null;
+      readonly generation: QuestionIndexGenerationV1;
+      readonly paths: readonly string[];
+      readonly reuse: boolean;
+    }
   | { readonly kind: 'cleanup'; readonly attempt: string | null; readonly revoke: boolean };
 export interface IndexWorkerReply {
   readonly status: 'ok';
@@ -71,5 +81,12 @@ export interface IndexWorkerReply {
   readonly files: readonly QuestionIndexedFileV1[];
   readonly chunks: readonly QuestionIndexRow[];
   readonly diskBytes: number;
+  readonly publication?: QuestionIndexPublication | undefined;
+}
+/** Metadata-only receipt, replaced atomically whenever its committed head is superseded. */
+export interface QuestionIndexPublication {
+  readonly operationId: string;
+  readonly expectedGenerationId: string | null;
+  readonly generation: QuestionIndexGenerationV1;
 }
 export type IndexReply = IndexWorkerReply | QuestionIndexFailure;

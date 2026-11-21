@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { guardedRetrievalRepository } from '../support/questions/retrieval-guarded-fixture.ts';
 import { test } from 'node:test';
 import type { QuestionIndexedChunkV1, QuestionIndexGenerationV1, SourceSnapshotV1, SpanResultV1 } from '../../../src/contracts/questions/contracts.ts';
 import { computeFileDigest as digest } from '../../../src/foundation/docker-workspace-policy.ts';
@@ -180,7 +181,7 @@ function fixture(names = ['zeta', 'eta', 'beta', 'gamma', 'delta', 'alpha', 'the
           snapshotId: snapshot.snapshotId,
           manifestDigest: snapshot.manifestDigest,
           path: request.path,
-          range: { startLine: request.startLine, endLine: request.endLine },
+          range: { startLine: request.startLine, endLine: Math.min(request.endLine, text.split('\n').length) },
           excerpt,
           excerptDigest: digest(excerpt),
           originalByteDigest: digest(text),
@@ -501,6 +502,7 @@ test('cancelled exhausted closed and token-overflow admission starts no index or
 test('partial literal scans and parse coverage gaps never become scoped absence', async () => {
   for (const mode of ['partial', 'parse'] as const) {
     const f = fixture(['alpha']);
+    let literalScans = 0;
     const options = {
       ...f.options,
       staticLookup: 'missing',
@@ -508,8 +510,9 @@ test('partial literal scans and parse coverage gaps never become scoped absence'
         ? {
             repository: {
               ...f.options.repository,
-              async searchLiteral() {
-                return { status: 'ok' as const, coverage: 'partial' as const, omissionReasons: ['scan-limit' as const], hits: [] };
+              async readSpan(): Promise<SpanResultV1> {
+                literalScans++;
+                return { status: 'unavailable', reasonCode: 'unreadable' };
               },
             },
           }
@@ -530,9 +533,11 @@ test('partial literal scans and parse coverage gaps never become scoped absence'
           }),
     };
     const retrieval = createQuestionRetrieval(options);
-    await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'missing', limits }, control());
+    const ranked = await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'missing', limits }, control());
+    assert.equal(ranked.status, 'complete', mode);
     const absence = await retrieval.proveAbsence(control());
-    assert.equal(absence.status, 'insufficient', mode);
+    assert.deepEqual(absence, { status: 'insufficient', reasonCode: 'incomplete-coverage' }, mode);
+    assert.equal(literalScans, mode === 'partial' ? 1 : 0);
     assert.ok(!('receipt' in absence));
   }
 });
@@ -551,12 +556,16 @@ test('model request paths cannot narrow host absence scope and exact definitions
 
 test('identical chunk identities deduplicate before cutoff and conflicting provenance refuses all ranking', async () => {
   const f = fixture();
-  const row = f.rows[0];
+  const row = f.rows[5];
   assert.ok(row);
   f.rows.push(structuredClone(row));
   const result = await createQuestionRetrieval(f.options).rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'behavior', limits }, control());
   assert.equal(result.status, 'complete');
-  if (result.status === 'complete') assert.equal(new Set(result.ranked.map(hit => hit.chunkId)).size, 5);
+  if (result.status === 'complete')
+    assert.deepEqual(
+      result.ranked.map(hit => hit.chunkId),
+      ['chunk-5', 'chunk-2', 'chunk-4', 'chunk-1', 'chunk-3'],
+    );
   const corrupt = fixture(['alpha']);
   const first = corrupt.rows[0];
   assert.ok(first);
@@ -602,4 +611,263 @@ test('cancelling a held query ignores late embedding and performs no final index
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(validations, 0);
   assert.equal(f.counts().reads, 0);
+});
+
+test('request file and memory limits fence the whole generation and retain read work', async () => {
+  for (const requestLimits of [
+    { ...limits, maxFiles: 1 },
+    { ...limits, maxWorkerMemoryBytes: 1 },
+  ]) {
+    const f = fixture(['alpha', 'beta']);
+    const result = await createQuestionRetrieval(f.options).rank(
+      { schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'behavior', limits: requestLimits },
+      control(),
+    );
+    assert.equal(result.status, 'exhausted');
+    assert.ok(!('ranked' in result));
+    assert.equal(f.budget.snapshot().consumed.scannedVectors, 2);
+  }
+});
+
+test('malformed guarded spans produce typed refusals without throwing', async () => {
+  for (const span of [null, {}, { path: 'alpha.py', range: null }]) {
+    const f = fixture(['alpha']);
+    const retrieval = createQuestionRetrieval({
+      ...f.options,
+      repository: {
+        ...f.options.repository,
+        async readSpan() {
+          return { status: 'ok', span } as unknown as SpanResultV1;
+        },
+      },
+    });
+    const result = await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'alpha', limits }, control());
+    const admission = await retrieval.admit(result, 'chunk-0', control());
+    assert.equal(admission.status, 'unavailable');
+    assert.ok(!('span' in admission));
+  }
+});
+
+test('earlier query deadline bounds uncooperative inference and aborts its signal', { timeout: 2500 }, async () => {
+  const f = fixture(['alpha']);
+  const gate = Promise.withResolvers<{ status: 'ok'; tokens: number; vector: readonly number[] }>();
+  const started = Promise.withResolvers<AbortSignal>();
+  let validations = 0;
+  const retrieval = createQuestionRetrieval({
+    ...f.options,
+    index: {
+      ...f.options.index,
+      async validateCurrent() {
+        validations++;
+        return { status: 'ok' };
+      },
+    },
+    embedding: {
+      ...f.options.embedding,
+      async embed(_input, signal) {
+        assert.ok(signal);
+        started.resolve(signal);
+        return gate.promise;
+      },
+    },
+  });
+  const pending = retrieval.rank(
+    { schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'alpha', limits: { ...limits, maxRetrievalDeadlineMs: 80 } },
+    control(),
+  );
+  const signal = await started.promise;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      pending,
+      new Promise<'timeout'>(resolve => {
+        timer = setTimeout(() => resolve('timeout'), 1000);
+      }),
+    ]);
+    assert.notEqual(result, 'timeout');
+    assert.equal(typeof result === 'object' ? result.status : result, 'exhausted');
+    assert.equal(signal.aborted, true);
+    assert.equal(f.budget.snapshot().consumed.scannedVectors, 1);
+    assert.equal(f.budget.snapshot().status, 'exhausted');
+    assert.equal(f.budget.reserveRetrievalQuery().ok, false);
+  } finally {
+    clearTimeout(timer);
+    gate.resolve({ status: 'ok', tokens: 2, vector: [1, 0] });
+  }
+  await pending;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(validations, 0);
+});
+
+test('absence confirmation rechecks cancellation and generation after guarded binding waits', { timeout: 2500 }, async () => {
+  for (const mode of ['stale', 'cancelled'] as const) {
+    const f = fixture(['alpha']);
+    let hold = false;
+    const entered = Promise.withResolvers<undefined>(),
+      gate = Promise.withResolvers<undefined>();
+    const retrieval = createQuestionRetrieval({
+      ...f.options,
+      staticLookup: 'missing',
+      repository: {
+        ...f.options.repository,
+        async checkBinding() {
+          if (hold) {
+            entered.resolve(undefined);
+            await gate.promise;
+          }
+          return { status: 'ok', binding: f.identity.binding };
+        },
+      },
+    });
+    await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'missing', limits }, control());
+    const absent = await retrieval.proveAbsence(control());
+    assert.equal(absent.status, 'ok');
+    if (absent.status !== 'ok') return;
+    hold = true;
+    const caller = new AbortController();
+    const pending = retrieval.validateAbsence(absent.receipt, { ...control(), signal: caller.signal });
+    await entered.promise;
+    if (mode === 'stale') f.stale();
+    else caller.abort();
+    gate.resolve(undefined);
+    assert.equal((await pending).status, mode);
+  }
+});
+
+test('closing retrieval while presentation waits cannot deliver source claims', { timeout: 2500 }, async () => {
+  const f = fixture(['alpha']);
+  let hold = false;
+  const entered = Promise.withResolvers<AbortSignal>(),
+    gate = Promise.withResolvers<undefined>();
+  const retrieval = createQuestionRetrieval({
+    ...f.options,
+    repository: {
+      ...f.options.repository,
+      async checkBinding(bounded: QuestionRepositoryOperationControl) {
+        if (hold) {
+          entered.resolve(bounded.signal);
+          await gate.promise;
+        }
+        return { status: 'ok', binding: f.identity.binding };
+      },
+    },
+  });
+  const result = await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'alpha', limits }, control());
+  const admission = await retrieval.admit(result, 'chunk-0', control());
+  assert.equal(admission.status, 'ok');
+  if (admission.status !== 'ok') return;
+  const proposal = {
+    claims: [{ claimId: 'claim', kind: 'observation', text: 'alpha returns one', evidence: [{ evidenceId: admission.span.evidenceId, range: { startLine: 1, endLine: 2 } }] }],
+    limitations: [],
+  };
+  hold = true;
+  const pending = retrieval.present(proposal, control());
+  const signal = await entered.promise;
+  retrieval.close();
+  gate.resolve(undefined);
+  assert.equal((await pending).kind, 'cancelled');
+  assert.equal(signal.aborted, true);
+});
+
+test('actual guarded exact-file absence covers later pages without parent directory broadening', async () => {
+  for (const match of [false, true]) {
+    const f = fixture(['alpha']);
+    const text = Array.from({ length: 125 }, (_, index) => (index === 124 && match ? '# missing' : '# harmless')).join('\n');
+    f.texts.set('alpha.py', text);
+    const manifest = [{ path: 'alpha.py', originalByteDigest: digest(text) }];
+    const manifestDigest = computeSourceManifestDigest(manifest);
+    const snapshot = { ...f.snapshot, manifest, manifestDigest, admissionLimits: { ...f.snapshot.admissionLimits, maxElapsedMs: 1000 } };
+    const generation = { ...f.generation, manifestDigest };
+    const options = {
+      ...f.options,
+      snapshot,
+      index: {
+        ...f.options.index,
+        async read() {
+          return { status: 'ok' as const, generation, files: manifest.map(file => ({ ...file, fileType: 'python-source' as const, coverage: 'complete' as const, omissionReasons: [] })), chunks: [] };
+        },
+      },
+    };
+    const guarded = guardedRetrievalRepository(options, f.texts);
+    const retrieval = createQuestionRetrieval({ ...options, repository: guarded.repository, staticLookup: 'missing' });
+    const rank = await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'missing', limits }, control());
+    assert.equal(rank.status, 'empty');
+    const result = await retrieval.proveAbsence(control());
+    if (match) assert.deepEqual(result, { status: 'insufficient', reasonCode: 'matches-found' });
+    else {
+      assert.equal(result.status, 'ok');
+      if (result.status === 'ok') assert.deepEqual(result.receipt.scope, ['alpha.py']);
+    }
+    assert.ok(guarded.reads.length >= 3);
+    assert.ok(guarded.reads.every(path => path === 'alpha.py'));
+    assert.ok(guarded.guarded.includes('read'));
+    assert.ok(!guarded.guarded.includes('search'));
+    assert.ok(f.budget.snapshot().consumed.scannedBytes >= Buffer.byteLength(text));
+  }
+});
+
+test('returned vector rows stay charged when admission or embedding refuses and on successful deduplication', async () => {
+  for (const mode of ['admission', 'embedding', 'success'] as const) {
+    const f = fixture(['alpha', 'beta']);
+    if (mode === 'admission') {
+      const first = f.rows[0];
+      assert.ok(first);
+      f.rows[0] = { ...first, metadata: { ...first.metadata, originalByteDigest: digest('wrong') } };
+    }
+    if (mode === 'success') {
+      const first = f.rows[0];
+      assert.ok(first);
+      f.rows.push(structuredClone(first));
+    }
+    const retrieval = createQuestionRetrieval({
+      ...f.options,
+      ...(mode === 'embedding'
+        ? {
+            embedding: {
+              ...f.options.embedding,
+              async embed() {
+                return { status: 'unavailable' as const, reasonCode: 'inference-failed' as const };
+              },
+            },
+          }
+        : {}),
+    });
+    const result = await retrieval.rank({ schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'alpha', limits }, control());
+    assert.equal(result.status, mode === 'admission' ? 'stale' : mode === 'embedding' ? 'unavailable' : 'complete');
+    assert.equal(f.budget.snapshot().consumed.scannedVectors, mode === 'success' ? 3 : 2);
+  }
+});
+
+test('host deadline bounds an uncooperative index read and ignores its late rows', { timeout: 2500 }, async () => {
+  const f = fixture(['alpha']);
+  const gate = Promise.withResolvers<Awaited<ReturnType<typeof f.options.index.read>>>();
+  const entered = Promise.withResolvers<AbortSignal>();
+  const retrieval = createQuestionRetrieval({
+    ...f.options,
+    index: {
+      ...f.options.index,
+      async read(_request, bounded) {
+        entered.resolve(bounded.signal);
+        return gate.promise;
+      },
+    },
+  });
+  const pending = retrieval.rank(
+    { schemaVersion: 'question-retrieval/1', identity: f.identity, generationId: 'generation', queryText: 'alpha', limits },
+    { ...control(), deadlineEpochMs: Date.now() + 80 },
+  );
+  const signal = await entered.promise;
+  try {
+    const result = await pending;
+    assert.equal(result.status, 'exhausted');
+    assert.ok(!('ranked' in result));
+    assert.equal(signal.aborted, true);
+    assert.equal(f.budget.snapshot().consumed.scannedVectors, 0);
+    assert.equal(f.budget.snapshot().status, 'exhausted');
+    assert.equal(f.budget.reserveRetrievalQuery().ok, false);
+  } finally {
+    gate.resolve(await f.options.index.read());
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.counts().embeds, 0);
 });

@@ -97,13 +97,14 @@ export function admittedView(result: QuestionIndexReadResult, options: QuestionR
     computeSourceManifestDigest(files.map(file => ({ path: file.path, originalByteDigest: file.originalByteDigest }))) !== options.snapshot.manifestDigest
   )
     return undefined;
+  const originalDigestByPath = new Map(files.map(file => [file.path, file.originalByteDigest]));
   const chunks: QuestionIndexRow[] = [];
   const identities = new Map<string, string>();
   for (const row of result.chunks) {
     const checked = validateQuestionIndexedChunk(row?.metadata);
     if (
       !checked.ok ||
-      !files.some(file => file.path === checked.value.path && file.originalByteDigest === checked.value.originalByteDigest) ||
+      originalDigestByPath.get(checked.value.path) !== checked.value.originalByteDigest ||
       !Array.isArray(row.vector) ||
       row.vector.length !== options.embedding.profile.dimension ||
       Array.from(row.vector).some(value => !Number.isFinite(value)) ||

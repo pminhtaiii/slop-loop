@@ -1,15 +1,15 @@
 /** SQLite state owner, called only inside the isolated index worker. */
 import { chmodSync, lstatSync, realpathSync, statSync } from 'node:fs';
-import { dirname, relative, isAbsolute } from 'node:path';
+import { dirname, relative, isAbsolute, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import * as sqliteVec from 'sqlite-vec';
 import type { QuestionIndexedFileV1, QuestionIndexGenerationV1, RetrievalResourceLimitsV1 } from '../contracts/questions/contracts.ts';
-import type { IndexCommand, IndexReply, QuestionIndexRow } from './index-types.ts';
+import type { IndexCommand, IndexReply, QuestionIndexRow, QuestionIndexPublication } from './index-types.ts';
 
 function inside(root: string, path: string): boolean {
   const part = relative(root, path);
-  return part === '' || (!part.startsWith('..') && !isAbsolute(part));
+  return part === '' || (part !== '..' && !part.startsWith(`..${sep}`) && !isAbsolute(part));
 }
 
 export function openIndexStorage(path: string, roots: readonly string[], limits: RetrievalResourceLimitsV1): (command: IndexCommand) => IndexReply {
@@ -34,12 +34,15 @@ export function openIndexStorage(path: string, roots: readonly string[], limits:
   );
   database.exec('CREATE TABLE IF NOT EXISTS writer (id INTEGER PRIMARY KEY CHECK(id=1), attempt TEXT NOT NULL, expires INTEGER NOT NULL)');
   database.exec('CREATE TABLE IF NOT EXISTS integrity (id INTEGER PRIMARY KEY CHECK(id=1), digest TEXT NOT NULL)');
+  database.exec('CREATE TABLE IF NOT EXISTS publication (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)');
   const contentDigest = () => {
     const hash = createHash('sha256');
     for (const query of ['SELECT id,data FROM head ORDER BY id', 'SELECT path,data FROM files ORDER BY path', 'SELECT id,path,data FROM chunks ORDER BY id']) {
       hash.update(query);
       for (const row of database.prepare(query).iterate()) hash.update(JSON.stringify(row)).update('\n');
     }
+    const receipt = database.prepare('SELECT data FROM publication WHERE id=1').get();
+    if (receipt) hash.update('publication').update(String(receipt['data']));
     return hash.digest('hex');
   };
   const decode = <T>(value: unknown): T => {
@@ -51,7 +54,16 @@ export function openIndexStorage(path: string, roots: readonly string[], limits:
     return row ? decode<QuestionIndexGenerationV1>(row['data']) : null;
   };
   const diskBytes = () => ['', '-journal', '-wal', '-shm'].reduce((sum, suffix) => sum + (statSync(path + suffix, { throwIfNoEntry: false })?.size ?? 0), 0);
-  const empty = () => ({ status: 'ok' as const, generation: head(), files: [], chunks: [], diskBytes: diskBytes() });
+  const publication = () => {
+    const row = database.prepare('SELECT data FROM publication WHERE id=1').get();
+    return row ? decode<QuestionIndexPublication>(row['data']) : undefined;
+  };
+  const empty = () => ({ status: 'ok' as const, generation: head(), files: [], chunks: [], diskBytes: diskBytes(), publication: publication() });
+  const fitsMemory = () => {
+    const bytes = database.prepare('SELECT COALESCE(sum(length(CAST(data AS BLOB))),0) AS bytes FROM chunks').get()?.['bytes'];
+    const fileBytes = database.prepare('SELECT COALESCE(sum(length(CAST(data AS BLOB))),0) AS bytes FROM files').get()?.['bytes'];
+    return typeof bytes === 'number' && typeof fileBytes === 'number' && bytes + fileBytes <= limits.maxWorkerMemoryBytes / 8;
+  };
   return command => {
     try {
       if (diskBytes() > limits.maxIndexDiskBytes) return { status: 'exhausted', reasonCode: 'scan-limit' };
@@ -78,9 +90,7 @@ export function openIndexStorage(path: string, roots: readonly string[], limits:
           const generation = head();
           const count = database.prepare('SELECT count(*) AS count FROM chunks').get()?.['count'];
           if (typeof count !== 'number' || count > command.maxChunks || count > limits.maxChunks) return { status: 'exhausted', reasonCode: 'scan-limit' };
-          const bytes = database.prepare('SELECT COALESCE(sum(length(CAST(data AS BLOB))),0) AS bytes FROM chunks').get()?.['bytes'];
-          const fileBytes = database.prepare('SELECT COALESCE(sum(length(CAST(data AS BLOB))),0) AS bytes FROM files').get()?.['bytes'];
-          if (typeof bytes !== 'number' || typeof fileBytes !== 'number' || bytes + fileBytes > limits.maxWorkerMemoryBytes / 8) return { status: 'exhausted', reasonCode: 'scan-limit' };
+          if (!fitsMemory()) return { status: 'exhausted', reasonCode: 'scan-limit' };
           const files = database
             .prepare('SELECT data FROM files ORDER BY path LIMIT ?')
             .all(limits.maxFiles + 1)
@@ -92,18 +102,18 @@ export function openIndexStorage(path: string, roots: readonly string[], limits:
             .map(row => decode<QuestionIndexRow>(row['data']));
           if (generation ? database.prepare('SELECT digest FROM integrity WHERE id=1').get()?.['digest'] !== contentDigest() : files.length !== 0 || chunks.length !== 0)
             return { status: 'unavailable', reasonCode: 'store-unavailable' };
-          return { status: 'ok', generation, files, chunks, diskBytes: diskBytes() };
+          return { status: 'ok', generation, files, chunks, diskBytes: diskBytes(), publication: publication() };
         } finally {
           database.exec('ROLLBACK');
         }
       }
       if (command.kind === 'stage') {
-        const lease = database.prepare('SELECT attempt,expires FROM writer WHERE id=1').get();
-        if (lease?.['attempt'] !== command.attempt || Number(lease['expires']) <= Date.now()) return { status: 'stale', reasonCode: 'binding-mismatch' };
         if (command.rows.length > limits.maxBatchSize) return { status: 'exhausted', reasonCode: 'scan-limit' };
         if (Buffer.byteLength(JSON.stringify(command.rows)) > limits.maxWorkerMemoryBytes / 8) return { status: 'exhausted', reasonCode: 'scan-limit' };
         database.exec('BEGIN IMMEDIATE');
         try {
+          const lease = database.prepare('SELECT attempt,expires FROM writer WHERE id=1').get();
+          if (lease?.['attempt'] !== command.attempt || Number(lease['expires']) <= Date.now()) return { status: 'stale', reasonCode: 'binding-mismatch' };
           database.prepare('INSERT OR REPLACE INTO staged_files VALUES (?,?,?)').run(command.attempt, command.file.path, JSON.stringify(command.file));
           const insert = database.prepare('INSERT INTO staged_chunks VALUES (?,?,?,?)');
           for (const row of command.rows) insert.run(command.attempt, row.metadata.chunkId, row.metadata.path, JSON.stringify(row));
@@ -111,9 +121,8 @@ export function openIndexStorage(path: string, roots: readonly string[], limits:
           if (typeof count !== 'number' || count > limits.maxChunks) throw new Error('Index stage quota');
           database.exec('COMMIT');
           return empty();
-        } catch (error) {
-          database.exec('ROLLBACK');
-          throw error;
+        } finally {
+          if (database.isTransaction) database.exec('ROLLBACK');
         }
       }
       if (command.kind === 'publish') {
@@ -138,7 +147,11 @@ export function openIndexStorage(path: string, roots: readonly string[], limits:
             database.prepare('INSERT INTO files SELECT path,data FROM staged_files WHERE attempt=?').run(command.attempt);
             database.prepare('INSERT INTO chunks SELECT id,path,data FROM staged_chunks WHERE attempt=?').run(command.attempt);
           }
+          if (!fitsMemory()) return { status: 'exhausted', reasonCode: 'scan-limit' };
           database.prepare('INSERT OR REPLACE INTO head VALUES(1,?)').run(JSON.stringify(command.generation));
+          database
+            .prepare('INSERT OR REPLACE INTO publication VALUES(1,?)')
+            .run(JSON.stringify({ operationId: command.operationId, expectedGenerationId: command.expected, generation: command.generation }));
           database.prepare('INSERT OR REPLACE INTO integrity VALUES(1,?)').run(contentDigest());
           database.prepare('DELETE FROM staged_files WHERE attempt=?').run(command.attempt);
           database.prepare('DELETE FROM staged_chunks WHERE attempt=?').run(command.attempt);
@@ -151,7 +164,10 @@ export function openIndexStorage(path: string, roots: readonly string[], limits:
       }
       database.exec('BEGIN IMMEDIATE');
       try {
-        if (command.revoke) database.exec('DELETE FROM head; DELETE FROM chunks; DELETE FROM files; DELETE FROM staged_chunks; DELETE FROM staged_files; DELETE FROM writer; DELETE FROM integrity;');
+        if (command.revoke)
+          database.exec(
+            'DELETE FROM head; DELETE FROM chunks; DELETE FROM files; DELETE FROM staged_chunks; DELETE FROM staged_files; DELETE FROM writer; DELETE FROM integrity; DELETE FROM publication;',
+          );
         else if (command.attempt === null) database.exec('DELETE FROM staged_chunks; DELETE FROM staged_files;');
         else {
           database.prepare('DELETE FROM staged_chunks WHERE attempt=?').run(command.attempt);

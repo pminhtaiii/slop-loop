@@ -1,8 +1,24 @@
 /** Uses the pinned Python grammar's identifier lexer, including its Unicode continuation tables. */
 import { createRequire } from 'node:module';
+import type { Parser as PythonParser, Language as PythonLanguage } from 'web-tree-sitter';
 import type { QuestionIndexedChunkV1 } from '../contracts/questions/contracts.ts';
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import type { QuestionIndexFailure } from './index.ts';
+
+let grammarSetup: Promise<{ Parser: typeof PythonParser; grammar: PythonLanguage }> | undefined;
+
+function pinnedGrammar() {
+  grammarSetup ??= (async () => {
+    const { Parser, Language } = await import('web-tree-sitter');
+    await Parser.init();
+    const grammar = await Language.load(createRequire(import.meta.url).resolve('@repomix/tree-sitter-wasms/out/tree-sitter-python.wasm'));
+    return { Parser, grammar };
+  })().catch(error => {
+    grammarSetup = undefined;
+    throw error;
+  });
+  return grammarSetup;
+}
 
 export interface RecognizedQuestionSymbols {
   readonly status: 'ok';
@@ -20,9 +36,7 @@ export async function recognizeQuestionSymbols(
   const before = stopped();
   if (before) return before;
   try {
-    const { Parser, Language } = await import('web-tree-sitter');
-    await Parser.init();
-    const grammar = await Language.load(createRequire(import.meta.url).resolve('@repomix/tree-sitter-wasms/out/tree-sitter-python.wasm'));
+    const { Parser, grammar } = await pinnedGrammar();
     const after = stopped();
     if (after) return after;
     const parser = new Parser();
