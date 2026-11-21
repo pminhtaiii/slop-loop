@@ -272,6 +272,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
       store,
       taskId: binding.taskId,
       approvalStorageDir: join(stateRoot, 'approvals'),
+      trustedOperator: operator,
       ...(binding.authorityRef === undefined ? {} : { initialControl: { controlVersion: 1, epoch: 1, mode: 'runnable' as const, activeAuthorityRef: binding.authorityRef } }),
       ...(binding.executionProfile === undefined ? {} : { executionProfile: binding.executionProfile }),
     });

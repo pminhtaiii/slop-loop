@@ -4,19 +4,28 @@
  * Applies an admitted, already-validated patch to the bound host repository through the existing
  * `WorkspaceFilesystemPort`, then reports the measured host revision so the settled-patch hook can
  * mirror it into the volume. It writes only the admitted target paths, refuses a protected or
- * excluded path, refuses a path whose parent is not a real directory, and refuses a hunk whose
- * context does not match the current bytes (a patch that is not this file's patch). The receiver
- * performs the write only; the caller still measures, settles and mirrors.
+ * content-excluded path, refuses a path whose parent is not a real directory, and refuses a hunk
+ * whose context does not match the current bytes (a patch that is not this file's patch).
+ *
+ * The whole patch is parsed, validated and computed before any write: every section is checked
+ * (form, size, path, context, deletion), every output byte is produced in memory, and only then are
+ * all targets committed by staging each file and renaming. A failure anywhere restores the originals,
+ * so no earlier write survives. The receiver performs the write only; the caller still measures,
+ * settles and mirrors.
  */
 import { isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
 import type { ApplyPatchAction } from '../contracts/foundation/uc03.ts';
+import { containsProtectedContent } from '../foundation/docker-workspace-policy.ts';
 import type { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
 
 interface Hunk {
   readonly oldStart: number;
-  readonly body: readonly string[];
+  readonly oldCount: number;
+  readonly newCount: number;
+  /** Filled as the body is parsed, then treated as immutable by `applyHunks`. */
+  readonly body: string[];
 }
 
 interface FileHunks {
@@ -31,37 +40,59 @@ function diffPath(raw: string, prefix: string): string | null {
   return token.startsWith(prefix) ? token.slice(prefix.length) : token;
 }
 
-/** Every file section of one unified diff, in order, with each hunk's raw body lines. */
+/**
+ * Every file section of one unified diff, in order, with each hunk's raw body lines. A hunk body is
+ * bounded by its header's line counts, so a following `--- ` file header is never swallowed as a
+ * removal line, and a body that does not reach its declared counts is malformed.
+ */
 function parseSections(diff: string): FileHunks[] | null {
   const sections: FileHunks[] = [];
   let oldPath: string | null = null;
-  let newPath: string | null = null;
   let current: { oldPath: string | null; newPath: string | null; hunks: Hunk[] } | null = null;
-  let openHunk: string[] | null = null;
-  for (const line of diff.split('\n')) {
-    if (openHunk !== null && (line.startsWith(' ') || line.startsWith('+') || line.startsWith('-') || line.startsWith('\\'))) {
-      openHunk.push(line);
-      continue;
+  let open: { readonly hunk: Hunk; readonly oldCount: number; readonly newCount: number } | null = null;
+  let oldSeen = 0;
+  let newSeen = 0;
+  const lines = diff.split('\n');
+  for (const line of lines) {
+    if (open !== null) {
+      const marker = line[0];
+      if (marker === '\\') continue;
+      const advancesOld = marker === ' ' || marker === '-';
+      const advancesNew = marker === ' ' || marker === '+';
+      if (advancesOld || advancesNew) {
+        if (advancesOld) oldSeen += 1;
+        if (advancesNew) newSeen += 1;
+        if (oldSeen > open.oldCount || newSeen > open.newCount) return null;
+        open.hunk.body.push(line);
+        if (oldSeen === open.oldCount && newSeen === open.newCount) open = null;
+        continue;
+      }
+      // A body that ends early is malformed; the section headers below are parsed from the same line.
+      if (oldSeen !== open.oldCount || newSeen !== open.newCount) return null;
+      open = null;
     }
     if (line.startsWith('--- ')) {
       if (current) sections.push(current);
       oldPath = diffPath(line.slice(4), 'a/');
-      newPath = null;
       current = { oldPath, newPath: null, hunks: [] };
-      openHunk = null;
       continue;
     }
     if (line.startsWith('+++ ')) {
       if (!current) return null;
-      newPath = diffPath(line.slice(4), 'b/') ?? oldPath;
-      current = { oldPath, newPath, hunks: current.hunks };
+      // The explicit null destination of a deletion is kept so the deletion refusal sees it first.
+      current = { oldPath, newPath: diffPath(line.slice(4), 'b/'), hunks: current.hunks };
       continue;
     }
     const header = HUNK.exec(line);
     if (header) {
       if (!current) return null;
-      openHunk = [];
-      current.hunks.push({ oldStart: Number(header[1]), body: openHunk });
+      const oldCount = header[2] === undefined ? 1 : Number(header[2]);
+      const newCount = header[4] === undefined ? 1 : Number(header[4]);
+      const hunk: Hunk = { oldStart: Number(header[1]), oldCount, newCount, body: [] };
+      current.hunks.push(hunk);
+      oldSeen = 0;
+      newSeen = 0;
+      open = { hunk, oldCount, newCount };
       continue;
     }
     if (line.length === 0) continue;
@@ -114,25 +145,69 @@ function applyHunks(source: string | null, hunks: readonly Hunk[]): string {
   return output.length === 0 ? '' : newlineMarker ? text : finalNewline ? `${text}\n` : text;
 }
 
-/** Applies every admitted target path, then reports the measured host revision. */
-export async function applyAdmittedPatch(filesystem: WorkspaceFilesystemPort, patch: ApplyPatchAction, maxFileBytes: number): Promise<{ readonly applied: true; readonly newRevisionDigest: string }> {
+interface PlannedWrite {
+  readonly path: string;
+  readonly content: string;
+  /** The bytes currently on disk, restored if a later commit step fails; undefined for a new file. */
+  readonly original: string | undefined;
+}
+
+/**
+ * Validates every section of one patch without any effect, then returns the complete set of writes.
+ * A malformed section (no destination, a `/dev/null` destination, a missing hunk, a size over the
+ * bound, a protected or content-excluded target, an unadmitted path) refuses the whole patch here.
+ */
+async function planWrites(filesystem: WorkspaceFilesystemPort, patch: ApplyPatchAction, maxFileBytes: number): Promise<PlannedWrite[]> {
   const sections = parseSections(patch.patchContent);
   if (!sections || sections.length === 0) throw new Error('PATCH_UNPARSEABLE: the admitted patch is not a unified diff');
   const admitted = new Set(patch.targetPaths);
-  const writes: { readonly path: string; readonly content: string }[] = [];
+  const writes: PlannedWrite[] = [];
+  const seen = new Set<string>();
   for (const section of sections) {
-    const path = section.newPath ?? section.oldPath;
-    if (path === null || !isCanonicalRelativePath(path) || isProtectedPath(path)) throw new Error(`PATCH_PATH_REFUSED: '${path ?? ''}' is not an admitted writable path`);
+    // A deletion names its source but a `/dev/null` destination: keep it distinct from a rename or edit.
+    if (section.newPath === null) throw new Error(`PATCH_DELETION_REFUSED: '${section.oldPath ?? ''}' would be deleted`);
+    const path = section.newPath;
+    if (!isCanonicalRelativePath(path) || isProtectedPath(path)) throw new Error(`PATCH_PATH_REFUSED: '${path}' is not an admitted writable path`);
     if (!admitted.has(path)) throw new Error(`PATCH_PATH_REFUSED: '${path}' is outside the admitted target paths`);
-    // A deletion produces an empty result, which this receiver never writes: the agent repairs bytes.
-    if (section.newPath === null) throw new Error(`PATCH_DELETION_REFUSED: '${path}' would be deleted`);
-    const current = await filesystem.readTextFile(path, maxFileBytes).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      throw error;
-    });
-    writes.push({ path, content: applyHunks(current, section.hunks) });
+    if (seen.has(path)) throw new Error(`PATCH_PATH_REFUSED: '${path}' appears in more than one section`);
+    seen.add(path);
+    if (section.hunks.length === 0) throw new Error(`PATCH_UNPARSEABLE: '${path}' has no hunks`);
+    let current: string | null;
+    try {
+      current = await filesystem.readTextFile(path, maxFileBytes);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      current = null;
+    }
+    // The same content exclusions the workspace mirror and view builder apply: a file whose current
+    // bytes would be excluded from a command view is never rewritten by a patch.
+    if (current !== null && containsProtectedContent(current)) throw new Error(`PATCH_PATH_REFUSED: '${path}' contains protected content`);
+    const content = applyHunks(current, section.hunks);
+    if (Buffer.byteLength(content, 'utf8') > maxFileBytes) throw new Error(`FILE_TOO_LARGE: '${path}' exceeds its byte limit`);
+    if (containsProtectedContent(content)) throw new Error(`PATCH_PATH_REFUSED: '${path}' would introduce protected content`);
+    writes.push({ path, content, original: current ?? undefined });
   }
-  for (const write of writes) await filesystem.writeFile(write.path, write.content, maxFileBytes);
+  return writes;
+}
+
+/** Applies every admitted target path atomically, then reports the measured host revision. */
+export async function applyAdmittedPatch(filesystem: WorkspaceFilesystemPort, patch: ApplyPatchAction, maxFileBytes: number): Promise<{ readonly applied: true; readonly newRevisionDigest: string }> {
+  // Every validation and every output byte is computed before the first write.
+  const writes = await planWrites(filesystem, patch, maxFileBytes);
+  const committed: PlannedWrite[] = [];
+  try {
+    for (const write of writes) {
+      await filesystem.writeFile(write.path, write.content, maxFileBytes);
+      committed.push(write);
+    }
+  } catch (error) {
+    // Restore every already-written file to its original bytes (or remove a newly created one).
+    for (const done of committed.reverse()) {
+      if (done.original === undefined) await filesystem.removeFile(done.path);
+      else await filesystem.writeFile(done.path, done.original, maxFileBytes);
+    }
+    throw error;
+  }
   const newRevisionDigest = await filesystem.getCurrentRevisionDigest(maxFileBytes);
   return { applied: true, newRevisionDigest };
 }
