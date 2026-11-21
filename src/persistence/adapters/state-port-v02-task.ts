@@ -11,6 +11,8 @@ import { equal } from './state-port-v02-admission.ts';
 export interface TaskOperationOptions {
   readonly store: StatePortStore;
   readonly trustedTransitions: Readonly<Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>>;
+  /** The owner's own AwaitPlan→Patch approval, derived from the recorded human decision; absent, no patch transition. */
+  readonly trustedApproval?: ((taskId: string) => Promise<NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted'] | undefined>) | undefined;
 }
 
 export async function loadTask(options: TaskOperationOptions, taskId: string): Promise<TaskState | null> {
@@ -51,7 +53,7 @@ export async function applyTransition(options: TaskOperationOptions, state: Task
     throw new Error(`CAS conflict: expected stateVersion ${prior.stateVersion + 1}, got ${state.stateVersion} (expectedVersion: ${expectedVersion})`);
   }
   if (!equal(state.budgetLedgers, prior.budgetLedgers)) throw new Error('Transition must retain current authoritative accounting');
-  const trusted = options.trustedTransitions[state.stateVersion];
+  const trusted = options.trustedTransitions[state.stateVersion] ?? (await derivedTrusted(options, state, prior));
   const result = validateStateTransition(prior, state, { allowSameNode: false, ...(trusted !== undefined ? { trusted } : {}) });
   if (!result.ok) throw new Error(`State transition validation failed: ${result.errors.map(error => `${error.path}: ${error.message}`).join(', ')}`);
   if (state.runId !== prior.runId) throw new Error('Run changes are unsupported');
@@ -96,4 +98,13 @@ export async function recover(options: TaskOperationOptions, taskId: string): Pr
   const validated = validateTaskState(recovered);
   if (!validated.ok) throw new Error(`Recovered task state invalid: ${validated.errors.map(error => error.message).join(', ')}`);
   return structuredClone(validated.value);
+}
+
+/**
+ * The owner-derived trusted facts for a transition the caller supplied none for. Only the
+ * AwaitPlan→Patch approval is derivable from durable owner state; every other edge stays as before.
+ */
+async function derivedTrusted(options: TaskOperationOptions, state: TaskState, prior: TaskState): Promise<NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted'] | undefined> {
+  if (!options.trustedApproval || prior.node !== 'AwaitPlan' || state.node !== 'Patch') return undefined;
+  return options.trustedApproval(prior.taskId);
 }

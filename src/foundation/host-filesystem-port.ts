@@ -5,11 +5,12 @@
  * ControlledRepositoryReader's containment check directly: a link that leaves the
  * workspace resolves to an absolute path and is refused there.
  */
+import { randomUUID } from 'node:crypto';
 import { constants, realpathSync } from 'node:fs';
-import { open, lstat, opendir, readdir, readlink, realpath, stat } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { mkdir, open, lstat, opendir, readdir, readlink, realpath, rename, rm, stat } from 'node:fs/promises';
+import { basename, join, resolve, sep } from 'node:path';
 import type { PortProvenance } from '../contracts/foundation/uc03.ts';
-import { computeCanonicalSha256, isCanonicalRelativePath } from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
 import { computeFileDigest } from './docker-workspace-policy.ts';
 import type { FileStat, QuestionRepositoryOperationControl, TrustedFilesystemEntry, TrustedFilesystemPort } from './repository-types.ts';
 
@@ -53,6 +54,16 @@ function checkControl(control: QuestionRepositoryOperationControl): void {
   }
   if (control.signal.aborted) throw new Error('CANCELLED: Filesystem operation was cancelled');
   if (Date.now() >= control.deadlineEpochMs) throw new Error('DEADLINE_EXCEEDED: Filesystem operation deadline elapsed');
+}
+
+/** `lstat` that reports absence as `undefined`; the promise API has no `throwIfNoEntry`. */
+async function lstatOptional(path: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return undefined;
+    throw error;
+  }
 }
 
 function positiveLimit(value: number): boolean {
@@ -283,5 +294,89 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     } finally {
       await handle.close();
     }
+  }
+
+  /**
+   * Writes one admitted patch target's bytes under the host tree with no effect outside it.
+   *
+   * Every existing ancestor is canonicalized and required to resolve to its own lexical path before
+   * anything is created, so a link that leaves the workspace is refused with zero effects. Missing
+   * parents are then created one level at a time, rechecking containment after each. The final write
+   * never follows a final-component link: an exclusive temp file in the same directory is created
+   * with `O_NOFOLLOW`, written, fsynced and renamed over the target, so a swapped-in link can never
+   * redirect the bytes. This is the real-tier patch receiver's only write; the caller has already
+   * admitted the path, measured the base revision and computed every output byte.
+   */
+  async writeFile(canonicalPath: string, content: string, maxBytes: number): Promise<void> {
+    if (!isCanonicalRelativePath(canonicalPath) || isProtectedPath(canonicalPath)) throw new Error(`WORKSPACE_ESCAPE: '${canonicalPath}' is not a writable canonical path`);
+    const bytes = Buffer.from(content, 'utf8');
+    if (!positiveLimit(maxBytes) || bytes.byteLength > maxBytes) throw new Error('FILE_TOO_LARGE: Patch target exceeds its byte limit');
+    const segments = canonicalPath.split('/');
+    const target = join(this.root, ...segments);
+    const parent = await this.ensureContainedParent(segments.slice(0, -1));
+    const existing = await lstatOptional(target);
+    if (existing?.isSymbolicLink() || (existing && !existing.isFile())) throw new Error(`WORKSPACE_ESCAPE: Patch target '${canonicalPath}' is not a regular file`);
+    const temporary = join(parent, `.${basename(target)}.${randomUUID()}.tmp`);
+    const handle = await open(temporary, 'wx', 0o600);
+    try {
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const { bytesWritten } = await handle.write(bytes, offset, bytes.byteLength - offset, offset);
+        if (bytesWritten <= 0) throw new Error('WORKSPACE_ESCAPE: Patch target write made no progress');
+        offset += bytesWritten;
+      }
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      // Recheck the parent immediately before the rename: a swapped ancestor must not receive the file.
+      if ((await realpath(parent)) !== parent) throw new Error('WORKSPACE_ESCAPE: Patch target parent leaves the canonical workspace');
+      await rename(temporary, target);
+    } catch (error) {
+      await rm(temporary, { force: true });
+      throw error;
+    }
+  }
+
+  /**
+   * Removes one canonical file under the root without following a final link. Used only to roll back
+   * a file a failed patch transaction created; an absent target is a no-op, and a directory or link in
+   * the final position is refused.
+   */
+  async removeFile(canonicalPath: string): Promise<void> {
+    if (!isCanonicalRelativePath(canonicalPath) || isProtectedPath(canonicalPath)) throw new Error(`WORKSPACE_ESCAPE: '${canonicalPath}' is not a removable canonical path`);
+    const target = this.absolute(canonicalPath);
+    const existing = await lstatOptional(target);
+    if (!existing) return;
+    if (!existing.isFile() || existing.isSymbolicLink()) throw new Error(`WORKSPACE_ESCAPE: Patch target '${canonicalPath}' is not a regular file`);
+    if ((await realpath(target)) !== target) throw new Error('WORKSPACE_ESCAPE: Patch target leaves the canonical workspace');
+    await rm(target);
+  }
+
+  /**
+   * The canonical absolute parent directory for `segments`, creating any missing level under the
+   * root one at a time and rechecking containment after each creation, so a link out of the
+   * workspace is refused before it can receive anything.
+   */
+  private async ensureContainedParent(segments: readonly string[]): Promise<string> {
+    const prefix = this.root.endsWith(sep) ? this.root : `${this.root}${sep}`;
+    let current = this.root;
+    for (const segment of segments) {
+      const next = join(current, segment);
+      const resolved = await realpath(next).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      });
+      if (resolved === null) {
+        await mkdir(next, 0o755);
+        // The created level must be a real directory inside the canonical root, never a link.
+        if ((await realpath(next)) !== next || !next.startsWith(prefix)) throw new Error('WORKSPACE_ESCAPE: Patch target parent leaves the canonical workspace');
+      } else if (resolved !== next || !next.startsWith(prefix)) {
+        throw new Error('WORKSPACE_ESCAPE: Patch target parent leaves the canonical workspace');
+      }
+      current = next;
+    }
+    return current;
   }
 }

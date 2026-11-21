@@ -30,6 +30,8 @@ import { createRepositoryBaselineSource } from './repository-baseline-source.ts'
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import type { SeededTaskIds } from './real-tier-task-seed.ts';
 import { mirrorRealTierWorkspace } from './real-tier-workspace.ts';
+import { patchAdmission } from './real-tier-patch-admission.ts';
+import { applyAdmittedPatch } from './real-tier-patch-receiver.ts';
 
 /** The one refusal an unbound producer makes: named, bounded, and with no effect. */
 export const TASK_UNBOUND = 'TASK_UNBOUND' as const;
@@ -229,6 +231,9 @@ export async function buildBoundCapabilities(
     workspaceId: ids.workspaceId,
     repositoryId: task.repositoryId,
     expectedRevisionDigest: bounds.currentRevision,
+    // A bound task owns and patches its own tree, so post-patch reads must follow the owner-observed
+    // revision; the owner fence still matches the whole observation under the writers' lock.
+    pinRevision: false,
     policyDigest: bounds.policyDigest,
     bounds: { maxPathLength: bounds.maxReadPathLength, maxQueryLength: bounds.maxQueryLength },
     provenance: 'real',
@@ -272,14 +277,25 @@ export async function buildBoundCapabilities(
     unattemptedClaimClosureHandoff: createDurableUnattemptedClaimClosureHandoff(owners.statePort),
     attemptStartRecoveryHandoff: createDurableAttemptStartRecoveryHandoff(owners.statePort),
     patchRecoveryHandoff: createRefusingPatchRecoveryHandoff(),
+    patchReceiver: async admittedPatch => {
+      const result = await applyAdmittedPatch(filesystem, admittedPatch, bounds.maxFileBytes);
+      // The manager's canonical revision is what `repository-outcome.ts` re-checks; advance it here,
+      // then the settled-patch hook re-copies the host tree into the volume under the writer lease.
+      assembly.workspaceManager.setCanonicalRevision(ids.workspaceId, result.newRevisionDigest);
+      return result;
+    },
     onSettledPatch: revision => mirrorRealTierWorkspace(assembly, ids, filesystem, revision, bounds.maxFileBytes),
     repositoryDiff: diff.source,
   });
   const executionGuard = createExecutionGuardV02({ ports: { statePort: owners.statePort, repositoryPort }, config: { provenance: 'real' } });
   const configPort = { provenance: 'real' as const, loadConfig: () => ({ configId: task.configId, configVersion: task.configVersion }) };
   const admissions = createRealTierAdmissions(assembly, task, owners.statePort);
+  // One resolver for every check admission: Investigate diagnostics take the pre-plan branch, while
+  // the approved-plan Verify/Repair re-checks take the plan-bound branch. The node decides which.
+  const admissionContextForCheck: NonNullable<TrustedHostExpectedContext['admissionContextForCheck']> = request =>
+    request.currentState.node === 'Verify' || request.currentState.node === 'Repair' ? admissions.admissionContextForVerifyCheck(request) : admissions.admissionContextForCheck(request);
   const trustedExpectedContext: TrustedHostExpectedContext = {
-    admissionContextForCheck: admissions.admissionContextForCheck,
+    admissionContextForCheck,
     taskId: ids.taskId,
     workspaceId: ids.workspaceId,
     repositoryId: task.repositoryId,
@@ -303,7 +319,11 @@ export async function buildBoundCapabilities(
   };
   return {
     ports,
-    config: { trustedExpectedContext, coderAdmission: admissions.coderAdmission },
+    config: {
+      trustedExpectedContext,
+      coderAdmission: admissions.coderAdmission,
+      admissionContext: request => patchAdmission(assembly, task, owners.statePort, request),
+    },
     hostPorts: { repositoryPort, executionGuard, configPort: configPort as UC03GraphPortsV02['configPort'] },
     guardedRead,
     hostAuthority,
