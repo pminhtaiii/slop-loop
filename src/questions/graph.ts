@@ -13,9 +13,11 @@ import { validateQuestionBudgetProfile, validateQuestionIdentity, validateQuesti
 import { containsProtectedContent } from '../foundation/docker-workspace-policy.ts';
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import { createQuestionEvidenceRegistry } from './evidence.ts';
-import { createQuestionModelPort } from './model.ts';
+import { createQuestionModelPort, type QuestionModelOutcomeV1 } from './model.ts';
+import { withRetrievalControl } from './retrieval-control.ts';
 import { createQuestionRetrieval } from './retrieval.ts';
 import { sameBinding } from './retrieval-admission.ts';
+import { createQuestionConversationNodes } from './graph-outcomes.ts';
 import { admitInvestigationBinding, budgetStop, definitionHint, investigateQuestionTool, investigationRepository, questionStop, repositoryStop } from './graph-investigation.ts';
 import type { QuestionInvestigationConfiguration, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
 
@@ -123,43 +125,46 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
     )
       return failed(questionStop('invalid-decision'));
     if (containsProtectedContent(question)) return failed(questionStop('protected-content'));
-    const stop = (): QuestionClosedOutcomeV1 | undefined => {
+    const stop = (preferred?: QuestionClosedOutcomeV1): QuestionClosedOutcomeV1 | undefined => {
       if (Date.now() >= control.deadlineEpochMs) return questionStop('deadline');
       if (control.signal.aborted) {
         config.budget.cancel();
         return questionStop('cancelled');
       }
+      if (control.work && (control.work.remaining('scannedFiles') <= 0 || control.work.remaining('scannedBytes') <= 0)) return questionStop('scan-limit');
+      if (control.work && control.work.remaining('returnedBytes') <= 0) return questionStop('output-limit');
       const budget = config.budget.snapshot();
-      if (budget.status !== 'open') return budgetStop(budget.status);
+      if (budget.status !== 'open') return budget.status === 'exhausted' && preferred?.kind === 'budget-exhausted' ? preferred : budgetStop(budget.status);
       if (budget.remainingElapsedMs <= 0) return questionStop('elapsed-deadline');
       return undefined;
     };
     const close = (outcome: QuestionClosedOutcomeV1, state: State) => ({ result: closedResult(outcome, state.usage) });
+    const conversation = createQuestionConversationNodes(config, evidenceRegistry, control, stop);
     const app = new StateGraph(InvestigationState)
       .addNode('Admit', async (state: State) => {
         const before = stop();
         if (before) return close(before, state);
         const bindingFailure = await admitInvestigationBinding(config, repository, control);
-        const afterBinding = stop();
+        const afterBinding = stop(bindingFailure);
         if (afterBinding) return close(afterBinding, state);
         if (bindingFailure) return close(bindingFailure, state);
         const observation = await source.rank(
           { schemaVersion: 'question-retrieval/1', identity: config.identity, generationId: config.generationId, queryText: question, limits: config.profile.retrieval },
           control,
         );
-        const after = stop();
+        const after = stop(observation.status !== 'complete' && observation.status !== 'empty' ? repositoryStop(observation) : undefined);
         if (after) return { ...close(after, state), retrieval: observation };
         if (observation.status !== 'complete' && observation.status !== 'empty') return { ...close(repositoryStop(observation), state), retrieval: observation };
         const evidence: AdmittedSpanV1[] = [];
         const observations: string[] = [];
         for (const hit of observation.ranked) {
           const admitted = await source.admit(observation, hit.chunkId, control);
-          const afterAdmission = stop();
+          const afterAdmission = stop(admitted.status !== 'ok' ? repositoryStop(admitted) : undefined);
           if (afterAdmission) return { ...close(afterAdmission, state), retrieval: observation };
           if (admitted.status !== 'ok') return { ...close(repositoryStop(admitted), state), retrieval: observation };
           // Issuance cannot be copied between registries. This extra guarded read is charged independently.
           const read = await evidenceRegistry.readSpan({ path: hit.path, startLine: hit.startLine, endLine: hit.endLine }, control);
-          const afterRead = stop();
+          const afterRead = stop(read.status !== 'ok' ? repositoryStop(read) : undefined);
           if (afterRead) return { ...close(afterRead, state), retrieval: observation };
           if (read.status !== 'ok') return { ...close(repositoryStop(read), state), retrieval: observation };
           if (
@@ -189,8 +194,16 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
       .addNode('Decide', async (state: State) => {
         const before = stop();
         if (before) return close(before, state);
-        const response = await modelPort.decide({ question, evidence: state.evidence, observations: state.observations }, control.signal);
-        const after = stop();
+        const response = await withRetrievalControl<QuestionModelOutcomeV1>(
+          control,
+          bounded => modelPort.decide({ question, evidence: state.evidence, observations: state.observations }, bounded.signal),
+          failure => ({
+            status: 'stopped',
+            reasonCode: failure.reasonCode === 'deadline' ? 'elapsed-deadline' : 'cancelled',
+            usage: { status: 'unknown', reasonCode: failure.reasonCode === 'deadline' ? 'timeout' : 'cancelled' },
+          }),
+        );
+        const after = stop(response.status === 'stopped' ? questionStop(response.reasonCode) : undefined);
         if (response.status !== 'ok' && !control.signal.aborted && Date.now() < control.deadlineEpochMs)
           return { result: closedResult(questionStop(response.reasonCode), response.usage), usage: response.usage };
         if (after) return { result: closedResult(after, response.usage), usage: response.usage };
@@ -201,17 +214,22 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
         const before = stop();
         if (before) return close(before, state);
         const decision = state.decision;
-        if (!decision || !['answer', 'read', 'search', 'list'].includes(decision.kind)) return close(questionStop('invalid-decision'), state);
-        if (decision.kind === 'answer' && decision.claims.some(claim => claim.evidence.some(reference => !state.visibleEvidenceIds.includes(reference.evidenceId))))
+        if (!decision || !['answer', 'read', 'search', 'list', 'clarify', 'insufficient'].includes(decision.kind)) return close(questionStop('invalid-decision'), state);
+        if (
+          (decision.kind === 'answer' || decision.kind === 'insufficient') &&
+          decision.claims?.some(claim => claim.evidence.some(reference => !state.visibleEvidenceIds.includes(reference.evidenceId)))
+        )
           return close(questionStop('invalid-citation'), state);
         return {};
       })
+      .addNode('Clarify', conversation.clarify)
+      .addNode('Insufficient', conversation.insufficient)
       .addNode('Read', async (state: State) => {
         const before = stop();
         if (before) return close(before, state);
         if (!state.decision) return close(questionStop('invalid-decision'), state);
         const result = await investigateQuestionTool(state.decision, config, repository, evidenceRegistry, control);
-        const after = stop();
+        const after = stop(result.status === 'stopped' ? result.outcome : undefined);
         if (after) return close(after, state);
         if (result.status !== 'ok') return close(result.outcome, state);
         const hints = [...result.evidence].flatMap(span =>
@@ -230,7 +248,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
         if (before) return close(before, state);
         if (state.decision?.kind !== 'answer') return close(questionStop('invalid-decision'), state);
         const presentation = await evidenceRegistry.present(state.decision, control);
-        const after = stop();
+        const after = stop(presentation.kind === 'budget-exhausted' ? questionStop(presentation.reasonCode) : undefined);
         if (after) return close(after, state);
         if (presentation.kind !== 'delivered') return close(presentation.kind === 'budget-exhausted' ? questionStop(presentation.reasonCode) : presentation, state);
         const result: QuestionResultV1 = Object.freeze({
@@ -247,9 +265,13 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
       .addEdge(START, 'Admit')
       .addConditionalEdges('Admit', state => (state.result ? END : 'Decide'))
       .addConditionalEdges('Decide', state => (state.result ? END : 'Validate'))
-      .addConditionalEdges('Validate', state => (state.result ? END : state.decision?.kind === 'answer' ? 'Deliver' : 'Read'))
+      .addConditionalEdges('Validate', state =>
+        state.result ? END : state.decision?.kind === 'answer' ? 'Deliver' : state.decision?.kind === 'clarify' ? 'Clarify' : state.decision?.kind === 'insufficient' ? 'Insufficient' : 'Read',
+      )
       .addConditionalEdges('Read', state => (state.result ? END : 'Decide'))
       .addEdge('Deliver', END)
+      .addEdge('Clarify', END)
+      .addEdge('Insufficient', END)
       .compile();
     try {
       const final = await app.invoke(

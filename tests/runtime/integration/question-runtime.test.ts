@@ -6,6 +6,7 @@ import type {
   QuestionIndexedChunkV1,
   QuestionIndexGenerationV1,
   QuestionModelDecisionV1,
+  QuestionRuntimeBudgetV1,
   SourceSnapshotV1,
 } from '../../../src/contracts/questions/contracts.ts';
 import { computeFileDigest as digest } from '../../../src/foundation/docker-workspace-policy.ts';
@@ -33,6 +34,7 @@ function fixture(
     ['recover.py', 'def recover():\n    return "safe"'],
   ]),
   chunks: readonly { path: string; startLine: number; endLine: number; symbol: string; definitionEnd?: number }[] = [{ path: 'entry.py', startLine: 1, endLine: 2, symbol: 'start' }],
+  runtimeOverrides: Partial<QuestionRuntimeBudgetV1> = {},
 ) {
   const binding = { repositoryId: 'repo', workspaceId: 'workspace', revisionDigest: digest('revision'), policyDigest: digest('policy') };
   const identity = { sessionId: 'session', taskId: 'task', runId: 'run', questionId: 'question', binding, configDigest: digest('config') };
@@ -61,6 +63,7 @@ function fixture(
       maxClarificationRounds: 2,
       maxConversationBytes: 15000,
       maxFinalBytes: 10000,
+      ...runtimeOverrides,
     },
     repository: { maxFileBytes: 20000, maxSpanBytes: 4096, maxSpanLines: 60, maxPageEntries: 100, maxSearchHits: 20, maxQueryBytes: 1000, maxPathBytes: 500 },
     retrieval: {
@@ -116,6 +119,7 @@ function fixture(
   });
   let scans = 0,
     modelCalls = 0,
+    bindingChecks = 0,
     current = true;
   const embedding = createControlledQuestionEmbedding(
     { id: 'controlled/1', dimension: 2, maxTokens: 512 },
@@ -133,6 +137,7 @@ function fixture(
       };
     },
     async validateCurrent() {
+      bindingChecks++;
       return current ? { status: 'ok' as const } : { status: 'stale' as const, reasonCode: 'binding-mismatch' as const };
     },
   };
@@ -183,7 +188,7 @@ function fixture(
       transport: {
         kind: 'controlled' as const,
         enforcesOutputTokenCap: true as const,
-        async send(request: QuestionCompiledRequestV1) {
+        async send(request: QuestionCompiledRequestV1): Promise<unknown> {
           requests.push(request);
           const step = steps[modelCalls++];
           assert.ok(step, 'script must cover every admitted model call');
@@ -201,6 +206,7 @@ function fixture(
     requests,
     guarded,
     counts: () => ({ modelCalls, scans }),
+    bindingChecks: () => bindingChecks,
     stale() {
       current = false;
     },
@@ -418,4 +424,303 @@ test('a remembered evidence ID omitted by the latest compiler cannot support a n
   if (run.result.kind === 'failed') assert.equal(run.result.reasonCode, 'invalid-citation');
   assert.equal(f.guarded.reads.length, readsAtFinalProposal);
   assert.equal(f.counts().modelCalls, 3);
+});
+
+test('material ambiguity returns a task-charged clarification and waits without background activity', async () => {
+  const f = fixture([() => ({ kind: 'clarify', question: 'Which recovery mechanism?', explanation: 'The referent is unresolved.', unresolvedReferents: ['task recovery', 'process recovery'] })]);
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain recovery.', control());
+  assert.equal(run.result.kind, 'awaiting-clarification');
+  if (run.result.kind !== 'awaiting-clarification') return;
+  assert.equal(run.result.clarification.round, 1);
+  assert.deepEqual(run.result.clarification.unresolvedReferents, ['task recovery', 'process recovery']);
+  assert.equal(f.budget.snapshot().consumed.clarificationRounds, 1);
+  const waiting = { ...f.counts(), reads: f.guarded.reads.length };
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual({ ...f.counts(), reads: f.guarded.reads.length }, waiting);
+});
+
+test('clarification cap returns honest insufficient evidence without charging a new round or doing final IO', async () => {
+  const f = fixture([() => ({ kind: 'clarify', question: 'Which recovery?', explanation: 'The referent remains unresolved.', unresolvedReferents: ['task', 'process'] })]);
+  for (let i = 0; i < f.profile.runtime.maxClarificationRounds; i++) {
+    const reservation = f.budget.reserveClarification();
+    assert.ok(reservation.ok);
+    await reservation.value.execute(
+      async () => undefined,
+      () => ({ kind: 'work', work: { clarificationRounds: 1 } }),
+    );
+  }
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain recovery.', control());
+  assert.equal(run.result.kind, 'insufficient-evidence');
+  if (run.result.kind !== 'insufficient-evidence') return;
+  assert.deepEqual(run.result.claims, []);
+  assert.deepEqual(run.result.citations, []);
+  assert.equal(f.budget.snapshot().consumed.clarificationRounds, 2);
+  assert.equal(f.budget.snapshot().status, 'open');
+  assert.equal(f.counts().modelCalls, 1);
+  assert.equal(f.budget.snapshot().consumed.toolCalls, 2);
+});
+
+test('a partial search miss remains insufficient evidence rather than confirmed absence', async () => {
+  const f = fixture([
+    () => ({ kind: 'search', query: 'undocumented-author-intent' }),
+    context => {
+      assert.match(context.observations.items.join('\n'), /"kind":"search"/);
+      assert.match(context.observations.items.join('\n'), /"coverage":"partial"/);
+      return { kind: 'insufficient', explanation: 'The inspected source cannot establish the author intent; search coverage does not prove absence.' };
+    },
+  ]);
+  const search = f.options.repository.searchLiteral;
+  f.options.repository = {
+    ...f.options.repository,
+    async searchLiteral(request, bounded) {
+      const page = await search(request, bounded);
+      return page.status === 'ok' ? { ...page, coverage: 'partial', omissionReasons: ['protected'] } : page;
+    },
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Why did the author choose recovery?', control());
+  assert.equal(run.result.kind, 'insufficient-evidence');
+  if (run.result.kind !== 'insufficient-evidence') return;
+  assert.deepEqual(run.result.claims, []);
+  assert.deepEqual(run.result.citations, []);
+  assert.match(run.result.explanation, /cannot establish/);
+  assert.equal(f.counts().modelCalls, 2);
+});
+
+test('insufficient evidence can retain supported claims only after admitted final binding validation', async () => {
+  const f = fixture([
+    context => {
+      const proposal = answer(context, ['entry.py']);
+      assert.equal(proposal.kind, 'answer');
+      return { kind: 'insufficient', explanation: 'Delegation is visible; author intent remains unknown.', claims: proposal.kind === 'answer' ? proposal.claims : [] };
+    },
+  ]);
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('What happens and why?', control());
+  assert.equal(run.result.kind, 'insufficient-evidence');
+  if (run.result.kind !== 'insufficient-evidence') return;
+  assert.equal(run.result.citations[0]?.path, 'entry.py');
+  assert.equal(run.result.claims.length, 1);
+  assert.equal(f.budget.snapshot().consumed.toolCalls, 3);
+  assert.ok(!('text' in run.result));
+});
+
+test('an earlier caller deadline fences an uncooperative model and retains its uncertain reservation', async t => {
+  const f = fixture([]);
+  let sends = 0;
+  f.options.model.transport.send = async () => {
+    sends++;
+    return await new Promise<never>(() => undefined);
+  };
+  t.after(() => f.budget.cancel());
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const pending = graph.value.run('Explain start.', { ...control(), deadlineEpochMs: Date.now() + 1200 });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const result = await Promise.race([
+    pending,
+    new Promise<'unbounded'>(resolve => {
+      timer = setTimeout(() => resolve('unbounded'), 1700);
+    }),
+  ]);
+  clearTimeout(timer);
+  assert.notEqual(result, 'unbounded', 'the caller deadline must bound the whole run independently of task elapsed room');
+  if (result === 'unbounded') return;
+  assert.equal(result.result.kind, 'budget-exhausted');
+  if (result.result.kind === 'budget-exhausted') assert.equal(result.result.reasonCode, 'elapsed-deadline');
+  assert.ok(!('claims' in result.result) && !('citations' in result.result));
+  assert.equal(sends, 1);
+  assert.ok(f.budget.snapshot().reserved.billableTokens > 0);
+  const reads = f.guarded.reads.length;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.guarded.reads.length, reads);
+});
+
+test('the exact last tool call suppresses final binding IO and preserves the tool-limit reason', async () => {
+  let finalChecks = 0;
+  let checksAtProposal = 0;
+  const f = fixture(
+    [
+      context => {
+        checksAtProposal = finalChecks;
+        return answer(context, ['entry.py']);
+      },
+    ],
+    undefined,
+    undefined,
+    { maxToolCalls: 2 },
+  );
+  const check = f.options.index.validateCurrent;
+  f.options.index.validateCurrent = async () => {
+    finalChecks++;
+    return await check();
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain start.', control());
+  assert.equal(run.result.kind, 'budget-exhausted');
+  if (run.result.kind === 'budget-exhausted') assert.equal(run.result.reasonCode, 'tool-limit');
+  assert.ok(!('claims' in run.result) && !('citations' in run.result));
+  assert.equal(finalChecks, checksAtProposal);
+  assert.equal(f.budget.snapshot().consumed.toolCalls, 2);
+  assert.equal(f.counts().modelCalls, 1);
+});
+
+test('unknown usage blocks clarification and keeps the reservation with zero later source or provider effects', async () => {
+  const f = fixture([]);
+  let sends = 0;
+  let closedChecks = 0;
+  f.options.model.transport.send = async () => {
+    sends++;
+    closedChecks = f.bindingChecks();
+    return { decision: { kind: 'clarify', question: 'Which flow?', explanation: 'Ambiguous.', unresolvedReferents: ['one', 'two'] }, usage: { status: 'missing' } };
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain recovery.', control());
+  assert.equal(run.result.kind, 'blocked');
+  if (run.result.kind === 'blocked') assert.equal(run.result.reasonCode, 'accounting-unknown');
+  assert.ok(!('claims' in run.result) && !('citations' in run.result) && !('clarification' in run.result));
+  assert.equal(sends, 1);
+  assert.equal(f.bindingChecks(), closedChecks);
+  assert.equal(f.budget.snapshot().status, 'blocked');
+  assert.ok(f.budget.snapshot().reserved.billableTokens > 0);
+});
+
+test('cancellation during a model decision suppresses its late answer and all final source checks', async () => {
+  const cancellation = new AbortController();
+  let atCancellation = 0;
+  const f = fixture([
+    context => {
+      atCancellation = f.bindingChecks();
+      cancellation.abort();
+      return answer(context, ['entry.py']);
+    },
+  ]);
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain start.', { ...control(), signal: cancellation.signal });
+  assert.equal(run.result.kind, 'cancelled');
+  assert.ok(!('claims' in run.result) && !('citations' in run.result));
+  assert.equal(f.bindingChecks(), atCancellation);
+  assert.equal(f.counts().modelCalls, 1);
+  assert.equal(f.budget.snapshot().status, 'cancelled');
+});
+
+test('mandatory model context overflow returns a claim-free context-limit without provider dispatch or final IO', async () => {
+  const f = fixture([]);
+  let checksAtCompilation = 0;
+  f.options.model.counter.countRequest = () => {
+    checksAtCompilation = f.bindingChecks();
+    return 30001;
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain start.', control());
+  assert.equal(run.result.kind, 'blocked');
+  if (run.result.kind === 'blocked') assert.equal(run.result.reasonCode, 'context-limit');
+  assert.ok(!('claims' in run.result) && !('citations' in run.result));
+  assert.equal(f.counts().modelCalls, 0);
+  assert.equal(f.bindingChecks(), checksAtCompilation);
+  assert.equal(f.budget.snapshot().consumed.modelCalls, 0);
+});
+
+test('a denied protected read stops without model retry or protected bytes', async () => {
+  const f = fixture([() => ({ kind: 'read', path: '.env', startLine: 1, endLine: 1 })]);
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain recovery.', control());
+  assert.equal(run.result.kind, 'blocked');
+  if (run.result.kind === 'blocked') assert.equal(run.result.reasonCode, 'owner-denied');
+  assert.equal(f.counts().modelCalls, 1);
+  assert.ok(!f.guarded.reads.includes('.env'));
+  assert.ok(!('claims' in run.result) && !('citations' in run.result));
+});
+
+test('pre-cancelled and expired runs start no index, source or provider operations', async () => {
+  for (const kind of ['cancelled', 'budget-exhausted'] as const) {
+    const f = fixture([]);
+    const cancellation = new AbortController();
+    if (kind === 'cancelled') cancellation.abort();
+    const graph = createQuestionInvestigation(f.options);
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explain start.', { signal: cancellation.signal, deadlineEpochMs: Date.now() + (kind === 'cancelled' ? 20000 : -1) });
+    assert.equal(run.result.kind, kind);
+    assert.deepEqual(f.counts(), { modelCalls: 0, scans: 0 });
+    assert.equal(f.bindingChecks(), 0);
+    assert.equal(f.guarded.reads.length, 0);
+    assert.ok(!('claims' in run.result) && !('citations' in run.result));
+  }
+});
+
+test('protected conversational text is never displayed and small final caps refuse bounded output', async () => {
+  const protectedText = 'api_key = "controlled_secret_token"';
+  const vectors = [
+    { decision: { kind: 'clarify', question: 'Which flow?', explanation: protectedText, unresolvedReferents: ['one', 'two'] }, maxFinalBytes: 10000, reason: 'protected-content' },
+    { decision: { kind: 'insufficient', explanation: protectedText }, maxFinalBytes: 10000, reason: 'protected-content' },
+    { decision: { kind: 'insufficient', explanation: 'The evidence cannot establish the author intent.' }, maxFinalBytes: 10, reason: 'render-limit' },
+  ];
+  for (const vector of vectors) {
+    const f = fixture([() => vector.decision], undefined, undefined, { maxFinalBytes: vector.maxFinalBytes });
+    const graph = createQuestionInvestigation(f.options);
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explain recovery.', control());
+    assert.equal(run.result.kind, 'failed');
+    if (run.result.kind === 'failed') assert.equal(run.result.reasonCode, vector.reason);
+    assert.ok(!JSON.stringify(run.result).includes('controlled_secret_token'));
+    assert.equal(f.budget.snapshot().consumed.clarificationRounds, 0);
+    assert.equal(f.budget.snapshot().consumed.toolCalls, 2);
+    assert.equal(f.counts().modelCalls, 1);
+  }
+});
+
+test('safe conversational whitespace is normalized and claim-free result arrays are immutable', async () => {
+  const f = fixture([() => ({ kind: 'insufficient', explanation: 'Cannot\n establish\t intent.' })]);
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain recovery.', control());
+  assert.equal(run.result.kind, 'insufficient-evidence');
+  if (run.result.kind !== 'insufficient-evidence') return;
+  assert.equal(run.result.explanation, 'Cannot establish intent.');
+  assert.ok(Object.isFrozen(run.result.claims) && Object.isFrozen(run.result.citations) && Object.isFrozen(run.result.limitations));
+});
+
+test('exact outer file, scanned-byte and returned-byte boundaries suppress all final binding IO', async () => {
+  for (const exhausted of ['scannedFiles', 'scannedBytes', 'returnedBytes'] as const) {
+    const available = { scannedFiles: 10000, scannedBytes: 10000000, returnedBytes: 1000000 };
+    let closedChecks = 0;
+    const f = fixture([
+      context => {
+        closedChecks = f.bindingChecks();
+        available[exhausted] = 0;
+        return answer(context, ['entry.py']);
+      },
+    ]);
+    const graph = createQuestionInvestigation(f.options);
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explain start.', {
+      ...control(),
+      work: {
+        remaining: key => available[key],
+        charge(work) {
+          for (const key of ['scannedFiles', 'scannedBytes', 'returnedBytes'] as const) {
+            if ((work[key] ?? 0) > available[key]) return false;
+          }
+          for (const key of ['scannedFiles', 'scannedBytes', 'returnedBytes'] as const) available[key] -= work[key] ?? 0;
+          return true;
+        },
+      },
+    });
+    assert.equal(run.result.kind, 'budget-exhausted');
+    if (run.result.kind === 'budget-exhausted') assert.equal(run.result.reasonCode, exhausted === 'returnedBytes' ? 'output-limit' : 'scan-limit');
+    assert.equal(f.bindingChecks(), closedChecks, 'no final generation or repository scan may start after the outer limit');
+    assert.equal(f.counts().modelCalls, 1);
+    assert.ok(!('claims' in run.result) && !('citations' in run.result));
+  }
 });
