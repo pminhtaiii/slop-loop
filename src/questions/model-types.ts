@@ -40,6 +40,8 @@ export interface QuestionModelTransportV1 {
 }
 
 export interface QuestionModelTransportControlV1 extends QuestionBudgetExecutionContextV1 {
+  /** Optional earlier caller deadline in epoch milliseconds; deadlineAt remains in the ledger clock. */
+  readonly deadlineEpochMs?: number;
   readonly admission: Readonly<{ reservationId: string; identity: QuestionIdentityV1; maximumBillableTokens: number; maximumCostMicros: number }>;
 }
 
@@ -64,8 +66,8 @@ export type QuestionModelOutcomeV1 =
   | { readonly status: 'stopped'; readonly reasonCode: QuestionModelFailureReasonV1; readonly usage: QuestionUsageV1 };
 
 export interface QuestionModelPort {
-  /** Host-composed boundary: owns admission, then dispatches one admission-bound transport call. No retries or tool execution. */
-  decide(context: unknown, signal: AbortSignal): Promise<QuestionModelOutcomeV1>;
+  /** Owns admission and rechecks the optional caller epoch deadline after synchronous compilation and before transport. No retries or tools. */
+  decide(context: unknown, signal: AbortSignal, deadlineEpochMs?: number): Promise<QuestionModelOutcomeV1>;
 }
 
 export type QuestionModelPortCreationV1 = { readonly ok: true; readonly value: QuestionModelPort } | { readonly ok: false; readonly reasonCode: 'invalid-config' };

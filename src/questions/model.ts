@@ -28,6 +28,10 @@ function stopped(reasonCode: QuestionModelFailureReasonV1, usage: QuestionUsageV
   return Object.freeze({ status: 'stopped', reasonCode, usage: Object.freeze(usage) });
 }
 
+function deadlineUsage(usage: QuestionUsageV1): QuestionUsageV1 {
+  return usage.status === 'complete' ? usage : { status: 'unknown', reasonCode: 'timeout' };
+}
+
 /** Creates no provider or accounting owner. Host capabilities/config are validated before any dispatch. */
 export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV1): QuestionModelPortCreationV1 {
   const identity = validateQuestionIdentity(options?.identity);
@@ -64,12 +68,15 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
     transport: Object.freeze({ ...transport, send: transport.send.bind(transport) }),
   });
 
-  async function decide(context: unknown, signal: AbortSignal): Promise<QuestionModelOutcomeV1> {
+  async function decide(context: unknown, signal: AbortSignal, deadlineEpochMs?: number): Promise<QuestionModelOutcomeV1> {
     if (!signal || typeof signal.addEventListener !== 'function') return stopped('invalid-context');
+    if (deadlineEpochMs !== undefined && (!Number.isFinite(deadlineEpochMs) || deadlineEpochMs <= 0)) return stopped('invalid-context');
+    const callerExpired = () => deadlineEpochMs !== undefined && Date.now() >= deadlineEpochMs;
     if (signal.aborted) {
       config.budget.cancel();
       return stopped('cancelled');
     }
+    if (callerExpired()) return stopped('elapsed-deadline');
     const state = config.budget.snapshot();
     if (state.status !== 'open') {
       if (state.status === 'cancelled') return stopped('cancelled');
@@ -81,8 +88,10 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
     try {
       compiled = compileQuestionModelRequest(context, config, signal);
     } catch {
-      return stopped('owner-unavailable');
+      return stopped(callerExpired() ? 'elapsed-deadline' : 'owner-unavailable');
     }
+    // A synchronous tokenizer can cross the caller deadline before an abort timer gets an event-loop turn.
+    if (callerExpired()) return stopped('elapsed-deadline');
     if (!compiled.ok) {
       if (compiled.reasonCode === 'cancelled') config.budget.cancel();
       return stopped(compiled.reasonCode);
@@ -93,6 +102,10 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
     }
     const admission = config.budget.reserveModelCall(compiled.request.inputTokens);
     if (!admission.ok) return stopped(admission.reasonCode);
+    if (callerExpired()) {
+      admission.value.releaseBeforeDispatch();
+      return stopped('elapsed-deadline');
+    }
     if (admission.value.maximumBillableTokens - compiled.request.inputTokens !== compiled.request.maxOutputTokens) {
       admission.value.releaseBeforeDispatch();
       return stopped('owner-unavailable');
@@ -105,12 +118,19 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
         config.budget.cancel();
         return stopped('cancelled');
       }
+      if (callerExpired()) {
+        admission.value.releaseBeforeDispatch();
+        return stopped('elapsed-deadline');
+      }
       const execution = await admission.value.execute(
-        control =>
-          config.transport.send(
+        control => {
+          // Check at the actual transport boundary as well as before reserving. Never mix epoch and ledger clocks.
+          if (callerExpired()) throw new Error('QUESTION_DEADLINE_ELAPSED_BEFORE_DISPATCH');
+          return config.transport.send(
             compiled.request,
             Object.freeze({
               ...control,
+              ...(deadlineEpochMs === undefined ? {} : { deadlineEpochMs }),
               admission: Object.freeze({
                 reservationId: admission.value.id,
                 identity: config.identity,
@@ -118,13 +138,15 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
                 maximumCostMicros: admission.value.maximumCostMicros,
               }),
             }),
-          ),
+          );
+        },
         response => {
           const usage = validateQuestionUsage(record(response) ? response['usage'] : undefined);
           observedUsage = usage.ok ? usage.value : { status: 'unknown', reasonCode: 'invalid-metadata' };
           return { kind: 'model-usage', usage: observedUsage };
         },
       );
+      if (callerExpired()) return stopped('elapsed-deadline', deadlineUsage(observedUsage));
       if (!execution.ok)
         return stopped(
           execution.reasonCode,
@@ -156,7 +178,7 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
       return Object.freeze({ status: 'ok', decision: decision.value, usage: usage.value, visibleEvidenceIds: compiled.request.visibleEvidenceIds });
     } catch {
       // The reservation has already held uncertain usage. Provider exception text never leaves this boundary.
-      return stopped('accounting-unknown', { status: 'unknown', reasonCode: 'provider-error' });
+      return callerExpired() ? stopped('elapsed-deadline', { status: 'unknown', reasonCode: 'timeout' }) : stopped('accounting-unknown', { status: 'unknown', reasonCode: 'provider-error' });
     } finally {
       signal.removeEventListener('abort', cancel);
     }

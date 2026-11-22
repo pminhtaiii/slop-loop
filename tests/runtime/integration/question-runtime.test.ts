@@ -724,3 +724,31 @@ test('exact outer file, scanned-byte and returned-byte boundaries suppress all f
     assert.ok(!('claims' in run.result) && !('citations' in run.result));
   }
 });
+
+test('synchronous request counting crossing the immutable caller deadline prevents provider dispatch', async () => {
+  const realNow = Date.now;
+  let closedChecks = 0;
+  const f = fixture([context => answer(context, ['entry.py'])]);
+  f.options.model.counter.countRequest = () => {
+    closedChecks = f.bindingChecks();
+    Date.now = () => realNow() + 40000;
+    return 100;
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const caller = Object.freeze(control());
+  let run;
+  try {
+    run = await graph.value.run('Explain start.', caller);
+  } finally {
+    Date.now = realNow;
+  }
+  assert.equal(run.result.kind, 'budget-exhausted');
+  if (run.result.kind === 'budget-exhausted') assert.equal(run.result.reasonCode, 'elapsed-deadline');
+  assert.equal(f.counts().modelCalls, 0, 'deadline crossing during synchronous compilation must close transport admission');
+  assert.equal(f.bindingChecks(), closedChecks);
+  assert.equal(f.guarded.reads.length, 2);
+  assert.ok(!('claims' in run.result) && !('citations' in run.result));
+  assert.equal(f.budget.snapshot().consumed.modelCalls, 0);
+  assert.equal(f.budget.snapshot().reserved.billableTokens, 0);
+});

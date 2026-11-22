@@ -196,7 +196,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
         if (before) return close(before, state);
         const response = await withRetrievalControl<QuestionModelOutcomeV1>(
           control,
-          bounded => modelPort.decide({ question, evidence: state.evidence, observations: state.observations }, bounded.signal),
+          bounded => modelPort.decide({ question, evidence: state.evidence, observations: state.observations }, bounded.signal, bounded.deadlineEpochMs),
           failure => ({
             status: 'stopped',
             reasonCode: failure.reasonCode === 'deadline' ? 'elapsed-deadline' : 'cancelled',
