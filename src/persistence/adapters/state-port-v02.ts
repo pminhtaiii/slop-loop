@@ -128,7 +128,12 @@ export class DurableStatePortV02 implements StatePortV02 {
       trustedTransitions,
       stagedBindings,
       controlSeed: this.controlSeed,
-      ...(options.approvalStorageDir === undefined ? {} : { trustedApproval: (taskId: string) => this.verificationAuthority.trustedPlanApproval(taskId) }),
+      ...(options.approvalStorageDir === undefined
+        ? {}
+        : {
+            trustedApproval: (taskId: string) => this.verificationAuthority.trustedPlanApproval(taskId),
+            commitApproval: (taskId: string) => this.verificationAuthority.commitPlanApproval(taskId),
+          }),
     };
     // Construction, not the `provenance` string, is what the production brand attests (contract §(b)5).
     if (this.provenance === 'real') registerProductionJournal(this);
@@ -196,9 +201,14 @@ export class DurableStatePortV02 implements StatePortV02 {
     return this.verificationAuthority.recordVerificationApproval(request);
   }
 
-  /** The AwaitPlan→Patch trusted approval, derived from the recorded human decision. */
+  /** The AwaitPlan→Patch trusted approval, derived from the recorded human decision. Read-only. */
   trustedPlanApproval(taskId: string): ReturnType<DurableVerificationAuthority['trustedPlanApproval']> {
     return this.verificationAuthority.trustedPlanApproval(taskId);
+  }
+
+  /** Consumes the plan decision on accepted transition: binds it to this authority and generation. */
+  commitPlanApproval(taskId: string): Promise<boolean> {
+    return this.verificationAuthority.commitPlanApproval(taskId);
   }
 
   /**

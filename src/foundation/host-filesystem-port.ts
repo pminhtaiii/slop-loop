@@ -333,6 +333,7 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
       await handle.close();
       closed = true;
       await this.beforeCommit?.(temporary);
+      // shortcut: no compare-before-rename or dir-handle anchoring; workspace writer lease excludes other writers by design. Upgrade when multi-writer workspaces are added.
       // Recheck the parent immediately before the rename: a swapped ancestor must not receive the file.
       if ((await realpath(parent)) !== parent) throw new Error('WORKSPACE_ESCAPE: Patch target parent leaves the canonical workspace');
       await rename(temporary, target);

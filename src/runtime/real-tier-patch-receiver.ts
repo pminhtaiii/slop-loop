@@ -268,10 +268,13 @@ export async function applyAdmittedPatch(filesystem: WorkspaceFilesystemPort, pa
       }
     }
     if (unrecoveredPaths.length > 0) {
-      (error as { unrecoveredPaths?: readonly string[] }).unrecoveredPaths = Object.freeze([...unrecoveredPaths]);
-      if (error instanceof Error) {
-        error.message = `${error.message} (unrecovered paths: ${unrecoveredPaths.join(', ')})`;
+      const err = error instanceof Error ? error : new Error(String(error));
+      (err as { unrecoveredPaths?: readonly string[]; recoveryRequired?: boolean }).unrecoveredPaths = Object.freeze([...unrecoveredPaths]);
+      (err as { recoveryRequired?: boolean }).recoveryRequired = true;
+      if (!err.message.startsWith('PATCH_RECOVERY_REQUIRED:')) {
+        err.message = `PATCH_RECOVERY_REQUIRED: ${err.message} (unrecovered paths: ${unrecoveredPaths.join(', ')})`;
       }
+      throw err;
     }
     throw error;
   }

@@ -16,6 +16,7 @@ export interface StagedCompletionBinding {
   readonly controlVersion?: number | undefined;
   readonly decisionAuthorityGeneration?: number | undefined;
 }
+import { readDecisionBindings, rollbackDecisionBindings } from './state-port-v02-verification-records.ts';
 
 export interface TaskOperationOptions {
   readonly store: StatePortStore;
@@ -25,6 +26,8 @@ export interface TaskOperationOptions {
   readonly trustedApproval?: ((taskId: string) => Promise<NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted'] | undefined>) | undefined;
   readonly controlSeed?: ControlRecordV02 | undefined;
   readonly stagedBindings?: Record<number, StagedCompletionBinding> | undefined;
+  /** Persists the issued plan decision binding on an accepted AwaitPlan→Patch transition. */
+  readonly commitApproval?: ((taskId: string) => Promise<boolean>) | undefined;
 }
 
 export async function loadTask(options: TaskOperationOptions, taskId: string): Promise<TaskState | null> {
@@ -110,15 +113,46 @@ export async function applyTransition(options: TaskOperationOptions, state: Task
   if (state.runId !== prior.runId) throw new Error('Run changes are unsupported');
 
   const saved: TaskState = { ...result.value, budgetLedgers: prior.budgetLedgers ?? [] };
-  await store.writeTask(state.taskId, saved);
 
-  if (Object.prototype.hasOwnProperty.call(options.trustedTransitions, state.stateVersion)) {
-    Reflect.deleteProperty(options.trustedTransitions, state.stateVersion);
+  if (prior.node === 'AwaitPlan' && result.value.node === 'Patch' && options.commitApproval) {
+    const priorBindings = readDecisionBindings(store, state.taskId);
+    let bound = false;
+    try {
+      bound = await options.commitApproval(state.taskId);
+      if (!bound) throw new Error('Failed to bind issued plan approval decision');
+      await store.writeTask(state.taskId, saved);
+    } catch (err) {
+      if (bound) {
+        try {
+          await rollbackDecisionBindings(store, state.taskId, priorBindings);
+        } catch (rollbackErr) {
+          const writeErr: Error & { recoveryRequired?: boolean; taskId?: string; rollbackError?: unknown } = err instanceof Error ? err : new Error(String(err));
+          Object.assign(writeErr, { recoveryRequired: true, taskId: state.taskId, rollbackError: rollbackErr });
+          if (!writeErr.message.startsWith('PATCH_RECOVERY_REQUIRED:')) {
+            writeErr.message = `PATCH_RECOVERY_REQUIRED: ${writeErr.message}`;
+          }
+          throw writeErr;
+        }
+      }
+      throw err;
+    }
+    consumeStaged(options, state.stateVersion);
+    return structuredClone(saved);
   }
-  if (options.stagedBindings && Object.prototype.hasOwnProperty.call(options.stagedBindings, state.stateVersion)) {
-    Reflect.deleteProperty(options.stagedBindings, state.stateVersion);
-  }
+
+  await store.writeTask(state.taskId, saved);
+  consumeStaged(options, state.stateVersion);
   return structuredClone(saved);
+}
+
+/** Consumes the staged facts for one version, only after its task write succeeded, so a failed write can retry. */
+function consumeStaged(options: TaskOperationOptions, stateVersion: number): void {
+  if (Object.prototype.hasOwnProperty.call(options.trustedTransitions, stateVersion)) {
+    Reflect.deleteProperty(options.trustedTransitions, stateVersion);
+  }
+  if (options.stagedBindings && Object.prototype.hasOwnProperty.call(options.stagedBindings, stateVersion)) {
+    Reflect.deleteProperty(options.stagedBindings, stateVersion);
+  }
 }
 
 export async function checkpoint(options: TaskOperationOptions, state: TaskState): Promise<void> {

@@ -322,6 +322,9 @@ test('planDecisionIsApproved: only a recorded approval at the current authority 
   f.record(approved, 'approved');
   // The AwaitPlan→Patch trusted plan approval is where this owner consumes the plan decision.
   assert.ok(await f.port.trustedPlanApproval(TASK.taskId));
+  const current1 = await f.port.loadTask(TASK.taskId);
+  assert.ok(current1);
+  await f.port.transition({ ...current1, stateVersion: current1.stateVersion + 1, node: 'Patch', nextAction: 'apply-patch' }, current1.stateVersion);
   assert.equal(await f.port.planDecisionIsApproved(approved, contextOf(approved)), true);
   const rejected = `dec-plan-${'4'.repeat(64)}`;
   f.record(rejected, 'rejected');
@@ -363,6 +366,9 @@ test('F-211-07: a decision consumed at one generation is refused once the genera
   f.record(ORIGINAL, 'approved');
   // Consuming the plan decision at the AwaitPlan→Patch edge binds it to generation 3.
   assert.ok(await f.port.trustedPlanApproval(TASK.taskId), 'the recorded decision is a trusted plan approval at generation 3');
+  const current2 = await f.port.loadTask(TASK.taskId);
+  assert.ok(current2);
+  await f.port.transition({ ...current2, stateVersion: current2.stateVersion + 1, node: 'Patch', nextAction: 'apply-patch' }, current2.stateVersion);
   // Publishing the same policy at generation 4 is a successor authority; the old decision does not carry over.
   assert.equal((await f.port.publishAuthority({ authorityRef: { ...POLICY, decisionAuthorityGeneration: POLICY.decisionAuthorityGeneration + 1 } })).status, 'published');
   assert.equal(await f.port.planDecisionIsApproved(ORIGINAL, { ...contextOf(ORIGINAL), expectedDecisionAuthorityGeneration: POLICY.decisionAuthorityGeneration + 1 }), false);

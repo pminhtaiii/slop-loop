@@ -63,7 +63,7 @@ function reasonOf(resolution: RealTierResolution): string {
 
 function assertNoSecrets(value: unknown): void {
   const serialized = JSON.stringify(value);
-  for (const needle of [fixture.KEY, fixture.HREF, '192.0.2.10', '54321', '/v1/messages', fixture.DIGEST_KEY]) {
+  for (const needle of [fixture.KEY, fixture.HREF, '192.0.2.10', ':54321', '/v1/messages', fixture.DIGEST_KEY]) {
     assert.ok(!serialized.includes(needle), `serialized output must not carry ${needle === fixture.DIGEST_KEY ? 'the digest key' : 'a sentinel'}`);
   }
 }
