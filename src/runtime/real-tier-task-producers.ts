@@ -265,7 +265,7 @@ export async function buildBoundCapabilities(
     guardCapability: guardedRead,
     fsPort: filesystem,
     limits: { maxExcerptBytes: Math.min(task.limits.maxOutputBytes, 65_536), maxResultCount: 32 },
-    expectedRevisionDigest: bounds.currentRevision,
+    expectedRevisionDigest: () => assembly.workspaceManager?.getCanonicalRevision(ids.workspaceId) ?? bounds.currentRevision,
     provenance: 'real',
     workspaceRoot: bounds.repositoryRoot,
     statePort: owners.statePort,

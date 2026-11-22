@@ -191,7 +191,7 @@ export interface ControlledRepositoryToolsOptions {
   readonly guardCapability: ExecutionGuardReadCapability;
   readonly fsPort: TrustedFilesystemPort;
   readonly limits: RepositoryReadLimits;
-  readonly expectedRevisionDigest?: string | undefined;
+  readonly expectedRevisionDigest?: string | (() => string | undefined) | undefined;
   readonly provenance?: PortProvenance | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly statePort?: StatePortV02 | undefined;
@@ -224,7 +224,7 @@ export interface RepositoryReadOperationsOptions {
   readonly guardCapability: ExecutionGuardReadCapability;
   readonly fsPort: TrustedFilesystemPort;
   readonly limits: RepositoryReadLimits;
-  readonly expectedRevisionDigest?: string | undefined;
+  readonly expectedRevisionDigest?: string | (() => string | undefined) | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly statePort?: StatePortV02 | undefined;
   readonly taskControl?: RepositoryTaskControlReadPortV02 | undefined;
