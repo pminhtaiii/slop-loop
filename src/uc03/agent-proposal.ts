@@ -14,7 +14,7 @@ const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
 const SAFE_REASON = /^[a-z][a-z0-9-]*$/u;
 const SUCCESS_CLAIMS = new Set(['success', 'completed', 'complete', 'done', 'fixed', 'passed']);
 
-const VARIANT_FIELDS: Readonly<Record<CoderKind, readonly string[]>> = {
+export const VARIANT_FIELDS: Readonly<Record<CoderKind, readonly string[]>> = {
   inspect: ['operation', 'args'],
   'propose-plan': ['diagnosis', 'strategy', 'suspectedLocations', 'scopedPaths', 'evidenceRefs'],
   'propose-patch': ['diff', 'targetPaths', 'approvedPlanRef'],
