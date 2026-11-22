@@ -426,11 +426,18 @@ export interface StatePortV02 extends PortIdentity {
   resolvePlanDecisionInContext?(decisionId: string, context: VerificationApprovalContextV02): Promise<VerificationApprovalResolutionV02>;
   readSettledPatchAncestry?(request: SettledPatchAncestryRequestV02): Promise<SettledPatchAncestryV02 | null>;
   /**
-   * Stages the owner-issued completion facts for the one delivery transition already authorized by
-   * `trusted.completion`. The owner consumes the staged facts in that transition only. Missing method
-   * means the graph cannot reach `DELIVERED` through this port.
+   * Stages owner completion facts for the delivery transition authorized by `trusted.completion`.
+   * Consumed only for the exact delivery candidate under the task lock; missing method blocks delivery.
    */
-  stageCompletionReceipt?(trusted: NonNullable<TrustedTransitionContext>): Promise<boolean>;
+  stageCompletionReceipt?(
+    trusted: NonNullable<TrustedTransitionContext>,
+    binding?: {
+      readonly expectedReviewHead?: number;
+      readonly candidateDigest?: string;
+      readonly controlVersion?: number;
+      readonly decisionAuthorityGeneration?: number;
+    },
+  ): Promise<boolean>;
 }
 
 /** Public owner composition may expose this issuer capability independently. */
