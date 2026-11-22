@@ -227,3 +227,37 @@ test('CR-4652881417: countPatchEdits counts added and deleted lines from hunks a
   const truncated = '--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,2 @@\n-a\n';
   assert.equal(countPatchEdits(truncated), null);
 });
+
+test(
+  'CR-4653752280: pure insertion hunk with oldCount 0 uses oldStart as insertion offset',
+  withTree({ 'insert.py': 'a\nb\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    // Inserting after line 1 ('a') using @@ -1,0 +2 @@
+    const diff = '--- a/insert.py\n+++ b/insert.py\n@@ -1,0 +2 @@\n+inserted\n';
+    await applyAdmittedPatch(filesystem, patch(['insert.py'], diff), 1024);
+    assert.equal(readFileSync(join(root, 'insert.py'), 'utf8'), 'a\ninserted\nb\n');
+  }),
+);
+
+test(
+  'CR-4653752286: planWrites validates oldPath and newPath, refusing renames and creation over existing file',
+  withTree({ 'source.py': 'x = 1\n', 'dest.py': 'y = 2\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+
+    // 1. Rename (different oldPath and newPath) is refused with PATCH_PATH_REFUSED
+    const renameDiff = '--- a/source.py\n+++ b/dest.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n';
+    await assert.rejects(() => applyAdmittedPatch(filesystem, patch(['dest.py'], renameDiff), 1024), /PATCH_PATH_REFUSED/, 'rename section must be refused with PATCH_PATH_REFUSED');
+
+    // 2. Creation from /dev/null where destination already exists is refused with PATCH_PATH_REFUSED
+    const createExistingDiff = '--- /dev/null\n+++ b/dest.py\n@@ -0,0 +1 @@\n+new content\n';
+    await assert.rejects(
+      () => applyAdmittedPatch(filesystem, patch(['dest.py'], createExistingDiff), 1024),
+      /PATCH_PATH_REFUSED/,
+      'creation over existing file must be refused with PATCH_PATH_REFUSED',
+    );
+
+    // Verify neither file was modified
+    assert.equal(readFileSync(join(root, 'source.py'), 'utf8'), 'x = 1\n');
+    assert.equal(readFileSync(join(root, 'dest.py'), 'utf8'), 'y = 2\n');
+  }),
+);

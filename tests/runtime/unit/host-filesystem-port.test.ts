@@ -3,7 +3,7 @@
  * The overflow probe is the contract that keeps an oversized file from ever being loaded.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -203,5 +203,47 @@ test(
     await port.removeFile('undo/created.py');
     assert.equal(existsSync(join(root, 'undo/created.py')), false);
     await assert.rejects(() => port.removeFile('src'), /WORKSPACE_ESCAPE/);
+  }),
+);
+
+test(
+  'CR-4653752228: writeFile preserves existing file mode on replace and keeps 0o600 for new files',
+  withWorkspace(async root => {
+    const port = new WorkspaceFilesystemPort({ root });
+    await port.writeFile('new.py', 'b = 2\n', 1024);
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(join(root, 'new.py')).mode & 0o777, 0o600);
+    }
+
+    if (process.platform !== 'win32') {
+      chmodSync(join(root, 'src', 'a.py'), 0o755);
+    }
+    const expectedMode = statSync(join(root, 'src', 'a.py')).mode;
+    await port.writeFile('src/a.py', 'x = 2\n', 1024);
+    const updatedMode = statSync(join(root, 'src', 'a.py')).mode;
+    assert.equal(updatedMode, expectedMode, 'mode must be copied from existing file');
+    if (process.platform !== 'win32') {
+      assert.equal(updatedMode & 0o777, 0o755, 'execute bits must be preserved on POSIX');
+    }
+  }),
+);
+
+test(
+  'CR-4653752234: writeFile cleans up temporary file on failure and propagates original error',
+  withWorkspace(async root => {
+    class FailingCommitPort extends WorkspaceFilesystemPort {
+      protected override async beforeCommit(temporary: string): Promise<void> {
+        assert.equal(existsSync(temporary), true);
+        throw new Error('SIMULATED_WRITE_FAILURE');
+      }
+    }
+    const port = new FailingCommitPort({ root });
+    await assert.rejects(() => port.writeFile('src/a.py', 'updated', 1024), /SIMULATED_WRITE_FAILURE/);
+    const files = readdirSync(join(root, 'src'));
+    assert.equal(
+      files.some(f => f.includes('.tmp')),
+      false,
+      'staged temp file must be cleaned up on failure',
+    );
   }),
 );

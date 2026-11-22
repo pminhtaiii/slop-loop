@@ -18,6 +18,7 @@ import type {
   RunCommandAction,
   SourceEvidence,
   TaskState,
+  TrustedTransitionContext,
   ValidationError,
   AdmittedFile,
 } from '../v01/types.ts';
@@ -424,6 +425,12 @@ export interface StatePortV02 extends PortIdentity {
   recordVerificationApproval?(request: RecordVerificationApprovalRequestV02): Promise<RecordVerificationApprovalResultV02>;
   resolvePlanDecisionInContext?(decisionId: string, context: VerificationApprovalContextV02): Promise<VerificationApprovalResolutionV02>;
   readSettledPatchAncestry?(request: SettledPatchAncestryRequestV02): Promise<SettledPatchAncestryV02 | null>;
+  /**
+   * Stages the owner-issued completion facts for the one delivery transition already authorized by
+   * `trusted.completion`. The owner consumes the staged facts in that transition only. Missing method
+   * means the graph cannot reach `DELIVERED` through this port.
+   */
+  stageCompletionReceipt?(trusted: NonNullable<TrustedTransitionContext>): Promise<boolean>;
 }
 
 /** Public owner composition may expose this issuer capability independently. */

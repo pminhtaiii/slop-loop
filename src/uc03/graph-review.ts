@@ -10,6 +10,7 @@ import {
   type TaskState,
   type ReviewResult,
   type ProviderRequest,
+  type StateTransitionOptions,
 } from '../contracts/foundation/uc03.ts';
 import { reviewerContextDigest } from '../foundation/reviewer.ts';
 import { evaluateDeterministicCompletion } from './verification.ts';
@@ -260,6 +261,43 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
       const report = reportForPredicate(state.task, persisted, state.baseline, state.verificationResults, result, diffInfo, completionInput.input, completion, milestones);
       return { state: persisted, reviewResult: result, reviewRequest, finalReport: report, terminalOutcome: report.outcome, reasons: completion.reasons, milestones };
     }
+
+    // The durable owner stages its completion facts for exactly the delivery transition below; a port
+    // that owns the completion record some other way (the controlled fixture passes it by version)
+    // simply has nothing to stage. The transition validator re-checks every field either way.
+    const plan = deliverCandidate.plan;
+    const authorizedDiffDigest = completionInput.input.authorizedDiffDigest;
+    const stager = (ports.statePort as { readonly stageCompletionReceipt?: (trusted: NonNullable<StateTransitionOptions['trusted']>) => Promise<boolean> }).stageCompletionReceipt;
+    const staged =
+      !stager || !plan?.baselineRef || !authorizedDiffDigest
+        ? true
+        : await stager.call(ports.statePort, {
+            completion: {
+              taskId: state.task.taskId,
+              runId: deliverCandidate.runId,
+              repositoryRevisionDigest: deliverCandidate.repositoryRevisionDigest,
+              diffDigest: diffInfo.diffDigest,
+              checkSetDigest: plan.checkSetDigest,
+              baselineRef: plan.baselineRef,
+              criteriaDigest: computeCanonicalSha256(state.task.acceptanceCriteria),
+              authorizedDiffDigest,
+              protectedTestsDigest: completionInput.input.currentProtectedTestsDigest,
+              originalProtectedTestsDigest: completionInput.input.originalProtectedTestsDigest,
+              reviewerRoleConfigId: result.reviewerRoleConfigId,
+              reviewIterationReservationRef: result.iterationReservationRef,
+              checks: completionInput.input.verificationResults,
+              review: result,
+            },
+          });
+    if (!staged)
+      return {
+        state: ownerState,
+        reviewResult: result,
+        reviewRequest,
+        terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const,
+        reasons: ['Owner did not stage the completion facts for this delivery transition'],
+        milestones,
+      };
 
     const persisted = await transitionState(ports.statePort, deliverCandidate, ownerState.stateVersion);
     return { state: persisted, reviewResult: result, reviewRequest, milestones };

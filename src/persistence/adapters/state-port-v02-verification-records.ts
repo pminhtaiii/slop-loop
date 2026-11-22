@@ -302,6 +302,8 @@ export function requestMatchesAuthority(record: ApprovalRequestRecord, authority
  * verification, or the plan and authority the one settled approved-plan patch ran under for the
  * historical branch.
  */
+const HISTORICAL_PATCH_NODES: ReadonlySet<string> = new Set(['Verify', 'Review', 'Deliver', 'Repair']);
+
 export async function ownerContext(
   store: StatePortStore,
   taskId: string,
@@ -311,7 +313,8 @@ export async function ownerContext(
 ): Promise<{ readonly authority: PolicyAuthorityRefV02; readonly context: VerificationApprovalContextV02 } | null> {
   const task = await store.readTask(taskId);
   if (purpose === 'historical-patch') {
-    if (!task || task.plan?.decisionRef !== decisionId || task.node !== 'Verify') return null;
+    // The historical branch also serves the post-verification nodes that still name this patch.
+    if (!task || !HISTORICAL_PATCH_NODES.has(task.node)) return null;
     const ancestry = await readSettledPatchAncestry(store, { taskId, runId: task.runId, resultingRepositoryRevisionDigest: task.repositoryRevisionDigest });
     const original = ancestry?.originalTaskState;
     const authority = ancestry?.originalAuthorityRef;

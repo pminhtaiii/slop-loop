@@ -245,3 +245,32 @@ test('durable v0.2 state port: a non-ENOENT fence scan failure aborts instead of
     rmSync(baseDir, { recursive: true, force: true });
   }
 });
+
+test('durable v0.2 state port: caller-supplied trustedTransitions retains subsequent mutations', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc03-durable-trusted-transitions-'));
+  try {
+    const store = new DurableStore(baseDir);
+    await store.init();
+    const trustedTransitions: Record<number, unknown> = {};
+    const port = new DurableStatePortV02({
+      store,
+      initialControl: {
+        controlVersion: context.expectedControlVersion,
+        epoch: context.expectedEpoch,
+        activeAuthorityRef: context.policyAuthorityRef,
+      },
+      trustedTransitions: trustedTransitions as never,
+    });
+    const seeded = seedTask();
+    await port.transition(seeded, 0);
+
+    // Caller adds a trusted transition for the next state version after port construction.
+    const sentinel = { replanReservation: undefined };
+    trustedTransitions[seeded.stateVersion + 1] = sentinel;
+
+    const internalTransitions = (port as unknown as { taskOptions: { trustedTransitions: Record<number, unknown> } }).taskOptions.trustedTransitions;
+    assert.equal(internalTransitions[seeded.stateVersion + 1], sentinel, 'the port must share the caller-supplied trustedTransitions record rather than shallow-cloning it');
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
