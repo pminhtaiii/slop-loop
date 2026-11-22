@@ -918,6 +918,7 @@ test('v0.2 DispatchClaimV02 validator rejects v0.1 claims, cross-branch fields, 
 
 for (const [modelId, accepted] of [
   ['cmc/deepseek/deepseek-v4.1-flash', true],
+  ['nvidia/nemotron-3.5-lightning:free', true],
   ['model-1', true],
   ['/x', false],
   ['x/', false],

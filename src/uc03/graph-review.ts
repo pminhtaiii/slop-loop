@@ -24,6 +24,7 @@ import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
 import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
 import type { ReviewObservationV1 } from '../contracts/review.ts';
 import { boundReviewEnabled, prepareBoundReview, persistBoundReview, loadBoundReview } from './verification-review.ts';
+import { resolveReviewDeliveryBinding, type ReviewDeliveryBinding } from './graph-review-authority.ts';
 
 type ReviewPorts = Pick<UC03GraphPorts, 'statePort' | 'repositoryPort' | 'reviewerPort' | 'hostAuthority'>;
 type ReviewConfig = Pick<
@@ -267,28 +268,36 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
     // simply has nothing to stage. The transition validator re-checks every field either way.
     const plan = deliverCandidate.plan;
     const authorizedDiffDigest = completionInput.input.authorizedDiffDigest;
-    const stager = (ports.statePort as { readonly stageCompletionReceipt?: (trusted: NonNullable<StateTransitionOptions['trusted']>) => Promise<boolean> }).stageCompletionReceipt;
+    const binding = resolveReviewDeliveryBinding(ports.statePort, state.task.taskId, observation, deliverCandidate, ownerState.stateVersion);
+    const stager = (ports.statePort as { readonly stageCompletionReceipt?: (trusted: NonNullable<StateTransitionOptions['trusted']>, binding?: ReviewDeliveryBinding) => Promise<boolean> })
+      .stageCompletionReceipt;
     const staged =
       !stager || !plan?.baselineRef || !authorizedDiffDigest
         ? true
-        : await stager.call(ports.statePort, {
-            completion: {
-              taskId: state.task.taskId,
-              runId: deliverCandidate.runId,
-              repositoryRevisionDigest: deliverCandidate.repositoryRevisionDigest,
-              diffDigest: diffInfo.diffDigest,
-              checkSetDigest: plan.checkSetDigest,
-              baselineRef: plan.baselineRef,
-              criteriaDigest: computeCanonicalSha256(state.task.acceptanceCriteria),
-              authorizedDiffDigest,
-              protectedTestsDigest: completionInput.input.currentProtectedTestsDigest,
-              originalProtectedTestsDigest: completionInput.input.originalProtectedTestsDigest,
-              reviewerRoleConfigId: result.reviewerRoleConfigId,
-              reviewIterationReservationRef: result.iterationReservationRef,
-              checks: completionInput.input.verificationResults,
-              review: result,
+        : await stager.call(
+            ports.statePort,
+            {
+              completion: {
+                taskId: state.task.taskId,
+                runId: deliverCandidate.runId,
+                repositoryRevisionDigest: deliverCandidate.repositoryRevisionDigest,
+                diffDigest: diffInfo.diffDigest,
+                checkSetDigest: plan.checkSetDigest,
+                baselineRef: plan.baselineRef,
+                criteriaDigest: computeCanonicalSha256(state.task.acceptanceCriteria),
+                authorizedDiffDigest,
+                protectedTestsDigest: completionInput.input.currentProtectedTestsDigest,
+                originalProtectedTestsDigest: completionInput.input.originalProtectedTestsDigest,
+                reviewerRoleConfigId: result.reviewerRoleConfigId,
+                reviewIterationReservationRef: result.iterationReservationRef,
+                checks: completionInput.input.verificationResults,
+                review: result,
+                controlVersion: binding.controlVersion,
+                decisionAuthorityGeneration: binding.decisionAuthorityGeneration,
+              },
             },
-          });
+            binding,
+          );
     if (!staged)
       return {
         state: ownerState,
