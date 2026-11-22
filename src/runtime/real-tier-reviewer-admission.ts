@@ -56,6 +56,9 @@ async function resolveReviewerAdmission(
   if (!plan || !decisionRef || !planBindingDigest) return undefined;
   const owner = await currentAuthority(port, state);
   if (!owner) return undefined;
+  // As in coder admission: an approval issued under an older authority generation cannot admit a review.
+  const issued = port.readIssuedDecisionBinding(state.taskId, decisionRef);
+  if (!issued || issued.decisionAuthorityGeneration !== owner.decisionAuthorityGeneration) return undefined;
   const current = await port.loadTask(state.taskId);
   if (!current?.budgetLedgers) return undefined;
   // A review may use only the review-iteration room this task has left; none left is a refusal.

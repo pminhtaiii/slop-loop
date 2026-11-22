@@ -7,7 +7,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { constants, realpathSync } from 'node:fs';
-import { chmod, mkdir, open, lstat, opendir, readdir, readlink, realpath, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, open, lstat, opendir, readdir, readlink, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 import type { PortProvenance } from '../contracts/foundation/uc03.ts';
 import { computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
@@ -327,10 +327,11 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
         if (bytesWritten <= 0) throw new Error('WORKSPACE_ESCAPE: Patch target write made no progress');
         offset += bytesWritten;
       }
+      // Through the handle, so a temp entry swapped for a symlink cannot redirect the mode change.
+      if (existing) await handle.chmod(Number(existing.mode) & 0o7777);
       await handle.sync();
       await handle.close();
       closed = true;
-      if (existing) await chmod(temporary, Number(existing.mode) & 0o7777);
       await this.beforeCommit?.(temporary);
       // Recheck the parent immediately before the rename: a swapped ancestor must not receive the file.
       if ((await realpath(parent)) !== parent) throw new Error('WORKSPACE_ESCAPE: Patch target parent leaves the canonical workspace');
