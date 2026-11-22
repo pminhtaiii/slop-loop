@@ -7,7 +7,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { constants, realpathSync } from 'node:fs';
-import { mkdir, open, lstat, opendir, readdir, readlink, realpath, rename, rm, stat } from 'node:fs/promises';
+import { chmod, mkdir, open, lstat, opendir, readdir, readlink, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 import type { PortProvenance } from '../contracts/foundation/uc03.ts';
 import { computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
@@ -91,6 +91,7 @@ async function readBoundedBytes(handle: Awaited<ReturnType<typeof open>>, maxByt
 export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
   readonly provenance: PortProvenance;
   private readonly root: string;
+  protected beforeCommit?(temporary: string): Promise<void>;
 
   constructor(options: WorkspaceFilesystemPortOptions) {
     if (!options || typeof options.root !== 'string' || !options.root.trim()) throw new Error('INVALID_OPTIONS: root must be a non-empty path');
@@ -318,6 +319,7 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     if (existing?.isSymbolicLink() || (existing && !existing.isFile())) throw new Error(`WORKSPACE_ESCAPE: Patch target '${canonicalPath}' is not a regular file`);
     const temporary = join(parent, `.${basename(target)}.${randomUUID()}.tmp`);
     const handle = await open(temporary, 'wx', 0o600);
+    let closed = false;
     try {
       let offset = 0;
       while (offset < bytes.byteLength) {
@@ -326,15 +328,16 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
         offset += bytesWritten;
       }
       await handle.sync();
-    } finally {
       await handle.close();
-    }
-    try {
+      closed = true;
+      if (existing) await chmod(temporary, Number(existing.mode) & 0o7777);
+      await this.beforeCommit?.(temporary);
       // Recheck the parent immediately before the rename: a swapped ancestor must not receive the file.
       if ((await realpath(parent)) !== parent) throw new Error('WORKSPACE_ESCAPE: Patch target parent leaves the canonical workspace');
       await rename(temporary, target);
     } catch (error) {
-      await rm(temporary, { force: true });
+      if (!closed) await handle.close().catch(() => undefined);
+      await rm(temporary, { force: true }).catch(() => undefined);
       throw error;
     }
   }

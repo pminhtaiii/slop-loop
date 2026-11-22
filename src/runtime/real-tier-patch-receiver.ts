@@ -135,7 +135,7 @@ function applyHunks(source: string | null, hunks: readonly Hunk[]): string {
   let cursor = 0;
   let lastNewSideNoNewline: boolean | undefined = undefined;
   for (const hunk of hunks) {
-    const start = source === null && hunk.oldStart === 0 ? 0 : hunk.oldStart - 1;
+    const start = source === null && hunk.oldStart === 0 ? 0 : hunk.oldCount === 0 ? hunk.oldStart : hunk.oldStart - 1;
     if (start < cursor || start > sourceLines.length) throw new Error('PATCH_CONTEXT_MISMATCH: hunk start is outside the current file');
     while (cursor < start) output.push(sourceLines[cursor++] as string);
     for (const line of hunk.body) {
@@ -207,6 +207,9 @@ async function planWrites(filesystem: WorkspaceFilesystemPort, patch: ApplyPatch
     // A deletion names its source but a `/dev/null` destination: keep it distinct from a rename or edit.
     if (section.newPath === null) throw new Error(`PATCH_DELETION_REFUSED: '${section.oldPath ?? ''}' would be deleted`);
     const path = section.newPath;
+    if (section.oldPath !== null && section.oldPath !== path) {
+      throw new Error(`PATCH_PATH_REFUSED: rename from '${section.oldPath}' to '${path}' is not supported`);
+    }
     if (!isCanonicalRelativePath(path) || isProtectedPath(path)) throw new Error(`PATCH_PATH_REFUSED: '${path}' is not an admitted writable path`);
     if (!admitted.has(path)) throw new Error(`PATCH_PATH_REFUSED: '${path}' is outside the admitted target paths`);
     if (seen.has(path)) throw new Error(`PATCH_PATH_REFUSED: '${path}' appears in more than one section`);
@@ -218,6 +221,9 @@ async function planWrites(filesystem: WorkspaceFilesystemPort, patch: ApplyPatch
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       rawBytes = null;
+    }
+    if (section.oldPath === null && rawBytes !== null) {
+      throw new Error(`PATCH_PATH_REFUSED: destination '${path}' already exists`);
     }
     let current: string | null = null;
     if (rawBytes !== null) {

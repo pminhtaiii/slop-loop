@@ -20,6 +20,9 @@ import { executionProfileOf } from './real-tier-execution-profile.ts';
 type CheckRequest = Parameters<NonNullable<TrustedHostExpectedContext['admissionContextForCheck']>>[0];
 type CheckAdmission = Awaited<ReturnType<NonNullable<TrustedHostExpectedContext['admissionContextForCheck']>>>;
 
+/** Default working directory used when a pinned check omits workingDirectory, matching uc03 verification-checks.ts. */
+export const DEFAULT_CHECK_WORKING_DIRECTORY = 'tests';
+
 /** The plan binding digest `graph-validation.ts` and the UC-05 evaluator both compute for this plan. */
 export function approvedPlanBindingDigest(task: BugTask, state: TaskState, decisionRef: string): string | undefined {
   const plan = state.plan;
@@ -55,7 +58,7 @@ export async function verifyCheckAdmission(
     !testPath ||
     action.purpose !== pinned.purpose ||
     action.executable !== pinned.executable ||
-    action.workingDirectory !== (pinned.workingDirectory ?? '.') ||
+    action.workingDirectory !== (pinned.workingDirectory ?? DEFAULT_CHECK_WORKING_DIRECTORY) ||
     computeCanonicalSha256(action.argv) !== computeCanonicalSha256(pinned.argv)
   )
     return undefined;

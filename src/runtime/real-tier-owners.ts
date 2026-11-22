@@ -118,7 +118,12 @@ const HOST_OPERATOR: TrustedOperatorIdentity = Object.freeze({ actorId: 'host-op
  * decision id, and no request record exists yet when it is first made. The stored record stays
  * primary; only its absence falls back to that same observed action.
  */
-function realContext(provider: ReturnType<typeof createRealContextProvider>, taskId: string, statePort: DurableStatePortV02): ReturnType<typeof createRealContextProvider> {
+function realContext(
+  provider: ReturnType<typeof createRealContextProvider>,
+  taskId: string,
+  statePort: DurableStatePortV02,
+  ownerPolicyIdentity?: Readonly<{ policyId: string; policyVersion: string; configId?: string; configVersion?: string }>,
+): ReturnType<typeof createRealContextProvider> {
   const observedPlan = async (input: unknown): Promise<unknown> => {
     // The provider has admitted this context; persisted plan facts complete its approval freshness.
     const context = input as ApprovalContext;
@@ -147,12 +152,12 @@ function realContext(provider: ReturnType<typeof createRealContextProvider>, tas
   return {
     loadForAction: async (task, actionId) => {
       const raw = await provider.loadForAction(task, actionId).catch(() => undefined);
-      return raw === undefined ? observedSyntheticPlan(taskId, actionId, statePort) : observedPlan(raw);
+      return raw === undefined ? observedSyntheticPlan(taskId, actionId, statePort, ownerPolicyIdentity) : observedPlan(raw);
     },
     loadForDecision: async decisionId => {
       const stored = await provider.loadForDecision(decisionId).catch(() => undefined);
       // A verification D1 (`dec-verify-…`) has no stored request and was never a registered action.
-      if (decisionId.startsWith('dec-verify-')) return observedSyntheticPlan(taskId, decisionId, statePort);
+      if (decisionId.startsWith('dec-verify-')) return observedSyntheticPlan(taskId, decisionId, statePort, ownerPolicyIdentity);
       const fallback = stored === undefined ? await provider.loadForAction(taskId, decisionId) : stored;
       return observedPlan(fallback);
     },
@@ -164,7 +169,12 @@ function realContext(provider: ReturnType<typeof createRealContextProvider>, tas
  * durable task already records the exact plan, so the observed action and facts are reconstructed
  * from it — the provider's own freshness fields still come from `observedPlan`.
  */
-async function observedSyntheticPlan(taskId: string, actionId: string, statePort: DurableStatePortV02): Promise<unknown> {
+export async function observedSyntheticPlan(
+  taskId: string,
+  actionId: string,
+  statePort: DurableStatePortV02,
+  ownerPolicyIdentity?: Readonly<{ policyId: string; policyVersion: string; configId?: string; configVersion?: string }>,
+): Promise<unknown> {
   const state = await statePort.loadTask(taskId);
   const plan = state?.plan;
   if (!state || !plan || state.node !== 'Verify' || state.activeDecisionId !== undefined) return unbound();
@@ -176,6 +186,10 @@ async function observedSyntheticPlan(taskId: string, actionId: string, statePort
     diagnosisEvidenceRefs: plan.evidenceRefs,
     checkSetDigest: plan.checkSetDigest,
   };
+  const policyId = ownerPolicyIdentity?.policyId ?? state.taskContext?.configId ?? '';
+  const policyVersion = ownerPolicyIdentity?.policyVersion ?? state.taskContext?.configVersion ?? '';
+  const configId = ownerPolicyIdentity?.configId ?? state.taskContext?.configId ?? '';
+  const configVersion = ownerPolicyIdentity?.configVersion ?? state.taskContext?.configVersion ?? '';
   const built = {
     action,
     facts: {
@@ -184,10 +198,10 @@ async function observedSyntheticPlan(taskId: string, actionId: string, statePort
       repositoryId: state.repositoryId,
       repositoryRevisionDigest: state.repositoryRevisionDigest,
       policyIdentity: {
-        policyId: state.taskContext?.configId ?? '',
-        policyVersion: state.taskContext?.configVersion ?? '',
-        configId: state.taskContext?.configId ?? '',
-        configVersion: state.taskContext?.configVersion ?? '',
+        policyId,
+        policyVersion,
+        configId,
+        configVersion,
       },
       registeredActionDigest: computeCanonicalSha256(action),
       continuationRef: actionId,
@@ -209,8 +223,8 @@ async function observedSyntheticPlan(taskId: string, actionId: string, statePort
       currentTaskId: state.taskId,
       currentWorkspaceId: state.workspaceId,
       currentRepositoryRevisionDigest: state.repositoryRevisionDigest,
-      currentPolicyId: state.taskContext?.configId ?? '',
-      currentPolicyVersion: state.taskContext?.configVersion ?? '',
+      currentPolicyId: policyId,
+      currentPolicyVersion: policyVersion,
       currentNormalizedActionDigest: computeCanonicalSha256(action),
       currentPlanVersion: plan.planVersion,
       currentStrategyDigest: plan.strategyDigest,
@@ -289,10 +303,16 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
     const created = binding.createContext?.();
     // Without a factory the service still refuses every context; the stand-in keeps the port shape.
     const contextSource: RealContextSource = created ?? { provenance: 'real', observe: () => unbound() };
+    const ownerPolicyIdentity = binding.policyIdentity ?? profile.policyIdentity;
     const context =
       created === undefined
         ? { loadForAction: async () => unbound(), loadForDecision: async () => unbound() }
-        : realContext(createRealContextProvider({ durable: { loadTask: id => taskStatePort.loadTask(id) as never }, approvals: approvalStore, source: created }), binding.taskId, taskStatePort);
+        : realContext(
+            createRealContextProvider({ durable: { loadTask: id => taskStatePort.loadTask(id) as never }, approvals: approvalStore, source: created }),
+            binding.taskId,
+            taskStatePort,
+            ownerPolicyIdentity,
+          );
     const approvalService = createApprovalService({
       taskId: binding.taskId,
       profile,

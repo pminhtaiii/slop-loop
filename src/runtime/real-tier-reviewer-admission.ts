@@ -20,6 +20,7 @@ import { microUsd } from '../foundation/deepseek-transport-request.ts';
 import { DEFAULT_POLICY_PROFILE as DEFAULT_PROFILE } from '../persistence/adapters/approval-types.ts';
 import type { DurableStatePortV02 } from '../persistence/adapters/state-port-v02.ts';
 import type { UC03ReviewerAdmission } from '../uc03/graph-types.ts';
+import { fitTokenReservation } from './real-tier-admission-budgets.ts';
 import { currentAuthority, policyFacts } from './real-tier-admissions.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import { approvedPlanBindingDigest } from './real-tier-verify-admission.ts';
@@ -58,13 +59,14 @@ async function resolveReviewerAdmission(
   const current = await port.loadTask(state.taskId);
   if (!current?.budgetLedgers) return undefined;
   // A review may use only the review-iteration room this task has left; none left is a refusal.
+  const iterationLedgers = current.budgetLedgers.filter(ledger => ledger.kind === 'iteration' || ledger.kind === 'review_iteration');
   const iterationRoom = Math.min(
-    ...current.budgetLedgers
-      .filter(ledger => ledger.kind === 'iteration' || ledger.kind === 'review_iteration')
-      .map(ledger => ledger.limit - ledger.consumed - ledger.reservations.reduce((sum, reservation) => sum + reservation.amount, 0)),
+    ...(iterationLedgers.length > 0
+      ? iterationLedgers.map(ledger => ledger.limit - ledger.consumed - ledger.reservations.reduce((sum, reservation) => sum + reservation.amount, 0))
+      : [task.budgetLimits.maxReviewIterations]),
   );
-  const maxReviewerIterations = Math.min(assembly.profile.limits.reviewerIterations, task.budgetLimits.maxReviewIterations, iterationRoom);
-  if (!Number.isSafeInteger(maxReviewerIterations) || maxReviewerIterations <= 0) return undefined;
+  const maxReviewerIterations = Math.min(assembly.profile.limits.reviewerIterations, task.budgetLimits.maxReviewIterations);
+  if (!Number.isSafeInteger(maxReviewerIterations) || maxReviewerIterations <= 0 || !Number.isSafeInteger(iterationRoom) || iterationRoom <= 0) return undefined;
   // The reviewer request is minted over exactly the evidence projection the Review node dispatches.
   const contextDigest = reviewerContextDigest(task, diff.diff, evidence, state.repositoryRevisionDigest, {
     runId: state.runId,
@@ -72,12 +74,25 @@ async function resolveReviewerAdmission(
   });
   if (contextDigest === null) return undefined;
   const { limits, pricing, runLimits } = assembly.profile;
+  const costLedgers = current.budgetLedgers.filter(ledger => ledger.kind === 'cost');
+  const tokenLedgers = current.budgetLedgers.filter(ledger => ledger.kind === 'tokens');
   const remainingCost = Math.min(
-    ...current.budgetLedgers.filter(ledger => ledger.kind === 'cost').map(ledger => ledger.limit - ledger.consumed - ledger.reservations.reduce((sum, reservation) => sum + reservation.amount, 0)),
+    ...(costLedgers.length > 0
+      ? costLedgers.map(ledger => ledger.limit - ledger.consumed - ledger.reservations.reduce((sum, reservation) => sum + reservation.amount, 0))
+      : [task.budgetLimits.maxCostUsd]),
+    task.budgetLimits.maxCostUsd,
   );
-  const maxInputTokens = Math.min(limits.inputTokensPerRequest, runLimits.perRunInputTokens, task.budgetLimits.maxTokens);
-  const maxOutputTokens = Math.min(limits.outputTokensPerRequest, runLimits.perRunOutputTokens, task.budgetLimits.maxTokens);
-  const maxBillableTokens = maxInputTokens + maxOutputTokens;
+  const remainingTokens = Math.min(
+    ...(tokenLedgers.length > 0
+      ? tokenLedgers.map(ledger => ledger.limit - ledger.consumed - ledger.reservations.reduce((sum, reservation) => sum + reservation.amount, 0))
+      : [task.budgetLimits.maxTokens]),
+    task.budgetLimits.maxTokens,
+  );
+  const maxInputCeiling = Math.min(limits.inputTokensPerRequest, runLimits.perRunInputTokens, task.budgetLimits.maxTokens);
+  const maxOutputCeiling = Math.min(limits.outputTokensPerRequest, runLimits.perRunOutputTokens, task.budgetLimits.maxTokens);
+  const fittedTokens = fitTokenReservation(remainingTokens, maxInputCeiling, maxOutputCeiling);
+  if (!fittedTokens) return undefined;
+  const { maxInputTokens, maxOutputTokens, maxBillableTokens } = fittedTokens;
   const maxCostUsd = Math.min(remainingCost, task.budgetLimits.maxCostUsd, microUsd(pricing, maxInputTokens, maxOutputTokens, maxInputTokens) / 1_000_000);
   if (!(maxCostUsd > 0)) return undefined;
   const providerRequestId = `reviewer-${randomUUID()}`;
