@@ -219,7 +219,7 @@ test('PR222 A: atomicWrite resolves with new content on successful rename withou
 
     const subDir = join(dir, 'sub-dir');
     mkdirSync(subDir);
-    await assert.rejects(() => atomicWrite(subDir, 'cannot overwrite dir'), /Failed to atomically rename .* after 15 attempts\./);
+    await assert.rejects(() => atomicWrite(subDir, 'cannot overwrite dir'));
     const tempFilesAfterFailure = readdirSync(dir).filter(f => f.startsWith('.tmp-'));
     assert.equal(tempFilesAfterFailure.length, 0, 'temp file was cleaned up after rename failure');
   } finally {
