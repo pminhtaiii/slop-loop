@@ -7,6 +7,7 @@ import type {
   QuestionBudgetRefusalCodeV1,
   QuestionBudgetReservation as QuestionBudgetReservationPortV1,
   QuestionBudgetWorkV1,
+  QuestionBudgetReservationResultV1,
 } from './budget.ts';
 import type { BudgetCounters } from './budget-ledger-counters.ts';
 
@@ -33,6 +34,15 @@ export interface ReservationLedgerPortV1 {
   _ignoreLate(internal: InternalReservation): void;
   _checkResponse(internal: InternalReservation): QuestionBudgetRefusalCodeV1 | undefined;
   _reconcile(internal: InternalReservation, receipt: unknown): QuestionBudgetExecutionResultV1<void>;
+}
+
+/** Uses ordinary work settlement for compiler time, with no provider token or cost receipt. */
+export async function executeModelCompilation<T>(admission: QuestionBudgetReservationResultV1, compile: () => T): Promise<QuestionBudgetExecutionResultV1<T>> {
+  if (!admission.ok) return admission;
+  return admission.value.execute(
+    async () => compile(),
+    () => ({ kind: 'work', work: {} }),
+  );
 }
 
 /** The only reservation path that may invoke an adapter. */

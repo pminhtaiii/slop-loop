@@ -57,6 +57,32 @@ const pricing = {
   outputMicrosPerMillionTokens: 200_000,
 } as const;
 
+test('compiler activity at the exact task deadline exhausts admission with zero provider accounting', async () => {
+  let clock = 0;
+  const created = createQuestionBudgetLedger(validProfile({ maxElapsedMsTask: 10 }), { pricing, now: () => clock });
+  assert.ok(created.ok);
+  const result = await created.value.runModelCompilation(() => {
+    clock = 10;
+    return 'compiled';
+  });
+  assert.deepEqual(result, { ok: false, reasonCode: 'elapsed-deadline' });
+  const state = created.value.snapshot();
+  assert.equal(state.consumed.elapsedMs, 10);
+  assert.equal(state.consumed.modelCalls, 0);
+  assert.equal(state.consumed.billableTokens, 0);
+  assert.equal(state.consumed.costMicros, 0);
+  assert.equal(state.reserved.billableTokens, 0);
+  let invoked = false;
+  assert.deepEqual(
+    await created.value.runModelCompilation(() => {
+      invoked = true;
+    }),
+    { ok: false, reasonCode: 'elapsed-deadline' },
+  );
+  assert.equal(invoked, false);
+  assert.deepEqual(created.value.reserveModelCall(100), { ok: false, reasonCode: 'elapsed-deadline' });
+});
+
 test('budget admission rejects missing retrieval limits before any operation can be reserved', () => {
   const result = createQuestionBudgetLedger({ schemaVersion: 'question-budget/1', runtime: validRuntime, repository: validRepository }, { pricing, now: () => 0 });
 

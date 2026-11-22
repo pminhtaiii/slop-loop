@@ -603,9 +603,11 @@ test('question model compiles the complete bounded request and settles trusted t
   assert.equal(ledger.value.snapshot().reserved.billableTokens, 0);
 });
 
-function questionModelFixture(options: { runtime?: Partial<QuestionRuntimeBudgetV1>; counter?: QuestionRequestTokenCounterV1; send?: QuestionModelTransportV1['send']; cap?: boolean } = {}) {
+function questionModelFixture(
+  options: { runtime?: Partial<QuestionRuntimeBudgetV1>; counter?: QuestionRequestTokenCounterV1; send?: QuestionModelTransportV1['send']; cap?: boolean; now?: () => number } = {},
+) {
   const profile = { ...budgetProfile, runtime: { ...budgetProfile.runtime, ...options.runtime } };
-  const ledger = createQuestionBudgetLedger(profile, { pricing: { inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 1_000_000 } });
+  const ledger = createQuestionBudgetLedger(profile, { pricing: { inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 1_000_000 }, ...(options.now ? { now: options.now } : {}) });
   assert.equal(ledger.ok, true);
   if (!ledger.ok) throw new Error('Controlled fixture configuration invalid');
   const requests: QuestionCompiledRequestV1[] = [];
@@ -628,8 +630,133 @@ function questionModelFixture(options: { runtime?: Partial<QuestionRuntimeBudget
   return { model, budget: ledger.value, requests };
 }
 
-test('question model mandatory context overflow makes zero provider calls and no reservation', async () => {
-  const fixture = questionModelFixture({ runtime: { maxInputTokensPerCall: 100 }, counter: { kind: 'controlled', countRequest: request => Buffer.byteLength(request) } });
+test('question model charges compiler task time before transport even with a later caller deadline', async () => {
+  let clock = 0;
+  let counts = 0;
+  const fixture = questionModelFixture({
+    runtime: { maxElapsedMsTask: 10 },
+    now: () => clock,
+    counter: {
+      kind: 'controlled',
+      countRequest: () => {
+        counts += 1;
+        clock += 11;
+        return 123;
+      },
+    },
+  });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const signal = new AbortController().signal;
+  const expected = { status: 'stopped', reasonCode: 'elapsed-deadline', usage: { status: 'missing' } };
+  assert.deepEqual(await fixture.model.value.decide({ question: 'Explain dispatch.' }, signal, Date.now() + 10_000), expected);
+  assert.deepEqual(await fixture.model.value.decide({ question: 'Try again.' }, signal), expected);
+  assert.equal(counts, 1);
+  assert.equal(fixture.requests.length, 0);
+  const state = fixture.budget.snapshot();
+  assert.equal(state.status, 'exhausted');
+  assert.equal(state.consumed.elapsedMs, 10);
+  assert.equal(state.remainingElapsedMs, 0);
+  assert.equal(state.consumed.modelCalls, 0);
+  assert.equal(state.consumed.billableTokens, 0);
+  assert.equal(state.reserved.billableTokens, 0);
+  assert.equal(fixture.budget.reserveRepositoryOperation('read').ok, false);
+});
+
+test('question model accumulates fitting compilation time across calls without charging human waiting', async () => {
+  let clock = 0;
+  const fixture = questionModelFixture({
+    runtime: { maxElapsedMsTask: 10 },
+    now: () => clock,
+    counter: {
+      kind: 'controlled',
+      countRequest: () => {
+        clock += 4;
+        return 123;
+      },
+    },
+  });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const signal = new AbortController().signal;
+  assert.equal((await fixture.model.value.decide({ question: 'Explain dispatch.' }, signal)).status, 'ok');
+  assert.equal(fixture.budget.snapshot().consumed.elapsedMs, 4);
+  clock += 1_000;
+  assert.equal((await fixture.model.value.decide({ question: 'Explain again.' }, signal)).status, 'ok');
+  assert.equal(fixture.budget.snapshot().consumed.elapsedMs, 8);
+  assert.deepEqual(await fixture.model.value.decide({ question: 'Explain once more.' }, signal), { status: 'stopped', reasonCode: 'elapsed-deadline', usage: { status: 'missing' } });
+  assert.equal(fixture.requests.length, 2);
+  assert.equal(fixture.budget.snapshot().consumed.elapsedMs, 10);
+  assert.equal(fixture.budget.snapshot().consumed.modelCalls, 2);
+  assert.equal(fixture.budget.snapshot().consumed.billableTokens, 254);
+  assert.equal(fixture.budget.snapshot().reserved.billableTokens, 0);
+});
+
+test('question model charges overflow and compiler errors without provider billing and cannot renew elapsed time', async () => {
+  for (const failure of ['overflow', 'throw'] as const) {
+    let clock = 0;
+    const fixture = questionModelFixture({
+      runtime: { maxElapsedMsTask: 10 },
+      now: () => clock,
+      counter: {
+        kind: 'controlled',
+        countRequest: () => {
+          clock += 6;
+          if (failure === 'throw') throw new Error('MARKER_SECRET_COUNT_FAILURE');
+          return 100_000;
+        },
+      },
+    });
+    assert.equal(fixture.model.ok, true);
+    if (!fixture.model.ok) continue;
+    const signal = new AbortController().signal;
+    assert.deepEqual(await fixture.model.value.decide({ question: 'Explain dispatch.' }, signal), {
+      status: 'stopped',
+      reasonCode: failure === 'overflow' ? 'context-limit' : 'owner-unavailable',
+      usage: { status: 'missing' },
+    });
+    assert.equal(fixture.budget.snapshot().consumed.elapsedMs, 6);
+    assert.deepEqual(await fixture.model.value.decide({ question: 'Try again.' }, signal), { status: 'stopped', reasonCode: 'elapsed-deadline', usage: { status: 'missing' } });
+    const state = fixture.budget.snapshot();
+    assert.equal(state.status, 'exhausted');
+    assert.equal(state.consumed.elapsedMs, 10);
+    assert.equal(state.consumed.modelCalls, 0);
+    assert.equal(state.consumed.billableTokens, 0);
+    assert.equal(state.consumed.costMicros, 0);
+    assert.equal(state.reserved.billableTokens, 0);
+    assert.equal(fixture.requests.length, 0);
+  }
+});
+
+test('question model charges cancelled compilation and prevents subsequent provider or repository dispatch', async () => {
+  let clock = 0;
+  const controller = new AbortController();
+  const fixture = questionModelFixture({
+    runtime: { maxElapsedMsTask: 10 },
+    now: () => clock,
+    counter: {
+      kind: 'controlled',
+      countRequest: () => {
+        clock += 4;
+        controller.abort();
+        return 123;
+      },
+    },
+  });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  assert.deepEqual(await fixture.model.value.decide({ question: 'Explain dispatch.' }, controller.signal), { status: 'stopped', reasonCode: 'cancelled', usage: { status: 'missing' } });
+  assert.equal(fixture.budget.snapshot().status, 'cancelled');
+  assert.equal(fixture.budget.snapshot().consumed.elapsedMs, 4);
+  assert.equal(fixture.budget.snapshot().consumed.modelCalls, 0);
+  assert.equal(fixture.budget.snapshot().consumed.billableTokens, 0);
+  assert.equal(fixture.budget.snapshot().reserved.billableTokens, 0);
+  assert.equal(fixture.requests.length, 0);
+  assert.equal(fixture.budget.reserveRepositoryOperation('read').ok, false);
+});
+
+test('question model mandatory context overflow makes zero provider calls and no billable reservation', async () => {
+  const fixture = questionModelFixture({ now: () => 0, runtime: { maxInputTokensPerCall: 100 }, counter: { kind: 'controlled', countRequest: request => Buffer.byteLength(request) } });
   assert.equal(fixture.model.ok, true);
   if (!fixture.model.ok) return;
   const before = fixture.budget.snapshot();
@@ -860,6 +987,8 @@ test('question model requires an actual host token guarantee for a host transpor
   assert.equal(createQuestionModelPort({ ...common, counter: { kind: 'controlled', countRequest: () => 100 } }).ok, false);
   assert.equal(createQuestionModelPort({ ...common, counter: { kind: 'exact-provider', providerId: 'wrong-provider', modelId: 'model', countRequest: () => 100 } }).ok, false);
   assert.equal(createQuestionModelPort({ ...common, counter: { kind: 'certified-upper-bound', providerId: 'provider', modelId: 'model', countRequest: () => 100 } }).ok, false);
+  const unmeteredBudget = new Proxy(ledger.value, { get: (target, key, receiver) => (key === 'runModelCompilation' ? undefined : Reflect.get(target, key, receiver)) });
+  assert.equal(createQuestionModelPort({ ...common, budget: unmeteredBudget, counter: { kind: 'exact-provider', providerId: 'provider', modelId: 'model', countRequest: () => 100 } }).ok, false);
 });
 
 test('question model rejects a transport cap inconsistent with the ledger reservation', async () => {

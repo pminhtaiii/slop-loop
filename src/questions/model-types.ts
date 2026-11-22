@@ -66,7 +66,7 @@ export type QuestionModelOutcomeV1 =
   | { readonly status: 'stopped'; readonly reasonCode: QuestionModelFailureReasonV1; readonly usage: QuestionUsageV1 };
 
 export interface QuestionModelPort {
-  /** Owns admission and rechecks the optional caller epoch deadline after synchronous compilation and before transport. No retries or tools. */
+  /** Meters compilation on the task ledger before billable admission, and separately checks the optional caller epoch deadline before transport. No retries or tools. */
   decide(context: unknown, signal: AbortSignal, deadlineEpochMs?: number): Promise<QuestionModelOutcomeV1>;
 }
 

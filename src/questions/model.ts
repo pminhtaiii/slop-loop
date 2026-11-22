@@ -51,6 +51,7 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
     transport.enforcesOutputTokenCap !== true ||
     typeof transport.send !== 'function' ||
     !options.budget ||
+    typeof options.budget.runModelCompilation !== 'function' ||
     typeof options.budget.reserveModelCall !== 'function' ||
     typeof options.budget.snapshot !== 'function' ||
     typeof options.budget.cancel !== 'function' ||
@@ -84,12 +85,16 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
       const denied = config.budget.reserveModelCall(0);
       return stopped(denied.ok ? 'accounting-unknown' : denied.reasonCode);
     }
-    let compiled;
-    try {
-      compiled = compileQuestionModelRequest(context, config, signal);
-    } catch {
-      return stopped(callerExpired() ? 'elapsed-deadline' : 'owner-unavailable');
-    }
+    const compilation = await config.budget.runModelCompilation(() => {
+      try {
+        return compileQuestionModelRequest(context, config, signal);
+      } catch {
+        // Compiler failure has no provider usage; still settle its active time before returning.
+        return { ok: false, reasonCode: 'owner-unavailable' } as const;
+      }
+    });
+    if (!compilation.ok) return stopped(compilation.reasonCode);
+    const compiled = compilation.value;
     // A synchronous tokenizer can cross the caller deadline before an abort timer gets an event-loop turn.
     if (callerExpired()) return stopped('elapsed-deadline');
     if (!compiled.ok) {

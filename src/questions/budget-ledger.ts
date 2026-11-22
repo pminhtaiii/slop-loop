@@ -1,7 +1,4 @@
-/**
- * Owns the cumulative UC-02 task budget and its operation reservations. One
- * instance belongs to one task and must be retained across follow-up runs.
- */
+/** Owns cumulative task counters and operation reservations; retain one ledger across follow-up runs. */
 import type { QuestionBudgetProfileV1 } from '../contracts/questions/contracts.ts';
 import type { QuestionBudgetLedger as QuestionBudgetLedgerPortV1, QuestionBudgetReservationResultV1 } from './budget.ts';
 import { settleBudgetReceipt } from './budget-ledger-settlement.ts';
@@ -18,6 +15,7 @@ import {
   planFinalValidation,
   planIndexBatch,
   planModelCall,
+  planModelCompilation,
   planRepositoryOperation,
   planRetrievalQuery,
   planSnapshotAdmission,
@@ -27,7 +25,7 @@ import {
   type BudgetReservationPlanResultV1,
   type BudgetCounters,
 } from './budget-ledger-counters.ts';
-import { BudgetReservationEngine, type InternalReservation, type ReservationLedgerPortV1 } from './budget-ledger-reservations.ts';
+import { BudgetReservationEngine, executeModelCompilation, type InternalReservation, type ReservationLedgerPortV1 } from './budget-ledger-reservations.ts';
 
 /** Integer micro-USD rates per million billable tokens; each call rounds its weighted total up once. */
 export interface QuestionBudgetPricingV1 {
@@ -97,7 +95,17 @@ export type QuestionBudgetRefusalCodeV1 =
   | 'duplicate-settlement';
 
 export type QuestionBudgetOperationKindV1 =
-  'snapshot-admission' | 'repository-list' | 'repository-search' | 'repository-read' | 'retrieval-index' | 'retrieval-query' | 'model-call' | 'final-validation' | 'summary' | 'clarification';
+  | 'snapshot-admission'
+  | 'repository-list'
+  | 'repository-search'
+  | 'repository-read'
+  | 'retrieval-index'
+  | 'retrieval-query'
+  | 'model-call'
+  | 'model-compilation'
+  | 'final-validation'
+  | 'summary'
+  | 'clarification';
 
 export type QuestionBudgetAccountingReceiptV1 =
   | { readonly kind: 'work'; readonly work: unknown }
@@ -113,7 +121,6 @@ export interface QuestionBudgetExecutionContextV1 {
 
 export type QuestionBudgetExecutionResultV1<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1 };
 
-/** A task-scoped ledger. Create it once and reuse it for every run in that task. */
 class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedgerPortV1 {
   private readonly profile: QuestionBudgetProfileV1;
   private readonly pricing: QuestionBudgetPricingV1;
@@ -171,6 +178,13 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
 
   public reserveModelCall(compiledInputTokens: number): QuestionBudgetReservationResultV1 {
     return this.admit(() => planModelCall(this.profile, this.pricing, this.available(), compiledInputTokens));
+  }
+
+  public runModelCompilation<T>(compile: () => T): Promise<QuestionBudgetExecutionResultV1<T>> {
+    return executeModelCompilation(
+      this.admit(() => planModelCompilation(this.available())),
+      compile,
+    );
   }
 
   public reserveRetrievalQuery(): QuestionBudgetReservationResultV1 {
