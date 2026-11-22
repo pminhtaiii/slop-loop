@@ -109,15 +109,15 @@ export async function applyTransition(options: TaskOperationOptions, state: Task
   if (!result.ok) throw new Error(`State transition validation failed: ${result.errors.map(error => `${error.path}: ${error.message}`).join(', ')}`);
   if (state.runId !== prior.runId) throw new Error('Run changes are unsupported');
 
+  const saved: TaskState = { ...result.value, budgetLedgers: prior.budgetLedgers ?? [] };
+  await store.writeTask(state.taskId, saved);
+
   if (Object.prototype.hasOwnProperty.call(options.trustedTransitions, state.stateVersion)) {
     Reflect.deleteProperty(options.trustedTransitions, state.stateVersion);
   }
   if (options.stagedBindings && Object.prototype.hasOwnProperty.call(options.stagedBindings, state.stateVersion)) {
     Reflect.deleteProperty(options.stagedBindings, state.stateVersion);
   }
-
-  const saved: TaskState = { ...result.value, budgetLedgers: prior.budgetLedgers ?? [] };
-  await store.writeTask(state.taskId, saved);
   return structuredClone(saved);
 }
 

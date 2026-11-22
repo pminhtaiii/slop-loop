@@ -226,13 +226,18 @@ export class DurableStatePortV02 implements StatePortV02 {
         return false;
       }
       const controlHead = await this.statePort.readControl(taskId, this.controlSeed);
-      const controlVersion = binding?.controlVersion ?? ((trusted.completion as Record<string, unknown> | undefined)?.controlVersion as number | undefined);
+      const controlVersion = binding?.controlVersion ?? ((trusted.completion as Record<string, unknown> | undefined)?.controlVersion as number | undefined) ?? controlHead?.controlVersion;
       const decisionAuthorityGeneration =
         binding?.decisionAuthorityGeneration ??
         ((trusted.completion as Record<string, unknown> | undefined)?.decisionAuthorityGeneration as number | undefined) ??
-        (((trusted.completion as Record<string, unknown> | undefined)?.review as Record<string, unknown> | undefined)?.decisionAuthorityGeneration as number | undefined);
+        (((trusted.completion as Record<string, unknown> | undefined)?.review as Record<string, unknown> | undefined)?.decisionAuthorityGeneration as number | undefined) ??
+        controlHead?.activeAuthorityRef?.decisionAuthorityGeneration;
 
-      if (controlVersion !== undefined && controlHead?.controlVersion !== controlVersion) {
+      if (controlVersion === undefined) {
+        return false;
+      }
+
+      if (controlHead?.controlVersion !== controlVersion) {
         return false;
       }
       if (decisionAuthorityGeneration !== undefined && controlHead?.activeAuthorityRef?.decisionAuthorityGeneration !== decisionAuthorityGeneration) {
