@@ -152,13 +152,21 @@ export class RepositoryPatchReceiver {
         throw error;
       }
       if (!current || duplicateAttempt || this.outcomeRecovery.hasPending(current.attempt.attemptId)) throw error;
+      const isRecoveryRequired = (error as { recoveryRequired?: unknown } | null | undefined)?.recoveryRequired === true;
+      let recorded: Awaited<ReturnType<typeof this.recordOutcome>>;
       try {
         const outcome = createPatchOutcomeReceipt(current.claim, current.attempt, admittedContext, 'uncertain');
-        return await this.recordOutcome(lease, admittedContext, current.claim, current.attempt, outcome);
+        recorded = await this.recordOutcome(lease, admittedContext, current.claim, current.attempt, outcome);
       } catch (pendingError: unknown) {
         if (!this.outcomeRecovery.hasPending(current.attempt.attemptId)) keepLease = true;
+        // A held outcome must still tell the caller which files the failed rollback left behind.
+        if (isRecoveryRequired && pendingError instanceof Error)
+          Object.assign(pendingError, { recoveryRequired: true, unrecoveredPaths: (error as { unrecoveredPaths?: unknown }).unrecoveredPaths, recoveryError: error });
         throw pendingError;
       }
+      // The receipt records `uncertain`; the caller still needs the unrecovered paths.
+      if (isRecoveryRequired) throw error;
+      return recorded;
     } finally {
       if (!keepLease && (!claimed || !this.claimLifecycle.hasPending(claimed.claimId)) && (!current || !this.outcomeRecovery.hasPending(current.attempt.attemptId))) await lease.release();
     }

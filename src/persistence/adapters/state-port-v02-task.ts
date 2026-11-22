@@ -72,7 +72,16 @@ export async function applyTransition(options: TaskOperationOptions, state: Task
       await store.writeTask(state.taskId, saved);
     } catch (err) {
       if (bound) {
-        await rollbackDecisionBindings(store, state.taskId, priorBindings).catch(() => undefined);
+        try {
+          await rollbackDecisionBindings(store, state.taskId, priorBindings);
+        } catch (rollbackErr) {
+          const writeErr: Error & { recoveryRequired?: boolean; taskId?: string; rollbackError?: unknown } = err instanceof Error ? err : new Error(String(err));
+          Object.assign(writeErr, { recoveryRequired: true, taskId: state.taskId, rollbackError: rollbackErr });
+          if (!writeErr.message.startsWith('PATCH_RECOVERY_REQUIRED:')) {
+            writeErr.message = `PATCH_RECOVERY_REQUIRED: ${writeErr.message}`;
+          }
+          throw writeErr;
+        }
       }
       throw err;
     }

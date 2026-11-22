@@ -278,7 +278,7 @@ export async function bindIssuedDecision(store: StatePortStore, taskId: string, 
 export async function rollbackDecisionBindings(store: StatePortStore, taskId: string, prior: ReadonlyMap<string, IssuedDecisionBindingV02> | null): Promise<void> {
   const filePath = store.statePath(taskId, DECISION_BINDINGS_FILE);
   if (prior === null || prior.size === 0) {
-    await rm(filePath, { force: true }).catch(() => undefined);
+    await rm(filePath, { force: true });
     return;
   }
   const decisions = [...prior.values()].sort((left, right) => (left.decisionId < right.decisionId ? -1 : left.decisionId > right.decisionId ? 1 : 0));
