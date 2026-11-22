@@ -691,6 +691,7 @@ test('v0.2 repository policy binds pre-plan diagnostics to Investigate criteria 
 
 for (const [modelId, accepted] of [
   ['cmc/deepseek/deepseek-v4.1-flash', true],
+  ['nvidia/nemotron-3.5-lightning:free', true],
   ['model-1', true],
   ['/x', false],
   ['x/', false],
