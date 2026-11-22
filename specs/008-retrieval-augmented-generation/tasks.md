@@ -47,9 +47,10 @@
 **Goal**: Appropriate clarification/uncertainty, no invented goals or activity after stop.
 **Independent test**: Ambiguous question/clear control, unsupported premise/author intent, malicious source, write request and exhaustion/cancellation.
 
-- [ ] T009 [US2] Add clarification, insufficient-evidence, blocked, stale, exhausted and cancelled transitions to src/questions/graph.ts and safe results to src/questions/presentation.ts with tests/runtime/integration/question-runtime.test.ts.
+- [X] T009 [US2] Add clarification, insufficient-evidence, blocked, stale, exhausted and cancelled transitions to src/questions/graph.ts and safe results to src/questions/presentation.ts with tests/runtime/integration/question-runtime.test.ts.
   - **Dependencies**: T008.
   - **Acceptance**: Typed outcomes, no partial-search absence claims, cap stops new clarification, waits without background calls, invalid output never delivered as answer; no model retry after exhausted/denied/unknown usage. Exhausted/deadline/cancelled/stale/unknown-accounting/context-limit outcomes contain no source claims/citations and zero post-limit IO.
+  - **Evidence**: Independent merger `/root/merger` accepted repaired candidate `a27fb09ef2ea09539a7b7ecb45aa51501258749d` on 2026-11-22. Source/fresh emitted graph/model/evidence group 75/75 each (23 graph journeys), independent stop/model probes 21/21 each, typecheck/build/scoped lint/format passed. RAG-T009-001 first failed both layouts at `069179e6` (provider sent after synchronous compilation crossed caller deadline); the single correction adds host epoch-deadline checks after compilation/reservation and immediately before transport, independently verified with zero sends. Local passing receipt: `.agent-work/2026-11-22/rag-question-investigation/merger/T009-a27fb09e-verdict.json`; the earlier failure remains retained. Controlled outcomes only; continuation/session lifecycle remains T011–T012.
 - [ ] T010 [US2] Add adversarial and clarification behavior fixtures in tests/runtime/support/questions/scripted-model.ts and acceptance vectors in tests/runtime/integration/question-runtime.test.ts.
   - **Dependencies**: T009.
   - **Acceptance**: Expected choices are judgeable for clear/ambiguous controls; cannot access mutation/execution through injected instructions; canaries absent from model-visible evidence/final results/logs.
