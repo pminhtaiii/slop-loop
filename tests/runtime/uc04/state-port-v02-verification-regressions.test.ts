@@ -293,6 +293,10 @@ test('regression (4652881403): verification authority reads control head using p
   const planApproval = await f.port.trustedPlanApproval(TASK.taskId);
   assert.ok(planApproval, 'trustedPlanApproval should succeed using controlSeed fallback');
 
+  const current = await f.port.loadTask(TASK.taskId);
+  assert.ok(current);
+  await f.port.transition({ ...current, stateVersion: current.stateVersion + 1, node: 'Patch', nextAction: 'apply-patch' }, current.stateVersion);
+
   const decisionApproved = await f.port.planDecisionIsApproved(ORIGINAL, contextOf(ORIGINAL));
   assert.equal(decisionApproved, true, 'planDecisionIsApproved should succeed using controlSeed fallback');
 });

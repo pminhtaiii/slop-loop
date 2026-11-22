@@ -19,6 +19,7 @@ import { computeCanonicalSha256, isRecordVerificationApprovalRequestV02, isVerif
 import type {
   ApprovalBinding,
   ApprovalBindingContext,
+  PolicyAuthorityRefV02,
   RecordVerificationApprovalRequestV02,
   RecordVerificationApprovalResultV02,
   TaskState,
@@ -164,8 +165,9 @@ export class DurableVerificationAuthority {
     return validateApprovalBinding(binding, context.approvalContext).ok && bindingMatchesContext(binding, context.approvalContext);
   }
 
-  /** The AwaitPlan→Patch trusted approval, derived only from the recorded human decision and the head. */
-  async trustedPlanApproval(taskId: string): Promise<{ readonly approval: { readonly binding: unknown; readonly freshness: ApprovalBindingContext } } | undefined> {
+  private async resolvePlanApprovalFacts(
+    taskId: string,
+  ): Promise<{ readonly authority: PolicyAuthorityRefV02; readonly decisionId: string; readonly binding: ApprovalBinding; readonly context: VerificationApprovalContextV02 } | undefined> {
     const storageDir = this.options.approvalStorageDir;
     if (!storageDir) return undefined;
     const state = await this.options.store.readTask(taskId);
@@ -180,16 +182,26 @@ export class DurableVerificationAuthority {
     const context = approvalContextOf(decisionId, state.plan, state, authority);
     const binding: ApprovalBinding = { ...record.binding, status: 'approved' };
     if (!validateApprovalBinding(binding, context.approvalContext).ok || !bindingMatchesContext(binding, context.approvalContext)) return undefined;
-    // This transition is where the owner consumes the plan decision: bind it to this authority and
-    // generation, so a later advanced generation can never re-label the same record as current.
-    const bound = await bindIssuedDecision(this.options.store, taskId, {
-      decisionId,
-      issuerKeyRef: authority.issuerKeyRef,
-      decisionAuthorityGeneration: authority.decisionAuthorityGeneration,
-      bindingDigest: bindingIdentityDigest(binding),
+    return { authority, decisionId, binding, context };
+  }
+
+  /** The AwaitPlan→Patch trusted approval, derived only from the recorded human decision and the head. Read-only. */
+  async trustedPlanApproval(taskId: string): Promise<{ readonly approval: { readonly binding: unknown; readonly freshness: ApprovalBindingContext } } | undefined> {
+    const facts = await this.resolvePlanApprovalFacts(taskId);
+    if (!facts) return undefined;
+    return { approval: { binding: facts.binding, freshness: facts.context.approvalContext } };
+  }
+
+  /** Consumes the plan decision on accepted transition: binds it to this authority and generation. */
+  async commitPlanApproval(taskId: string): Promise<boolean> {
+    const facts = await this.resolvePlanApprovalFacts(taskId);
+    if (!facts) return false;
+    return bindIssuedDecision(this.options.store, taskId, {
+      decisionId: facts.decisionId,
+      issuerKeyRef: facts.authority.issuerKeyRef,
+      decisionAuthorityGeneration: facts.authority.decisionAuthorityGeneration,
+      bindingDigest: bindingIdentityDigest(facts.binding),
     });
-    if (!bound) return undefined;
-    return { approval: { binding, freshness: context.approvalContext } };
   }
 
   async recordVerificationApproval(request: RecordVerificationApprovalRequestV02): Promise<RecordVerificationApprovalResultV02> {
@@ -237,7 +249,15 @@ export class DurableVerificationAuthority {
       if (!issued || issued.decisionAuthorityGeneration !== authority.decisionAuthorityGeneration || issued.issuerKeyRef !== authority.issuerKeyRef) {
         return fail('stale', 'OWNER_AUTHORITY_CHANGED');
       }
-      return result('approved', state, control);
+      if (control.controlVersion === request.expectedControlVersion) {
+        const next: ControlRecordV02 = { ...control, controlVersion: control.controlVersion + 1 };
+        await this.options.store.writeControl(request.taskId, next);
+        return result('approved', state, next);
+      }
+      if (control.controlVersion === request.expectedControlVersion + 1) {
+        return result('approved', state, control);
+      }
+      return fail('stale', 'OWNER_CAS_MISMATCH');
     }
     if (control.mode === 'rejected' && control.holdRef === rejectionHoldRef(request.requestIdentity) && plan?.decisionRef === request.originalDecisionId) return result('rejected', state, control);
     if (state.node !== 'Verify' || !plan || plan.decisionRef !== request.originalDecisionId || state.activeDecisionId !== undefined) return fail('stale', 'VERIFY_STATE_MISMATCH');

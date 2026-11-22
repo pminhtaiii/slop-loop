@@ -11,6 +11,7 @@
  *   advanced generation cannot re-label the old record as current.
  */
 import { existsSync, readFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { computeCanonicalSha256 } from '../../contracts/foundation/uc03.ts';
@@ -30,7 +31,7 @@ import { readSettledPatchAncestry } from './state-port-v02-journal.ts';
 import type { StatePortStore } from './state-port-v02-storage.ts';
 import type { ControlRecordV02 } from './state-port-v02-types.ts';
 
-const DECISION_BINDINGS_FILE = 'verification-decisions.json';
+export const DECISION_BINDINGS_FILE = 'verification-decisions.json';
 const SHA256 = /^sha256:[0-9a-f]{64}$/u;
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
@@ -271,6 +272,17 @@ export async function bindIssuedDecision(store: StatePortStore, taskId: string, 
   const decisions = [...bindings.values(), binding].sort((left, right) => (left.decisionId < right.decisionId ? -1 : left.decisionId > right.decisionId ? 1 : 0));
   await store.writeJson(store.statePath(taskId, DECISION_BINDINGS_FILE), { schemaVersion: 1, decisions });
   return true;
+}
+
+/** Roll back the decision bindings to the snapshot captured before an accepted transition attempt. */
+export async function rollbackDecisionBindings(store: StatePortStore, taskId: string, prior: ReadonlyMap<string, IssuedDecisionBindingV02> | null): Promise<void> {
+  const filePath = store.statePath(taskId, DECISION_BINDINGS_FILE);
+  if (prior === null || prior.size === 0) {
+    await rm(filePath, { force: true }).catch(() => undefined);
+    return;
+  }
+  const decisions = [...prior.values()].sort((left, right) => (left.decisionId < right.decisionId ? -1 : left.decisionId > right.decisionId ? 1 : 0));
+  await store.writeJson(filePath, { schemaVersion: 1, decisions });
 }
 
 /** Read one issued decision binding from the durable owner record, or null when absent or malformed. */
