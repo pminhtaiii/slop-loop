@@ -37,9 +37,10 @@
   - **Dependencies**: T005, T006.
   - **Acceptance**: No fake repair state, no secrets/model-selected authority; deterministic request compiler with exact/certified upper bound includes system/tool/serialization overhead before reservation/dispatch. Accumulated-evidence and mandatory-context overflow tests show fitting selection or claim-free context-limit with zero provider calls; transport output cap enforced. Finite reservations/denied unknown accounting; scripted transport/counter clearly controlled.
   - **Evidence**: Independent merger `/root/merger` accepted `8b47eeee3fc0a35fc667c886803331bfb589a8bb` on 2026-11-22. Source/fresh emitted contract suites 37/37 each; independent model probes 7/7 each; typecheck/build/scoped lint/format passed. Candidate-bound local receipt: `.agent-work/2026-11-22/rag-question-investigation/merger/T007-verdict-8b47eeee.json`. Controlled protocol evidence only; G-LIVE/G-QUALITY remain gated.
-- [ ] T008 [US1] Compose sequential LangGraph investigation and final delivery in src/questions/graph.ts with tests/runtime/integration/question-runtime.test.ts.
+- [X] T008 [US1] Compose sequential LangGraph investigation and final delivery in src/questions/graph.ts with tests/runtime/integration/question-runtime.test.ts.
   - **Dependencies**: T007, T023.
   - **Acceptance**: Search/read/navigation decisions can reach late/cross-file evidence; long-definition expansion follows original-definition links with bounded guarded reads and leaves ranked results unchanged; final claims cited; drift rechecked; unknown tools fail without execution; graph loops bounded by domain counters.
+  - **Evidence**: Independent merger `/root/merger` accepted `a06ed792dca73405a8cf297f0efc94d84ea3281f` on 2026-11-22. Graph source 8/8, fresh emitted graph/model/evidence/retrieval group 88/88 and independent graph probes 6/6 per layout passed; typecheck/build/scoped lint/format passed. The source sandbox group retained one SQLite failure (87/88); the unchanged exact test passed with elevated access (1/1), as did the emitted group. Local receipt: `.agent-work/2026-11-22/rag-question-investigation/merger/T008-a06ed792-verdict.json`. Controlled investigation only; sessions, host absence delivery and live quality remain separate.
 
 ## Phase 4: User Story 2 — Clarify and stop honestly (P1)
 
