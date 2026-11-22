@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createQuestionModelPort } from '../../../src/questions/model.ts';
+import type { QuestionCompiledRequestV1, QuestionModelTransportV1, QuestionRequestTokenCounterV1 } from '../../../src/questions/model.ts';
+import type { QuestionRuntimeBudgetV1 } from '../../../src/contracts/questions/contracts.ts';
+import { createQuestionBudgetLedger } from '../../../src/questions/budget.ts';
 import { QUESTION_CONTRACT_VERSIONS } from '../../../src/contracts/questions/contracts.ts';
 import {
   validateQuestionBudgetProfile,
@@ -551,4 +555,345 @@ test('terminal question results accept evidence or clarification and forbid clai
   assert.equal(validateQuestionResult(closed).ok, true);
   assert.equal(validateQuestionResult({ ...closed, claims: validAnswer.claims }).ok, false);
   assert.equal(validateQuestionResult({ ...closed, reasonCode: 'raw provider error text' }).ok, false);
+});
+
+test('question model compiles the complete bounded request and settles trusted transport usage', async () => {
+  const ledger = createQuestionBudgetLedger(budgetProfile, { pricing: { inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } });
+  assert.equal(ledger.ok, true);
+  if (!ledger.ok) return;
+  let calls = 0;
+  const model = createQuestionModelPort({
+    identity,
+    profile: budgetProfile,
+    budget: ledger.value,
+    providerId: 'controlled-provider',
+    modelId: 'controlled-model',
+    counter: {
+      kind: 'controlled',
+      countRequest: request => {
+        assert.match(request, /"system":/);
+        assert.match(request, /"tools":/);
+        assert.match(request, /"maxOutputTokens":2048/);
+        assert.match(request, /How is dispatch selected/);
+        return 123;
+      },
+    },
+    transport: {
+      kind: 'controlled',
+      enforcesOutputTokenCap: true,
+      send: async (request, control) => {
+        calls += 1;
+        assert.equal(request.maxOutputTokens, 2_048);
+        assert.equal(control.signal.aborted, false);
+        assert.equal(control.admission.identity.taskId, identity.taskId);
+        assert.match(control.admission.reservationId, /^qb-/);
+        assert.ok(Number.isFinite(control.deadlineAt));
+        assert.equal(ledger.value.snapshot().reserved.billableTokens, 2_171);
+        return { decision: { kind: 'search', query: 'dispatch' }, usage: { status: 'complete', inputTokens: 123, outputTokens: 7 } };
+      },
+    },
+  });
+  assert.equal(model.ok, true);
+  if (!model.ok) return;
+  const result = await model.value.decide({ question: 'How is dispatch selected?' }, new AbortController().signal);
+  assert.equal(result.status, 'ok');
+  assert.equal(calls, 1);
+  assert.equal(ledger.value.snapshot().consumed.billableTokens, 130);
+  assert.equal(ledger.value.snapshot().consumed.costMicros, 137);
+  assert.equal(ledger.value.snapshot().reserved.billableTokens, 0);
+});
+
+function questionModelFixture(options: { runtime?: Partial<QuestionRuntimeBudgetV1>; counter?: QuestionRequestTokenCounterV1; send?: QuestionModelTransportV1['send']; cap?: boolean } = {}) {
+  const profile = { ...budgetProfile, runtime: { ...budgetProfile.runtime, ...options.runtime } };
+  const ledger = createQuestionBudgetLedger(profile, { pricing: { inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 1_000_000 } });
+  assert.equal(ledger.ok, true);
+  if (!ledger.ok) throw new Error('Controlled fixture configuration invalid');
+  const requests: QuestionCompiledRequestV1[] = [];
+  const model = createQuestionModelPort({
+    identity,
+    profile,
+    budget: ledger.value,
+    providerId: 'controlled-provider',
+    modelId: 'controlled-model',
+    counter: options.counter ?? { kind: 'controlled', countRequest: () => 123 },
+    transport: {
+      kind: 'controlled',
+      enforcesOutputTokenCap: (options.cap ?? true) as true,
+      send: async (request, control) => {
+        requests.push(request);
+        return options.send ? options.send(request, control) : { decision: { kind: 'list', path: '.' }, usage: { status: 'complete', inputTokens: request.inputTokens, outputTokens: 4 } };
+      },
+    },
+  });
+  return { model, budget: ledger.value, requests };
+}
+
+test('question model mandatory context overflow makes zero provider calls and no reservation', async () => {
+  const fixture = questionModelFixture({ runtime: { maxInputTokensPerCall: 100 }, counter: { kind: 'controlled', countRequest: request => Buffer.byteLength(request) } });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const before = fixture.budget.snapshot();
+  const result = await fixture.model.value.decide(
+    { question: 'Explain the dispatch path.', constraints: ['Do not omit this constraint.'], pendingClarification: 'Focus on the synchronous route.' },
+    new AbortController().signal,
+  );
+  assert.deepEqual(result, { status: 'stopped', reasonCode: 'context-limit', usage: { status: 'missing' } });
+  assert.equal(fixture.requests.length, 0);
+  assert.deepEqual(fixture.budget.snapshot(), before);
+});
+
+test('question model projects accumulated evidence deterministically without omitting mandatory intent', async () => {
+  const fixture = questionModelFixture({ runtime: { maxInputTokensPerCall: 6_000 }, counter: { kind: 'controlled', countRequest: request => Buffer.byteLength(request) } });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const evidence = [1, 2, 3].map(index => ({ ...span, evidenceId: 'evidence-' + index, excerpt: 'x'.repeat(1_500) }));
+  const result = await fixture.model.value.decide({ question: 'Explain dispatch.', constraints: ['Keep current intent.'], evidence }, new AbortController().signal);
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  assert.ok(result.visibleEvidenceIds.length > 0);
+  assert.ok(result.visibleEvidenceIds.length < evidence.length);
+  assert.equal(result.visibleEvidenceIds[0], 'evidence-1');
+  const request = fixture.requests[0];
+  assert.ok(request);
+  assert.ok(request.inputTokens <= 6_000);
+  assert.match(request.serialized, /Keep current intent/);
+  assert.match(request.serialized, /untrusted-source/);
+  assert.doesNotMatch(request.serialized, /evidence-3/);
+  const next = await fixture.model.value.decide({ question: 'Explain dispatch.', constraints: ['Keep current intent.'], evidence }, new AbortController().signal);
+  assert.equal(next.status, 'ok');
+  if (next.status === 'ok') assert.deepEqual(next.visibleEvidenceIds, result.visibleEvidenceIds);
+});
+
+test('question model denies a transport without enforced output cap before counting or dispatch', () => {
+  let counted = 0;
+  const fixture = questionModelFixture({
+    cap: false,
+    counter: {
+      kind: 'controlled',
+      countRequest: () => {
+        counted += 1;
+        return 123;
+      },
+    },
+  });
+  assert.deepEqual(fixture.model, { ok: false, reasonCode: 'invalid-config' });
+  assert.equal(counted, 0);
+  assert.equal(fixture.requests.length, 0);
+});
+
+test('question model cancellation during token counting closes the task without provider effects', async () => {
+  const controller = new AbortController();
+  const fixture = questionModelFixture({
+    counter: {
+      kind: 'controlled',
+      countRequest: () => {
+        controller.abort();
+        return 123;
+      },
+    },
+  });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, controller.signal);
+  assert.deepEqual(result, { status: 'stopped', reasonCode: 'cancelled', usage: { status: 'missing' } });
+  assert.equal(fixture.budget.snapshot().status, 'cancelled');
+  assert.equal(fixture.requests.length, 0);
+});
+
+test('question model preserves missing and unknown usage, holds accounting and blocks subsequent dispatch', async () => {
+  for (const usage of [{ status: 'missing' }, { status: 'unknown', reasonCode: 'timeout' }, { status: 'complete', inputTokens: -1, outputTokens: 1 }]) {
+    let counts = 0;
+    const fixture = questionModelFixture({
+      counter: {
+        kind: 'controlled',
+        countRequest: () => {
+          counts += 1;
+          return 123;
+        },
+      },
+      send: async () => ({ decision: { kind: 'list', path: '.' }, usage }),
+    });
+    assert.equal(fixture.model.ok, true);
+    if (!fixture.model.ok) continue;
+    const result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal);
+    assert.equal(result.status, 'stopped');
+    if (result.status !== 'stopped') continue;
+    assert.equal(result.reasonCode, 'accounting-unknown');
+    assert.deepEqual(result.usage, usage.status === 'complete' ? { status: 'unknown', reasonCode: 'invalid-metadata' } : usage);
+    assert.equal(fixture.budget.snapshot().status, 'blocked');
+    assert.equal(fixture.budget.snapshot().reserved.billableTokens, 2_171);
+    const next = await fixture.model.value.decide({ question: 'Try again.' }, new AbortController().signal);
+    assert.equal(next.status, 'stopped');
+    assert.equal(fixture.requests.length, 1);
+    assert.equal(counts, 1);
+  }
+});
+
+test('question model rejects unknown execution decisions while settling known usage without retry', async () => {
+  const fixture = questionModelFixture({ send: async () => ({ decision: { kind: 'execute', command: 'python malicious.py' }, usage: { status: 'complete', inputTokens: 123, outputTokens: 4 } }) });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal);
+  assert.deepEqual(result, { status: 'stopped', reasonCode: 'invalid-decision', usage: { status: 'complete', inputTokens: 123, outputTokens: 4 } });
+  assert.equal(fixture.budget.snapshot().consumed.modelCalls, 1);
+  assert.equal(fixture.budget.snapshot().reserved.billableTokens, 0);
+  assert.equal(fixture.requests.length, 1);
+});
+
+test('question model over-cap usage is held and never admitted as a decision', async () => {
+  const fixture = questionModelFixture({ send: async () => ({ decision: { kind: 'list', path: '.' }, usage: { status: 'complete', inputTokens: 123, outputTokens: 2_049 } }) });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal);
+  assert.deepEqual(result, { status: 'stopped', reasonCode: 'over-reservation', usage: { status: 'unknown', reasonCode: 'over-reservation' } });
+  assert.equal(fixture.budget.snapshot().status, 'blocked');
+  assert.equal(fixture.budget.snapshot().reserved.billableTokens, 2_171);
+  assert.equal(fixture.requests.length, 1);
+});
+
+test('question model refuses exhausted task admission without an additional transport call', async () => {
+  const fixture = questionModelFixture({ runtime: { maxModelCalls: 1 } });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const signal = new AbortController().signal;
+  assert.equal((await fixture.model.value.decide({ question: 'Explain dispatch.' }, signal)).status, 'ok');
+  assert.deepEqual(await fixture.model.value.decide({ question: 'Explain again.' }, signal), { status: 'stopped', reasonCode: 'model-limit', usage: { status: 'missing' } });
+  assert.equal(fixture.requests.length, 1);
+  assert.equal(fixture.budget.snapshot().consumed.modelCalls, 1);
+});
+
+test('question model rejects protected context and model-selected authority before any counting or dispatch', async () => {
+  let counts = 0;
+  const fixture = questionModelFixture({
+    counter: {
+      kind: 'controlled',
+      countRequest: () => {
+        counts += 1;
+        return 123;
+      },
+    },
+  });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  assert.deepEqual(await fixture.model.value.decide({ question: 'MARKER_SECRET_MODEL_CANARY' }, new AbortController().signal), {
+    status: 'stopped',
+    reasonCode: 'protected-content',
+    usage: { status: 'missing' },
+  });
+  assert.deepEqual(await fixture.model.value.decide({ question: 'Explain dispatch.', providerId: 'model-selected-provider' }, new AbortController().signal), {
+    status: 'stopped',
+    reasonCode: 'invalid-context',
+    usage: { status: 'missing' },
+  });
+  assert.equal(counts, 0);
+  assert.equal(fixture.requests.length, 0);
+});
+
+test('question model transport exceptions expose fixed metadata and retain uncertain reservations', async () => {
+  const fixture = questionModelFixture({
+    send: async () => {
+      throw new Error('MARKER_SECRET_PROVIDER_FAILURE');
+    },
+  });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal);
+  assert.deepEqual(result, { status: 'stopped', reasonCode: 'accounting-unknown', usage: { status: 'unknown', reasonCode: 'provider-error' } });
+  assert.doesNotMatch(JSON.stringify(result), /MARKER_SECRET/);
+  assert.equal(fixture.budget.snapshot().status, 'blocked');
+  assert.equal(fixture.budget.snapshot().reserved.billableTokens, 2_171);
+  assert.equal(fixture.requests.length, 1);
+});
+
+test('question model ignores cancelled late responses and preserves the cumulative hold', async () => {
+  const controller = new AbortController();
+  const fixture = questionModelFixture({
+    send: async () => {
+      controller.abort();
+      return { decision: validAnswer, usage: { status: 'complete', inputTokens: 123, outputTokens: 4 } };
+    },
+  });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, controller.signal);
+  assert.equal(result.status, 'stopped');
+  if (result.status === 'stopped') assert.equal(result.reasonCode, 'cancelled');
+  assert.equal('decision' in result, false);
+  assert.equal(fixture.budget.snapshot().status, 'cancelled');
+  assert.equal(fixture.budget.snapshot().reserved.billableTokens, 2_171);
+});
+
+test('question model deadline prevents a late answer and leaves no retry path', async () => {
+  const pending = Promise.withResolvers<unknown>();
+  const fixture = questionModelFixture({ runtime: { maxElapsedMsTask: 20 }, send: async () => pending.promise });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal);
+  assert.equal(result.status, 'stopped');
+  if (result.status === 'stopped') assert.equal(result.reasonCode, 'elapsed-deadline');
+  pending.resolve({ decision: validAnswer, usage: { status: 'complete', inputTokens: 123, outputTokens: 4 } });
+  const next = await fixture.model.value.decide({ question: 'Try again.' }, new AbortController().signal);
+  assert.equal(next.status, 'stopped');
+  assert.equal(fixture.requests.length, 1);
+  assert.equal(fixture.budget.snapshot().status, 'exhausted');
+  assert.equal('decision' in result, false);
+});
+
+test('question model requires an actual host token guarantee for a host transport', () => {
+  const ledger = createQuestionBudgetLedger(budgetProfile, { pricing: { inputMicrosPerMillionTokens: 1, outputMicrosPerMillionTokens: 1 } });
+  assert.equal(ledger.ok, true);
+  if (!ledger.ok) return;
+  const common = {
+    identity,
+    profile: budgetProfile,
+    budget: ledger.value,
+    providerId: 'provider',
+    modelId: 'model',
+    transport: {
+      kind: 'host' as const,
+      enforcesOutputTokenCap: true as const,
+      send: async () => {
+        throw new Error('Must not dispatch');
+      },
+    },
+  };
+  assert.equal(createQuestionModelPort({ ...common, counter: { kind: 'controlled', countRequest: () => 100 } }).ok, false);
+  assert.equal(createQuestionModelPort({ ...common, counter: { kind: 'exact-provider', providerId: 'wrong-provider', modelId: 'model', countRequest: () => 100 } }).ok, false);
+  assert.equal(createQuestionModelPort({ ...common, counter: { kind: 'certified-upper-bound', providerId: 'provider', modelId: 'model', countRequest: () => 100 } }).ok, false);
+});
+
+test('question model rejects a transport cap inconsistent with the ledger reservation', async () => {
+  const ledger = createQuestionBudgetLedger(budgetProfile, { pricing: { inputMicrosPerMillionTokens: 1, outputMicrosPerMillionTokens: 1 } });
+  assert.equal(ledger.ok, true);
+  if (!ledger.ok) return;
+  let calls = 0;
+  const model = createQuestionModelPort({
+    identity,
+    profile: { ...budgetProfile, runtime: { ...budgetProfile.runtime, maxOutputTokensPerCall: 4_096 } },
+    budget: ledger.value,
+    providerId: 'controlled-provider',
+    modelId: 'controlled-model',
+    counter: { kind: 'controlled', countRequest: () => 123 },
+    transport: {
+      kind: 'controlled',
+      enforcesOutputTokenCap: true,
+      send: async () => {
+        calls += 1;
+        return { decision: { kind: 'list', path: '.' }, usage: { status: 'complete', inputTokens: 123, outputTokens: 4 } };
+      },
+    },
+  });
+  assert.equal(model.ok, true);
+  if (!model.ok) return;
+  assert.deepEqual(await model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal), { status: 'stopped', reasonCode: 'owner-unavailable', usage: { status: 'missing' } });
+  assert.equal(calls, 0);
+  assert.equal(ledger.value.snapshot().reserved.billableTokens, 0);
+});
+
+test('question model preserves known usage when the response envelope is malformed', async () => {
+  const usage = { status: 'complete', inputTokens: 123, outputTokens: 4 };
+  const fixture = questionModelFixture({ send: async () => ({ decision: { kind: 'list', path: '.' }, usage, authority: 'model-selected' }) });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  assert.deepEqual(await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal), { status: 'stopped', reasonCode: 'invalid-decision', usage });
 });
