@@ -18,6 +18,7 @@ export async function atomicWrite(filePath: string, content: string): Promise<vo
 
   const tempPath = join(dir, `.tmp-${randomUUID()}`);
   const handle = await open(tempPath, 'wx', 0o600);
+  let renamed = false;
   try {
     try {
       await handle.writeFile(content, 'utf8');
@@ -25,7 +26,6 @@ export async function atomicWrite(filePath: string, content: string): Promise<vo
     } finally {
       await handle.close();
     }
-    let renamed = false;
     for (let attempt = 0; attempt < 15; attempt++) {
       try {
         await rename(tempPath, filePath);
@@ -44,9 +44,11 @@ export async function atomicWrite(filePath: string, content: string): Promise<vo
       throw new Error(`Failed to atomically rename ${tempPath} to ${filePath} after 15 attempts.`);
     }
   } finally {
-    await unlink(tempPath).catch((err: unknown) => {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    });
+    if (!renamed) {
+      await unlink(tempPath).catch((err: unknown) => {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      });
+    }
   }
 }
 

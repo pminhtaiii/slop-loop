@@ -7,6 +7,7 @@ import type { TaskState } from '../../contracts/foundation/uc03.ts';
 import { isSafeStorageId } from '../store.ts';
 import type { StatePortStore } from './state-port-v02-storage.ts';
 import { equal } from './state-port-v02-admission.ts';
+import { readDecisionBindings, rollbackDecisionBindings } from './state-port-v02-verification-records.ts';
 
 export interface TaskOperationOptions {
   readonly store: StatePortStore;
@@ -14,6 +15,8 @@ export interface TaskOperationOptions {
   readonly trustedTransitions: Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>;
   /** The owner's own AwaitPlan→Patch approval, derived from the recorded human decision; absent, no patch transition. */
   readonly trustedApproval?: ((taskId: string) => Promise<NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted'] | undefined>) | undefined;
+  /** Persists the issued plan decision binding on an accepted AwaitPlan→Patch transition. */
+  readonly commitApproval?: ((taskId: string) => Promise<boolean>) | undefined;
 }
 
 export async function loadTask(options: TaskOperationOptions, taskId: string): Promise<TaskState | null> {
@@ -59,6 +62,32 @@ export async function applyTransition(options: TaskOperationOptions, state: Task
   if (!result.ok) throw new Error(`State transition validation failed: ${result.errors.map(error => `${error.path}: ${error.message}`).join(', ')}`);
   if (state.runId !== prior.runId) throw new Error('Run changes are unsupported');
   const saved: TaskState = { ...result.value, budgetLedgers: prior.budgetLedgers ?? [] };
+
+  if (prior.node === 'AwaitPlan' && result.value.node === 'Patch' && options.commitApproval) {
+    const priorBindings = readDecisionBindings(store, state.taskId);
+    let bound = false;
+    try {
+      bound = await options.commitApproval(state.taskId);
+      if (!bound) throw new Error('Failed to bind issued plan approval decision');
+      await store.writeTask(state.taskId, saved);
+    } catch (err) {
+      if (bound) {
+        try {
+          await rollbackDecisionBindings(store, state.taskId, priorBindings);
+        } catch (rollbackErr) {
+          const writeErr: Error & { recoveryRequired?: boolean; taskId?: string; rollbackError?: unknown } = err instanceof Error ? err : new Error(String(err));
+          Object.assign(writeErr, { recoveryRequired: true, taskId: state.taskId, rollbackError: rollbackErr });
+          if (!writeErr.message.startsWith('PATCH_RECOVERY_REQUIRED:')) {
+            writeErr.message = `PATCH_RECOVERY_REQUIRED: ${writeErr.message}`;
+          }
+          throw writeErr;
+        }
+      }
+      throw err;
+    }
+    return structuredClone(saved);
+  }
+
   await store.writeTask(state.taskId, saved);
   return structuredClone(saved);
 }
