@@ -122,9 +122,12 @@ export class DurableStatePortV02 implements StatePortV02 {
     });
     // Reads fall through to the caller's live table; staged completion facts stay on this port.
     const trustedTransitions: tasks.TaskOperationOptions['trustedTransitions'] = Object.create(options.trustedTransitions ?? null);
+    const stagedBindings: Record<number, tasks.StagedCompletionBinding> = Object.create(null);
     this.taskOptions = {
       store: this.statePort,
       trustedTransitions,
+      stagedBindings,
+      controlSeed: this.controlSeed,
       ...(options.approvalStorageDir === undefined ? {} : { trustedApproval: (taskId: string) => this.verificationAuthority.trustedPlanApproval(taskId) }),
     };
     // Construction, not the `provenance` string, is what the production brand attests (contract §(b)5).
@@ -204,12 +207,51 @@ export class DurableStatePortV02 implements StatePortV02 {
    * deterministic predicate both passed; the transition validator still re-checks every field against
    * the persisted task, plan and review refs. A later transition without a fresh stage refuses.
    */
-  async stageCompletionReceipt(trusted: NonNullable<NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>): Promise<boolean> {
-    if (!this.boundTaskId) return false;
-    const task = await this.loadTask(this.boundTaskId);
-    if (!task) return false;
-    this.taskOptions.trustedTransitions[task.stateVersion + 1] = trusted;
-    return true;
+  async stageCompletionReceipt(
+    trusted: NonNullable<NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>,
+    binding?: {
+      readonly expectedReviewHead?: number;
+      readonly candidateDigest?: string;
+      readonly controlVersion?: number;
+      readonly decisionAuthorityGeneration?: number;
+    },
+  ): Promise<boolean> {
+    const taskId = this.boundTaskId;
+    if (!taskId) return false;
+    return this.statePort.locked(taskId, async () => {
+      const task = await this.loadTask(taskId);
+      if (!task) return false;
+      const expectedReviewHead = binding?.expectedReviewHead ?? ((trusted as Record<string, unknown>).expectedReviewHead as number | undefined);
+      if (expectedReviewHead !== undefined && task.stateVersion !== expectedReviewHead) {
+        return false;
+      }
+      const controlHead = await this.statePort.readControl(taskId, this.controlSeed);
+      const controlVersion = binding?.controlVersion ?? ((trusted.completion as Record<string, unknown> | undefined)?.controlVersion as number | undefined);
+      const decisionAuthorityGeneration =
+        binding?.decisionAuthorityGeneration ??
+        ((trusted.completion as Record<string, unknown> | undefined)?.decisionAuthorityGeneration as number | undefined) ??
+        (((trusted.completion as Record<string, unknown> | undefined)?.review as Record<string, unknown> | undefined)?.decisionAuthorityGeneration as number | undefined);
+
+      if (controlVersion !== undefined && controlHead?.controlVersion !== controlVersion) {
+        return false;
+      }
+      if (decisionAuthorityGeneration !== undefined && controlHead?.activeAuthorityRef?.decisionAuthorityGeneration !== decisionAuthorityGeneration) {
+        return false;
+      }
+
+      const candidateDigest = binding?.candidateDigest ?? ((trusted as Record<string, unknown>).candidateDigest as string | undefined);
+      const targetVersion = (expectedReviewHead !== undefined ? expectedReviewHead : task.stateVersion) + 1;
+      this.taskOptions.trustedTransitions[targetVersion] = trusted;
+      if (this.taskOptions.stagedBindings) {
+        this.taskOptions.stagedBindings[targetVersion] = {
+          candidateDigest,
+          expectedReviewHead,
+          controlVersion,
+          decisionAuthorityGeneration,
+        };
+      }
+      return true;
+    });
   }
 
   /** Whether the recorded plan decision still stands as a human approval at the named authority. */

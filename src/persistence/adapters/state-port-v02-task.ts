@@ -2,11 +2,20 @@
  * Task-state operations for the durable UC-03 v0.2 state port: compare-and-swap transitions,
  * checkpoints and recovery.
  */
-import { validateStateTransition, validateTaskState } from '../../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, validateStateTransition, validateTaskState } from '../../contracts/foundation/uc03.ts';
 import type { TaskState } from '../../contracts/foundation/uc03.ts';
 import { isSafeStorageId } from '../store.ts';
 import type { StatePortStore } from './state-port-v02-storage.ts';
 import { equal } from './state-port-v02-admission.ts';
+import type { ControlRecordV02 } from './state-port-v02-types.ts';
+import { DEFAULT_CONTROL } from './state-port-v02-types.ts';
+
+export interface StagedCompletionBinding {
+  readonly candidateDigest?: string | undefined;
+  readonly expectedReviewHead?: number | undefined;
+  readonly controlVersion?: number | undefined;
+  readonly decisionAuthorityGeneration?: number | undefined;
+}
 
 export interface TaskOperationOptions {
   readonly store: StatePortStore;
@@ -14,6 +23,8 @@ export interface TaskOperationOptions {
   readonly trustedTransitions: Record<number, NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted']>;
   /** The owner's own AwaitPlan→Patch approval, derived from the recorded human decision; absent, no patch transition. */
   readonly trustedApproval?: ((taskId: string) => Promise<NonNullable<Parameters<typeof validateStateTransition>[2]>['trusted'] | undefined>) | undefined;
+  readonly controlSeed?: ControlRecordV02 | undefined;
+  readonly stagedBindings?: Record<number, StagedCompletionBinding> | undefined;
 }
 
 export async function loadTask(options: TaskOperationOptions, taskId: string): Promise<TaskState | null> {
@@ -55,9 +66,56 @@ export async function applyTransition(options: TaskOperationOptions, state: Task
   }
   if (!equal(state.budgetLedgers, prior.budgetLedgers)) throw new Error('Transition must retain current authoritative accounting');
   const trusted = options.trustedTransitions[state.stateVersion] ?? (await derivedTrusted(options, state, prior));
+
+  const stagedBinding = options.stagedBindings?.[state.stateVersion];
+  if (stagedBinding) {
+    if (stagedBinding.expectedReviewHead !== undefined && prior.stateVersion !== stagedBinding.expectedReviewHead) {
+      throw new Error(`Staged completion receipt rejected: expected Review head ${stagedBinding.expectedReviewHead}, got ${prior.stateVersion}`);
+    }
+    if (stagedBinding.candidateDigest !== undefined) {
+      const candidateDigest = computeCanonicalSha256(state);
+      if (candidateDigest !== stagedBinding.candidateDigest) {
+        throw new Error('Staged completion receipt rejected: delivery candidate digest mismatch');
+      }
+    }
+    if (stagedBinding.controlVersion !== undefined || stagedBinding.decisionAuthorityGeneration !== undefined) {
+      const controlHead = await store.readControl(state.taskId, options.controlSeed ?? DEFAULT_CONTROL);
+      if (stagedBinding.controlVersion !== undefined && controlHead.controlVersion !== stagedBinding.controlVersion) {
+        throw new Error(`Delivery commit refused: control head version mismatch (expected ${stagedBinding.controlVersion}, got ${controlHead.controlVersion})`);
+      }
+      if (stagedBinding.decisionAuthorityGeneration !== undefined && controlHead.activeAuthorityRef?.decisionAuthorityGeneration !== stagedBinding.decisionAuthorityGeneration) {
+        throw new Error(
+          `Delivery commit refused: decision authority generation mismatch (expected ${stagedBinding.decisionAuthorityGeneration}, got ${controlHead.activeAuthorityRef?.decisionAuthorityGeneration})`,
+        );
+      }
+    }
+  } else if (trusted?.completion) {
+    const rawReview = (trusted.completion as Record<string, unknown>).review as Record<string, unknown> | undefined;
+    const recordedGeneration = ((trusted.completion as Record<string, unknown>).decisionAuthorityGeneration as number | undefined) ?? (rawReview?.decisionAuthorityGeneration as number | undefined);
+    const recordedControlVersion = (trusted.completion as Record<string, unknown>).controlVersion as number | undefined;
+
+    if (recordedControlVersion !== undefined || recordedGeneration !== undefined) {
+      const controlHead = await store.readControl(state.taskId, options.controlSeed ?? DEFAULT_CONTROL);
+      if (recordedControlVersion !== undefined && controlHead.controlVersion !== recordedControlVersion) {
+        throw new Error(`Delivery commit refused: control head version mismatch (expected ${recordedControlVersion}, got ${controlHead.controlVersion})`);
+      }
+      if (recordedGeneration !== undefined && controlHead.activeAuthorityRef?.decisionAuthorityGeneration !== recordedGeneration) {
+        throw new Error(`Delivery commit refused: decision authority generation mismatch (expected ${recordedGeneration}, got ${controlHead.activeAuthorityRef?.decisionAuthorityGeneration})`);
+      }
+    }
+  }
+
   const result = validateStateTransition(prior, state, { allowSameNode: false, ...(trusted !== undefined ? { trusted } : {}) });
   if (!result.ok) throw new Error(`State transition validation failed: ${result.errors.map(error => `${error.path}: ${error.message}`).join(', ')}`);
   if (state.runId !== prior.runId) throw new Error('Run changes are unsupported');
+
+  if (Object.prototype.hasOwnProperty.call(options.trustedTransitions, state.stateVersion)) {
+    Reflect.deleteProperty(options.trustedTransitions, state.stateVersion);
+  }
+  if (options.stagedBindings && Object.prototype.hasOwnProperty.call(options.stagedBindings, state.stateVersion)) {
+    Reflect.deleteProperty(options.stagedBindings, state.stateVersion);
+  }
+
   const saved: TaskState = { ...result.value, budgetLedgers: prior.budgetLedgers ?? [] };
   await store.writeTask(state.taskId, saved);
   return structuredClone(saved);

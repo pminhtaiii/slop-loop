@@ -11,7 +11,7 @@ export class ControlledRepositoryReader {
   private readonly guardCapability: RepositoryReadOperationsOptions['guardCapability'];
   private readonly fsPort: RepositoryReadOperationsOptions['fsPort'];
   private readonly limits: RepositoryReadOperationsOptions['limits'];
-  private readonly expectedRevisionDigest?: string | undefined;
+  private readonly expectedRevisionDigest?: string | (() => string | undefined) | undefined;
   private readonly workspaceRoot?: string | undefined;
   private readonly pathGuard: RepositoryPathGuard;
   private readonly statePort: RepositoryReadOperationsOptions['statePort'];
@@ -75,8 +75,9 @@ export class ControlledRepositoryReader {
     if (typeof currentRev !== 'string' || currentRev.trim().length === 0) {
       throw new Error('INVALID_REVISION_DIGEST: Current revision digest must be a non-empty string');
     }
-    if (this.expectedRevisionDigest !== undefined && currentRev !== this.expectedRevisionDigest) {
-      throw new Error(`STALE_REVISION: REVISION_DRIFT: Expected revision ${this.expectedRevisionDigest} but got ${currentRev}`);
+    const expected = typeof this.expectedRevisionDigest === 'function' ? this.expectedRevisionDigest() : this.expectedRevisionDigest;
+    if (expected !== undefined && currentRev !== expected) {
+      throw new Error(`STALE_REVISION: REVISION_DRIFT: Expected revision ${expected} but got ${currentRev}`);
     }
     return currentRev;
   }
