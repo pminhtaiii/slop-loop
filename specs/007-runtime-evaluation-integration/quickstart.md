@@ -161,6 +161,9 @@ The 2026-11-04 implementation release for T020–T034 remains source/controlled 
 - T014 real comparison: two admitted real attempts, gated by T011.
 - T017: actual browser journey, gated by T011. Source console tests are not browser evidence.
 - G-RESTART / original UC-03 T032: process-kill recovery. T018 full Feature 007 acceptance remains separate.
+- T054 real campaign: not run. Its first attempt stopped at endpoint conformance with an authentication refusal, before any repair (ticket #213).
+
+T031 requests original-owner review of the original UC-03 ledger closure (G-ROUTE). That review has not taken place, and this record does not close any original-ledger task.
 
 The `serve` CLI command (T035) launches the console only from real-ready provenance and refuses controlled-ready, so no console was served at the real tier; the controlled journey (T037) uses `createEvaluationConsoleHost` directly. `createEvaluationService` stores experiments, receipts and the active ID in process-local maps; this does not provide a durable session or restart guarantee. Host-file CLI control commands can use trusted assembly bindings but do not launch the console. No paid provider call, container run, production owner delivery, browser run, restart or full-suite acceptance is claimed.
 
