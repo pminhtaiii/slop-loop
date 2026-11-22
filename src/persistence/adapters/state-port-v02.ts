@@ -120,9 +120,11 @@ export class DurableStatePortV02 implements StatePortV02 {
       operator: options.trustedOperator,
       controlSeed: this.controlSeed,
     });
+    // Reads fall through to the caller's live table; staged completion facts stay on this port.
+    const trustedTransitions: tasks.TaskOperationOptions['trustedTransitions'] = Object.create(options.trustedTransitions ?? null);
     this.taskOptions = {
       store: this.statePort,
-      trustedTransitions: { ...(options.trustedTransitions ?? {}) },
+      trustedTransitions,
       ...(options.approvalStorageDir === undefined ? {} : { trustedApproval: (taskId: string) => this.verificationAuthority.trustedPlanApproval(taskId) }),
     };
     // Construction, not the `provenance` string, is what the production brand attests (contract §(b)5).
