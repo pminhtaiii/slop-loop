@@ -1,7 +1,7 @@
 # Tasks: Evidence-backed repository questions
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [contracts](contracts/decisions.md).
-**Authorization**: Planning only. All tasks unchecked; G-PLAN and a subsequent G-IMPLEMENT release required before runtime edits. External G-LIVE/G-QUALITY prerequisites are not waived by controlled checks.
+**Authorization**: Scoped implementation releases are recorded in [decisions](contracts/decisions.md), including the 2026-11-22 T007–T010 source/controlled release. Checked tasks record accepted evidence, not successor authorization. External G-LIVE/G-QUALITY prerequisites are not waived by controlled checks.
 **Tests**: Explicitly required by user; exercise behavior and authority boundaries, not mirror implementation. Contributor batches require registered merger verification and end-of-batch review under the existing workflow when implementation is released.
 
 ## Phase 1: Setup
@@ -33,9 +33,10 @@
 **Goal**: Useful source-grounded answers without implementation names.
 **Independent test**: Known symbol, late definition, three-file paraphrase and architecture cases with controlled decisions; later live quality evaluated separately.
 
-- [ ] T007 [US1] Add question model protocol validation and host transport/accounting composition in src/questions/model.ts with malformed output/usage tests in tests/runtime/contract/questions.test.ts.
+- [X] T007 [US1] Add question model protocol validation and host transport/accounting composition in src/questions/model.ts with malformed output/usage tests in tests/runtime/contract/questions.test.ts.
   - **Dependencies**: T005, T006.
   - **Acceptance**: No fake repair state, no secrets/model-selected authority; deterministic request compiler with exact/certified upper bound includes system/tool/serialization overhead before reservation/dispatch. Accumulated-evidence and mandatory-context overflow tests show fitting selection or claim-free context-limit with zero provider calls; transport output cap enforced. Finite reservations/denied unknown accounting; scripted transport/counter clearly controlled.
+  - **Evidence**: Independent merger `/root/merger` accepted `8b47eeee3fc0a35fc667c886803331bfb589a8bb` on 2026-11-22. Source/fresh emitted contract suites 37/37 each; independent model probes 7/7 each; typecheck/build/scoped lint/format passed. Candidate-bound local receipt: `.agent-work/2026-11-22/rag-question-investigation/merger/T007-verdict-8b47eeee.json`. Controlled protocol evidence only; G-LIVE/G-QUALITY remain gated.
 - [ ] T008 [US1] Compose sequential LangGraph investigation and final delivery in src/questions/graph.ts with tests/runtime/integration/question-runtime.test.ts.
   - **Dependencies**: T007, T023.
   - **Acceptance**: Search/read/navigation decisions can reach late/cross-file evidence; long-definition expansion follows original-definition links with bounded guarded reads and leaves ranked results unchanged; final claims cited; drift rechecked; unknown tools fail without execution; graph loops bounded by domain counters.
