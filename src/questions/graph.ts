@@ -20,6 +20,7 @@ import { sameBinding } from './retrieval-admission.ts';
 import { createQuestionConversationNodes } from './graph-outcomes.ts';
 import { admitInvestigationBinding, budgetStop, definitionHint, investigateQuestionTool, investigationRepository, questionStop, repositoryStop } from './graph-investigation.ts';
 import type { QuestionInvestigationConfiguration, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
+import { createQuestionNavigation } from './graph-navigation.ts';
 
 export type { QuestionInvestigation, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
 
@@ -126,11 +127,9 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
       return failed(questionStop('invalid-decision'));
     if (containsProtectedContent(question)) return failed(questionStop('protected-content'));
     const stop = (preferred?: QuestionClosedOutcomeV1): QuestionClosedOutcomeV1 | undefined => {
+      if (control.signal.aborted) config.budget.cancel();
       if (Date.now() >= control.deadlineEpochMs) return questionStop('deadline');
-      if (control.signal.aborted) {
-        config.budget.cancel();
-        return questionStop('cancelled');
-      }
+      if (control.signal.aborted) return questionStop('cancelled');
       if (control.work && (control.work.remaining('scannedFiles') <= 0 || control.work.remaining('scannedBytes') <= 0)) return questionStop('scan-limit');
       if (control.work && control.work.remaining('returnedBytes') <= 0) return questionStop('output-limit');
       const budget = config.budget.snapshot();
@@ -140,6 +139,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
     };
     const close = (outcome: QuestionClosedOutcomeV1, state: State) => ({ result: closedResult(outcome, state.usage) });
     const conversation = createQuestionConversationNodes(config, evidenceRegistry, control, stop);
+    const navigation = createQuestionNavigation(config);
     const app = new StateGraph(InvestigationState)
       .addNode('Admit', async (state: State) => {
         const before = stop();
@@ -230,10 +230,11 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
         const before = stop();
         if (before) return close(before, state);
         if (!state.decision) return close(questionStop('invalid-decision'), state);
-        const result = await investigateQuestionTool(state.decision, config, repository, evidenceRegistry, control);
+        const result = await investigateQuestionTool(state.decision, config, repository, evidenceRegistry, control, navigation);
         const after = stop(result.status === 'stopped' ? result.outcome : undefined);
         if (after) return close(after, state);
         if (result.status !== 'ok') return close(result.outcome, state);
+        result.commitNavigation?.();
         const evidence = Object.freeze([...state.evidence, ...result.evidence]);
         const hints = [...linkedDefinitions.values()].flatMap(chunk => {
           const hint = definitionHint(chunk, evidence, config.profile.repository.maxSpanLines);
@@ -281,6 +282,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
     } catch {
       return failed(stop() ?? questionStop('unavailable'));
     } finally {
+      navigation.close();
       source.close();
     }
   }

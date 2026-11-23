@@ -87,6 +87,7 @@ export class ScriptedQuestionTransport implements QuestionModelTransportV1 {
   readonly enforcesOutputTokenCap = true as const;
   readonly #steps: readonly ScriptedQuestionTransportStep[];
   #nextStep = 0;
+  #sendAttempts = 0;
 
   constructor(steps: readonly ScriptedQuestionTransportStep[]) {
     this.#steps = Object.freeze([...steps]);
@@ -96,11 +97,16 @@ export class ScriptedQuestionTransport implements QuestionModelTransportV1 {
     return this.#nextStep;
   }
 
+  get sendAttempts(): number {
+    return this.#sendAttempts;
+  }
+
   get remainingSteps(): number {
     return this.#steps.length - this.#nextStep;
   }
 
   async send(request: QuestionCompiledRequestV1, control: QuestionModelTransportControlV1): Promise<unknown> {
+    this.#sendAttempts++;
     if (control.signal.aborted) throw new ScriptedQuestionModelError('cancelled');
     const step = this.#steps[this.#nextStep];
     if (!step) throw new ScriptedQuestionModelError('invalid-metadata');

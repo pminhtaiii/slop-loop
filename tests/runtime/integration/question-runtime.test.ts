@@ -23,6 +23,418 @@ import { QUESTION_BEHAVIOR_CONTROLS, ScriptedQuestionTransport, controlledQuesti
 
 const control = () => ({ signal: new AbortController().signal, deadlineEpochMs: Date.now() + 20000 });
 
+test('simultaneous caller cancellation and epoch expiry cancels the retained ledger before IO', async () => {
+  const f = fixture([]);
+  const cancellation = new AbortController();
+  cancellation.abort();
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain start.', { signal: cancellation.signal, deadlineEpochMs: Date.now() - 1 });
+  assert.equal(run.result.kind, 'budget-exhausted');
+  assert.equal(f.budget.snapshot().status, 'cancelled');
+  assert.deepEqual(f.counts(), { scans: 0, modelCalls: 0 });
+  assert.equal(f.guarded.reads.length, 0);
+});
+
+test('directory observations reject a valid page for a different requested directory', async () => {
+  const f = fixture([() => ({ kind: 'list', path: '.' })]);
+  f.options.repository = {
+    ...f.options.repository,
+    async listDirectory() {
+      return { status: 'ok', path: 'other', entries: [{ path: 'other/file.py', kind: 'file' }], coverage: 'complete', omissionReasons: [] };
+    },
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explore the modules.', control());
+  assert.equal(run.result.kind, 'blocked');
+  assert.equal(f.counts().modelCalls, 1, 'mismatched page never reaches a second model call');
+});
+
+for (const kind of ['list', 'search'] as const) {
+  test('bounded ' + kind + ' continuations expose every original entry before advancing adapter cursor', async () => {
+    const count = kind === 'list' ? 110 : 25;
+    const texts = new Map([
+      ['entry.py', 'def start():\n    return 1'],
+      ...Array.from({ length: count - (kind === 'list' ? 1 : 0) }, (_, i) => ['module_' + String(i).padStart(3, '0') + '_'.repeat(180) + '.py', 'needle'] as [string, string]),
+    ]);
+    const seen = new Set<string>();
+    let adapterCalls = 0;
+    const next: Step = context => {
+      const page = context.observations.items
+        .map(item => JSON.parse(item) as { kind: string; entries?: { path: string }[]; hits?: { path: string }[]; nextCursor?: string })
+        .filter(item => item.kind === kind)
+        .at(-1);
+      if (!page) return kind === 'list' ? { kind, path: '.' } : { kind, query: 'needle' };
+      for (const item of page.entries ?? page.hits ?? []) seen.add(item.path);
+      if (page.nextCursor) return kind === 'list' ? { kind, path: '.', cursor: page.nextCursor } : { kind, query: 'needle', cursor: page.nextCursor };
+      return { kind: 'insufficient', explanation: 'Examined the available navigation pages.' };
+    };
+    const f = fixture(
+      Array.from({ length: 100 }, () => next),
+      texts,
+      undefined,
+      { maxConversationBytes: 1300, maxModelCalls: 100, maxInputTokensPerCall: 100000, maxBillableTokensTask: 10000000 },
+    );
+    const repository = f.options.repository;
+    f.options.repository = {
+      ...repository,
+      async listDirectory(request, bounded) {
+        adapterCalls++;
+        return repository.listDirectory(request, bounded);
+      },
+      async searchLiteral(request, bounded) {
+        adapterCalls++;
+        return repository.searchLiteral(request, bounded);
+      },
+    };
+    const graph = createQuestionInvestigation(f.options);
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explore available modules.', control());
+    assert.equal(run.result.kind, 'insufficient-evidence', JSON.stringify(run));
+    assert.equal(seen.size, count, 'all adapter entries remain reachable through bounded metadata');
+    assert.equal(adapterCalls, 2, 'cached suffixes never refetch or skip the original page');
+  });
+}
+
+test('tiny navigation cap retains the pending page instead of refetching past it', async () => {
+  let adapterCalls = 0;
+  const f = fixture(
+    [
+      () => ({ kind: 'list', path: '.' }),
+      () => ({ kind: 'list', path: '.' }),
+      context => {
+        assert.deepEqual(context.observations.items, []);
+        return { kind: 'insufficient', explanation: 'Navigation metadata cannot fit.' };
+      },
+    ],
+    undefined,
+    undefined,
+    { maxConversationBytes: 2 },
+  );
+  const list = f.options.repository.listDirectory.bind(f.options.repository);
+  f.options.repository = {
+    ...f.options.repository,
+    async listDirectory(request, bounded) {
+      adapterCalls++;
+      return list(request, bounded);
+    },
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explore modules.', control());
+  assert.equal(run.result.kind, 'insufficient-evidence');
+  assert.equal(adapterCalls, 1);
+  assert.equal(f.budget.snapshot().consumed.toolCalls, 4, 'even retained no-prefix turns consume domain tool budget');
+});
+
+test('a suffix with no fitting entry retains its issued cursor across charged retries', async () => {
+  let token: string | undefined;
+  let calls = 0;
+  const next: Step = context => {
+    const page = context.observations.items
+      .map(item => JSON.parse(item) as { kind: string; nextCursor?: string })
+      .filter(item => item.kind === 'list')
+      .at(-1);
+    assert.ok(page?.nextCursor);
+    token ??= page.nextCursor;
+    assert.equal(page.nextCursor, token);
+    return { kind: 'list', path: '.', cursor: token };
+  };
+  const f = fixture(
+    [() => ({ kind: 'list', path: '.' }), next, next, () => ({ kind: 'insufficient', explanation: 'The remaining entry cannot fit.' })],
+    new Map([
+      ['entry.py', 'def start():\n    return 1'],
+      ['module_' + '_'.repeat(400) + '.py', '# long path'],
+    ]),
+    undefined,
+    { maxConversationBytes: 400 },
+  );
+  const list = f.options.repository.listDirectory.bind(f.options.repository);
+  f.options.repository = {
+    ...f.options.repository,
+    async listDirectory(request, bounded) {
+      calls++;
+      return list(request, bounded);
+    },
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explore modules.', control());
+  assert.equal(run.result.kind, 'insufficient-evidence');
+  assert.equal(calls, 1);
+  assert.equal(f.budget.snapshot().consumed.toolCalls, 5);
+});
+
+test('search continuation cannot change the literal query', async () => {
+  let calls = 0;
+  const f = fixture(
+    [
+      () => ({ kind: 'search', query: 'needle' }),
+      context => {
+        const page = context.observations.items
+          .map(item => JSON.parse(item) as { kind: string; nextCursor?: string })
+          .filter(item => item.kind === 'search')
+          .at(-1);
+        assert.ok(page?.nextCursor?.startsWith('question-nav-'));
+        assert.ok(page);
+        return { kind: 'search', query: 'different', cursor: page.nextCursor };
+      },
+    ],
+    new Map([['entry.py', 'def start():\n    return 1'], ...Array.from({ length: 20 }, (_, i) => ['module_' + String(i).padStart(3, '0') + '_'.repeat(180) + '.py', 'needle'] as [string, string])]),
+    undefined,
+    { maxConversationBytes: 1300, maxInputTokensPerCall: 100000 },
+  );
+  const search = f.options.repository.searchLiteral.bind(f.options.repository);
+  f.options.repository = {
+    ...f.options.repository,
+    async searchLiteral(request, bounded) {
+      calls++;
+      return search(request, bounded);
+    },
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Locate needle.', control());
+  assert.equal(run.result.kind, 'failed');
+  assert.equal(calls, 1);
+  assert.equal(f.counts().modelCalls, 2);
+});
+
+test('navigation token from a closed run grants no continuation in a new graph', async () => {
+  let token: string | undefined;
+  const texts = new Map([
+    ['entry.py', 'def start():\n    return 1'],
+    ...Array.from({ length: 99 }, (_, i) => ['module_' + String(i).padStart(3, '0') + '_'.repeat(180) + '.py', '# module'] as [string, string]),
+  ]);
+  const first = fixture(
+    [
+      () => ({ kind: 'list', path: '.' }),
+      context => {
+        token = context.observations.items.map(item => JSON.parse(item) as { kind: string; nextCursor?: string }).find(item => item.kind === 'list')?.nextCursor;
+        assert.ok(token);
+        return { kind: 'insufficient', explanation: 'Stop this run.' };
+      },
+    ],
+    texts,
+    undefined,
+    { maxConversationBytes: 1300 },
+  );
+  const graph = createQuestionInvestigation(first.options);
+  assert.ok(graph.ok);
+  assert.equal((await graph.value.run('Explore modules.', control())).result.kind, 'insufficient-evidence');
+  let calls = 0;
+  const second = fixture([() => ({ kind: 'list', path: '.', cursor: token })], texts, undefined, { maxConversationBytes: 1300 });
+  const list = second.options.repository.listDirectory.bind(second.options.repository);
+  second.options.repository = {
+    ...second.options.repository,
+    async listDirectory(request, bounded) {
+      calls++;
+      return list(request, bounded);
+    },
+  };
+  const another = createQuestionInvestigation(second.options);
+  assert.ok(another.ok);
+  assert.equal((await another.value.run('Explore modules.', control())).result.kind, 'failed');
+  assert.equal(calls, 0);
+});
+
+test('cancellation before cached navigation closes the ledger without a second adapter call', async () => {
+  const cancellation = new AbortController();
+  let calls = 0;
+  let checksAtCancellation = 0;
+  const f = fixture(
+    [
+      () => ({ kind: 'list', path: '.' }),
+      context => {
+        const page = context.observations.items.map(item => JSON.parse(item) as { kind: string; nextCursor?: string }).find(item => item.kind === 'list');
+        assert.ok(page?.nextCursor);
+        checksAtCancellation = f.bindingChecks();
+        cancellation.abort();
+        return { kind: 'list', path: '.', cursor: page.nextCursor };
+      },
+    ],
+    new Map([['entry.py', 'def start():\n    return 1'], ...Array.from({ length: 99 }, (_, i) => ['module_' + String(i).padStart(3, '0') + '_'.repeat(180) + '.py', '# module'] as [string, string])]),
+    undefined,
+    { maxConversationBytes: 1300 },
+  );
+  const list = f.options.repository.listDirectory.bind(f.options.repository);
+  f.options.repository = {
+    ...f.options.repository,
+    async listDirectory(request, bounded) {
+      calls++;
+      return list(request, bounded);
+    },
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explore modules.', { ...control(), signal: cancellation.signal });
+  assert.equal(run.result.kind, 'cancelled');
+  assert.equal(f.budget.snapshot().status, 'cancelled');
+  assert.equal(calls, 1);
+  assert.equal(f.bindingChecks(), checksAtCancellation);
+});
+
+for (const refusal of ['forged', 'path', 'kind', 'replay', 'stale', 'budget'] as const) {
+  test('navigation continuation refuses ' + refusal + ' without additional adapter dispatch', async () => {
+    let token: string | undefined;
+    let calls = 0;
+    let checksAtRefusal = 0;
+    const observe = (context: VisibleContext) => {
+      const page = context.observations.items
+        .map(item => JSON.parse(item) as { kind: string; nextCursor?: string })
+        .filter(item => item.kind === 'list')
+        .at(-1);
+      assert.ok(page?.nextCursor);
+      return page.nextCursor;
+    };
+    const next: Step = context => {
+      token = observe(context);
+      if (refusal === 'stale') f.stale();
+      checksAtRefusal = f.bindingChecks();
+      if (refusal === 'kind') return { kind: 'search', query: 'needle', cursor: token };
+      return { kind: 'list', path: refusal === 'path' ? 'other' : '.', cursor: refusal === 'forged' ? 'question-nav-forged-token' : token };
+    };
+    const steps: Step[] = [() => ({ kind: 'list', path: '.' }), next];
+    if (refusal === 'replay') steps.push(() => ({ kind: 'list', path: '.', cursor: token }));
+    const texts = new Map([
+      ['entry.py', 'def start():\n    return 1'],
+      ...Array.from({ length: 99 }, (_, i) => ['module_' + String(i).padStart(3, '0') + '_'.repeat(180) + '.py', '# module'] as [string, string]),
+    ]);
+    const f = fixture(steps, texts, undefined, { maxConversationBytes: 1300, ...(refusal === 'budget' ? { maxToolCalls: 3 } : {}) });
+    const list = f.options.repository.listDirectory.bind(f.options.repository);
+    f.options.repository = {
+      ...f.options.repository,
+      async listDirectory(request, bounded) {
+        calls++;
+        return list(request, bounded);
+      },
+    };
+    const graph = createQuestionInvestigation(f.options);
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explore modules.', control());
+    assert.equal(run.result.kind, refusal === 'stale' ? 'stale-repository' : refusal === 'budget' ? 'budget-exhausted' : 'failed');
+    assert.equal(calls, 1);
+    if (refusal === 'budget') {
+      assert.equal(f.budget.snapshot().consumed.toolCalls, 3);
+      assert.equal(f.bindingChecks(), checksAtRefusal, 'exhausted cached turn performs no new binding IO');
+    }
+    assert.equal(f.counts().modelCalls, refusal === 'replay' ? 3 : 2);
+  });
+}
+
+test('full-fitting navigation preserves the exact original adapter cursor', async () => {
+  let cursor: string | undefined;
+  const f = fixture(
+    [
+      () => ({ kind: 'list', path: '.' }),
+      context => {
+        const page = context.observations.items.map(item => JSON.parse(item) as { kind: string; nextCursor?: string; entries?: unknown[] }).find(item => item.kind === 'list');
+        assert.ok(page);
+        assert.equal(page.entries?.length, 100);
+        assert.equal(page.nextCursor, cursor);
+        return { kind: 'insufficient', explanation: 'Available page inspected.' };
+      },
+    ],
+    new Map([['entry.py', 'def start():\n    return 1'], ...Array.from({ length: 100 }, (_, i) => ['m' + String(i).padStart(3, '0') + '.py', '# module'] as [string, string])]),
+  );
+  const list = f.options.repository.listDirectory.bind(f.options.repository);
+  f.options.repository = {
+    ...f.options.repository,
+    async listDirectory(request, bounded) {
+      const page = await list(request, bounded);
+      if (page.status === 'ok') cursor = page.nextCursor;
+      return page;
+    },
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explore modules.', control());
+  assert.equal(run.result.kind, 'insufficient-evidence');
+  assert.ok(cursor?.startsWith('cursor-'));
+});
+
+test('full-fitting opaque adapter cursor remains usable when it shares the local token prefix', async () => {
+  const cursor = 'question-nav-adapter-opaque-cursor';
+  let calls = 0;
+  const f = fixture([
+    () => ({ kind: 'list', path: '.' }),
+    context => {
+      const page = context.observations.items
+        .map(item => JSON.parse(item) as { kind: string; nextCursor?: string })
+        .filter(item => item.kind === 'list')
+        .at(-1);
+      assert.equal(page?.nextCursor, cursor);
+      return { kind: 'list', path: '.', cursor };
+    },
+    context => {
+      assert.ok(context.observations.items.some(item => item.includes('second.py')));
+      return { kind: 'insufficient', explanation: 'Both pages inspected.' };
+    },
+  ]);
+  f.options.repository = {
+    ...f.options.repository,
+    async listDirectory(request) {
+      calls++;
+      if (calls === 1) return { status: 'ok', path: '.', entries: [{ path: 'first.py', kind: 'file' }], coverage: 'partial', omissionReasons: [], nextCursor: cursor };
+      assert.equal(request.cursor, cursor);
+      return { status: 'ok', path: '.', entries: [{ path: 'second.py', kind: 'file' }], coverage: 'complete', omissionReasons: [] };
+    },
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explore modules.', control());
+  assert.equal(run.result.kind, 'insufficient-evidence');
+  assert.equal(calls, 2);
+});
+
+test('escaped navigation selects the longest fitting prefix with logarithmic candidate serializations', async () => {
+  let pageSerializations = 0;
+  let originalEntries: readonly { path: string; kind: string }[] = [];
+  const f = fixture(
+    [
+      () => ({ kind: 'list', path: '.' }),
+      context => {
+        const observation = context.observations.items.find(item => (JSON.parse(item) as { kind: string }).kind === 'list');
+        assert.ok(observation);
+        const page = JSON.parse(observation) as { entries: { path: string; kind: string }[]; omittedEntries: number };
+        assert.ok(page.entries.length > 0 && page.entries.length < originalEntries.length);
+        assert.ok(Buffer.byteLength(JSON.stringify([observation])) <= 1300);
+        const longer = JSON.stringify({ ...page, entries: [...page.entries, originalEntries[page.entries.length]], omittedEntries: page.omittedEntries - 1 });
+        assert.ok(Buffer.byteLength(JSON.stringify([longer])) > 1300, 'one more escaped entry exceeds the complete array bound');
+        return { kind: 'insufficient', explanation: 'The bounded page was inspected.' };
+      },
+    ],
+    new Map([['entry.py', 'def start():\n    return 1'], ...Array.from({ length: 100 }, (_, i) => ['module_' + String(i).padStart(3, '0') + '_"'.repeat(70) + '.py', '# module'] as [string, string])]),
+    undefined,
+    { maxConversationBytes: 1300 },
+  );
+  const list = f.options.repository.listDirectory.bind(f.options.repository);
+  f.options.repository = {
+    ...f.options.repository,
+    async listDirectory(request, bounded) {
+      const page = await list(request, bounded);
+      if (page.status === 'ok') originalEntries = page.entries;
+      return page;
+    },
+  };
+  const stringify = JSON.stringify;
+  JSON.stringify = ((...args: unknown[]) => {
+    const value = args[0];
+    if (typeof value === 'object' && value !== null && 'kind' in value && value.kind === 'list' && 'entries' in value && Array.isArray(value.entries)) pageSerializations++;
+    return Reflect.apply(stringify, JSON, args) as string | undefined;
+  }) as typeof JSON.stringify;
+  try {
+    const graph = createQuestionInvestigation(f.options);
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explore modules.', control());
+    assert.equal(run.result.kind, 'insufficient-evidence');
+    assert.ok(pageSerializations <= Math.ceil(Math.log2(100)) + 3, 'candidate serialization count is logarithmic');
+  } finally {
+    JSON.stringify = stringify;
+  }
+});
+
 test('retained token refusal is preserved before any investigation IO', async () => {
   const f = fixture([]);
   assert.deepEqual(f.budget.reserveModelCall(30001), { ok: false, reasonCode: 'token-limit' });
@@ -114,7 +526,8 @@ test('real long-path directory page remains bounded navigation with its guarded 
           .find(item => item.kind === 'list');
         assert.ok(page, 'page must survive full serialized conversation budgeting');
         assert.ok(page.entries.length > 0 && page.entries.length < 100);
-        assert.equal(page.nextCursor, cursor);
+        assert.ok(page.nextCursor?.startsWith('question-nav-'));
+        assert.notEqual(page.nextCursor, cursor, 'the trimmed suffix precedes the original adapter cursor');
         assert.equal(page.coverage, 'partial');
         assert.equal(page.truncated, true);
         assert.ok(page.omissionReasons.includes('output-limit'));
@@ -1053,8 +1466,10 @@ test('controlled clear and ambiguous questions have judgeable distinct graph out
       assert.equal(f.budget.snapshot().consumed.clarificationRounds, 1);
     }
     assert.equal(transport.consumedSteps, 1);
+    assert.equal(transport.sendAttempts, 1);
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(transport.consumedSteps, 1, 'awaiting clarification starts no background model work');
+    assert.equal(transport.sendAttempts, 1, 'awaiting clarification starts no background send attempts');
   }
 });
 

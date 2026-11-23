@@ -2,15 +2,18 @@
 import type { AdmittedSpanV1, QuestionClosedOutcomeV1, QuestionIndexedChunkV1, QuestionModelDecisionV1 } from '../contracts/questions/contracts.ts';
 import { validateDirectoryPage, validateRepositoryBinding, validateSearchPage } from '../contracts/questions/validation.ts';
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
+import { normalizeLexicalPath } from '../contracts/foundation/uc03.ts';
 import type { QuestionBudgetAccountingReceiptV1, QuestionBudgetRefusalCodeV1 } from './budget.ts';
 import type { QuestionEvidenceRegistryV1 } from './evidence.ts';
 import type { QuestionInvestigationConfiguration } from './graph-types.ts';
 import { retrievalInterruption, trackRepositoryWork, withRetrievalControl } from './retrieval-control.ts';
 import type { QuestionRepositoryPort } from './repository.ts';
 import { sameBinding } from './retrieval-admission.ts';
+import type { QuestionNavigation, QuestionNavigationProjection } from './graph-navigation.ts';
 
 export type QuestionInvestigationToolResult =
-  { readonly status: 'ok'; readonly evidence: readonly AdmittedSpanV1[]; readonly observation: string | undefined } | { readonly status: 'stopped'; readonly outcome: QuestionClosedOutcomeV1 };
+  | { readonly status: 'ok'; readonly evidence: readonly AdmittedSpanV1[]; readonly observation: string | undefined; readonly commitNavigation?: () => void }
+  | { readonly status: 'stopped'; readonly outcome: QuestionClosedOutcomeV1 };
 
 /** Fixed metadata-only translation. Adapter exception text and source-bearing failure payloads never escape. */
 export function questionStop(reason: string): QuestionClosedOutcomeV1 {
@@ -125,6 +128,7 @@ export async function investigateQuestionTool(
   repository: QuestionRepositoryPort,
   registry: QuestionEvidenceRegistryV1,
   control: QuestionRepositoryOperationControl,
+  navigation: QuestionNavigation,
 ): Promise<QuestionInvestigationToolResult> {
   if (decision.kind === 'read') {
     const read = await registry.readSpan(decision, control);
@@ -132,6 +136,9 @@ export async function investigateQuestionTool(
     return { status: 'ok', evidence: [read.span], observation: JSON.stringify({ kind: 'read', path: read.span.path, range: read.span.range, truncation: read.span.truncation }) };
   }
   if (decision.kind !== 'list' && decision.kind !== 'search') return { status: 'stopped', outcome: questionStop('invalid-decision') };
+  const cached = navigation.lookup(decision);
+  if (cached.kind === 'invalid') return { status: 'stopped', outcome: questionStop('invalid-decision') };
+  let cachedProjection: QuestionNavigationProjection | undefined;
   const admission = config.budget.reserveRepositoryOperation(decision.kind);
   if (!admission.ok) return { status: 'stopped', outcome: questionStop(admission.reasonCode) };
   const reservation = admission.value;
@@ -146,6 +153,11 @@ export async function investigateQuestionTool(
           const stop = retrievalInterruption(bounded);
           if (stop) return stop;
           if (current.status !== 'ok') return current;
+          if (cached.kind === 'cached') {
+            cachedProjection = navigation.project(decision, cached.retained.page, cached);
+            if (!work.meter.charge({ returnedBytes: cachedProjection.returnedBytes })) return { status: 'exhausted' as const, reasonCode: 'output-limit' as const };
+            return { status: 'navigation-cached' as const };
+          }
           const result = decision.kind === 'list' ? await repository.listDirectory(decision, bounded) : await repository.searchLiteral(decision, bounded);
           const after = retrievalInterruption(bounded);
           if (after) return after;
@@ -157,11 +169,14 @@ export async function investigateQuestionTool(
     result => workReceipt(result, work.consumed),
   );
   if (!operation.ok) return { status: 'stopped', outcome: questionStop(operation.reasonCode) };
+  if (operation.value.status === 'navigation-cached' && cachedProjection) return { status: 'ok', evidence: [], observation: cachedProjection.observation, commitNavigation: cachedProjection.commit };
   if (decision.kind === 'list') {
     const checked = validateDirectoryPage(operation.value, config.profile.repository);
     if (!checked.ok) return { status: 'stopped', outcome: questionStop('unavailable') };
     if (checked.value.status !== 'ok') return { status: 'stopped', outcome: repositoryStop(checked.value) };
-    return { status: 'ok', evidence: [], observation: boundedPageObservation({ kind: 'list', ...checked.value }, 'entries', config.profile.runtime.maxConversationBytes) };
+    if (normalizeLexicalPath(checked.value.path) !== normalizeLexicalPath(decision.path)) return { status: 'stopped', outcome: questionStop('unavailable') };
+    const projection = navigation.project(decision, { kind: 'list', ...checked.value });
+    return { status: 'ok', evidence: [], observation: projection.observation, commitNavigation: projection.commit };
   }
   const checked = validateSearchPage(operation.value, config.profile.repository);
   if (!checked.ok) return { status: 'stopped', outcome: questionStop('unavailable') };
@@ -177,36 +192,15 @@ export async function investigateQuestionTool(
       hits.push({ path: read.span.path, line: hit.line, column: hit.column });
   }
   const unconfirmed = hits.length !== checked.value.hits.length;
-  return {
-    status: 'ok',
-    evidence,
-    observation: boundedPageObservation(
-      {
-        kind: 'search',
-        query: decision.query,
-        coverage: unconfirmed ? 'partial' : checked.value.coverage,
-        omissionReasons: [...checked.value.omissionReasons, ...(unconfirmed ? ['unconfirmed-hit'] : [])],
-        nextCursor: checked.value.nextCursor,
-        hits,
-      },
-      'hits',
-      config.profile.runtime.maxConversationBytes,
-    ),
-  };
-}
-
-/** Includes the escaped observation string and its enclosing conversation array in the bound. */
-function boundedPageObservation(page: { readonly coverage: string; readonly omissionReasons: readonly string[] } & Record<string, unknown>, key: string, maxBytes: number): string | undefined {
-  const original = page[key] as readonly unknown[];
-  const items = [...original];
-  for (;;) {
-    const omitted = original.length - items.length;
-    const projected = { ...page, [key]: items, ...(omitted > 0 ? { coverage: 'partial', omissionReasons: [...page.omissionReasons, 'output-limit'], truncated: true, omittedEntries: omitted } : {}) };
-    const observation = JSON.stringify(projected);
-    if (Buffer.byteLength(JSON.stringify([observation])) <= maxBytes) return observation;
-    if (items.length === 0) return undefined;
-    items.pop();
-  }
+  const projection = navigation.project(decision, {
+    kind: 'search',
+    query: decision.query,
+    coverage: unconfirmed ? 'partial' : checked.value.coverage,
+    omissionReasons: [...checked.value.omissionReasons, ...(unconfirmed ? ['unconfirmed-hit'] : [])],
+    nextCursor: checked.value.nextCursor,
+    hits,
+  });
+  return { status: 'ok', evidence, observation: projection.observation, commitNavigation: projection.commit };
 }
 
 function workReceipt(result: { readonly status: string; readonly reasonCode?: string }, work: unknown): QuestionBudgetAccountingReceiptV1 {
