@@ -142,17 +142,18 @@ function applyHunks(source: string | null, hunks: readonly Hunk[]): string {
     if (start < cursor || start > sourceLines.length) throw new Error('PATCH_CONTEXT_MISMATCH: hunk start is outside the current file');
     while (cursor < start) output.push(sourceLines[cursor++] as string);
     for (const line of hunk.body) {
+      const text = isCrlf && line.text.endsWith('\r') ? line.text.slice(0, -1) : line.text;
       if (line.marker === ' ' || line.marker === '-') {
-        if (sourceLines[cursor] !== line.text) throw new Error('PATCH_CONTEXT_MISMATCH: hunk line does not match the current file');
+        if (sourceLines[cursor] !== text) throw new Error('PATCH_CONTEXT_MISMATCH: hunk line does not match the current file');
         if (line.noNewline) {
           if (cursor !== sourceLines.length - 1 || trailingNewline) {
             throw new Error('PATCH_CONTEXT_MISMATCH: hunk specifies no newline at EOF but file has newline or more lines');
           }
         }
         cursor += 1;
-        if (line.marker === ' ') output.push(line.text);
+        if (line.marker === ' ') output.push(text);
       } else if (line.marker === '+') {
-        output.push(line.text);
+        output.push(text);
       } else {
         throw new Error('PATCH_CONTEXT_MISMATCH: unknown hunk line marker');
       }

@@ -294,3 +294,26 @@ test(
     assert.equal(readFileSync(join(root, 'mixed.py'), 'utf8'), 'crlf_line\r\nlf_line\n');
   }),
 );
+
+test(
+  'issue #237: CRLF file + CRLF hunk lines diff applies, keeping exact CRLF bytes',
+  withTree({ 'crlf.py': 'line1\r\nline2\r\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    const diff = '--- a/crlf.py\r\n+++ b/crlf.py\r\n@@ -1,2 +1,2 @@\r\n line1\r\n-line2\r\n+newline2\r\n';
+    await applyAdmittedPatch(filesystem, patch(['crlf.py'], diff), 1024);
+    const content = readFileSync(join(root, 'crlf.py'), 'utf8');
+    assert.equal(content, 'line1\r\nnewline2\r\n');
+  }),
+);
+
+test(
+  'issue #237: CRLF file + CRLF-bearing pure-addition hunk at EOF applies with no double CR',
+  withTree({ 'crlf.py': 'line1\r\nline2\r\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    const diff = '--- a/crlf.py\r\n+++ b/crlf.py\r\n@@ -2,0 +3 @@\r\n+line3\r\n';
+    await applyAdmittedPatch(filesystem, patch(['crlf.py'], diff), 1024);
+    const content = readFileSync(join(root, 'crlf.py'), 'utf8');
+    assert.equal(content, 'line1\r\nline2\r\nline3\r\n');
+    assert.equal(content.includes('\r\r'), false, 'output must contain no doubled \\r');
+  }),
+);
