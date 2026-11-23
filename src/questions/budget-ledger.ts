@@ -25,7 +25,7 @@ import {
   type BudgetReservationPlanResultV1,
   type BudgetCounters,
 } from './budget-ledger-counters.ts';
-import { BudgetReservationEngine, executeModelCompilation, type InternalReservation, type ReservationLedgerPortV1 } from './budget-ledger-reservations.ts';
+import { BudgetReservationEngine, executeModelCompilation, reservationElapsed, type InternalReservation, type ReservationLedgerPortV1 } from './budget-ledger-reservations.ts';
 
 /** Integer micro-USD rates per million billable tokens; each call rounds its weighted total up once. */
 export interface QuestionBudgetPricingV1 {
@@ -96,6 +96,8 @@ export type QuestionBudgetAccountingReceiptV1 =
   | { readonly kind: 'model-usage'; readonly usage: unknown };
 
 export interface QuestionBudgetExecutionContextV1 {
+  /** Synchronous predicate in the trusted task clock, without accounting side effects. */
+  hasTime(): boolean;
   readonly signal: AbortSignal;
   readonly deadlineAt: number;
   /** Remaining operation time in the ledger clock at dispatch. */
@@ -164,7 +166,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     return this.admit(() => planModelCall(this.profile, this.pricing, this.available(), compiledInputTokens));
   }
 
-  public runModelCompilation<T>(compile: () => T): Promise<QuestionBudgetExecutionResultV1<T>> {
+  public runModelCompilation<T>(compile: (control: QuestionBudgetExecutionContextV1) => T): Promise<QuestionBudgetExecutionResultV1<T>> {
     return executeModelCompilation(
       this.admit(() => planModelCompilation(this.available())),
       compile,
@@ -294,22 +296,11 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   }
 
   private elapsedFor(internal: InternalReservation): number | undefined {
-    if (internal.startedAt === undefined) return undefined;
-    const endedAt = this.now();
-    if (!Number.isFinite(endedAt) || endedAt < internal.startedAt || endedAt >= internal.deadlineAt) return undefined;
-    const elapsedMs = Math.ceil(endedAt - internal.startedAt);
-    if (!Number.isSafeInteger(elapsedMs) || this.consumed['elapsedMs'] + elapsedMs > this.profile.runtime.maxElapsedMsTask) return undefined;
-    return elapsedMs;
+    return reservationElapsed(internal, this.now(), this.profile.runtime.maxElapsedMsTask - this.consumed['elapsedMs']);
   }
 
   private elapsedAtHold(internal: InternalReservation): number | undefined {
-    if (internal.startedAt === undefined) return undefined;
-    const endedAt = this.now();
-    if (!Number.isFinite(endedAt) || endedAt < internal.startedAt) return undefined;
-    const elapsedMs = Math.ceil(endedAt - internal.startedAt);
-    const remainingMs = this.profile.runtime.maxElapsedMsTask - this.consumed['elapsedMs'];
-    if (!Number.isSafeInteger(elapsedMs) || remainingMs <= 0) return undefined;
-    return Math.min(elapsedMs, remainingMs);
+    return reservationElapsed(internal, this.now(), this.profile.runtime.maxElapsedMsTask - this.consumed['elapsedMs'], true);
   }
 
   private hold(internal: InternalReservation, reasonCode: QuestionBudgetRefusalCodeV1): void {
@@ -384,6 +375,11 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   private clearTimer(internal: InternalReservation): void {
     if (internal.timer !== undefined) clearTimeout(internal.timer);
     internal.timer = undefined;
+  }
+
+  public _hasTime(internal: InternalReservation): boolean {
+    const now = this.now();
+    return this.status === 'open' && internal.status === 'running' && Number.isFinite(now) && now >= (internal.startedAt ?? now) && now < internal.deadlineAt;
   }
 
   public _start(internal: InternalReservation): QuestionBudgetExecutionResultV1<number> {

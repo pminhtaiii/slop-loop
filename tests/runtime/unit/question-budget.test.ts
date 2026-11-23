@@ -127,6 +127,29 @@ test('malformed accounting after an actual dispatch retains the hold instead of 
   assert.equal(created.value.snapshot().reserved.billableTokens, 600);
 });
 
+test('public compiler exceptions preserve the original error and release nonprovider work after charging time', async () => {
+  for (const elapsed of [4, 20]) {
+    let clock = 0;
+    const created = createQuestionBudgetLedger(validProfile({ maxElapsedMsTask: 10 }), { pricing, now: () => clock });
+    assert.ok(created.ok);
+    const error = new Error('Original controlled compiler error');
+    await assert.rejects(
+      created.value.runModelCompilation(() => {
+        clock = elapsed;
+        throw error;
+      }),
+      actual => actual === error,
+    );
+    const state = created.value.snapshot();
+    assert.equal(state.status, elapsed < 10 ? 'open' : 'exhausted');
+    assert.equal(state.consumed.elapsedMs, Math.min(elapsed, 10));
+    assert.equal(state.reserved.billableTokens, 0);
+    assert.equal(state.reserved.modelCalls, 0);
+    assert.equal(state.consumed.modelCalls, 0);
+    assert.equal(created.value.reserveModelCall(100).ok, elapsed < 10);
+  }
+});
+
 test('compiler activity at the exact task deadline exhausts admission with zero provider accounting', async () => {
   let clock = 0;
   const created = createQuestionBudgetLedger(validProfile({ maxElapsedMsTask: 10 }), { pricing, now: () => clock });

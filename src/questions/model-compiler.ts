@@ -30,26 +30,29 @@ function text(value: unknown, maxBytes: number): value is string {
 
 function validateContext(input: unknown, config: QuestionModelConfigurationV1): QuestionModelContextV1 | undefined {
   if (!record(input) || Object.keys(input).some(key => !['question', 'constraints', 'pendingClarification', 'conversation', 'observations', 'evidence'].includes(key))) return undefined;
-  if (!text(input['question'], 65_536)) return undefined;
+  const question = input['question'];
+  if (!text(question, 65_536)) return undefined;
   const constraints = input['constraints'] ?? [];
   const pending = input['pendingClarification'];
   const conversation = input['conversation'] ?? [];
   const observations = input['observations'] ?? [];
   const evidence = input['evidence'] ?? [];
-  if (!Array.isArray(constraints) || constraints.length > 100 || Array.from(constraints).some(item => !text(item, 8_192))) return undefined;
+  if (!Array.isArray(constraints) || constraints.length > 100) return undefined;
+  const checkedConstraints: string[] = [];
+  for (const item of constraints as unknown[]) {
+    if (!text(item, 8_192)) return undefined;
+    checkedConstraints.push(item);
+  }
   if (pending !== undefined && !text(pending, 8_192)) return undefined;
-  if (
-    !Array.isArray(conversation) ||
-    conversation.length > 1_000 ||
-    Array.from(conversation).some(
-      item =>
-        !record(item) ||
-        Object.keys(item).sort().join(',') !== 'role,text' ||
-        (item['role'] !== 'user' && item['role'] !== 'assistant') ||
-        !text(item['text'], config.profile.runtime.maxConversationBytes),
-    )
-  )
-    return undefined;
+  if (!Array.isArray(conversation) || conversation.length > 1_000) return undefined;
+  const checkedConversation: NonNullable<QuestionModelContextV1['conversation']>[number][] = [];
+  for (const item of conversation as unknown[]) {
+    if (!record(item) || Object.keys(item).sort().join(',') !== 'role,text') return undefined;
+    const role = item['role'];
+    const entryText = item['text'];
+    if ((role !== 'user' && role !== 'assistant') || !text(entryText, config.profile.runtime.maxConversationBytes)) return undefined;
+    checkedConversation.push({ role, text: entryText });
+  }
   if (!Array.isArray(observations) || observations.length > 1_000) return undefined;
   const boundedObservations: string[] = [];
   for (const item of observations as unknown[]) {
@@ -70,10 +73,10 @@ function validateContext(input: unknown, config: QuestionModelConfigurationV1): 
   }
   // Only validated bounded fields cross this cast; span validation detaches nested source metadata.
   return {
-    question: input['question'],
-    constraints: [...constraints] as string[],
+    question,
+    constraints: checkedConstraints,
     ...(pending === undefined ? {} : { pendingClarification: pending }),
-    conversation: structuredClone(conversation) as NonNullable<QuestionModelContextV1['conversation']>,
+    conversation: checkedConversation,
     observations: boundedObservations,
     evidence: spans,
   };
@@ -81,13 +84,15 @@ function validateContext(input: unknown, config: QuestionModelConfigurationV1): 
 
 export type QuestionRequestCompilationV1 =
   | { readonly ok: true; readonly request: QuestionCompiledRequestV1 }
-  | { readonly ok: false; readonly reasonCode: 'context-limit' | 'invalid-context' | 'protected-content' | 'owner-unavailable' | 'cancelled' };
+  | { readonly ok: false; readonly reasonCode: 'context-limit' | 'invalid-context' | 'protected-content' | 'owner-unavailable' | 'cancelled' | 'elapsed-deadline' };
 
 /** Counts every candidate in stable order; mandatory intent is never truncated to fit. */
-export function compileQuestionModelRequest(input: unknown, config: QuestionModelConfigurationV1, signal: AbortSignal): QuestionRequestCompilationV1 {
+export function compileQuestionModelRequest(input: unknown, config: QuestionModelConfigurationV1, signal: AbortSignal, hasTime: () => boolean): QuestionRequestCompilationV1 {
   if (signal.aborted) return { ok: false, reasonCode: 'cancelled' };
+  if (!hasTime()) return { ok: false, reasonCode: 'elapsed-deadline' };
   const context = validateContext(input, config);
   if (!context) return { ok: false, reasonCode: 'invalid-context' };
+  if (!hasTime()) return { ok: false, reasonCode: 'elapsed-deadline' };
   if (containsProtectedContent(JSON.stringify(context))) return { ok: false, reasonCode: 'protected-content' };
   const conversation: NonNullable<QuestionModelContextV1['conversation']>[number][] = [];
   const observations: string[] = [];
@@ -111,21 +116,45 @@ export function compileQuestionModelRequest(input: unknown, config: QuestionMode
       evidence: { trust: 'untrusted-source', spans: evidence },
     });
   let invalidCounter = false;
+  let expired = false;
   const count = (serialized: string): number => {
     if (signal.aborted) return Number.POSITIVE_INFINITY;
+    if (!hasTime()) {
+      expired = true;
+      return Number.POSITIVE_INFINITY;
+    }
     const tokens = config.counter.countRequest(serialized);
+    if (!hasTime()) {
+      expired = true;
+      return Number.POSITIVE_INFINITY;
+    }
     if (!Number.isSafeInteger(tokens) || tokens <= 0) {
       invalidCounter = true;
       return Number.POSITIVE_INFINITY;
     }
     return tokens;
   };
+  if (!hasTime()) return { ok: false, reasonCode: 'elapsed-deadline' };
   let serialized = serialize();
   let tokens = count(serialized);
+  if (expired) return { ok: false, reasonCode: 'elapsed-deadline' };
   if (signal.aborted) return { ok: false, reasonCode: 'cancelled' };
   if (invalidCounter) return { ok: false, reasonCode: 'owner-unavailable' };
   if (tokens > config.profile.runtime.maxInputTokensPerCall) return { ok: false, reasonCode: 'context-limit' };
+  // Reserve fitting current source before optional history/navigation; newest issued spans get stable first priority.
+  for (const span of [...(context.evidence ?? [])].reverse()) {
+    if (!hasTime()) return { ok: false, reasonCode: 'elapsed-deadline' };
+    evidence.unshift(span);
+    const candidate = serialize();
+    const counted = count(candidate);
+    if (expired) return { ok: false, reasonCode: 'elapsed-deadline' };
+    if (counted <= config.profile.runtime.maxInputTokensPerCall) {
+      serialized = candidate;
+      tokens = counted;
+    } else evidence.shift();
+  }
   for (const entry of [...(context.conversation ?? [])].reverse()) {
+    if (!hasTime()) return { ok: false, reasonCode: 'elapsed-deadline' };
     conversation.unshift(entry);
     if (Buffer.byteLength(JSON.stringify(conversation)) > config.profile.runtime.maxConversationBytes) {
       conversation.shift();
@@ -133,28 +162,22 @@ export function compileQuestionModelRequest(input: unknown, config: QuestionMode
     }
     const candidate = serialize();
     const counted = count(candidate);
+    if (expired) return { ok: false, reasonCode: 'elapsed-deadline' };
     if (counted <= config.profile.runtime.maxInputTokensPerCall) {
       serialized = candidate;
       tokens = counted;
     } else conversation.shift();
   }
   for (const observation of [...(context.observations ?? [])].reverse()) {
+    if (!hasTime()) return { ok: false, reasonCode: 'elapsed-deadline' };
     observations.unshift(observation);
     const candidate = serialize();
     const counted = count(candidate);
+    if (expired) return { ok: false, reasonCode: 'elapsed-deadline' };
     if (counted <= config.profile.runtime.maxInputTokensPerCall && Buffer.byteLength(JSON.stringify(observations)) <= config.profile.runtime.maxConversationBytes) {
       serialized = candidate;
       tokens = counted;
     } else observations.shift();
-  }
-  for (const span of context.evidence ?? []) {
-    evidence.push(span);
-    const candidate = serialize();
-    const counted = count(candidate);
-    if (counted <= config.profile.runtime.maxInputTokensPerCall) {
-      serialized = candidate;
-      tokens = counted;
-    } else evidence.pop();
   }
   if (signal.aborted) return { ok: false, reasonCode: 'cancelled' };
   if (invalidCounter) return { ok: false, reasonCode: 'owner-unavailable' };

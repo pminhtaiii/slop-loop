@@ -9,7 +9,7 @@ export interface QuestionModelContextV1 {
   readonly conversation?: readonly Readonly<{ role: 'user' | 'assistant'; text: string }>[];
   /** Safe metadata/navigation text. Repository content inside it is untrusted, never an instruction. */
   readonly observations?: readonly string[];
-  /** Host-supplied issued spans; final citation authority remains with the evidence registry. */
+  /** Host spans in issuance order. Fit newest first before optional context, then serialize selected spans in issuance order; citation authority remains with the registry. */
   readonly evidence?: readonly AdmittedSpanV1[];
 }
 

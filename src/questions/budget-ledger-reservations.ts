@@ -27,6 +27,7 @@ export interface InternalReservation {
 }
 
 export interface ReservationLedgerPortV1 {
+  _hasTime(internal: InternalReservation): boolean;
   _start(internal: InternalReservation): QuestionBudgetExecutionResultV1<number>;
   _releaseBeforeDispatch(internal: InternalReservation): QuestionBudgetExecutionResultV1<void>;
   _complete(internal: InternalReservation, receipt: unknown): QuestionBudgetExecutionResultV1<void>;
@@ -37,12 +38,31 @@ export interface ReservationLedgerPortV1 {
 }
 
 /** Uses ordinary work settlement for compiler time, with no provider token or cost receipt. */
-export async function executeModelCompilation<T>(admission: QuestionBudgetReservationResultV1, compile: () => T): Promise<QuestionBudgetExecutionResultV1<T>> {
+export async function executeModelCompilation<T>(admission: QuestionBudgetReservationResultV1, compile: (control: QuestionBudgetExecutionContextV1) => T): Promise<QuestionBudgetExecutionResultV1<T>> {
   if (!admission.ok) return admission;
-  return admission.value.execute(
-    async () => compile(),
+  const errors: unknown[] = [];
+  const result = await admission.value.execute(
+    async control => {
+      try {
+        return { ok: true, value: compile(control) } as const;
+      } catch (error) {
+        errors.push(error);
+        return { ok: false } as const;
+      }
+    },
     () => ({ kind: 'work', work: {} }),
   );
+  if (errors.length > 0) throw errors[0];
+  if (!result.ok) return result;
+  return result.value.ok ? { ok: true, value: result.value.value } : { ok: false, reasonCode: 'accounting-unknown' };
+}
+
+/** Measures the trusted ledger clock for settled work and capped terminal accounting. */
+export function reservationElapsed(internal: InternalReservation, now: number, remaining: number, allowExpired = false): number | undefined {
+  if (internal.startedAt === undefined || !Number.isFinite(now) || now < internal.startedAt || (!allowExpired && now >= internal.deadlineAt)) return undefined;
+  const elapsed = Math.ceil(now - internal.startedAt);
+  if (!Number.isSafeInteger(elapsed) || remaining <= 0 || (!allowExpired && elapsed > remaining)) return undefined;
+  return Math.min(elapsed, remaining);
 }
 
 /** The only reservation path that may invoke an adapter. */
@@ -99,7 +119,10 @@ export class BudgetReservationEngine implements QuestionBudgetReservationPortV1 
     this.signal.addEventListener('abort', onAbort, { once: true });
     let value: T | typeof aborted;
     try {
-      value = await Promise.race([cancellation.promise, operation({ signal: this.signal, deadlineAt: this.deadlineAt, remainingMs: started.value })]);
+      value = await Promise.race([
+        cancellation.promise,
+        operation({ signal: this.signal, deadlineAt: this.deadlineAt, remainingMs: started.value, hasTime: () => this.owner._hasTime(this.internal) }),
+      ]);
     } catch (error) {
       if (this.signal.aborted) {
         this.owner._ignoreLate(this.internal);

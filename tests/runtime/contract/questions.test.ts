@@ -761,6 +761,181 @@ test('question model cannot mistake provider shape or a matching thrown message 
   }
 });
 
+test('question model snapshots accessor-backed intent and conversation exactly once before validation', async () => {
+  const reads = { question: 0, constraint: 0, role: 0, text: 0 };
+  const constraints = [Object.defineProperty({}, 'unused', { value: true })];
+  Object.defineProperty(constraints, 0, { get: () => (++reads.constraint === 1 ? 'Keep original intent.' : 'MARKER_SECRET_CHANGED_CONSTRAINT') });
+  const context = {
+    get question() {
+      return ++reads.question === 1 ? 'Explain dispatch.' : 'MARKER_SECRET_CHANGED_QUESTION';
+    },
+    constraints,
+    conversation: [
+      {
+        get role() {
+          return ++reads.role === 1 ? 'user' : ['user'];
+        },
+        get text() {
+          return ++reads.text === 1 ? 'Original conversation.' : 'MARKER_SECRET_CHANGED_CONVERSATION';
+        },
+      },
+    ],
+  };
+  const fixture = questionModelFixture();
+  assert.ok(fixture.model.ok);
+  const result = await fixture.model.value.decide(context, new AbortController().signal);
+  assert.equal(result.status, 'ok');
+  const request = fixture.requests[0];
+  assert.ok(request);
+  const selected = JSON.parse(request.serialized);
+  assert.equal(selected.question, 'Explain dispatch.');
+  assert.deepEqual(selected.constraints, ['Keep original intent.']);
+  assert.deepEqual(selected.conversation, [{ role: 'user', text: 'Original conversation.' }]);
+  assert.deepEqual(reads, { question: 1, constraint: 1, role: 1, text: 1 });
+  assert.doesNotMatch(request.serialized, /MARKER_SECRET/);
+});
+
+test('question compiler stops candidate counting immediately after the synchronous task deadline', async () => {
+  let clock = 0;
+  let counts = 0;
+  const fixture = questionModelFixture({
+    now: () => clock,
+    runtime: { maxElapsedMsTask: 10 },
+    counter: {
+      kind: 'controlled',
+      countRequest: () => {
+        counts += 1;
+        clock += 10;
+        return 123;
+      },
+    },
+  });
+  assert.ok(fixture.model.ok);
+  const result = await fixture.model.value.decide(
+    { question: 'Explain dispatch.', conversation: [{ role: 'user', text: 'Optional conversation.' }], observations: ['Optional navigation.'], evidence: [span] },
+    new AbortController().signal,
+  );
+  assert.deepEqual(result, { status: 'stopped', reasonCode: 'elapsed-deadline', usage: { status: 'missing' } });
+  assert.equal(counts, 1);
+  assert.equal(fixture.requests.length, 0);
+  assert.equal(fixture.budget.snapshot().consumed.elapsedMs, 10);
+  assert.equal(fixture.budget.snapshot().reserved.billableTokens, 0);
+});
+
+test('question model checks trusted task time again after execution starts and before transport', async () => {
+  let clock = 0;
+  const fixture = questionModelFixture({
+    now: () => clock,
+    runtime: { maxElapsedMsTask: 10 },
+    beforeModelOperation: () => {
+      clock = 20;
+    },
+  });
+  assert.ok(fixture.model.ok);
+  assert.deepEqual(await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal), {
+    status: 'stopped',
+    reasonCode: 'elapsed-deadline',
+    usage: { status: 'missing' },
+  });
+  const state = fixture.budget.snapshot();
+  assert.equal(fixture.requests.length, 0);
+  assert.equal(state.status, 'exhausted');
+  assert.equal(state.consumed.elapsedMs, 10);
+  for (const key of ['modelCalls', 'billableTokens', 'costMicros'] as const) {
+    assert.equal(state.consumed[key], 0);
+    assert.equal(state.reserved[key], 0);
+  }
+});
+
+test('question model preserves failed settlement ahead of caller expiry and retains known settled late usage', async () => {
+  for (const mode of ['over', 'missing', 'invalid', 'complete', 'throw'] as const) {
+    let epoch = 100;
+    const usage =
+      mode === 'missing'
+        ? { status: 'missing' }
+        : mode === 'invalid'
+          ? { status: 'complete', inputTokens: -1, outputTokens: 4 }
+          : { status: 'complete', inputTokens: 123, outputTokens: mode === 'over' ? 2_049 : 4 };
+    const fixture = questionModelFixture({
+      now: () => 0,
+      send: async () => {
+        epoch = 200;
+        if (mode === 'throw') throw new Error('Controlled provider failure');
+        return { decision: { kind: 'list', path: '.' }, usage };
+      },
+    });
+    assert.ok(fixture.model.ok);
+    const originalNow = Date.now;
+    let result;
+    try {
+      Date.now = () => epoch;
+      result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal, 150);
+    } finally {
+      Date.now = originalNow;
+    }
+    assert.equal(result.status, 'stopped');
+    if (result.status !== 'stopped') continue;
+    assert.equal(result.reasonCode, mode === 'complete' ? 'elapsed-deadline' : mode === 'over' ? 'over-reservation' : 'accounting-unknown');
+    assert.deepEqual(
+      result.usage,
+      mode === 'complete'
+        ? { status: 'complete', inputTokens: 123, outputTokens: 4 }
+        : mode === 'missing'
+          ? { status: 'missing' }
+          : { status: 'unknown', reasonCode: mode === 'over' ? 'over-reservation' : mode === 'throw' ? 'provider-error' : 'invalid-metadata' },
+    );
+    const state = fixture.budget.snapshot();
+    assert.equal(state.status, mode === 'complete' ? 'open' : 'blocked');
+    assert.equal(state.reserved.billableTokens, mode === 'complete' ? 0 : 2_171);
+    assert.equal(state.consumed.billableTokens, mode === 'complete' ? 127 : 0);
+    assert.equal(fixture.requests.length, 1);
+  }
+});
+
+test('question model gives newest fitting issued evidence priority over retained optional context with older fallback', async () => {
+  for (const freshBytes of [50, 500]) {
+    const fixture = questionModelFixture({
+      runtime: { maxInputTokensPerCall: 175 },
+      counter: {
+        kind: 'controlled',
+        countRequest: serialized => {
+          const request = JSON.parse(serialized);
+          return (
+            100 +
+            request.conversation.length * 100 +
+            request.observations.items.length * 100 +
+            request.evidence.spans.reduce((total: number, item: { excerpt: string }) => total + Buffer.byteLength(item.excerpt), 0)
+          );
+        },
+      },
+    });
+    assert.ok(fixture.model.ok);
+    const result = await fixture.model.value.decide(
+      {
+        question: 'Explain dispatch.',
+        constraints: ['Retain intent.'],
+        conversation: [{ role: 'user', text: 'Older optional conversation.' }],
+        observations: ['Older navigation.'],
+        evidence: [
+          { ...span, evidenceId: 'older', excerpt: 'o'.repeat(50) },
+          { ...span, evidenceId: 'fresh', excerpt: 'n'.repeat(freshBytes) },
+        ],
+      },
+      new AbortController().signal,
+    );
+    assert.equal(result.status, 'ok');
+    if (result.status !== 'ok') continue;
+    assert.deepEqual(result.visibleEvidenceIds, [freshBytes === 50 ? 'fresh' : 'older']);
+    const request = fixture.requests[0];
+    assert.ok(request);
+    const selected = JSON.parse(request.serialized);
+    assert.deepEqual(selected.conversation, []);
+    assert.deepEqual(selected.observations.items, []);
+    assert.deepEqual(selected.constraints, ['Retain intent.']);
+    assert.ok(request.inputTokens <= 175);
+  }
+});
+
 test('question model rejects sparse context arrays before counting or provider admission', async () => {
   for (const field of ['constraints', 'conversation', 'observations', 'evidence']) {
     let counts = 0;
@@ -1065,13 +1240,13 @@ test('question model projects accumulated evidence deterministically without omi
   if (result.status !== 'ok') return;
   assert.ok(result.visibleEvidenceIds.length > 0);
   assert.ok(result.visibleEvidenceIds.length < evidence.length);
-  assert.equal(result.visibleEvidenceIds[0], 'evidence-1');
+  assert.ok(result.visibleEvidenceIds.includes('evidence-3'));
   const request = fixture.requests[0];
   assert.ok(request);
   assert.ok(request.inputTokens <= 6_000);
   assert.match(request.serialized, /Keep current intent/);
   assert.match(request.serialized, /untrusted-source/);
-  assert.doesNotMatch(request.serialized, /evidence-3/);
+  assert.doesNotMatch(request.serialized, /evidence-1/);
   const next = await fixture.model.value.decide({ question: 'Explain dispatch.', constraints: ['Keep current intent.'], evidence }, new AbortController().signal);
   assert.equal(next.status, 'ok');
   if (next.status === 'ok') assert.deepEqual(next.visibleEvidenceIds, result.visibleEvidenceIds);

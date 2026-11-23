@@ -85,9 +85,9 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
       const denied = config.budget.reserveModelCall(0);
       return stopped(denied.ok ? 'accounting-unknown' : denied.reasonCode);
     }
-    const compilation = await config.budget.runModelCompilation(() => {
+    const compilation = await config.budget.runModelCompilation(control => {
       try {
-        return compileQuestionModelRequest(context, config, signal);
+        return compileQuestionModelRequest(context, config, signal, control.hasTime);
       } catch {
         // Compiler failure has no provider usage; still settle its active time before returning.
         return { ok: false, reasonCode: 'owner-unavailable' } as const;
@@ -136,7 +136,7 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
       const execution = await admission.value.execute(
         control => {
           // Check at the actual transport boundary as well as before reserving. Never mix epoch and ledger clocks.
-          if (callerExpired()) {
+          if (callerExpired() || !control.hasTime()) {
             refusedBeforeSend = true;
             return Promise.resolve(noDispatchResult);
           }
@@ -163,7 +163,6 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
         noDispatchResult,
       );
       if (refusedBeforeSend) return stopped('elapsed-deadline');
-      if (callerExpired()) return stopped('elapsed-deadline', deadlineUsage(observedUsage));
       if (!execution.ok)
         return stopped(
           execution.reasonCode,
@@ -181,6 +180,7 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
                         : 'invalid-metadata',
               },
         );
+      if (callerExpired()) return stopped('elapsed-deadline', deadlineUsage(observedUsage));
       if (signal.aborted) {
         config.budget.cancel();
         return stopped('cancelled');
@@ -195,7 +195,7 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
       return Object.freeze({ status: 'ok', decision: decision.value, usage: usage.value, visibleEvidenceIds: compiled.request.visibleEvidenceIds });
     } catch {
       // The reservation has already held uncertain usage. Provider exception text never leaves this boundary.
-      return callerExpired() ? stopped('elapsed-deadline', { status: 'unknown', reasonCode: 'timeout' }) : stopped('accounting-unknown', { status: 'unknown', reasonCode: 'provider-error' });
+      return stopped('accounting-unknown', { status: 'unknown', reasonCode: 'provider-error' });
     } finally {
       signal.removeEventListener('abort', cancel);
     }

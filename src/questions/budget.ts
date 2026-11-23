@@ -52,7 +52,7 @@ export interface QuestionBudgetReservation {
 export interface QuestionBudgetLedger {
   snapshot(): QuestionBudgetLedgerSnapshotV1;
   /** Meters synchronous request compilation on the task clock without reserving provider usage. Await settlement before dispatch. */
-  runModelCompilation<T>(compile: () => T): Promise<QuestionBudgetExecutionResultV1<T>>;
+  runModelCompilation<T>(compile: (control: QuestionBudgetExecutionContextV1) => T): Promise<QuestionBudgetExecutionResultV1<T>>;
   reserveSnapshotAdmission(): QuestionBudgetReservationResultV1;
   reserveRepositoryOperation(kind: 'list' | 'search' | 'read'): QuestionBudgetReservationResultV1;
   reserveFinalValidation(): QuestionBudgetReservationResultV1;
