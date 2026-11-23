@@ -93,6 +93,10 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
         return { ok: false, reasonCode: 'owner-unavailable' } as const;
       }
     });
+    if (signal.aborted) {
+      config.budget.cancel();
+      return stopped('cancelled');
+    }
     if (!compilation.ok) return stopped(compilation.reasonCode);
     const compiled = compilation.value;
     // A synchronous tokenizer can cross the caller deadline before an abort timer gets an event-loop turn.
@@ -117,6 +121,8 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
     }
     const cancel = () => config.budget.cancel();
     let observedUsage: QuestionUsageV1 = { status: 'missing' };
+    const noDispatchResult = Object.freeze({});
+    let refusedBeforeSend = false;
     signal.addEventListener('abort', cancel, { once: true });
     try {
       if (signal.aborted) {
@@ -130,7 +136,10 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
       const execution = await admission.value.execute(
         control => {
           // Check at the actual transport boundary as well as before reserving. Never mix epoch and ledger clocks.
-          if (callerExpired()) throw new Error('QUESTION_DEADLINE_ELAPSED_BEFORE_DISPATCH');
+          if (callerExpired()) {
+            refusedBeforeSend = true;
+            return Promise.resolve(noDispatchResult);
+          }
           return config.transport.send(
             compiled.request,
             Object.freeze({
@@ -146,11 +155,14 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
           );
         },
         response => {
+          if (response === noDispatchResult) return { kind: 'model-not-dispatched' };
           const usage = validateQuestionUsage(record(response) ? response['usage'] : undefined);
           observedUsage = usage.ok ? usage.value : { status: 'unknown', reasonCode: 'invalid-metadata' };
           return { kind: 'model-usage', usage: observedUsage };
         },
+        noDispatchResult,
       );
+      if (refusedBeforeSend) return stopped('elapsed-deadline');
       if (callerExpired()) return stopped('elapsed-deadline', deadlineUsage(observedUsage));
       if (!execution.ok)
         return stopped(

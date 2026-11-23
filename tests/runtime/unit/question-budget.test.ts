@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createQuestionBudgetLedger } from '../../../src/questions/budget.ts';
+import type { QuestionBudgetAccountingReceiptV1 } from '../../../src/questions/budget.ts';
 
 const validRuntime = {
   maxToolCalls: 5,
@@ -56,6 +57,75 @@ const pricing = {
   inputMicrosPerMillionTokens: 100_000,
   outputMicrosPerMillionTokens: 200_000,
 } as const;
+
+test('no-dispatch accounting requires the exact private host result and a model reservation', async () => {
+  for (const scenario of ['missing-identity', 'copied-identity', 'repository', 'extra-receipt-key', 'valid'] as const) {
+    let clock = 0;
+    const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => clock });
+    assert.ok(created.ok);
+    const admission = scenario === 'repository' ? created.value.reserveRepositoryOperation('read') : created.value.reserveModelCall(100);
+    assert.ok(admission.ok);
+    const privateResult = Object.freeze({});
+    const actualResult = scenario === 'copied-identity' ? {} : privateResult;
+    const result = await admission.value.execute(
+      async () => {
+        clock = 3;
+        return actualResult;
+      },
+      () => (scenario === 'extra-receipt-key' ? { kind: 'model-not-dispatched', extra: true } : { kind: 'model-not-dispatched' }),
+      scenario === 'missing-identity' ? undefined : privateResult,
+    );
+    const state = created.value.snapshot();
+    if (scenario === 'valid') {
+      assert.deepEqual(result, { ok: true, value: privateResult });
+      assert.equal(state.status, 'open');
+      assert.equal(state.consumed.elapsedMs, 3);
+      assert.equal(state.consumed.modelCalls, 0);
+      assert.equal(state.reserved.modelCalls, 0);
+      assert.equal(state.reserved.billableTokens, 0);
+      assert.deepEqual(admission.value.reconcile({ kind: 'model-not-dispatched' }), { ok: false, reasonCode: 'accounting-unknown' });
+    } else {
+      assert.deepEqual(result, { ok: false, reasonCode: 'accounting-unknown' });
+      assert.equal(state.status, 'blocked');
+      if (scenario !== 'repository') assert.equal(state.reserved.billableTokens, 600);
+    }
+  }
+});
+
+test('a held actual model dispatch cannot be refunded using a no-dispatch reconciliation receipt', async () => {
+  const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => 0 });
+  assert.ok(created.ok);
+  const admission = created.value.reserveModelCall(100);
+  assert.ok(admission.ok);
+  await assert.rejects(
+    admission.value.execute(
+      async () => {
+        throw new Error('Controlled actual dispatch failure');
+      },
+      () => ({ kind: 'model-usage', usage: { status: 'missing' } }),
+    ),
+  );
+  const held = created.value.snapshot();
+  assert.deepEqual(admission.value.reconcile({ kind: 'model-not-dispatched' }), { ok: false, reasonCode: 'accounting-unknown' });
+  assert.deepEqual(created.value.snapshot(), held);
+  assert.equal(held.reserved.billableTokens, 600);
+  assert.equal(held.status, 'blocked');
+});
+
+test('malformed accounting after an actual dispatch retains the hold instead of bypassing runtime validation', async () => {
+  const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => 0 });
+  assert.ok(created.ok);
+  const admission = created.value.reserveModelCall(100);
+  assert.ok(admission.ok);
+  // Exercise a malformed external accounting callback despite its static return type.
+  const result = await admission.value.execute(
+    async () => 'actual-response',
+    () => null as unknown as QuestionBudgetAccountingReceiptV1,
+  );
+  assert.deepEqual(result, { ok: false, reasonCode: 'accounting-unknown' });
+  assert.equal(created.value.snapshot().status, 'blocked');
+  assert.equal(created.value.snapshot().reserved.billableTokens, 600);
+});
 
 test('compiler activity at the exact task deadline exhausts admission with zero provider accounting', async () => {
   let clock = 0;

@@ -90,6 +90,7 @@ export type QuestionBudgetOperationKindV1 =
   | 'clarification';
 
 export type QuestionBudgetAccountingReceiptV1 =
+  | { readonly kind: 'model-not-dispatched' }
   | { readonly kind: 'work'; readonly work: unknown }
   | { readonly kind: 'work-exhausted'; readonly work: unknown; readonly reasonCode: 'scan-limit' | 'output-limit' | 'elapsed-deadline' }
   | { readonly kind: 'model-usage'; readonly usage: unknown };
@@ -232,7 +233,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     return availableCounters(this.consumed, this.reserved, counterLimits(this.profile));
   }
 
-  private exhaust(reasonCode: QuestionBudgetRefusalCodeV1): QuestionBudgetReservationResultV1 {
+  private exhaust(reasonCode: QuestionBudgetRefusalCodeV1): { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1 } {
     if (this.status !== 'open') return { ok: false, reasonCode: this.terminalReason ?? reasonCode };
     this.status = 'exhausted';
     this.terminalReason = reasonCode;
@@ -252,7 +253,8 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
         : undefined;
     const accounting = terminalWork && isRecord(receipt) ? { kind: 'work', work: receipt['work'] } : receipt;
     const settlement = settleBudgetReceipt(accounting, internal.kind, internal.maximumWork, internal.reservedCounters, internal.maximumInputTokens, internal.maximumOutputTokens, this.pricing);
-    const elapsedMs = !reconciled && settlement.ok ? this.elapsedFor(internal) : 0;
+    const undispatched = internal.kind === 'model-call' && isRecord(receipt) && receipt['kind'] === 'model-not-dispatched';
+    const elapsedMs = !reconciled && settlement.ok ? (undispatched ? this.elapsedAtHold(internal) : this.elapsedFor(internal)) : 0;
     if (internal.status !== expectedStatus) return { ok: false, reasonCode: reconciled ? 'duplicate-settlement' : (this.terminalReason ?? 'duplicate-settlement') };
     if (!settlement.ok) {
       this.hold(internal, 'accounting-unknown');
@@ -266,6 +268,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     if (internal.kind.startsWith('repository-') || internal.kind === 'final-validation') settlement.counters['toolCalls'] = 1;
     const settled = this.settleCounters(internal, settlement.counters);
     if (!settled.ok) return settled;
+    if (undispatched && this.consumed['elapsedMs'] >= this.profile.runtime.maxElapsedMsTask) return this.exhaust('elapsed-deadline');
     if (reconciled && this.status === 'blocked') {
       this.status = 'open';
       this.terminalReason = undefined;

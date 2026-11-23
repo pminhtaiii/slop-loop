@@ -82,10 +82,15 @@ export class BudgetReservationEngine implements QuestionBudgetReservationPortV1 
   }
 
   public reconcile(accounting: QuestionBudgetAccountingReceiptV1): QuestionBudgetExecutionResultV1<void> {
+    if (accounting?.kind === 'model-not-dispatched') return { ok: false, reasonCode: 'accounting-unknown' };
     return this.owner._reconcile(this.internal, accounting);
   }
 
-  public async execute<T>(operation: (context: QuestionBudgetExecutionContextV1) => Promise<T>, account: (value: T) => QuestionBudgetAccountingReceiptV1): Promise<QuestionBudgetExecutionResultV1<T>> {
+  public async execute<T>(
+    operation: (context: QuestionBudgetExecutionContextV1) => Promise<T>,
+    account: (value: T) => QuestionBudgetAccountingReceiptV1,
+    noDispatchResult?: object,
+  ): Promise<QuestionBudgetExecutionResultV1<T>> {
     const started = this.owner._start(this.internal);
     if (!started.ok) return started;
     const aborted = Symbol('reservation-aborted');
@@ -106,7 +111,9 @@ export class BudgetReservationEngine implements QuestionBudgetReservationPortV1 
     } finally {
       this.signal.removeEventListener('abort', onAbort);
     }
-    const responseStatus = this.owner._checkResponse(this.internal);
+    // Only the host's private invocation object can precede late-provider fencing. Never inspect provider fields here.
+    const undispatched = this.kind === 'model-call' && typeof noDispatchResult === 'object' && noDispatchResult !== null && value === noDispatchResult;
+    const responseStatus = undispatched ? undefined : this.owner._checkResponse(this.internal);
     if (value === aborted || responseStatus !== undefined) {
       this.owner._ignoreLate(this.internal);
       return { ok: false, reasonCode: responseStatus ?? 'cancelled' };
@@ -117,6 +124,10 @@ export class BudgetReservationEngine implements QuestionBudgetReservationPortV1 
     } catch (error) {
       this.owner._hold(this.internal, 'accounting-unknown');
       throw error;
+    }
+    if ((receipt?.kind === 'model-not-dispatched') !== undispatched) {
+      this.owner._hold(this.internal, 'accounting-unknown');
+      return { ok: false, reasonCode: 'accounting-unknown' };
     }
     const completion = this.owner._complete(this.internal, receipt);
     return completion.ok ? { ok: true, value } : completion;
