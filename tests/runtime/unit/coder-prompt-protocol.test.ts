@@ -30,6 +30,7 @@ function assertCoderSystemProtocol(text: string): void {
   }
   assert.equal(text.includes('reply with an inspect first'), true, 'missing inspect-first instruction in system text');
   assert.equal(text.includes('must exactly equal the path of an item in untrustedEvidence or an entry of task.evidenceRefs'), true, 'missing evidenceRefs-equals-path rule in system text');
+  assert.equal(text.includes('Never list the root'), true, 'missing root-listing prohibition in system text');
   assert.equal(text.includes('canonical repository-relative paths'), true, 'missing relative-path rule in system text');
   assert.equal(text.includes('For request.purpose propose-plan/propose-replan, reply with inspect, propose-plan, request-info or stop.'), true, 'missing propose-plan purpose-mapping in system text');
   assert.equal(text.includes('For propose-patch/propose-repair, reply with inspect or propose-patch'), true, 'missing propose-patch purpose-mapping in system text');
@@ -79,6 +80,7 @@ test('coder prompt protocol includes all kinds, variant fields, proposalId, and 
     'reply with an inspect first',
     'must exactly equal the path of an item in untrustedEvidence or an entry of task.evidenceRefs',
     'canonical repository-relative paths',
+    'Never list the root',
     'For request.purpose propose-plan/propose-replan, reply with inspect, propose-plan, request-info or stop.',
     'For propose-patch/propose-repair, reply with inspect or propose-patch',
     'approvedPlanRef = task.plan.decisionRef',
