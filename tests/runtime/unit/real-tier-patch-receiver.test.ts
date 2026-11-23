@@ -261,3 +261,36 @@ test(
     assert.equal(readFileSync(join(root, 'dest.py'), 'utf8'), 'y = 2\n');
   }),
 );
+
+test(
+  'issue #237: CRLF file + LF diff applies, keeping CRLF on all lines and no bare LF',
+  withTree({ 'crlf.py': 'line1\r\nline2\r\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    const diff = '--- a/crlf.py\n+++ b/crlf.py\n@@ -1,2 +1,3 @@\n line1\n-line2\n+newline2\n+newline3\n';
+    await applyAdmittedPatch(filesystem, patch(['crlf.py'], diff), 1024);
+    const content = readFileSync(join(root, 'crlf.py'), 'utf8');
+    assert.equal(content, 'line1\r\nnewline2\r\nnewline3\r\n');
+    assert.equal(content.includes('\r\n'), true);
+    assert.equal(/(?<!\r)\n/.test(content), false, 'output must contain no bare \\n');
+  }),
+);
+
+test(
+  'issue #237: CRLF file + diff whose context line differs in content is refused with PATCH_CONTEXT_MISMATCH',
+  withTree({ 'crlf.py': 'line1\r\nline2\r\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    const diff = '--- a/crlf.py\n+++ b/crlf.py\n@@ -1,2 +1,2 @@\n wrong_context\n-line2\n+newline2\n';
+    await assert.rejects(() => applyAdmittedPatch(filesystem, patch(['crlf.py'], diff), 1024), /PATCH_CONTEXT_MISMATCH/);
+    assert.equal(readFileSync(join(root, 'crlf.py'), 'utf8'), 'line1\r\nline2\r\n');
+  }),
+);
+
+test(
+  'issue #237: mixed-ending file is still handled as before and refused on CRLF context line against LF diff',
+  withTree({ 'mixed.py': 'crlf_line\r\nlf_line\n' }, async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    const diff = '--- a/mixed.py\n+++ b/mixed.py\n@@ -1,2 +1,2 @@\n crlf_line\n-lf_line\n+newline\n';
+    await assert.rejects(() => applyAdmittedPatch(filesystem, patch(['mixed.py'], diff), 1024), /PATCH_CONTEXT_MISMATCH/);
+    assert.equal(readFileSync(join(root, 'mixed.py'), 'utf8'), 'crlf_line\r\nlf_line\n');
+  }),
+);
