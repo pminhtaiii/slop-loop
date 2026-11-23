@@ -43,7 +43,7 @@ function messageResponse(overrides: Record<string, unknown> = {}): Response {
 }
 
 function request(overrides: Partial<ProviderRequest> = {}): ProviderRequest {
-  return createFixtureProviderRequest({ modelId: 'deepseek-flash', maxCostUsd: 0.1, ...overrides });
+  return createFixtureProviderRequest({ modelId: 'deepseek-flash', maxCostUsd: 0.1, maxInputTokens: 3000, maxBillableTokens: 5000, ...overrides });
 }
 
 function payloadFor(overrides: Partial<ProviderRequest> = {}, stateOverrides: Partial<ReturnType<typeof createFixtureTaskState>> = {}): HostModelTransportPayload {
@@ -326,7 +326,7 @@ test('keeps the full admitted maxima for every uncertain or usage-less outcome',
     const subject = createDeepSeekTransport({ endpoint: ENDPOINT, apiKey: KEY, pricing: PRICING, fetch: fetchImpl, runLimiter: limiter });
     await subject.execute(payloadFor({ providerRequestId: 'req-a', timeoutMs: 5 }));
     assert.equal(calls.length, 1, label);
-    assert.deepEqual(limiter.countersFor('task-calc-001', 'run-001'), { taskId: 'task-calc-001', runId: 'run-001', calls: 1, inputTokensCharged: 2000, outputTokensCharged: 1000 }, label);
+    assert.deepEqual(limiter.countersFor('task-calc-001', 'run-001'), { taskId: 'task-calc-001', runId: 'run-001', calls: 1, inputTokensCharged: 3000, outputTokensCharged: 1000 }, label);
     // Unknown usage is never zero and never labelled as an observed cost.
     assert.deepEqual(
       limiter.reportFor({ taskId: 'task-calc-001', runId: 'run-001', callId: 'req-a' }),

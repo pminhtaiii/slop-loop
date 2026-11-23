@@ -26,7 +26,11 @@ const messageResponse = (): Response =>
     headers: { 'content-type': 'application/json' },
   });
 const payload = (overrides: Partial<ProviderRequest> = {}): HostModelTransportPayload =>
-  buildTransportPayload(createFixtureTaskState(), [createFixtureSourceEvidence()], createFixtureProviderRequest({ modelId: 'deepseek-flash', maxCostUsd: 0.1, ...overrides }));
+  buildTransportPayload(
+    createFixtureTaskState(),
+    [createFixtureSourceEvidence()],
+    createFixtureProviderRequest({ modelId: 'deepseek-flash', maxCostUsd: 0.1, maxInputTokens: 3000, maxBillableTokens: 5000, ...overrides }),
+  );
 function fakeFetch(handler: () => Response | Promise<Response> = messageResponse): { fetchImpl: typeof globalThis.fetch; calls: number[] } {
   const calls: number[] = [];
   const fetchImpl = async (): Promise<Response> => {
@@ -212,9 +216,9 @@ test('stops the transport at the call ceiling with zero fetches for the refused 
 });
 
 test('stops the transport when admitted maxima would pass a per-run token ceiling', async () => {
-  // Uncertain responses never settle, so each call keeps its full 2,000 in / 1,000 out maxima.
+  // Uncertain responses never settle, so each call keeps its full 3,000 in / 1,000 out maxima.
   const { fetchImpl, calls } = fakeFetch(() => new Response('{"error":"boom"}', { status: 503 }));
-  const subject = fixedTransport(fetchImpl, createRunUsageLimiter({ ...LIMITS, perRunInputTokens: 4000, perRunOutputTokens: 2000 }));
+  const subject = fixedTransport(fetchImpl, createRunUsageLimiter({ ...LIMITS, perRunInputTokens: 6000, perRunOutputTokens: 2000 }));
   assert.equal((await subject.execute(payload({ providerRequestId: 'req-a' }))) instanceof Object, true);
   await subject.execute(payload({ providerRequestId: 'req-b' }));
   const refused = await subject.execute(payload({ providerRequestId: 'req-c' }));
