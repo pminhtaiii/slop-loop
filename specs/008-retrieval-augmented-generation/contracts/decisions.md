@@ -42,3 +42,9 @@ T021, serving and runtime composition, real embedding quality measurement, produ
 The user explicitly requested implementation of T021 and T023 in the canonical task ledger and selected `feat/rag-persistent-hybrid-retrieval`. Execute T021 before T023, retaining T019, T020 and T022 as prerequisites. The release covers the persistent incremental index, hybrid retrieval, guarded evidence re-admission and scoped coverage receipts under the existing retrieval contract, with disposable local storage and controlled embedding tests.
 
 This release does not authorize successor graph/runtime composition, production defaults, real embedding quality measurement under T026, live-provider experiments or a protected-branch merge. Store restart checks establish only the exercised index behavior, not durable question-session recovery or real-model answer quality. Contributor publication follows the existing paired PR workflow and human merge decision.
+
+## 2026-11-22 — T007–T010 controlled implementation release
+
+The user explicitly requested T007, T008, T009 and T010 and selected `feat/rag-question-model-and-investigation`. Execute these tasks in dependency order with the completed foundation and retrieval tasks as prerequisites. The release covers the question model protocol, deterministic complete-request compilation, supplied host transport/accounting boundaries, sequential investigation graph, typed clarification/stop outcomes and adversarial fixtures at the source/controlled-test tier.
+
+T011 onward, actual live-provider/owner admission, production defaults, real-model quality, embedding experiments and protected-branch merging remain separately gated. Controlled transports and counters establish only exercised protocol behavior. Contributor publication and independent merger/review checks follow the existing workflow.

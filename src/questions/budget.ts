@@ -38,8 +38,12 @@ export interface QuestionBudgetReservation {
   readonly signal: AbortSignal;
   /** Releases the bound only while no adapter dispatch has started. */
   releaseBeforeDispatch(): QuestionBudgetExecutionResultV1<void>;
-  /** Calls the adapter with its deadline and signal, then admits only a timely settled result. */
-  execute<T>(operation: (context: QuestionBudgetExecutionContextV1) => Promise<T>, account: (value: T) => QuestionBudgetAccountingReceiptV1): Promise<QuestionBudgetExecutionResultV1<T>>;
+  /** Calls the adapter with its deadline/signal. Optional noDispatchResult must be a fresh private host object never exposed to transport; only its exact identity permits zero-dispatch model settlement. */
+  execute<T>(
+    operation: (context: QuestionBudgetExecutionContextV1) => Promise<T>,
+    account: (value: T) => QuestionBudgetAccountingReceiptV1,
+    noDispatchResult?: object,
+  ): Promise<QuestionBudgetExecutionResultV1<T>>;
   /** Apply later trusted accounting to an uncertain held reservation; late adapter results are never reconciled automatically. */
   reconcile(accounting: QuestionBudgetAccountingReceiptV1): QuestionBudgetExecutionResultV1<void>;
 }
@@ -47,6 +51,8 @@ export interface QuestionBudgetReservation {
 /** One cumulative task ledger; reuse it across follow-ups and never recreate it from a model decision. */
 export interface QuestionBudgetLedger {
   snapshot(): QuestionBudgetLedgerSnapshotV1;
+  /** Meters synchronous request compilation on the task clock without reserving provider usage. Await settlement before dispatch. */
+  runModelCompilation<T>(compile: (control: QuestionBudgetExecutionContextV1) => T): Promise<QuestionBudgetExecutionResultV1<T>>;
   reserveSnapshotAdmission(): QuestionBudgetReservationResultV1;
   reserveRepositoryOperation(kind: 'list' | 'search' | 'read'): QuestionBudgetReservationResultV1;
   reserveFinalValidation(): QuestionBudgetReservationResultV1;
