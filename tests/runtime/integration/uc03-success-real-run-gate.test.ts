@@ -308,8 +308,8 @@ test('each conformance failure exits nonzero after exactly one fetch and zero ca
     ['conformance-redirect', async () => new Response('', { status: 302, headers: { location: 'http://elsewhere.invalid/' } })],
     ['conformance-malformed', async () => new Response('not json', { status: 200 })],
     ['conformance-model-mismatch', async () => new Response(JSON.stringify({ model: 'other/model' }), { status: 200 })],
-    // The superseded 2026-11-20 identity is not the current pin.
-    ['conformance-model-mismatch', async () => new Response(JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash' }), { status: 200 })],
+    // The endpoint answers the pinned request id with a different identity; echoing the request id is not it.
+    ['conformance-model-mismatch', async () => new Response(JSON.stringify({ model: PINNED_MODEL }), { status: 200 })],
   ];
   for (const [reasonCode, respond] of rows) {
     const catalog = catalogFor();
