@@ -22,6 +22,222 @@ import { guardedRetrievalRepository } from '../support/questions/retrieval-guard
 import { QUESTION_BEHAVIOR_CONTROLS, ScriptedQuestionTransport, controlledQuestionRequestCounter } from '../support/questions/scripted-model.ts';
 
 const control = () => ({ signal: new AbortController().signal, deadlineEpochMs: Date.now() + 20000 });
+
+test('retained token refusal is preserved before any investigation IO', async () => {
+  const f = fixture([]);
+  assert.deepEqual(f.budget.reserveModelCall(30001), { ok: false, reasonCode: 'token-limit' });
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain start.', control());
+  assert.equal(run.result.kind, 'budget-exhausted');
+  if (run.result.kind === 'budget-exhausted') assert.equal(run.result.reasonCode, 'token-limit');
+  assert.deepEqual(f.counts(), { scans: 0, modelCalls: 0 });
+  assert.equal(f.guarded.reads.length, 0);
+  assert.equal(f.bindingChecks(), 0);
+});
+
+for (const reason of ['tool-limit', 'model-limit', 'scan-limit', 'output-limit', 'cost-limit', 'elapsed-deadline'] as const) {
+  test('retained ' + reason + ' closes before IO without changing cumulative counters', async () => {
+    const f = fixture([], undefined, undefined, { maxToolCalls: 1, maxModelCalls: 1, maxReturnedBytes: 100, maxCostMicrosTask: 1, maxElapsedMsTask: 1000 });
+    let clock = 0;
+    const ledger = createQuestionBudgetLedger(f.profile, { pricing: { inputMicrosPerMillionTokens: reason === 'cost-limit' ? 1000000 : 0, outputMicrosPerMillionTokens: 0 }, now: () => clock });
+    assert.ok(ledger.ok);
+    const budget = ledger.value;
+    if (reason === 'tool-limit' || reason === 'output-limit') {
+      const operation = budget.reserveRepositoryOperation('read');
+      assert.ok(operation.ok);
+      await operation.value.execute(
+        async () => undefined,
+        () => ({ kind: 'work', work: reason === 'output-limit' ? { returnedBytes: 100 } : {} }),
+      );
+      assert.deepEqual(budget.reserveRepositoryOperation('read'), { ok: false, reasonCode: reason });
+    } else if (reason === 'model-limit') {
+      const operation = budget.reserveModelCall(100);
+      assert.ok(operation.ok);
+      await operation.value.execute(
+        async () => undefined,
+        () => ({ kind: 'model-usage', usage: { status: 'complete', inputTokens: 100, outputTokens: 10 } }),
+      );
+      assert.deepEqual(budget.reserveModelCall(100), { ok: false, reasonCode: reason });
+    } else if (reason === 'scan-limit') {
+      const operation = budget.reserveSnapshotAdmission();
+      assert.ok(operation.ok);
+      await operation.value.execute(
+        async () => undefined,
+        () => ({ kind: 'work', work: { scannedBytes: f.profile.runtime.maxScannedBytes } }),
+      );
+      assert.deepEqual(budget.reserveRepositoryOperation('read'), { ok: false, reasonCode: reason });
+    } else if (reason === 'cost-limit') assert.deepEqual(budget.reserveModelCall(100), { ok: false, reasonCode: reason });
+    else
+      await budget.runModelCompilation(() => {
+        clock = 1000;
+      });
+    const before = budget.snapshot();
+    assert.equal(before.reasonCode, reason);
+    const graph = createQuestionInvestigation({ ...f.options, budget });
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explain start.', control());
+    assert.equal(run.result.kind, 'budget-exhausted');
+    if (run.result.kind === 'budget-exhausted') assert.equal(run.result.reasonCode, reason);
+    assert.deepEqual(budget.snapshot(), before);
+    assert.deepEqual(f.counts(), { scans: 0, modelCalls: 0 });
+    assert.equal(f.guarded.reads.length, 0);
+    assert.equal(f.bindingChecks(), 0);
+  });
+}
+
+test('source answer bounds the whole serialized result including identity and usage', async () => {
+  const f = fixture([context => ({ ...answer(context, ['entry.py']), limitations: ['Known source limitation. '.repeat(15)] })], undefined, undefined, { maxFinalBytes: 850 });
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain start.', control());
+  assert.equal(run.result.kind, 'failed');
+  if (run.result.kind === 'failed') assert.equal(run.result.reasonCode, 'render-limit');
+  assert.ok(!('claims' in run.result));
+  assert.ok(!('citations' in run.result));
+  assert.equal(f.counts().modelCalls, 1);
+  assert.equal(f.budget.snapshot().consumed.toolCalls, 3);
+});
+
+test('real long-path directory page remains bounded navigation with its guarded cursor', async () => {
+  const texts = new Map([
+    ['entry.py', 'def start():\n    return 1'],
+    ...Array.from({ length: 109 }, (_, i) => ['module_' + String(i).padStart(3, '0') + '_'.repeat(180) + '.py', '# module'] as [string, string]),
+  ]);
+  let cursor: string | undefined;
+  const f = fixture(
+    [
+      () => ({ kind: 'list', path: '.' }),
+      context => {
+        const page = context.observations.items
+          .map(item => JSON.parse(item) as { kind: string; entries: unknown[]; coverage: string; omissionReasons: string[]; nextCursor?: string; truncated?: boolean })
+          .find(item => item.kind === 'list');
+        assert.ok(page, 'page must survive full serialized conversation budgeting');
+        assert.ok(page.entries.length > 0 && page.entries.length < 100);
+        assert.equal(page.nextCursor, cursor);
+        assert.equal(page.coverage, 'partial');
+        assert.equal(page.truncated, true);
+        assert.ok(page.omissionReasons.includes('output-limit'));
+        assert.ok(Buffer.byteLength(JSON.stringify(context.observations.items)) <= 1300);
+        return { kind: 'insufficient', explanation: 'The directory page was incomplete.' };
+      },
+    ],
+    texts,
+    undefined,
+    { maxConversationBytes: 1300 },
+  );
+  const list = f.options.repository.listDirectory.bind(f.options.repository);
+  f.options.repository = {
+    ...f.options.repository,
+    async listDirectory(request, bounded) {
+      const page = await list(request, bounded);
+      assert.equal(page.status, 'ok');
+      if (page.status === 'ok') {
+        assert.equal(page.entries.length, 100);
+        cursor = page.nextCursor;
+        assert.ok(cursor);
+      }
+      return page;
+    },
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explore the modules.', control());
+  assert.equal(run.result.kind, 'insufficient-evidence', JSON.stringify(run));
+  assert.equal(f.counts().modelCalls, 2);
+});
+
+test('optional page metadata that cannot fit leaves the mandatory question available', async () => {
+  const f = fixture(
+    [
+      () => ({ kind: 'list', path: '.' }),
+      context => {
+        assert.deepEqual(context.observations.items, []);
+        return { kind: 'insufficient', explanation: 'More navigation context is needed.' };
+      },
+    ],
+    undefined,
+    undefined,
+    { maxConversationBytes: 2 },
+  );
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain the modules.', control());
+  assert.equal(run.result.kind, 'insufficient-evidence');
+  assert.equal(f.counts().modelCalls, 2);
+  assert.match(f.requests.at(-1)?.serialized ?? '', /Explain the modules/);
+});
+
+for (const variant of ['wrong-column', 'wrong-text', 'truncated-away', 'valid-unicode'] as const) {
+  test('search coordinates require guarded literal confirmation: ' + variant, async () => {
+    const f = fixture(
+      [
+        () => ({ kind: 'search', query: variant === 'wrong-text' ? 'absent' : 'safe' }),
+        context => {
+          const observations = context.observations.items.map(item => JSON.parse(item) as { kind: string; coverage: string; omissionReasons: string[]; hits: unknown[] });
+          const search = observations.find(item => item.kind === 'search');
+          assert.ok(search);
+          assert.equal(search.hits.length, variant === 'valid-unicode' ? 1 : 0);
+          if (variant !== 'valid-unicode') {
+            assert.equal(search.coverage, 'partial');
+            assert.ok(search.omissionReasons.includes('unconfirmed-hit'));
+          }
+          assert.ok(context.evidence.spans.some(span => span.path === 'recover.py'));
+          return { kind: 'insufficient', explanation: 'Available evidence is incomplete.' };
+        },
+      ],
+      new Map([
+        ['entry.py', 'def start():\n    return process()'],
+        ['recover.py', 'def recover():\n    return "😀safe"'],
+      ]),
+    );
+    const search = f.options.repository.searchLiteral.bind(f.options.repository);
+    const read = f.options.repository.readSpan.bind(f.options.repository);
+    f.options.repository = {
+      ...f.options.repository,
+      async searchLiteral(request, bounded) {
+        const result = await search({ ...request, query: 'safe' }, bounded);
+        if (result.status !== 'ok') return result;
+        return { ...result, hits: result.hits.map(hit => ({ ...hit, column: hit.column + (variant === 'wrong-column' ? 1 : 0) })) };
+      },
+      async readSpan(request, bounded) {
+        const result = await read(request, bounded);
+        if (variant !== 'truncated-away' || result.status !== 'ok' || result.span.path !== 'recover.py') return result;
+        const excerpt = result.span.excerpt.split('\n')[0] ?? '';
+        return { status: 'ok', span: { ...result.span, range: { startLine: 1, endLine: 1 }, excerpt, excerptDigest: digest(excerpt), truncation: { kind: 'truncated', nextLine: 2 } } };
+      },
+    };
+    const graph = createQuestionInvestigation(f.options);
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explain recovery.', control());
+    assert.equal(run.result.kind, 'insufficient-evidence', JSON.stringify(run));
+    assert.equal(f.counts().modelCalls, 2);
+  });
+}
+
+test('over-reserved snapshot work blocks the graph and keeps the full held allowance', async () => {
+  const f = fixture([]);
+  const reserve = f.budget.reserveSnapshotAdmission.bind(f.budget);
+  let held = 0;
+  f.budget.reserveSnapshotAdmission = () => {
+    const admission = reserve();
+    assert.ok(admission.ok);
+    held = admission.value.maximumWork.scannedBytes ?? 0;
+    const execute = admission.value.execute.bind(admission.value);
+    admission.value.execute = operation => execute(operation, () => ({ kind: 'work', work: { scannedBytes: held + 1 } }));
+    return admission;
+  };
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain start.', control());
+  assert.equal(run.result.kind, 'blocked');
+  if (run.result.kind === 'blocked') assert.equal(run.result.reasonCode, 'accounting-unknown');
+  assert.equal(f.budget.snapshot().reserved.scannedBytes, held);
+  assert.equal(f.budget.snapshot().status, 'blocked');
+  assert.equal(f.guarded.reads.length, 0);
+  assert.deepEqual(f.counts(), { scans: 0, modelCalls: 0 });
+  assert.ok(!('claims' in run.result));
+});
 interface VisibleContext {
   readonly evidence: { readonly spans: readonly AdmittedSpanV1[] };
   readonly observations: { readonly items: readonly string[] };
@@ -46,7 +262,7 @@ function fixture(
     binding,
     manifestDigest: computeSourceManifestDigest(manifest),
     acquisitionId: 'acquired',
-    admissionLimits: { maxFiles: 20, maxBytes: 100000, maxElapsedMs: 1000 },
+    admissionLimits: { maxFiles: Math.max(20, texts.size), maxBytes: 100000, maxElapsedMs: 1000 },
     manifest,
   };
   const profile: QuestionBudgetProfileV1 = {
@@ -69,7 +285,7 @@ function fixture(
     },
     repository: { maxFileBytes: 20000, maxSpanBytes: 4096, maxSpanLines: 60, maxPageEntries: 100, maxSearchHits: 20, maxQueryBytes: 1000, maxPathBytes: 500 },
     retrieval: {
-      maxFiles: 20,
+      maxFiles: Math.max(20, texts.size),
       maxChunks: 100,
       maxVectorDimensions: 2,
       maxBatchSize: 8,
@@ -338,6 +554,39 @@ test('linked long definitions expand in guarded pages without enlarging the froz
       [61, 120],
       [121, 125],
     ],
+  );
+});
+
+test('tail ranked definitions expose omitted prefix without revisiting covered lines', async () => {
+  const body = ['def calculate():', ...Array.from({ length: 79 }, (_, i) => '    value_' + i + ' = ' + i)].join('\n');
+  const f = fixture(
+    [
+      context => {
+        const hints = context.observations.items.map(item => JSON.parse(item) as { kind: string; originalStartLine: number; originalEndLine: number; nextRead?: unknown });
+        const hint = hints.find(item => item.kind === 'definition-continuation');
+        assert.ok(hint);
+        assert.equal(hint.originalStartLine, 1);
+        assert.equal(hint.originalEndLine, 80);
+        assert.deepEqual(hint.nextRead, { kind: 'read', path: 'long.py', startLine: 1, endLine: 60 });
+        return hint.nextRead;
+      },
+      context => {
+        assert.ok(context.evidence.spans.some(span => span.range.startLine === 1 && span.range.endLine === 60));
+        assert.ok(!context.observations.items.some(item => JSON.parse(item).kind === 'definition-continuation'));
+        return answer(context, ['long.py']);
+      },
+    ],
+    new Map([['long.py', body]]),
+    [{ path: 'long.py', startLine: 61, endLine: 80, symbol: 'calculate', definitionEnd: 80 }],
+  );
+  const graph = createQuestionInvestigation(f.options);
+  assert.ok(graph.ok);
+  const run = await graph.value.run('Explain calculate.', control());
+  assert.equal(run.result.kind, 'answered', JSON.stringify(run));
+  assert.ok(run.retrieval?.status === 'complete');
+  assert.deepEqual(
+    run.retrieval.ranked.map(hit => [hit.startLine, hit.endLine]),
+    [[61, 80]],
   );
 });
 

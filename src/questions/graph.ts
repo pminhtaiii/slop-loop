@@ -134,7 +134,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
       if (control.work && (control.work.remaining('scannedFiles') <= 0 || control.work.remaining('scannedBytes') <= 0)) return questionStop('scan-limit');
       if (control.work && control.work.remaining('returnedBytes') <= 0) return questionStop('output-limit');
       const budget = config.budget.snapshot();
-      if (budget.status !== 'open') return budget.status === 'exhausted' && preferred?.kind === 'budget-exhausted' ? preferred : budgetStop(budget.status);
+      if (budget.status !== 'open') return budgetStop(budget.status, budget.reasonCode ?? (preferred?.kind === 'budget-exhausted' ? preferred.reasonCode : undefined));
       if (budget.remainingElapsedMs <= 0) return questionStop('elapsed-deadline');
       return undefined;
     };
@@ -185,9 +185,11 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
             chunk.excerptDigest === hit.excerptDigest
           ) {
             linkedDefinitions.set(chunk.chunkId, chunk);
-            const hint = definitionHint(chunk, read.span, config.profile.repository.maxSpanLines);
-            if (hint) observations.push(hint);
           }
+        }
+        for (const chunk of linkedDefinitions.values()) {
+          const hint = definitionHint(chunk, evidence, config.profile.repository.maxSpanLines);
+          if (hint) observations.push(hint);
         }
         return { retrieval: observation, evidence: Object.freeze(evidence), observations: Object.freeze(observations) };
       })
@@ -232,16 +234,13 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
         const after = stop(result.status === 'stopped' ? result.outcome : undefined);
         if (after) return close(after, state);
         if (result.status !== 'ok') return close(result.outcome, state);
-        const hints = [...result.evidence].flatMap(span =>
-          [...linkedDefinitions.values()]
-            .filter(chunk => chunk.path === span.path && chunk.definition && span.range.startLine >= chunk.definition.startLine && span.range.endLine <= chunk.definition.endLine)
-            .slice(0, 1)
-            .flatMap(chunk => {
-              const hint = definitionHint(chunk, span, config.profile.repository.maxSpanLines);
-              return hint ? [hint] : [];
-            }),
-        );
-        return { evidence: Object.freeze([...state.evidence, ...result.evidence]), observations: Object.freeze([...state.observations, result.observation, ...hints]), decision: null };
+        const evidence = Object.freeze([...state.evidence, ...result.evidence]);
+        const hints = [...linkedDefinitions.values()].flatMap(chunk => {
+          const hint = definitionHint(chunk, evidence, config.profile.repository.maxSpanLines);
+          return hint ? [hint] : [];
+        });
+        const previous = state.observations.filter(item => (JSON.parse(item) as { kind: string }).kind !== 'definition-continuation');
+        return { evidence, observations: Object.freeze([...previous, ...(result.observation === undefined ? [] : [result.observation]), ...hints]), decision: null };
       })
       .addNode('Deliver', async (state: State) => {
         const before = stop();
@@ -260,7 +259,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
           citations: presentation.citations,
           limitations: presentation.limitations,
         });
-        return { result };
+        return Buffer.byteLength(JSON.stringify(result)) <= config.profile.runtime.maxFinalBytes ? { result } : close({ kind: 'failed', reasonCode: 'render-limit' }, state);
       })
       .addEdge(START, 'Admit')
       .addConditionalEdges('Admit', state => (state.result ? END : 'Decide'))

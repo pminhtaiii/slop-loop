@@ -38,26 +38,7 @@ export interface CreateQuestionBudgetLedgerOptionsV1 {
   readonly now?: () => number;
 }
 
-export interface QuestionBudgetCountersV1 {
-  readonly elapsedMs: number;
-  readonly toolCalls: number;
-  readonly modelCalls: number;
-  readonly scannedFiles: number;
-  readonly scannedBytes: number;
-  readonly returnedBytes: number;
-  readonly billableTokens: number;
-  readonly costMicros: number;
-  readonly finalBytes: number;
-  readonly indexedFiles: number;
-  readonly indexedChunks: number;
-  readonly indexDiskBytes: number;
-  readonly scannedVectors: number;
-  readonly conversationBytes: number;
-  readonly clarificationRounds: number;
-  readonly snapshotAdmissions: number;
-  readonly retrievalQueries: number;
-  readonly summaryOperations: number;
-}
+export type QuestionBudgetCountersV1 = Readonly<BudgetCounters>;
 
 export interface QuestionBudgetWorkV1 {
   readonly scannedFiles?: number;
@@ -74,6 +55,7 @@ export interface QuestionBudgetWorkV1 {
 
 export interface QuestionBudgetLedgerSnapshotV1 {
   readonly status: 'open' | 'blocked' | 'cancelled' | 'exhausted';
+  readonly reasonCode?: QuestionBudgetRefusalCodeV1;
   readonly consumed: QuestionBudgetCountersV1;
   readonly reserved: QuestionBudgetCountersV1;
   readonly remainingElapsedMs: number;
@@ -150,6 +132,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     const remainingElapsedMs = Math.max(0, this.profile.runtime.maxElapsedMsTask - visibleConsumed['elapsedMs']);
     return Object.freeze({
       status: this.status,
+      ...(this.terminalReason === undefined ? {} : { reasonCode: this.terminalReason }),
       consumed: freezeCounters(visibleConsumed),
       reserved: freezeCounters(this.reserved),
       remainingElapsedMs,

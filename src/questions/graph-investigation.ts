@@ -10,13 +10,13 @@ import type { QuestionRepositoryPort } from './repository.ts';
 import { sameBinding } from './retrieval-admission.ts';
 
 export type QuestionInvestigationToolResult =
-  { readonly status: 'ok'; readonly evidence: readonly AdmittedSpanV1[]; readonly observation: string } | { readonly status: 'stopped'; readonly outcome: QuestionClosedOutcomeV1 };
+  { readonly status: 'ok'; readonly evidence: readonly AdmittedSpanV1[]; readonly observation: string | undefined } | { readonly status: 'stopped'; readonly outcome: QuestionClosedOutcomeV1 };
 
 /** Fixed metadata-only translation. Adapter exception text and source-bearing failure payloads never escape. */
 export function questionStop(reason: string): QuestionClosedOutcomeV1 {
   if (reason === 'cancelled') return { kind: 'cancelled', reasonCode: 'cancelled' };
   if (reason === 'binding-mismatch' || reason === 'source-mismatch') return { kind: 'stale-repository', reasonCode: reason };
-  if (reason === 'accounting-unknown') return { kind: 'blocked', reasonCode: 'accounting-unknown' };
+  if (reason === 'accounting-unknown' || reason === 'over-reservation') return { kind: 'blocked', reasonCode: 'accounting-unknown' };
   if (reason === 'context-limit') return { kind: 'blocked', reasonCode: 'context-limit' };
   if (reason === 'protected-content') return { kind: 'failed', reasonCode: 'protected-content' };
   if (reason === 'invalid-citation') return { kind: 'failed', reasonCode: 'invalid-citation' };
@@ -90,10 +90,24 @@ function indexBindingFailure(failure: { readonly status: string; readonly reason
 }
 
 /** Every hint is metadata from the frozen ranked definition, never a widened scored hit or citation. */
-export function definitionHint(chunk: QuestionIndexedChunkV1, span: AdmittedSpanV1, maxLines: number): string | undefined {
+export function definitionHint(chunk: QuestionIndexedChunkV1, spans: readonly AdmittedSpanV1[], maxLines: number): string | undefined {
   const definition = chunk.definition;
-  if (!definition || span.range.endLine >= definition.endLine) return undefined;
-  const startLine = span.range.endLine + 1;
+  if (!definition) return undefined;
+  let startLine = definition.startLine;
+  let endLine = definition.endLine;
+  const covered = spans
+    .filter(span => span.path === chunk.path)
+    .map(span => span.range)
+    .sort((a, b) => a.startLine - b.startLine);
+  for (const range of covered) {
+    if (range.endLine < startLine) continue;
+    if (range.startLine > startLine) {
+      endLine = Math.min(endLine, range.startLine - 1);
+      break;
+    }
+    startLine = Math.max(startLine, range.endLine + 1);
+  }
+  if (startLine > endLine) return undefined;
   return JSON.stringify({
     kind: 'definition-continuation',
     path: chunk.path,
@@ -101,7 +115,7 @@ export function definitionHint(chunk: QuestionIndexedChunkV1, span: AdmittedSpan
     qualifiedName: definition.qualifiedName,
     originalStartLine: definition.startLine,
     originalEndLine: definition.endLine,
-    nextRead: { kind: 'read', path: chunk.path, startLine, endLine: Math.min(definition.endLine, startLine + maxLines - 1) },
+    nextRead: { kind: 'read', path: chunk.path, startLine, endLine: Math.min(endLine, startLine + maxLines - 1) },
   });
 }
 
@@ -147,29 +161,52 @@ export async function investigateQuestionTool(
     const checked = validateDirectoryPage(operation.value, config.profile.repository);
     if (!checked.ok) return { status: 'stopped', outcome: questionStop('unavailable') };
     if (checked.value.status !== 'ok') return { status: 'stopped', outcome: repositoryStop(checked.value) };
-    return { status: 'ok', evidence: [], observation: JSON.stringify({ kind: 'list', ...checked.value }) };
+    return { status: 'ok', evidence: [], observation: boundedPageObservation({ kind: 'list', ...checked.value }, 'entries', config.profile.runtime.maxConversationBytes) };
   }
   const checked = validateSearchPage(operation.value, config.profile.repository);
   if (!checked.ok) return { status: 'stopped', outcome: questionStop('unavailable') };
   if (checked.value.status !== 'ok') return { status: 'stopped', outcome: repositoryStop(checked.value) };
   const evidence: AdmittedSpanV1[] = [];
+  const hits: { path: string; line: number; column: number }[] = [];
   for (const hit of checked.value.hits) {
     const read = await registry.readSpan({ path: hit.span.path, ...hit.span.range }, control);
     if (read.status !== 'ok') return { status: 'stopped', outcome: repositoryStop(read) };
     evidence.push(read.span);
+    const line = hit.line >= read.span.range.startLine && hit.line <= read.span.range.endLine ? read.span.excerpt.split('\n')[hit.line - read.span.range.startLine] : undefined;
+    if (line !== undefined && hit.matchLength === decision.query.length && line.slice(hit.column - 1, hit.column - 1 + decision.query.length) === decision.query)
+      hits.push({ path: read.span.path, line: hit.line, column: hit.column });
   }
+  const unconfirmed = hits.length !== checked.value.hits.length;
   return {
     status: 'ok',
     evidence,
-    observation: JSON.stringify({
-      kind: 'search',
-      query: decision.query,
-      coverage: checked.value.coverage,
-      omissionReasons: checked.value.omissionReasons,
-      nextCursor: checked.value.nextCursor,
-      hits: checked.value.hits.map(hit => ({ path: hit.span.path, line: hit.line, column: hit.column })),
-    }),
+    observation: boundedPageObservation(
+      {
+        kind: 'search',
+        query: decision.query,
+        coverage: unconfirmed ? 'partial' : checked.value.coverage,
+        omissionReasons: [...checked.value.omissionReasons, ...(unconfirmed ? ['unconfirmed-hit'] : [])],
+        nextCursor: checked.value.nextCursor,
+        hits,
+      },
+      'hits',
+      config.profile.runtime.maxConversationBytes,
+    ),
   };
+}
+
+/** Includes the escaped observation string and its enclosing conversation array in the bound. */
+function boundedPageObservation(page: { readonly coverage: string; readonly omissionReasons: readonly string[] } & Record<string, unknown>, key: string, maxBytes: number): string | undefined {
+  const original = page[key] as readonly unknown[];
+  const items = [...original];
+  for (;;) {
+    const omitted = original.length - items.length;
+    const projected = { ...page, [key]: items, ...(omitted > 0 ? { coverage: 'partial', omissionReasons: [...page.omissionReasons, 'output-limit'], truncated: true, omittedEntries: omitted } : {}) };
+    const observation = JSON.stringify(projected);
+    if (Buffer.byteLength(JSON.stringify([observation])) <= maxBytes) return observation;
+    if (items.length === 0) return undefined;
+    items.pop();
+  }
 }
 
 function workReceipt(result: { readonly status: string; readonly reasonCode?: string }, work: unknown): QuestionBudgetAccountingReceiptV1 {
