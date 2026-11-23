@@ -630,6 +630,125 @@ function questionModelFixture(
   return { model, budget: ledger.value, requests };
 }
 
+test('question model rejects sparse context arrays before counting or provider admission', async () => {
+  for (const field of ['constraints', 'conversation', 'observations', 'evidence']) {
+    let counts = 0;
+    const fixture = questionModelFixture({ now: () => 0, counter: { kind: 'controlled', countRequest: () => ++counts } });
+    assert.equal(fixture.model.ok, true);
+    if (!fixture.model.ok) continue;
+    const before = fixture.budget.snapshot();
+    const result = await fixture.model.value.decide({ question: 'Explain dispatch.', [field]: new Array(1) }, new AbortController().signal);
+    assert.deepEqual(result, { status: 'stopped', reasonCode: 'invalid-context', usage: { status: 'missing' } });
+    assert.equal(counts, 0);
+    assert.equal(fixture.requests.length, 0);
+    assert.deepEqual(fixture.budget.snapshot(), before);
+  }
+});
+
+test('question model accepts only original exact conversation roles and preserves valid labels', async () => {
+  for (const role of [['user'], { toString: () => 'assistant' }, 'user', 'assistant']) {
+    let counts = 0;
+    const fixture = questionModelFixture({
+      counter: {
+        kind: 'controlled',
+        countRequest: () => {
+          counts += 1;
+          return 123;
+        },
+      },
+    });
+    assert.equal(fixture.model.ok, true);
+    if (!fixture.model.ok) continue;
+    const result = await fixture.model.value.decide({ question: 'Explain dispatch.', conversation: [{ role, text: 'Previous intent.' }] }, new AbortController().signal);
+    if (typeof role === 'string') {
+      assert.equal(result.status, 'ok');
+      const request = fixture.requests[0];
+      assert.ok(request);
+      assert.deepEqual(JSON.parse(request.serialized).conversation, [{ role, text: 'Previous intent.' }]);
+    } else {
+      assert.deepEqual(result, { status: 'stopped', reasonCode: 'invalid-context', usage: { status: 'missing' } });
+      assert.equal(counts, 0);
+      assert.equal(fixture.requests.length, 0);
+      assert.equal(fixture.budget.snapshot().consumed.modelCalls, 0);
+      assert.equal(fixture.budget.snapshot().reserved.billableTokens, 0);
+    }
+  }
+});
+
+test('question model bounds the serialized conversation array and continues to older fitting entries', async () => {
+  const fixture = questionModelFixture({ runtime: { maxConversationBytes: 59 } });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const conversation = [
+    { role: 'user', text: 'a' },
+    { role: 'assistant', text: 'b' },
+    { role: 'user', text: 'c'.repeat(40) },
+  ];
+  const result = await fixture.model.value.decide({ question: 'Explain dispatch.', conversation }, new AbortController().signal);
+  assert.equal(result.status, 'ok');
+  const request = fixture.requests[0];
+  assert.ok(request);
+  const selected = JSON.parse(request.serialized).conversation;
+  assert.deepEqual(selected, [{ role: 'assistant', text: 'b' }]);
+  assert.ok(Buffer.byteLength(JSON.stringify(selected)) <= 59);
+  assert.equal(fixture.requests.length, 1);
+});
+
+test('question model reports the immutable usage settled by accounting without rereading mutable metadata', async () => {
+  let reads = 0;
+  const metadata = { status: 'complete', inputTokens: 123, outputTokens: 4 };
+  const fixture = questionModelFixture({
+    send: async () => ({
+      get usage() {
+        reads += 1;
+        if (reads > 1) metadata.outputTokens = 100;
+        return metadata;
+      },
+      decision: { kind: 'list', path: '.' },
+    }),
+  });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal);
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(result.usage, { status: 'complete', inputTokens: 123, outputTokens: 4 });
+  metadata.outputTokens = 200;
+  assert.equal(reads, 1);
+  assert.deepEqual(result.usage, { status: 'complete', inputTokens: 123, outputTokens: 4 });
+  assert.equal(Object.isFrozen(result.usage), true);
+  assert.equal(fixture.budget.snapshot().consumed.billableTokens, 127);
+  assert.equal(fixture.budget.snapshot().consumed.costMicros, 127);
+  assert.equal(fixture.budget.snapshot().reserved.billableTokens, 0);
+  assert.equal(fixture.requests.length, 1);
+});
+
+test('question model omits oversized optional navigation while preserving mandatory intent and secret isolation', async () => {
+  const fixture = questionModelFixture({ runtime: { maxConversationBytes: 80 } });
+  assert.equal(fixture.model.ok, true);
+  if (!fixture.model.ok) return;
+  const result = await fixture.model.value.decide(
+    {
+      question: 'Explain dispatch.',
+      constraints: ['Keep this intent.'],
+      observations: ['MARKER_SECRET_NAVIGATION_CANARY' + 'x'.repeat(100), 'Safe navigation.'],
+    },
+    new AbortController().signal,
+  );
+  assert.equal(result.status, 'ok');
+  assert.equal(fixture.requests.length, 1);
+  const compiled = fixture.requests[0];
+  assert.ok(compiled);
+  const request = compiled.serialized;
+  assert.deepEqual(JSON.parse(request).observations.items, ['Safe navigation.']);
+  assert.match(request, /Explain dispatch/);
+  assert.match(request, /Keep this intent/);
+  assert.doesNotMatch(request, /MARKER_SECRET/);
+  assert.doesNotMatch(JSON.stringify(result), /MARKER_SECRET/);
+  const malformed = await fixture.model.value.decide({ question: 'Explain dispatch.', observations: [42] }, new AbortController().signal);
+  assert.deepEqual(malformed, { status: 'stopped', reasonCode: 'invalid-context', usage: { status: 'missing' } });
+  assert.equal(fixture.requests.length, 1);
+});
+
 test('question model charges compiler task time before transport even with a later caller deadline', async () => {
   let clock = 0;
   let counts = 0;
@@ -951,11 +1070,24 @@ test('question model ignores cancelled late responses and preserves the cumulati
 });
 
 test('question model deadline prevents a late answer and leaves no retry path', async () => {
+  let clock = 0;
   const pending = Promise.withResolvers<unknown>();
-  const fixture = questionModelFixture({ runtime: { maxElapsedMsTask: 20 }, send: async () => pending.promise });
+  const started = Promise.withResolvers<undefined>();
+  const fixture = questionModelFixture({
+    now: () => clock,
+    runtime: { maxElapsedMsTask: 20 },
+    send: async () => {
+      started.resolve(undefined);
+      return pending.promise;
+    },
+  });
   assert.equal(fixture.model.ok, true);
   if (!fixture.model.ok) return;
-  const result = await fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal);
+  const deciding = fixture.model.value.decide({ question: 'Explain dispatch.' }, new AbortController().signal);
+  await started.promise;
+  assert.equal(fixture.requests.length, 1);
+  clock = 20;
+  const result = await deciding;
   assert.equal(result.status, 'stopped');
   if (result.status === 'stopped') assert.equal(result.reasonCode, 'elapsed-deadline');
   pending.resolve({ decision: validAnswer, usage: { status: 'complete', inputTokens: 123, outputTokens: 4 } });
@@ -963,6 +1095,8 @@ test('question model deadline prevents a late answer and leaves no retry path', 
   assert.equal(next.status, 'stopped');
   assert.equal(fixture.requests.length, 1);
   assert.equal(fixture.budget.snapshot().status, 'exhausted');
+  assert.equal(fixture.budget.snapshot().reserved.modelCalls, 1);
+  assert.equal(fixture.budget.snapshot().reserved.billableTokens, 2_171);
   assert.equal('decision' in result, false);
 });
 

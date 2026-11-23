@@ -175,8 +175,8 @@ export function createQuestionModelPort(options: CreateQuestionModelPortOptionsV
       }
       const response = execution.value;
       if (!record(response) || Object.keys(response).sort().join(',') !== 'decision,usage') return stopped('invalid-decision', observedUsage);
-      const usage = validateQuestionUsage(response['usage']);
-      // The ledger admits only complete usage, but retain validation at the public response boundary.
+      // Accounting already validated and detached this usage; provider getters cannot replace settled metadata.
+      const usage = validateQuestionUsage(observedUsage);
       if (!usage.ok || usage.value.status !== 'complete') return stopped('accounting-unknown', { status: 'unknown', reasonCode: 'invalid-metadata' });
       const decision = validateQuestionDecision(response['decision']);
       if (!decision.ok) return stopped('invalid-decision', usage.value);

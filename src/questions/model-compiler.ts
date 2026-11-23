@@ -36,21 +36,29 @@ function validateContext(input: unknown, config: QuestionModelConfigurationV1): 
   const conversation = input['conversation'] ?? [];
   const observations = input['observations'] ?? [];
   const evidence = input['evidence'] ?? [];
-  if (!Array.isArray(constraints) || constraints.length > 100 || constraints.some(item => !text(item, 8_192))) return undefined;
+  if (!Array.isArray(constraints) || constraints.length > 100 || Array.from(constraints).some(item => !text(item, 8_192))) return undefined;
   if (pending !== undefined && !text(pending, 8_192)) return undefined;
   if (
     !Array.isArray(conversation) ||
     conversation.length > 1_000 ||
-    conversation.some(
+    Array.from(conversation).some(
       item =>
         !record(item) ||
         Object.keys(item).sort().join(',') !== 'role,text' ||
-        !['user', 'assistant'].includes(String(item['role'])) ||
+        (item['role'] !== 'user' && item['role'] !== 'assistant') ||
         !text(item['text'], config.profile.runtime.maxConversationBytes),
     )
   )
     return undefined;
-  if (!Array.isArray(observations) || observations.length > 1_000 || observations.some(item => !text(item, config.profile.runtime.maxConversationBytes))) return undefined;
+  if (!Array.isArray(observations) || observations.length > 1_000) return undefined;
+  const boundedObservations: string[] = [];
+  for (const item of observations as unknown[]) {
+    if (typeof item !== 'string') return undefined;
+    // Optional navigation can be omitted; it must never displace mandatory intent or enter the request unchecked.
+    if (Buffer.byteLength(item) > config.profile.runtime.maxConversationBytes) continue;
+    if (!text(item, config.profile.runtime.maxConversationBytes)) return undefined;
+    boundedObservations.push(item);
+  }
   if (!Array.isArray(evidence) || evidence.length > 10_000) return undefined;
   const spans: AdmittedSpanV1[] = [];
   const ids = new Set<string>();
@@ -66,7 +74,7 @@ function validateContext(input: unknown, config: QuestionModelConfigurationV1): 
     constraints: [...constraints] as string[],
     ...(pending === undefined ? {} : { pendingClarification: pending }),
     conversation: structuredClone(conversation) as NonNullable<QuestionModelContextV1['conversation']>,
-    observations: [...observations] as string[],
+    observations: boundedObservations,
     evidence: spans,
   };
 }
@@ -117,17 +125,17 @@ export function compileQuestionModelRequest(input: unknown, config: QuestionMode
   if (signal.aborted) return { ok: false, reasonCode: 'cancelled' };
   if (invalidCounter) return { ok: false, reasonCode: 'owner-unavailable' };
   if (tokens > config.profile.runtime.maxInputTokensPerCall) return { ok: false, reasonCode: 'context-limit' };
-  let conversationBytes = 0;
   for (const entry of [...(context.conversation ?? [])].reverse()) {
-    const bytes = Buffer.byteLength(JSON.stringify(entry));
-    if (conversationBytes + bytes > config.profile.runtime.maxConversationBytes) continue;
     conversation.unshift(entry);
+    if (Buffer.byteLength(JSON.stringify(conversation)) > config.profile.runtime.maxConversationBytes) {
+      conversation.shift();
+      continue;
+    }
     const candidate = serialize();
     const counted = count(candidate);
     if (counted <= config.profile.runtime.maxInputTokensPerCall) {
       serialized = candidate;
       tokens = counted;
-      conversationBytes += bytes;
     } else conversation.shift();
   }
   for (const observation of [...(context.observations ?? [])].reverse()) {
