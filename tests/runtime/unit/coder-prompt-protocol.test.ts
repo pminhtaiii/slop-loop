@@ -23,6 +23,10 @@ function assertCoderSystemProtocol(text: string): void {
   for (const op of INSPECT_OPERATIONS) {
     assert.equal(text.includes(op), true, `missing inspect operation ${op} in system text`);
   }
+  // The real model dropped proposalId when it was stated once instead of in each schema.
+  for (const kind of Object.keys(VARIANT_FIELDS)) {
+    assert.equal(text.includes(`{"kind":"${kind}","proposalId":string,`), true, `schema for ${kind} must carry proposalId`);
+  }
   assert.equal(text.includes('reply with an inspect first'), true, 'missing inspect-first instruction in system text');
   assert.equal(text.includes('must exactly equal the path of an item in untrustedEvidence or an entry of task.evidenceRefs'), true, 'missing evidenceRefs-equals-path rule in system text');
   assert.equal(text.includes('canonical repository-relative paths'), true, 'missing relative-path rule in system text');
