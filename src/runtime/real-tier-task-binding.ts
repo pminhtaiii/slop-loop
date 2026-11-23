@@ -13,7 +13,7 @@
  * and host.json schemas are unchanged, because the catalog is already operator-resolved and the
  * catalog path is the loaded profile's own `catalog.path`, never a caller-supplied one.
  */
-import { readFileSync, realpathSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { computeCanonicalSha256, validateBugTask } from '../contracts/foundation/uc03.ts';
 import type { BugTask, PolicyAuthorityRefV02, TaskState } from '../contracts/foundation/uc03.ts';
@@ -69,6 +69,8 @@ export interface RealTierBindingOptions {
   readonly maxFileBytes?: number | undefined;
   /** Overrides the profile's `artifacts.retainRoot`; tests point it at a temp directory. */
   readonly retainedRoot?: string | undefined;
+  /** When set, creates a unique working copy of the fixture repository under this directory. */
+  readonly workingCopyRoot?: string | undefined;
 }
 
 export type RealTierBindingRefusal = Readonly<{ status: 'unavailable'; reasonCode: string; path: string }>;
@@ -187,7 +189,13 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   if ('status' in found) return found;
   const fixture = loadFixture(readText, found, catalogPath);
   if ('status' in fixture) return fixture;
-  const { task, repositoryRoot } = fixture;
+  const { task } = fixture;
+  let repositoryRoot = fixture.repositoryRoot;
+  if (options.workingCopyRoot !== undefined) {
+    const copyTarget = realpathSync(mkdtempSync(join(options.workingCopyRoot, 'repo-')));
+    cpSync(fixture.repositoryRoot, copyTarget, { recursive: true });
+    repositoryRoot = copyTarget;
+  }
 
   // Every finite bound is validated here, before any effect: a zero TTL or path bound is a bad
   // binding, not a task that should stay half-built.

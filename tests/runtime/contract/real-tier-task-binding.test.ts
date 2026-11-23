@@ -867,3 +867,37 @@ test('(r) the bound profile is pinned from the seeded task: mutating the returne
   assert.equal(DEFAULT_EXCLUSIONS_POLICY_VERSION, '0.1.0', 'bumping the builder default is a deliberate change to real claims');
   assert.equal(pinnedExecutionProfileOf(taskOf(), 'uc03-pytest:real-tier').exclusionsPolicyVersion, DEFAULT_EXCLUSIONS_POLICY_VERSION);
 });
+
+test('(s) workingCopyRoot binds a dedicated copy and leaves the catalog fixture repository unchanged', async () => {
+  const catalog = fixtureOf();
+  const retainedRoot = join(tempRoot('retained-s'), 'artifacts');
+
+  // Without the option, the bound root is the fixture root, as before.
+  const { assembly: assemblyDefault } = assemblyFor(catalog);
+  const defaultBinding = boundOrThrow(await bindRealTierTask(assemblyDefault, optionsOf(catalog, { retainedRoot })));
+  assert.equal(defaultBinding.repositoryRoot, catalog.repositoryDir);
+
+  // With workingCopyRoot set, the bound repositoryRoot is a new directory under it whose files are byte-identical to the fixture repository.
+  const workingCopyRoot1 = tempRoot('working-copy-1');
+  const { assembly: assembly1 } = assemblyFor(catalog);
+  const binding1 = boundOrThrow(await bindRealTierTask(assembly1, optionsOf(catalog, { retainedRoot, workingCopyRoot: workingCopyRoot1 })));
+  assert.notEqual(binding1.repositoryRoot, catalog.repositoryDir);
+  assert.equal(binding1.repositoryRoot.startsWith(workingCopyRoot1), true);
+  assert.equal(storeFingerprint(binding1.repositoryRoot), storeFingerprint(catalog.repositoryDir));
+
+  // Writing a file through the bound host filesystem port (or simply mutating the copy) leaves the fixture repository bytes unchanged.
+  const fixtureBefore = storeFingerprint(catalog.repositoryDir);
+  const hostFs = new WorkspaceFilesystemPort({ root: binding1.repositoryRoot });
+  await hostFs.writeFile('src/calculator.py', 'def divide(a, b):\n    return 42\n', 1_048_576);
+  assert.equal(storeFingerprint(catalog.repositoryDir), fixtureBefore);
+  assert.notEqual(storeFingerprint(binding1.repositoryRoot), fixtureBefore);
+
+  // And a second bindRealTierTask with a new working-copy root still binds (task-bound).
+  const workingCopyRoot2 = tempRoot('working-copy-2');
+  const { assembly: assembly2 } = assemblyFor(catalog);
+  const binding2 = boundOrThrow(await bindRealTierTask(assembly2, optionsOf(catalog, { retainedRoot, workingCopyRoot: workingCopyRoot2 })));
+  assert.equal(binding2.status, 'task-bound');
+  assert.notEqual(binding2.repositoryRoot, binding1.repositoryRoot);
+  assert.equal(binding2.repositoryRoot.startsWith(workingCopyRoot2), true);
+  assert.equal(storeFingerprint(binding2.repositoryRoot), fixtureBefore);
+});
