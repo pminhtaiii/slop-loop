@@ -30,12 +30,14 @@
 
 **Current correction hold (2026-11-23)**: User supplied twelve further PR review findings at accepted candidate324e5b36. Model compilation/deadline/settlement and graph continuation/path/cancellation boundaries are under scoped correction; T007–T010 acceptance is reopened until independent corrected verification. Historical candidate receipts and criteria are unchanged. No successor scope or live composition is released.
 
+**Round2 model gate**: Independent merger `/root/merger_resume` under owner `rag-r2-merger` accepted `6c021edd36354e9b6160b38ab9a993ba3c77bd93`: all9model criteria (3task +6supplied findings), source/fresh emitted147/147 each, independent33/33 each and one intended deadline mutation kill/restored33. Receipt `.agent-work/2026-11-22/rag-question-investigation-resume/round2/merger/r2-model-6c021edd-verdict.json`. T007 source corrections accepted; dependent graph and final batch gates remain open.
+
 ## Phase 3: User Story 1 — Answer with evidence (P1, MVP)
 
 **Goal**: Useful source-grounded answers without implementation names.
 **Independent test**: Known symbol, late definition, three-file paraphrase and architecture cases with controlled decisions; later live quality evaluated separately.
 
-- [ ] T007 [US1] Add question model protocol validation and host transport/accounting composition in src/questions/model.ts with malformed output/usage tests in tests/runtime/contract/questions.test.ts.
+- [X] T007 [US1] Add question model protocol validation and host transport/accounting composition in src/questions/model.ts with malformed output/usage tests in tests/runtime/contract/questions.test.ts.
   - **Dependencies**: T005, T006.
   - **Review correction accepted**: CodeRabbit CR12/CR13 were independently reproduced before repair. Final candidate `1ba4a3033db8f40e23f3a53749430b4d2426f01b` closes the retained ledger on compiler cancellation, charges active compilation time and releases known-zero-dispatch provider allowance while preserving actual uncertain holds. The selected batch acceptance below records the current criterion-bound verdict; earlier failure/passing receipts remain historical.
   - **Acceptance**: No fake repair state, no secrets/model-selected authority; deterministic request compiler with exact/certified upper bound includes system/tool/serialization overhead before reservation/dispatch. Accumulated-evidence and mandatory-context overflow tests show fitting selection or claim-free context-limit with zero provider calls; transport output cap enforced. Finite reservations/denied unknown accounting; scripted transport/counter clearly controlled.
