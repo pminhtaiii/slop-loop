@@ -50,6 +50,8 @@ const STANDALONE = 'standalone';
 const UNBOUND: ArtifactBinding = Object.freeze({ candidateSha: '', profileDigest: '', endpointDigest: '', model: '' });
 /** The decision-authority generation the C10 witness publishes; the seeded head carries generation 1. */
 const C10_GENERATION = 2;
+/** The maximum human approval pauses permitted per attempt before halting (e.g. plan, verification). */
+const MAX_APPROVAL_PAUSES = 3;
 
 /** One case's outcome: the row judged, and whatever artifact it can honestly produce. */
 export interface CaseOutcome {
@@ -166,14 +168,15 @@ async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBound
   };
   let result = await runGraph(binding.task, binding.ports, config);
   let approval: CaseEvidence['approval'];
-  if (result.outcome === 'pending-approval' && !options.clarificationHold?.(caseId)) {
+  for (let pause = 0; pause < MAX_APPROVAL_PAUSES && result.outcome === 'pending-approval' && !options.clarificationHold?.(caseId); pause++) {
     // Nothing approves automatically: an absent source leaves the pause recorded, not passed.
     const decision = await options.decideApproval?.(caseId, { taskId: binding.ids.taskId, console: ownersOf(assembly, binding.ids, binding.task.repositoryId).console });
     if (decision === undefined)
       return { record: { stage: 'case', outcome: 'fail', reasonCode: 'approval-required', caseId, facts: { attempt, workflow: result.outcome, node: result.state?.node ?? 'none' } } };
-    approval = { decisionId: result.state?.activeDecisionId ?? '', decided: decision };
+    approval ??= { decisionId: result.state?.activeDecisionId ?? '', decided: decision };
     // A rejection ends the case on its own hold; only approval continues the bound task.
-    if (decision === 'approve') result = await runGraph(binding.task, binding.ports, config, result.state ?? undefined);
+    if (decision === 'reject') break;
+    result = await runGraph(binding.task, binding.ports, config, result.state ?? undefined);
   }
   const accounting = accountingOf(assembly, binding.ids);
   const artifactBinding = options.binding ?? UNBOUND;

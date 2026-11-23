@@ -80,11 +80,11 @@ export function createOperatorDecisionSource(io: OperatorIo): (caseId: string, t
     const experimentId = caseId;
     const shown = await target.console.presentation(experimentId);
     if (!shown.ok || !isPresentation(shown.value)) {
-      io.write(`CASE ${caseId}: no pending plan approval is available (${shown.ok ? 'unexpected-shape' : shown.reasonCode}). Nothing was approved.`);
+      io.write(`CASE ${caseId}: no pending approval is available (${shown.ok ? 'unexpected-shape' : shown.reasonCode}). Nothing was approved.`);
       return undefined;
     }
     const view = shown.value;
-    io.write(`CASE ${caseId}: plan approval required for task ${view.taskId}.`);
+    io.write(`CASE ${caseId}: approval required for task ${view.taskId}.`);
     io.write(`  action: ${view.presentation.elements.action}`);
     io.write(`  necessity: ${view.presentation.elements.necessity}`);
     io.write(`  targets: ${view.presentation.elements.targets.join(', ') || 'none'}`);
