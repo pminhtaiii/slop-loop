@@ -14,7 +14,7 @@
  * catalog path is the loaded profile's own `catalog.path`, never a caller-supplied one.
  */
 import { readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import { computeCanonicalSha256, validateBugTask } from '../contracts/foundation/uc03.ts';
 import type { BugTask, PolicyAuthorityRefV02, TaskState } from '../contracts/foundation/uc03.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
@@ -145,6 +145,14 @@ function loadFixture(readText: (path: string) => string, entry: RealTierCatalogE
   // The carried prerequisite: the replan ledger is three slots, so a fixture that disagrees is refused.
   if (task.value.budgetLimits.maxReplanCount !== MAX_TASK_REPLANS) return refused('replan-count-unsupported', '$.task.budgetLimits.maxReplanCount');
   if (task.value.initialRevisionDigest.replace(/^sha256:/u, '') !== entry.initialRepositoryDigest) return refused('revision-mismatch', '$.initialRepositoryDigest');
+  for (let i = 0; i < task.value.requiredChecks.length; i++) {
+    const rawWd = task.value.requiredChecks[i]?.workingDirectory;
+    if (typeof rawWd !== 'string') return refused('check-working-directory-invalid', `$.task.requiredChecks[${i}].workingDirectory`);
+    const wd = posix.normalize(rawWd);
+    if (!posix.isAbsolute(wd) || (wd !== '/workspace/repo' && !wd.startsWith('/workspace/repo/'))) {
+      return refused('check-working-directory-invalid', `$.task.requiredChecks[${i}].workingDirectory`);
+    }
+  }
 
   const declared = document['repositoryRoot'];
   if (typeof declared !== 'string' || !declared.trim()) return refused('repository-root-missing', '$.repositoryRoot');

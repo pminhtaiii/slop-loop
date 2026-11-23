@@ -42,7 +42,9 @@ async function setup(fault?: 'timeout' | 'truncated' | 'measurement' | 'allocati
     reproduction: 'pytest',
     acceptanceCriteria: ['value is two'],
     constraints: [],
-    requiredChecks: [{ checkId: 'check-value', executable: 'pytest', argv: ['tests/test_calc.py'], purpose: 'reproduction', workingDirectory: '.', timeoutMs: 1000, maxOutputBytes: 4096 }],
+    requiredChecks: [
+      { checkId: 'check-value', executable: 'pytest', argv: ['tests/test_calc.py'], purpose: 'reproduction', workingDirectory: '/workspace/repo', timeoutMs: 1000, maxOutputBytes: 4096 },
+    ],
     limits: { timeoutMs: 1000, maxOutputBytes: 4096, maxCpuCores: 1, maxMemoryBytes: 1048576, maxPids: 16 },
     budgetLimits: { maxReplanCount: 3, maxTokens: 1000, maxCostUsd: 1, maxRepairAttempts: 2, maxReviewIterations: 2 },
     configId: 'config-mirror',
