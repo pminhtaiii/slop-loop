@@ -1,7 +1,4 @@
-/**
- * Owns the cumulative UC-02 task budget and its operation reservations. One
- * instance belongs to one task and must be retained across follow-up runs.
- */
+/** Owns cumulative task counters and operation reservations; retain one ledger across follow-up runs. */
 import type { QuestionBudgetProfileV1 } from '../contracts/questions/contracts.ts';
 import type { QuestionBudgetLedger as QuestionBudgetLedgerPortV1, QuestionBudgetReservationResultV1 } from './budget.ts';
 import { settleBudgetReceipt } from './budget-ledger-settlement.ts';
@@ -18,6 +15,7 @@ import {
   planFinalValidation,
   planIndexBatch,
   planModelCall,
+  planModelCompilation,
   planRepositoryOperation,
   planRetrievalQuery,
   planSnapshotAdmission,
@@ -27,7 +25,7 @@ import {
   type BudgetReservationPlanResultV1,
   type BudgetCounters,
 } from './budget-ledger-counters.ts';
-import { BudgetReservationEngine, type InternalReservation, type ReservationLedgerPortV1 } from './budget-ledger-reservations.ts';
+import { BudgetReservationEngine, executeModelCompilation, reservationElapsed, type InternalReservation, type ReservationLedgerPortV1 } from './budget-ledger-reservations.ts';
 
 /** Integer micro-USD rates per million billable tokens; each call rounds its weighted total up once. */
 export interface QuestionBudgetPricingV1 {
@@ -40,26 +38,7 @@ export interface CreateQuestionBudgetLedgerOptionsV1 {
   readonly now?: () => number;
 }
 
-export interface QuestionBudgetCountersV1 {
-  readonly elapsedMs: number;
-  readonly toolCalls: number;
-  readonly modelCalls: number;
-  readonly scannedFiles: number;
-  readonly scannedBytes: number;
-  readonly returnedBytes: number;
-  readonly billableTokens: number;
-  readonly costMicros: number;
-  readonly finalBytes: number;
-  readonly indexedFiles: number;
-  readonly indexedChunks: number;
-  readonly indexDiskBytes: number;
-  readonly scannedVectors: number;
-  readonly conversationBytes: number;
-  readonly clarificationRounds: number;
-  readonly snapshotAdmissions: number;
-  readonly retrievalQueries: number;
-  readonly summaryOperations: number;
-}
+export type QuestionBudgetCountersV1 = Readonly<BudgetCounters>;
 
 export interface QuestionBudgetWorkV1 {
   readonly scannedFiles?: number;
@@ -76,6 +55,7 @@ export interface QuestionBudgetWorkV1 {
 
 export interface QuestionBudgetLedgerSnapshotV1 {
   readonly status: 'open' | 'blocked' | 'cancelled' | 'exhausted';
+  readonly reasonCode?: QuestionBudgetRefusalCodeV1;
   readonly consumed: QuestionBudgetCountersV1;
   readonly reserved: QuestionBudgetCountersV1;
   readonly remainingElapsedMs: number;
@@ -97,14 +77,27 @@ export type QuestionBudgetRefusalCodeV1 =
   | 'duplicate-settlement';
 
 export type QuestionBudgetOperationKindV1 =
-  'snapshot-admission' | 'repository-list' | 'repository-search' | 'repository-read' | 'retrieval-index' | 'retrieval-query' | 'model-call' | 'final-validation' | 'summary' | 'clarification';
+  | 'snapshot-admission'
+  | 'repository-list'
+  | 'repository-search'
+  | 'repository-read'
+  | 'retrieval-index'
+  | 'retrieval-query'
+  | 'model-call'
+  | 'model-compilation'
+  | 'final-validation'
+  | 'summary'
+  | 'clarification';
 
 export type QuestionBudgetAccountingReceiptV1 =
+  | { readonly kind: 'model-not-dispatched' }
   | { readonly kind: 'work'; readonly work: unknown }
   | { readonly kind: 'work-exhausted'; readonly work: unknown; readonly reasonCode: 'scan-limit' | 'output-limit' | 'elapsed-deadline' }
   | { readonly kind: 'model-usage'; readonly usage: unknown };
 
 export interface QuestionBudgetExecutionContextV1 {
+  /** Synchronous predicate in the trusted task clock, without accounting side effects. */
+  hasTime(): boolean;
   readonly signal: AbortSignal;
   readonly deadlineAt: number;
   /** Remaining operation time in the ledger clock at dispatch. */
@@ -113,7 +106,6 @@ export interface QuestionBudgetExecutionContextV1 {
 
 export type QuestionBudgetExecutionResultV1<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1 };
 
-/** A task-scoped ledger. Create it once and reuse it for every run in that task. */
 class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedgerPortV1 {
   private readonly profile: QuestionBudgetProfileV1;
   private readonly pricing: QuestionBudgetPricingV1;
@@ -143,6 +135,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     const remainingElapsedMs = Math.max(0, this.profile.runtime.maxElapsedMsTask - visibleConsumed['elapsedMs']);
     return Object.freeze({
       status: this.status,
+      ...(this.terminalReason === undefined ? {} : { reasonCode: this.terminalReason }),
       consumed: freezeCounters(visibleConsumed),
       reserved: freezeCounters(this.reserved),
       remainingElapsedMs,
@@ -171,6 +164,13 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
 
   public reserveModelCall(compiledInputTokens: number): QuestionBudgetReservationResultV1 {
     return this.admit(() => planModelCall(this.profile, this.pricing, this.available(), compiledInputTokens));
+  }
+
+  public runModelCompilation<T>(compile: (control: QuestionBudgetExecutionContextV1) => T): Promise<QuestionBudgetExecutionResultV1<T>> {
+    return executeModelCompilation(
+      this.admit(() => planModelCompilation(this.available())),
+      compile,
+    );
   }
 
   public reserveRetrievalQuery(): QuestionBudgetReservationResultV1 {
@@ -235,7 +235,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     return availableCounters(this.consumed, this.reserved, counterLimits(this.profile));
   }
 
-  private exhaust(reasonCode: QuestionBudgetRefusalCodeV1): QuestionBudgetReservationResultV1 {
+  private exhaust(reasonCode: QuestionBudgetRefusalCodeV1): { readonly ok: false; readonly reasonCode: QuestionBudgetRefusalCodeV1 } {
     if (this.status !== 'open') return { ok: false, reasonCode: this.terminalReason ?? reasonCode };
     this.status = 'exhausted';
     this.terminalReason = reasonCode;
@@ -255,7 +255,8 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
         : undefined;
     const accounting = terminalWork && isRecord(receipt) ? { kind: 'work', work: receipt['work'] } : receipt;
     const settlement = settleBudgetReceipt(accounting, internal.kind, internal.maximumWork, internal.reservedCounters, internal.maximumInputTokens, internal.maximumOutputTokens, this.pricing);
-    const elapsedMs = !reconciled && settlement.ok ? this.elapsedFor(internal) : 0;
+    const undispatched = internal.kind === 'model-call' && isRecord(receipt) && receipt['kind'] === 'model-not-dispatched';
+    const elapsedMs = !reconciled && settlement.ok ? (undispatched ? this.elapsedAtHold(internal) : this.elapsedFor(internal)) : 0;
     if (internal.status !== expectedStatus) return { ok: false, reasonCode: reconciled ? 'duplicate-settlement' : (this.terminalReason ?? 'duplicate-settlement') };
     if (!settlement.ok) {
       this.hold(internal, 'accounting-unknown');
@@ -269,6 +270,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
     if (internal.kind.startsWith('repository-') || internal.kind === 'final-validation') settlement.counters['toolCalls'] = 1;
     const settled = this.settleCounters(internal, settlement.counters);
     if (!settled.ok) return settled;
+    if (undispatched && this.consumed['elapsedMs'] >= this.profile.runtime.maxElapsedMsTask) return this.exhaust('elapsed-deadline');
     if (reconciled && this.status === 'blocked') {
       this.status = 'open';
       this.terminalReason = undefined;
@@ -294,22 +296,11 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   }
 
   private elapsedFor(internal: InternalReservation): number | undefined {
-    if (internal.startedAt === undefined) return undefined;
-    const endedAt = this.now();
-    if (!Number.isFinite(endedAt) || endedAt < internal.startedAt || endedAt >= internal.deadlineAt) return undefined;
-    const elapsedMs = Math.ceil(endedAt - internal.startedAt);
-    if (!Number.isSafeInteger(elapsedMs) || this.consumed['elapsedMs'] + elapsedMs > this.profile.runtime.maxElapsedMsTask) return undefined;
-    return elapsedMs;
+    return reservationElapsed(internal, this.now(), this.profile.runtime.maxElapsedMsTask - this.consumed['elapsedMs']);
   }
 
   private elapsedAtHold(internal: InternalReservation): number | undefined {
-    if (internal.startedAt === undefined) return undefined;
-    const endedAt = this.now();
-    if (!Number.isFinite(endedAt) || endedAt < internal.startedAt) return undefined;
-    const elapsedMs = Math.ceil(endedAt - internal.startedAt);
-    const remainingMs = this.profile.runtime.maxElapsedMsTask - this.consumed['elapsedMs'];
-    if (!Number.isSafeInteger(elapsedMs) || remainingMs <= 0) return undefined;
-    return Math.min(elapsedMs, remainingMs);
+    return reservationElapsed(internal, this.now(), this.profile.runtime.maxElapsedMsTask - this.consumed['elapsedMs'], true);
   }
 
   private hold(internal: InternalReservation, reasonCode: QuestionBudgetRefusalCodeV1): void {
@@ -384,6 +375,11 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   private clearTimer(internal: InternalReservation): void {
     if (internal.timer !== undefined) clearTimeout(internal.timer);
     internal.timer = undefined;
+  }
+
+  public _hasTime(internal: InternalReservation): boolean {
+    const now = this.now();
+    return this.status === 'open' && internal.status === 'running' && Number.isFinite(now) && now >= (internal.startedAt ?? now) && now < internal.deadlineAt;
   }
 
   public _start(internal: InternalReservation): QuestionBudgetExecutionResultV1<number> {

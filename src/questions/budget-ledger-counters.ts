@@ -342,6 +342,10 @@ export function planModelCall(profile: QuestionBudgetProfileV1, pricing: Questio
   return plan('model-call', counters, {}, available['elapsedMs'], { inputTokens: compiledInputTokens, outputTokens });
 }
 
+export function planModelCompilation(available: BudgetCounters): BudgetReservationPlanResultV1 {
+  return plan('model-compilation', emptyCounters(), {}, available['elapsedMs']);
+}
+
 export function planRetrievalQuery(profile: QuestionBudgetProfileV1, available: BudgetCounters): BudgetReservationPlanResultV1 {
   const scannedVectors = available['scannedVectors'];
   if (scannedVectors <= 0) return denied('scan-limit');

@@ -119,18 +119,21 @@ function parseSections(diff: string): FileHunks[] | null {
   return sections;
 }
 
-function linesOf(content: string): { readonly lines: readonly string[]; readonly trailingNewline: boolean } {
+function linesOf(content: string, newline: '\r\n' | '\n' = '\n'): { readonly lines: readonly string[]; readonly trailingNewline: boolean } {
   if (content === '') return { lines: [], trailingNewline: false };
-  const trailingNewline = content.endsWith('\n');
-  return { lines: (trailingNewline ? content.slice(0, -1) : content).split('\n'), trailingNewline };
+  const trailingNewline = content.endsWith(newline);
+  return { lines: (trailingNewline ? content.slice(0, -newline.length) : content).split(newline), trailingNewline };
 }
 
 /**
  * Applies the hunks for one path to its current bytes. Refuses a context or removal line that does
  * not match the file at its declared position, so a foreign or stale patch never lands.
+ * When the current file uses CRLF line breaks exclusively, CRLF is preserved in the output.
  */
 function applyHunks(source: string | null, hunks: readonly Hunk[]): string {
-  const { lines: sourceLines, trailingNewline } = source === null ? { lines: [], trailingNewline: true } : linesOf(source);
+  const isCrlf = source !== null && source.includes('\r\n') && !/(?<!\r)\n/.test(source);
+  const newline = isCrlf ? '\r\n' : '\n';
+  const { lines: sourceLines, trailingNewline } = source === null ? { lines: [], trailingNewline: true } : linesOf(source, newline);
   const output: string[] = [];
   let cursor = 0;
   let lastNewSideNoNewline: boolean | undefined = undefined;
@@ -139,17 +142,18 @@ function applyHunks(source: string | null, hunks: readonly Hunk[]): string {
     if (start < cursor || start > sourceLines.length) throw new Error('PATCH_CONTEXT_MISMATCH: hunk start is outside the current file');
     while (cursor < start) output.push(sourceLines[cursor++] as string);
     for (const line of hunk.body) {
+      const text = isCrlf && line.text.endsWith('\r') ? line.text.slice(0, -1) : line.text;
       if (line.marker === ' ' || line.marker === '-') {
-        if (sourceLines[cursor] !== line.text) throw new Error('PATCH_CONTEXT_MISMATCH: hunk line does not match the current file');
+        if (sourceLines[cursor] !== text) throw new Error('PATCH_CONTEXT_MISMATCH: hunk line does not match the current file');
         if (line.noNewline) {
           if (cursor !== sourceLines.length - 1 || trailingNewline) {
             throw new Error('PATCH_CONTEXT_MISMATCH: hunk specifies no newline at EOF but file has newline or more lines');
           }
         }
         cursor += 1;
-        if (line.marker === ' ') output.push(line.text);
+        if (line.marker === ' ') output.push(text);
       } else if (line.marker === '+') {
-        output.push(line.text);
+        output.push(text);
       } else {
         throw new Error('PATCH_CONTEXT_MISMATCH: unknown hunk line marker');
       }
@@ -161,8 +165,8 @@ function applyHunks(source: string | null, hunks: readonly Hunk[]): string {
   const hadRemainingSource = cursor < sourceLines.length;
   while (cursor < sourceLines.length) output.push(sourceLines[cursor++] as string);
   const finalNewline = hadRemainingSource ? trailingNewline : lastNewSideNoNewline !== undefined ? !lastNewSideNoNewline : source === null ? true : trailingNewline;
-  const text = output.join('\n');
-  return output.length === 0 ? '' : finalNewline ? `${text}\n` : text;
+  const text = output.join(newline);
+  return output.length === 0 ? '' : finalNewline ? `${text}${newline}` : text;
 }
 
 /**

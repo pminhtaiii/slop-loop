@@ -1,5 +1,6 @@
 /** Deterministic, bounded rendering for already validated repository answers. */
-import type { QuestionCitationV1, QuestionClaimV1, QuestionLineRangeV1 } from '../contracts/questions/contracts.ts';
+import type { ClarifyQuestionDecisionV1, QuestionCitationV1, QuestionClaimV1, QuestionIdentityV1, QuestionLineRangeV1, QuestionResultV1, QuestionUsageV1 } from '../contracts/questions/contracts.ts';
+import { containsProtectedContent } from '../foundation/docker-workspace-policy.ts';
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import type { QuestionBudgetRefusalCodeV1 } from './budget.ts';
 import type { QuestionEvidenceRegistryV1 } from './evidence.ts';
@@ -21,6 +22,51 @@ export type QuestionPresentationResultV1 =
 /** Run final evidence validation and admitted binding recheck before returning source-bearing output. */
 export async function presentQuestionAnswer(registry: QuestionEvidenceRegistryV1, proposal: unknown, control: QuestionRepositoryOperationControl): Promise<QuestionPresentationResultV1> {
   return await registry.present(proposal, control);
+}
+
+/** Pure bounded conversation projection. It grants no source or continuation authority. */
+export function presentQuestionClarification(identity: QuestionIdentityV1, usage: QuestionUsageV1, decision: ClarifyQuestionDecisionV1, round: number, maxBytes: number): QuestionResultV1 {
+  const question = safeConversationText(decision.question);
+  const explanation = safeConversationText(decision.explanation);
+  const unresolvedReferents = decision.unresolvedReferents.map(safeConversationText);
+  const base = { schemaVersion: 'repository-question/1' as const, identity, usage };
+  if (!question || !explanation || unresolvedReferents.some(value => value === undefined)) return Object.freeze({ ...base, kind: 'failed', reasonCode: 'protected-content' });
+  const result: QuestionResultV1 = Object.freeze({
+    ...base,
+    kind: 'awaiting-clarification',
+    clarification: Object.freeze({ clarificationId: 'clarification-' + round, round, question, explanation, unresolvedReferents: Object.freeze(unresolvedReferents as string[]) }),
+  });
+  return Buffer.byteLength(JSON.stringify(result)) <= maxBytes ? result : Object.freeze({ ...base, kind: 'failed', reasonCode: 'render-limit' });
+}
+
+/** Claim-free insufficiency needs no source IO; supplied claims must already have passed the owning registry. */
+export function presentQuestionInsufficientEvidence(
+  identity: QuestionIdentityV1,
+  usage: QuestionUsageV1,
+  explanation: string,
+  maxBytes: number,
+  supported: ValidatedQuestionPresentationV1 = { claims: [], citations: [], limitations: [] },
+): QuestionResultV1 {
+  const clean = safeConversationText(explanation);
+  const base = { schemaVersion: 'repository-question/1' as const, identity, usage };
+  if (!clean) return Object.freeze({ ...base, kind: 'failed', reasonCode: 'protected-content' });
+  const result: QuestionResultV1 = Object.freeze({
+    ...base,
+    kind: 'insufficient-evidence',
+    explanation: clean,
+    claims: Object.freeze([...supported.claims]),
+    citations: Object.freeze([...supported.citations]),
+    limitations: Object.freeze([...supported.limitations]),
+  });
+  return Buffer.byteLength(JSON.stringify(result)) <= maxBytes ? result : Object.freeze({ ...base, kind: 'failed', reasonCode: 'render-limit' });
+}
+
+function safeConversationText(input: string): string | undefined {
+  const clean = input
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  return clean && !containsProtectedContent(input) && !containsProtectedContent(clean) ? clean : undefined;
 }
 
 /** @internal Called only after the evidence registry has resolved every citation to an issued span. */

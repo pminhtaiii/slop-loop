@@ -450,3 +450,107 @@ test('a grade is not-run, never a pass, when the run cannot supply or hold its s
     assert.deepEqual([row?.record.outcome, row?.record.reasonCode ?? ''], [outcome, reasonCode], `${label}: ${JSON.stringify(row?.record)}`);
   }
 });
+
+/** Graph double that pauses first at AwaitPlan, then at Verify, and completes on the second resume. */
+function graphDoubleWithTwoPauses(counters: { resumed: number }): NonNullable<Parameters<typeof runCaseStage>[1]['runGraph']> {
+  return async (task, ports, _config, initial) => {
+    const loaded = (initial ?? (await ports.statePort.loadTask(task.taskId))) as TaskState;
+    if (initial === undefined) {
+      return {
+        outcome: 'pending-approval',
+        state: { ...loaded, node: 'AwaitPlan', activeDecisionId: 'decision-plan-1' },
+        reasons: [],
+        milestones: [],
+      } as unknown as UC03WorkflowResult;
+    }
+    counters.resumed += 1;
+    if (counters.resumed === 1) {
+      return {
+        outcome: 'pending-approval',
+        state: { ...loaded, node: 'Verify', activeDecisionId: 'decision-verify-2' },
+        reasons: [],
+        milestones: [],
+      } as unknown as UC03WorkflowResult;
+    }
+    const store = (ports.statePort as unknown as { store?: { getClaimPath?: (taskId: string, claimId: string) => string } }).store;
+    if (store?.getClaimPath) {
+      const claimFile = store.getClaimPath(task.taskId, 'claim-cmd-c01');
+      mkdirSync(dirname(claimFile), { recursive: true });
+      const commandView: CommandView = {
+        viewId: 'view-c01-1',
+        viewDigest: `sha256:${'c'.repeat(64)}`,
+        taskId: task.taskId,
+        workspaceId: loaded.workspaceId ?? 'ws-c01',
+        canonicalRevisionDigest: loaded.repositoryRevisionDigest ?? `sha256:${'0'.repeat(64)}`,
+        admittedFiles: [],
+        exclusionsPolicyVersion: '1.0.0',
+        scratchIdentity: 'scratch-1',
+        mountedReadOnly: true,
+      };
+      const viewDigest = computeCommandViewDigest(commandView);
+      const validView = { ...commandView, viewDigest };
+      writeFileSync(
+        claimFile,
+        JSON.stringify({
+          context: {
+            subjectKind: 'repository-action',
+            commandView: validView,
+            action: { actionId: 'action-cmd-c01' },
+          },
+          receipt: {
+            claimId: 'claim-cmd-c01',
+          },
+        }),
+        'utf8',
+      );
+    }
+    const state = { ...loaded, node: 'Deliver', outcome: 'COMPLETED', repositoryRevisionDigest: FINAL_REVISION } as unknown as TaskState;
+    return { outcome: 'COMPLETED', state, finalReport, reasons: [], milestones: [], executionEvidence: { finalState: state } } as unknown as UC03WorkflowResult;
+  };
+}
+
+test('the case stage resumes through verification approval and records the first decision', async () => {
+  const env = catalogEnv();
+  const rows: readonly (readonly [string, readonly ('approve' | undefined)[], string, string, number, string | undefined])[] = [
+    ['plan pause -> approve -> verification pause -> approve', ['approve', 'approve'], 'pass', '', 2, 'decision-plan-1'],
+    ['plan pause -> approve -> second pause -> decision source returns undefined', ['approve', undefined], 'fail', 'approval-required', 1, undefined],
+  ];
+  for (const [label, decisions, expectedOutcome, expectedReasonCode, expectedResumed, expectedDecisionId] of rows) {
+    const seen: Seen = { admissions: [], executions: [], derived: [] };
+    const assemble = () =>
+      resolveRealTierAssembly({
+        env,
+        revision: REV,
+        stateRoot: tempRoot('state'),
+        spawn: createVolumeSpawn().spawn,
+        fetch: async () => allowedProviderResponse(PINNED_RETURNED_MODEL),
+      });
+    const first = assemble();
+    assert.equal(first.status, 'assembly-ready');
+    const assembly = first as RealTierAssembly;
+    const resolution = resolvePinnedGrader(assembly, 'C01', capability(seen, { drift: false, facts: true, hidden: 'pass' }));
+    assert.equal(resolution.status, 'ready');
+    if (resolution.status !== 'ready') return;
+    const counters = { resumed: 0 };
+    const queue = [...decisions];
+    const [row] = await runCaseStage(assemble, {
+      caseIds: ['C01'],
+      repositoryRoot: tempRoot('repo'),
+      pins: { contractVersion: 'uc03-host-composition/2', revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(component => [component, assembly.revision])) },
+      identity: {
+        profileId: 'uc03-runtime-evaluation-v1',
+        profileDigest: assembly.metadata.profileDigest,
+        configDigest: `sha256:${sha256Text(JSON.stringify({ limits: assembly.profile.limits, runLimits: assembly.profile.runLimits }))}`,
+        pricingDigest: `sha256:${sha256Text(JSON.stringify(assembly.profile.pricing))}`,
+      },
+      grade: (_assembly: RealTierAssembly, _caseId: string, request: CaseGradeRequest) => resolution.grade(request),
+      decideApproval: async () => queue.shift(),
+      runGraph: graphDoubleWithTwoPauses(counters),
+    });
+    assert.equal(counters.resumed, expectedResumed, `${label}: resumed count`);
+    assert.deepEqual([row?.record.outcome, row?.record.reasonCode ?? ''], [expectedOutcome, expectedReasonCode], `${label}: ${JSON.stringify(row?.record)}`);
+    if (expectedDecisionId !== undefined) {
+      assert.equal(row?.evidence?.approval?.decisionId, expectedDecisionId, `${label}: first decision recorded`);
+    }
+  }
+});
