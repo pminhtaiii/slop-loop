@@ -4,8 +4,50 @@ import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { test } from 'node:test';
 import { createQuestionRepositoryFixture, type CreateQuestionRepositoryFixtureOptions } from '../support/questions/fixtures.ts';
-import { ScriptedQuestionModelError, ScriptedQuestionModelPort } from '../support/questions/scripted-model.ts';
+import { ScriptedQuestionModelError, ScriptedQuestionModelPort, ScriptedQuestionTransport } from '../support/questions/scripted-model.ts';
+import type { QuestionCompiledRequestV1 } from '../../../src/questions/model.ts';
 import type { QuestionModelResponseV1 } from '../../../src/contracts/questions/contracts.ts';
+
+test('scripted transport counts every send attempt before cancellation, exhaustion, or step failure', async () => {
+  const transport = new ScriptedQuestionTransport([
+    () => ({ kind: 'insufficient', explanation: 'Known evidence limit.' }),
+    () => {
+      throw new Error('scripted failure');
+    },
+  ]);
+  const request: QuestionCompiledRequestV1 = { serialized: '{}', providerId: 'controlled', modelId: 'scripted', visibleEvidenceIds: [], inputTokens: 1, maxOutputTokens: 10 };
+  const digest = 'sha256:' + 'a'.repeat(64);
+  const identity = {
+    sessionId: 'session',
+    taskId: 'task',
+    runId: 'run',
+    questionId: 'question',
+    configDigest: digest,
+    binding: { repositoryId: 'repo', workspaceId: 'workspace', revisionDigest: digest, policyDigest: digest },
+  };
+  const caller = {
+    signal: new AbortController().signal,
+    deadlineAt: 1000,
+    remainingMs: 1000,
+    hasTime: () => true,
+    deadlineEpochMs: Date.now() + 1000,
+    admission: { reservationId: 'fixture', identity, maximumBillableTokens: 11, maximumCostMicros: 0 },
+  };
+  const cancelled = new AbortController();
+  cancelled.abort();
+  await assert.rejects(transport.send(request, { ...caller, signal: cancelled.signal }));
+  assert.equal(transport.sendAttempts, 1);
+  assert.equal(transport.consumedSteps, 0);
+  await transport.send(request, caller);
+  assert.equal(transport.sendAttempts, 2);
+  assert.equal(transport.consumedSteps, 1);
+  await assert.rejects(transport.send(request, caller), /scripted failure/);
+  assert.equal(transport.sendAttempts, 3);
+  assert.equal(transport.consumedSteps, 2);
+  await assert.rejects(transport.send(request, caller));
+  assert.equal(transport.sendAttempts, 4);
+  assert.equal(transport.consumedSteps, 2);
+});
 
 test('small question fixture is deterministic and isolated from the host workspace', async t => {
   const fixture = await createQuestionRepositoryFixture({ band: 'small', seed: 'fixture-v1' });

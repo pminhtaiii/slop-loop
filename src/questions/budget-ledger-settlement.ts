@@ -17,6 +17,7 @@ export function settleBudgetReceipt(
   pricing: QuestionBudgetPricingV1,
 ): BudgetSettlementResultV1 {
   if (!isRecord(receiptInput)) return { ok: false, reasonCode: 'accounting-unknown' };
+  if (kind === 'model-call' && receiptInput['kind'] === 'model-not-dispatched' && hasExactKeys(receiptInput, ['kind'])) return { ok: true, counters: emptyCounters() };
 
   if (kind === 'model-call' && receiptInput['kind'] === 'model-usage' && hasExactKeys(receiptInput, ['kind', 'usage'])) {
     const checkedUsage = validateQuestionUsage(receiptInput['usage']);

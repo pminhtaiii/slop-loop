@@ -102,7 +102,7 @@ function taskOf(overrides: Partial<BugTask> = {}): BugTask {
         executable: 'pytest',
         argv: ['-q', 'tests/test_calculator.py'],
         purpose: 'reproduction',
-        workingDirectory: 'tests',
+        workingDirectory: '/workspace/repo',
         timeoutMs: 30_000,
         maxOutputBytes: 1_048_576,
       },

@@ -13,7 +13,7 @@ import type { UC03CoderAdmissionResolver } from '../uc03/graph-types.ts';
 import type { TrustedHostExpectedContext } from '../uc03/investigation-types.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import { executionProfileOf } from './real-tier-execution-profile.ts';
-import { verifyCheckAdmission } from './real-tier-verify-admission.ts';
+import { DEFAULT_CHECK_WORKING_DIRECTORY, verifyCheckAdmission } from './real-tier-verify-admission.ts';
 import { approvedPlanCoderAdmission } from './real-tier-coder-admission.ts';
 
 interface Admissions {
@@ -115,7 +115,7 @@ export function createRealTierAdmissions(assembly: RealTierAssembly, boundTask: 
         !testPath ||
         action.purpose !== pinned.purpose ||
         action.executable !== pinned.executable ||
-        action.workingDirectory !== (pinned.workingDirectory ?? '.') ||
+        action.workingDirectory !== (pinned.workingDirectory ?? DEFAULT_CHECK_WORKING_DIRECTORY) ||
         computeCanonicalSha256(action.argv) !== computeCanonicalSha256(pinned.argv)
       )
         return undefined;

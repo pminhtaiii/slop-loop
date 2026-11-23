@@ -63,7 +63,15 @@ function taskOf(overrides: Partial<BugTask> = {}): BugTask {
     acceptanceCriteria: ['divide(1, 0) raises CalculationError'],
     constraints: [],
     requiredChecks: [
-      { checkId: 'check-1', executable: 'pytest', argv: ['-q', 'tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: 'tests', timeoutMs: 30_000, maxOutputBytes: 1_048_576 },
+      {
+        checkId: 'check-1',
+        executable: 'pytest',
+        argv: ['-q', 'tests/test_calculator.py'],
+        purpose: 'reproduction',
+        workingDirectory: '/workspace/repo',
+        timeoutMs: 30_000,
+        maxOutputBytes: 1_048_576,
+      },
     ],
     limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 2, maxMemoryBytes: 2_147_483_648, maxPids: 64 },
     budgetLimits: { maxReplanCount: 3, maxTokens: 100_000, maxCostUsd: 5, maxRepairAttempts: 2, maxReviewIterations: 2 },
