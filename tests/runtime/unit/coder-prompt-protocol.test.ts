@@ -23,6 +23,9 @@ function assertCoderSystemProtocol(text: string): void {
   for (const op of INSPECT_OPERATIONS) {
     assert.equal(text.includes(op), true, `missing inspect operation ${op} in system text`);
   }
+  assert.equal(text.includes('reply with an inspect first'), true, 'missing inspect-first instruction in system text');
+  assert.equal(text.includes('must exactly equal the path of an item in untrustedEvidence or an entry of task.evidenceRefs'), true, 'missing evidenceRefs-equals-path rule in system text');
+  assert.equal(text.includes('canonical repository-relative paths'), true, 'missing relative-path rule in system text');
 }
 
 test('coder prompt protocol includes all kinds, variant fields, proposalId, and inspect operations', () => {
@@ -42,12 +45,28 @@ test('coder prompt protocol includes all kinds, variant fields, proposalId, and 
   assert.equal(admission.ok, true, 'coder admission should succeed');
   if (!admission.ok) return;
 
-  const parsedBody = JSON.parse(admission.body) as { system: string };
+  const parsedBody = JSON.parse(admission.body) as {
+    system: string;
+    messages: readonly [{ role: string; content: string }];
+  };
   const systemText = parsedBody.system;
 
   assertCoderSystemProtocol(systemText);
 
-  const requiredSymbols = new Set<string>(['proposalId', ...Object.keys(VARIANT_FIELDS), ...Object.values(VARIANT_FIELDS).flat(), ...INSPECT_OPERATIONS]);
+  const promptContent = JSON.parse(parsedBody.messages[0].content) as {
+    task: { evidenceRefs?: readonly string[] };
+  };
+  assert.deepEqual(promptContent.task.evidenceRefs, coderPayload.state.evidenceRefs);
+
+  const requiredSymbols = new Set<string>([
+    'proposalId',
+    ...Object.keys(VARIANT_FIELDS),
+    ...Object.values(VARIANT_FIELDS).flat(),
+    ...INSPECT_OPERATIONS,
+    'reply with an inspect first',
+    'must exactly equal the path of an item in untrustedEvidence or an entry of task.evidenceRefs',
+    'canonical repository-relative paths',
+  ]);
 
   for (const symbol of requiredSymbols) {
     const stripped = systemText.replaceAll(symbol, '');
@@ -82,6 +101,14 @@ test('reviewer request body system text remains unchanged', () => {
   assert.equal(admission.ok, true, 'reviewer admission should succeed');
   if (!admission.ok) return;
 
-  const parsedBody = JSON.parse(admission.body) as { system: string };
+  const parsedBody = JSON.parse(admission.body) as {
+    system: string;
+    messages: readonly [{ role: string; content: string }];
+  };
   assert.equal(parsedBody.system, REVIEW_SYSTEM_TEXT);
+
+  const promptContent = JSON.parse(parsedBody.messages[0].content) as {
+    task: Record<string, unknown>;
+  };
+  assert.equal('evidenceRefs' in promptContent.task, false);
 });
