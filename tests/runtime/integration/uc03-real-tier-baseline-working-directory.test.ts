@@ -167,7 +167,11 @@ test('Row B: keep a check with workingDirectory: /workspace/repo that binds, and
     requiredChecks: bound.task.requiredChecks,
   });
   assert.equal(baselineRun.status, 'checks');
+  assert.equal(h.counts().baselineCalls, 1);
   const checkResult = baselineRun.checkResults.find(r => r.checkId === check.checkId);
   assert.ok(checkResult);
+  assert.equal(checkResult.outcome, 'fail');
+  assert.ok(checkResult.outputExcerpt?.includes('ZeroDivisionError'));
+  assert.ok(!checkResult.outputExcerpt?.startsWith('ADMISSION_DENIED'));
   assert.notEqual(checkResult.outputExcerpt, 'ADMISSION_DENIED: Missing admission context for required check');
 });
