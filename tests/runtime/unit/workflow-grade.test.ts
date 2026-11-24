@@ -850,3 +850,76 @@ test('F6: the mock route result carries exactly the pre-existing keys and no hos
   assert.ok(result);
   assert.deepEqual(Object.keys(result).sort(), ['actualOutcome', 'checkId', 'durationMs', 'executorId', 'finalSnapshot', 'outputBytes', 'profile', 'status']);
 });
+
+function setupDeriveEvidenceFactsFixture() {
+  const task = createFixtureBugTask();
+  const state = createFixtureTaskState({ node: 'Investigate', nextAction: 'propose-fix-plan', taskContext: task });
+  const textContent = 'def test_calc(): pass\n';
+  const testFiles = [{ path: 'tests/test_calculator.py', content: textContent }];
+  const firstCheck = task.requiredChecks[0];
+  assert.ok(firstCheck);
+  const retainedBaseline = {
+    taskId: task.taskId,
+    workspaceId: state.workspaceId,
+    repositoryId: task.repositoryId,
+    repositorySnapshotDigest: task.initialRevisionDigest,
+    acceptanceCriteria: task.acceptanceCriteria,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    requiredChecks: task.requiredChecks,
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    reproductionCheckId: firstCheck.checkId,
+    expectedPassingCheckIds: [],
+    expectedTestFiles: resolveExpectedTestFiles(task),
+    testProtectionDigest: computeTestProtectionDigest(testFiles),
+    reproductionFailureSignature: 'reproduced failure',
+    checkResults: task.requiredChecks.map(check => ({ checkId: check.checkId, outcome: 'fail' as const })),
+  };
+  const stopped = observation({
+    repositoryId: task.repositoryId,
+    taskId: task.taskId,
+    runId: state.runId,
+    initialRepositoryDigest: task.initialRevisionDigest,
+    workflowOutcome: 'INCOMPLETE',
+    effects: 'observed',
+  });
+  const derive = (files: readonly { path: string; content: string | Uint8Array }[]) => {
+    const freeze = async (binding: object) => ({ ...binding, snapshotId: 'final-tree', complete: true, files });
+    return deriveWorkflowEvidenceFacts({
+      caseId: 'C04',
+      task,
+      result: {
+        outcome: 'INCOMPLETE',
+        state,
+        milestones: [],
+        reasons: ['REAL_PROFILE_GENERATION_INVALID: MODEL_CALL_BUDGET_EXHAUSTED'],
+        executionEvidence: { finalState: state },
+      },
+      observation: stopped,
+      repository: { inspectDiff: async () => ({ diff: '', diffDigest: computeCanonicalSha256(''), changedFiles: [] }) },
+      finalTree: { freezeFinalTree: freeze, recheckCurrentFinalTree: freeze },
+      retainedBaseline,
+    });
+  };
+  return { textContent, derive };
+}
+
+test('deriveWorkflowEvidenceFacts row 1: baseline digest computed from text content and a final tree giving the same unchanged test file as bytes -> testsProtected: true', async () => {
+  const { textContent, derive } = setupDeriveEvidenceFactsFixture();
+  const facts = await derive([{ path: 'tests/test_calculator.py', content: Buffer.from(textContent, 'utf8') }]);
+  assert.ok(facts);
+  assert.equal(facts.evidence.testsProtected, true);
+});
+
+test('deriveWorkflowEvidenceFacts row 2: final tree giving a modified test file as bytes -> testsProtected: false', async () => {
+  const { derive } = setupDeriveEvidenceFactsFixture();
+  const facts = await derive([{ path: 'tests/test_calculator.py', content: Buffer.from('def test_calc(): pass  # modified\n', 'utf8') }]);
+  assert.ok(facts);
+  assert.equal(facts.evidence.testsProtected, false);
+});
+
+test('deriveWorkflowEvidenceFacts row 3: final tree giving a test file as invalid-UTF-8 bytes -> testsProtected: false', async () => {
+  const { derive } = setupDeriveEvidenceFactsFixture();
+  const facts = await derive([{ path: 'tests/test_calculator.py', content: new Uint8Array([0xff, 0xfe, 0xfd]) }]);
+  assert.ok(facts);
+  assert.equal(facts.evidence.testsProtected, false);
+});
