@@ -293,16 +293,24 @@ test('negative: missing, foreign, or corrupted baselineCandidate cannot certify 
     statePort: h.bound.ports.statePort,
     finalTree: driftTree,
   });
-  assert.ok(factsDrift, 'derivation runs over drifted tree');
-  assert.equal(factsDrift.evidence.testsProtected, false, 'protected tree drift must fail testsProtected fact');
-  assert.equal(factsDrift.evidence.sentinelsUnchanged, false, 'protected tree drift must fail sentinelsUnchanged fact');
+  assert.equal(factsDrift, undefined, 'protected tree drift must not supply gradeable clarification facts');
 
   // Negative 4: Speculative patch applied cannot certify clarification grade
+  const facts = await deriveWorkflowEvidenceFacts({
+    caseId: 'C02',
+    task: h.bound.task,
+    result,
+    observation,
+    repository: h.bound.ports.repositoryPort,
+    statePort: h.bound.ports.statePort,
+    finalTree,
+  });
+  assert.ok(facts);
   const grader = createC02Grader();
   const patchedGrade = await grader.grade('C02', {
     observation,
-    snapshot: factsDrift.snapshot,
-    evidence: { ...factsDrift.evidence, speculativePatchApplied: true },
+    snapshot: facts.snapshot,
+    evidence: { ...facts.evidence, speculativePatchApplied: true },
   });
   assert.equal(patchedGrade.grade, 'fail', 'speculative patch applied must fail clarification grade');
 });

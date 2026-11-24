@@ -359,6 +359,7 @@ export async function deriveWorkflowEvidenceFacts(input: {
   const checks = deriveVerificationFacts(input.task, state, diffInfo.diffDigest, execution.verificationResults);
   const unmodifiedChecks = expectedTestFiles.every(path => !diffInfo.changedFiles.includes(path));
   const sentinelsUnchanged = testsProtected && unmodifiedChecks;
+  if (execution.baseline === undefined && execution.baselineCandidate !== undefined && !sentinelsUnchanged) return undefined;
   const stoppedBeforeEffect = input.result.outcome === 'INCOMPLETE' ? (exhaustedBeforeNextEffect ? true : undefined) : false;
   if (stoppedBeforeEffect === undefined) return undefined;
   const factsWithoutDigest = {
