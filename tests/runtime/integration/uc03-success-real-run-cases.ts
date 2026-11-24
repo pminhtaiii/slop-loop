@@ -1,33 +1,22 @@
 /**
  * The T028 case stage (real-tier contract §(f) T028 row; T059).
  *
- * One fresh host per case, bound through `bindRealTierTask`, driven by `runUC03GraphV02`. C01's plan
- * pause is presented and decided explicitly through the injected T046 decision source — never
- * automatically — and only an approval continues the same bound task. C16 is judged from the C01
- * run's own final report (`uc03-success-real-c16.ts`), never inferred from the repair verdict; C10
- * is a dedicated zero-dispatch witness on its own fresh host (`uc03-success-real-c10.ts`). Cases run
- * in the order they are scheduled: C01, C02, C16, C10.
- *
- * The operator entry wires the real decision source and the real grader; the gate drives the same
- * seams with doubles, so nothing here reaches Docker, the network or a live endpoint.
+ * Runs cases in schedule order (C01, C02, C16, C10). Calls the shared real-tier case execution
+ * core (`executeRealTierCase` in `src/runtime/real-tier-case-run.ts`) for C01 and C02 attempts.
+ * C16 is judged from C01's final report; C10 runs as a zero-dispatch transport witness.
  */
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-
 import type { RealTierAssembly, resolveRealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
-import { bindRealTierTask, type RealTierBoundTask } from '../../../src/runtime/real-tier-task-binding.ts';
-import { createHostCoderGeneration } from '../../../src/runtime/host-coder.ts';
-import { runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
-import type { SnapshotPredicate } from '../../../eval/uc03/workflow-grade.ts';
+import { bindRealTierTask } from '../../../src/runtime/real-tier-task-binding.ts';
+import type { runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
 import type { UC03HostInputs } from '../../../src/runtime/uc03-host-bootstrap.ts';
-import type { CommandView, TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import type { TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import { executeRealTierCase, findSettledCommandAdmission } from '../../../src/runtime/real-tier-case-run.ts';
+import { PINS, type CaseGradeRequest, type GradeOutcome } from '../../../src/runtime/real-tier-case-grade.ts';
+import type { DecisionTarget } from '../../../src/runtime/real-tier-case-operator.ts';
 
 import { judgeC16Report } from './uc03-success-real-c16.ts';
 import { journalViewOf, judgeC10, publishRunAuthority, runC10Witness } from './uc03-success-real-c10.ts';
-import type { CaseGradeRequest, GradeOutcome } from './uc03-success-real-grader.ts';
-import type { DecisionTarget } from './uc03-success-real-operator.ts';
 import {
   C16_REPORT_SCHEMA,
   CASE_EVIDENCE_SCHEMA,
@@ -43,16 +32,14 @@ import {
   type StageRecord,
 } from './uc03-success-real-record.ts';
 
-/** The C01/C02 case predicates a pinned snapshot criterion supplies; C16/C10 are derived, never pinned. */
-export const PINS: Readonly<Record<string, SnapshotPredicate>> = Object.freeze({ C01: 'repair-success', C02: 'clarification' });
+export { PINS, findSettledCommandAdmission };
+
 /** The campaign id a standalone stage records when the operator entry did not supply one. */
 const STANDALONE = 'standalone';
 /** A standalone stage is bound to nothing, so the checker can never accept its artifacts. */
 const UNBOUND: ArtifactBinding = Object.freeze({ candidateSha: '', profileDigest: '', endpointDigest: '', model: '' });
 /** The decision-authority generation the C10 witness publishes; the seeded head carries generation 1. */
 const C10_GENERATION = 2;
-/** The maximum human approval pauses permitted per attempt before halting (e.g. plan, verification). */
-const MAX_APPROVAL_PAUSES = 3;
 
 /** One case's outcome: the row judged, and whatever artifact it can honestly produce. */
 export interface CaseOutcome {
@@ -93,13 +80,6 @@ export interface CaseStageOptions {
 const ownersOf = (assembly: RealTierAssembly, ids: Readonly<{ taskId: string; workspaceId: string }>, repositoryId: string) =>
   assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId });
 
-/** The journal facts one case artifact records, read from the owner, never inferred. */
-function accountingOf(assembly: RealTierAssembly, ids: Readonly<{ taskId: string }>): Readonly<{ claims: number; attempts: number; outcomes: number }> {
-  const journal = assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: '', repositoryId: '' }).statePort.getJournalSnapshot(ids.taskId) as { readonly attempts?: readonly unknown[] };
-  const view = journalViewOf(journal);
-  return Object.freeze({ claims: view.claims.length, attempts: journal.attempts?.length ?? 0, outcomes: view.outcomes.length });
-}
-
 /** The state a bound task is seeded in, for the C10 witness's provider admission. */
 async function stateOf(assembly: RealTierAssembly, ids: Readonly<{ taskId: string; workspaceId: string }>): Promise<TaskState> {
   const state = (await ownersOf(assembly, ids, '').statePort.loadTask(ids.taskId)) as TaskState | null;
@@ -118,119 +98,63 @@ const caseNotRun = (caseId: string, reasonCode: string, facts: StageRecord['fact
  * (SPEC-W5-003), never by the workflow status string alone.
  */
 async function runCaseAttempt(assembly: RealTierAssembly, caseId: string, attempt: number, options: CaseStageOptions): Promise<CaseOutcome> {
-  const workingCopyRoot = mkdtempSync(join(tmpdir(), 'uc03-t054-copy-'));
-  try {
-    const binding = await bindRealTierTask(assembly, { caseId, pins: options.pins, identity: options.identity, workingCopyRoot });
-    if (binding.status !== 'task-bound') return caseNotRun(caseId, binding.reasonCode, { attempt });
-    return await attemptOnBound(assembly, binding, caseId, attempt, options);
-  } finally {
-    rmSync(workingCopyRoot, { recursive: true, force: true });
-  }
-}
+  const execution = await executeRealTierCase({
+    assembly,
+    caseId,
+    attempt,
+    pins: options.pins,
+    identity: options.identity,
+    decideApproval: options.decideApproval,
+    clarificationHold: options.clarificationHold,
+    grade: options.grade,
+    binding: options.binding,
+    runGraph: options.runGraph,
+  });
 
-export function findSettledCommandAdmission(
-  assembly: RealTierAssembly,
-  ids: Readonly<{ taskId: string; workspaceId: string }>,
-  repositoryId: string,
-): { commandView?: CommandView; commandViewDigest?: string; commandAdmissionRef?: string } {
-  try {
-    const owner = ownersOf(assembly, ids, repositoryId);
-    const store = (owner.statePort as unknown as { store?: { getClaimPath?: (taskId: string, claimId: string) => string } }).store;
-    if (!store?.getClaimPath) return {};
-    const claimDir = dirname(store.getClaimPath(ids.taskId, 'dummy'));
-    if (!existsSync(claimDir)) return {};
-    const files = readdirSync(claimDir).filter(f => f.endsWith('.json'));
-    for (const file of files) {
-      const content = readFileSync(join(claimDir, file), 'utf8');
-      const claim = JSON.parse(content) as Record<string, unknown>;
-      const ctx = claim['context'] as Record<string, unknown> | undefined;
-      if (ctx && ctx['subjectKind'] === 'repository-action' && ctx['commandView']) {
-        const commandView = ctx['commandView'] as CommandView;
-        const commandViewDigest = digestOf(serialize(commandView));
-        const receipt = claim['receipt'] as Record<string, unknown> | undefined;
-        const commandAdmissionRef = (receipt?.['claimId'] as string) ?? (ctx['action'] as { actionId?: string })?.actionId ?? file.replace(/\.json$/, '');
-        return { commandView, commandViewDigest, commandAdmissionRef };
-      }
-    }
-  } catch {
-    // Non-throwing bounded read
+  if (execution.status !== 'task-bound') {
+    return caseNotRun(caseId, execution.reasonCode ?? 'binding-failed', { attempt });
   }
-  return {};
-}
 
-async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBoundTask, caseId: string, attempt: number, options: CaseStageOptions): Promise<CaseOutcome> {
-  const runGraph = options.runGraph ?? runUC03GraphV02;
-  // The binding carries no coder generation; the entry supplies the production one, as evaluation-graph.ts does.
-  const { limits } = assembly.profile;
-  const config = {
-    ...binding.config,
-    generation: createHostCoderGeneration({
-      model: binding.ports.modelPort,
-      repository: binding.ports.repositoryPort,
-      guardedRead: binding.ports.guardedRead,
-      admissionContextForCheck: binding.config.trustedExpectedContext.admissionContextForCheck,
-      budget: { maxModelCalls: limits.totalModelCalls, maxActiveMs: limits.activeExecutionMs, maxRepairs: limits.repairs, maxReplans: limits.materialReplans },
-    }),
-  };
-  let result = await runGraph(binding.task, binding.ports, config);
-  let approval: CaseEvidence['approval'];
-  for (let pause = 0; pause < MAX_APPROVAL_PAUSES && result.outcome === 'pending-approval' && !options.clarificationHold?.(caseId); pause++) {
-    // Nothing approves automatically: an absent source leaves the pause recorded, not passed.
-    const decision = await options.decideApproval?.(caseId, { taskId: binding.ids.taskId, console: ownersOf(assembly, binding.ids, binding.task.repositoryId).console });
-    if (decision === undefined)
-      return { record: { stage: 'case', outcome: 'fail', reasonCode: 'approval-required', caseId, facts: { attempt, workflow: result.outcome, node: result.state?.node ?? 'none' } } };
-    approval ??= { decisionId: result.state?.activeDecisionId ?? '', decided: decision };
-    // A rejection ends the case on its own hold; only approval continues the bound task.
-    if (decision === 'reject') break;
-    result = await runGraph(binding.task, binding.ports, config, result.state ?? undefined);
-  }
-  const accounting = accountingOf(assembly, binding.ids);
+  const accounting = execution.accounting ?? { claims: 0, attempts: 0, outcomes: 0 };
   const artifactBinding = options.binding ?? UNBOUND;
-  const graded: GradeOutcome =
-    PINS[caseId] === undefined
-      ? undefined
-      : await options.grade?.(assembly, caseId, {
-          caseId,
-          task: binding.task,
-          result,
-          ports: binding.ports,
-          model: artifactBinding.model,
-          repositoryRoot: binding.repositoryRoot,
-          requiresAdmission: caseId === 'C01',
-        });
+
+  if (execution.approvalRequired) {
+    return {
+      record: {
+        stage: 'case',
+        outcome: 'fail',
+        reasonCode: 'approval-required',
+        caseId,
+        facts: { attempt, workflow: execution.result?.outcome ?? 'none', node: execution.result?.state?.node ?? 'none' },
+      },
+    };
+  }
+
+  const graded = execution.gradeOutcome;
   const refusal = graded !== undefined && 'refusal' in graded ? graded.refusal : undefined;
   const gradeOutcome = graded !== undefined && !('refusal' in graded) ? graded : undefined;
   const grade = gradeOutcome?.grade;
-  const gradeBinding = gradeOutcome?.binding;
-  const commandAdmission = caseId === 'C01' ? findSettledCommandAdmission(assembly, binding.ids, binding.task.repositoryId) : {};
-  const finalReport = result.finalReport;
-  // C16 is judged from this run's own final report, on its content (SPEC-W5-103).
+  const commandAdmission = execution.commandAdmission ?? {};
+  const finalReport = execution.result?.finalReport;
   const judgedReport = caseId === 'C01' ? judgeC16Report(finalReport) : undefined;
+
   const evidence: CaseEvidence = {
-    ...(grade?.snapshot ? { snapshot: grade.snapshot } : {}),
-    ...(grade?.evidenceDigest ? { evidenceDigest: grade.evidenceDigest } : {}),
-    ...(grade ? { grade } : {}),
-    ...(gradeBinding ? { gradeBinding } : {}),
-    ...(commandAdmission.commandView ? { commandView: commandAdmission.commandView } : {}),
-    ...(commandAdmission.commandViewDigest ? { commandViewDigest: commandAdmission.commandViewDigest } : {}),
-    ...(commandAdmission.commandAdmissionRef ? { commandAdmissionRef: commandAdmission.commandAdmissionRef } : {}),
-    ...(approval ? { approval } : {}),
-    ...(finalReport ? { diffDigest: finalReport.diff.diffDigest } : {}),
+    ...execution.evidence,
     ...(judgedReport?.facts.present ? { reportDigest: judgedReport.facts.reportDigest } : {}),
-    ...(finalReport ? { usage: { tokens: finalReport.usage.tokensConsumed, cost: finalReport.usage.costUsd, costLabel: 'estimate-unverified' as const } } : {}),
-    ownerRevisions: { repository: result.state?.repositoryRevisionDigest ?? binding.task.initialRevisionDigest, ...options.pins.revisions },
   };
+
   const facts: Record<string, string | number | boolean | null> = {
     attempt,
-    workflow: result.outcome,
-    node: result.state?.node ?? 'none',
+    workflow: execution.result?.outcome ?? 'none',
+    node: execution.result?.state?.node ?? 'none',
     claims: accounting.claims,
     attempts: accounting.attempts,
     outcomes: accounting.outcomes,
-    ...(approval ? { approval: approval.decided, decision: approval.decisionId } : {}),
+    ...(execution.approval ? { approval: execution.approval.decided, decision: execution.approval.decisionId } : {}),
     ...(grade ? { grade: grade.grade, 'grade-reason': grade.reason, 'grader-digest': grade.criteriaDigest } : {}),
     ...(commandAdmission.commandViewDigest ? { 'command-view-digest': commandAdmission.commandViewDigest } : {}),
   };
+
   const artifact: CaseArtifactBody = {
     schema: CASE_EVIDENCE_SCHEMA,
     campaignId: options.campaignId ?? STANDALONE,
@@ -238,13 +162,15 @@ async function attemptOnBound(assembly: RealTierAssembly, binding: RealTierBound
     attempt,
     binding: artifactBinding,
     finalSnapshotDigest: grade?.snapshot?.digest ?? null,
-    identity: { taskId: binding.ids.taskId, runId: binding.ids.runId, workspaceId: binding.ids.workspaceId },
+    identity: execution.identity ?? { taskId: '', runId: '', workspaceId: '' },
     evidence,
     accounting,
   };
-  // A pinned predicate is the independent grade, never the status string; an unpinned id is not-run.
-  if (PINS[caseId] !== undefined && grade === undefined)
+
+  if (PINS[caseId] !== undefined && grade === undefined) {
     return { record: { stage: 'case', outcome: 'not-run', reasonCode: refusal ?? 'grader-unavailable', caseId, facts }, evidence, artifact, judgedReport };
+  }
+
   const outcome: StageRecord['outcome'] = PINS[caseId] === undefined ? 'not-run' : grade?.grade === 'pass' ? 'pass' : grade?.grade === 'fail' ? 'fail' : 'not-run';
   const record: StageRecord = { stage: 'case', outcome, ...(PINS[caseId] === undefined ? { reasonCode: 'unpinned' } : {}), caseId, facts };
   return { record, evidence, artifact, judgedReport };

@@ -67,25 +67,8 @@ export interface ConformanceReceipt {
   readonly finishedAt: number;
 }
 
-/**
- * The host-measured facts a grade receipt is issued from (real-tier contract §(f) T028, T062):
- * the case's own bound identities, expected criterion, measured snapshot/evidence and the tier and
- * executor/admission that graded it. The checker compares the grade against this, never the reverse.
- */
-export interface GradeReceiptBinding {
-  readonly taskId: string;
-  readonly runId: string;
-  readonly workspaceId: string;
-  readonly caseId: string;
-  readonly criterionId: string;
-  readonly criteriaDigest: string;
-  readonly snapshotId: string;
-  readonly snapshotDigest: string;
-  readonly evidenceDigest: string;
-  readonly tier: 'real-tier' | 'controlled-tier';
-  readonly executorId: string;
-  readonly admissionId: string | null;
-}
+import type { GradeReceiptBinding } from '../../../src/runtime/real-tier-case-grade.ts';
+export type { GradeReceiptBinding };
 
 /** One case's host-only evidence before projection. */
 export interface CaseEvidence {
