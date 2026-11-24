@@ -34,14 +34,14 @@ import type { EvaluationGradingAdmissionRequest, WorkflowObservation } from '../
 
 const fixture = createScanFixture('clarify-', 'clarify-profile-fixture');
 
-async function setupClarificationHarness() {
+async function setupClarificationHarness(options: { testPrefix?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'clarify-case-'));
   const repositoryRoot = join(root, 'repository');
   mkdirSync(join(repositoryRoot, 'src'), { recursive: true });
   mkdirSync(join(repositoryRoot, 'tests'), { recursive: true });
   const source = 'def divide(a, b):\n    return a / b\n';
   writeFileSync(join(repositoryRoot, 'src/calculator.py'), source);
-  writeFileSync(join(repositoryRoot, 'tests/test_calculator.py'), 'def test_divide_zero():\n    assert False\n');
+  writeFileSync(join(repositoryRoot, 'tests/test_calculator.py'), `${options.testPrefix ?? ''}def test_divide_zero():\n    assert False\n`);
   const revision = await new WorkspaceFilesystemPort({ root: repositoryRoot }).getCurrentRevisionDigest();
   const task: BugTask = {
     taskId: 'task-clarify',
@@ -130,16 +130,19 @@ async function setupClarificationHarness() {
   return { bound, config, repositoryRoot, counts: () => ({ baselineCalls, fetches, admissions }) };
 }
 
-function createFinalTreeDouble(repositoryRoot: string, overrides: { modifyProtected?: boolean } = {}) {
+function createFinalTreeDouble(repositoryRoot: string, overrides: { modifyProtected?: boolean; returnBytes?: boolean; protectedContent?: string | Uint8Array } = {}) {
   return {
     freezeFinalTree: (binding: FinalTreeBinding) => ({
       ...binding,
       snapshotId: 'clarification-tree-snap',
       complete: true,
       files: ['src/calculator.py', 'tests/test_calculator.py'].map(path => {
-        let content = readFileSync(join(repositoryRoot, path), 'utf8');
+        if (overrides.protectedContent !== undefined && path.includes('test_calculator.py')) {
+          return { path, content: overrides.protectedContent };
+        }
+        let content: string | Uint8Array = readFileSync(join(repositoryRoot, path), overrides.returnBytes && path.includes('test_calculator.py') ? null : 'utf8');
         if (overrides.modifyProtected && path.includes('test_calculator.py')) {
-          content += '\n# mutated test file\n';
+          content = typeof content === 'string' ? content + '\n# mutated test file\n' : Buffer.concat([content, Buffer.from('\n# mutated test file\n', 'utf8')]);
         }
         return { path, content };
       }),
@@ -313,4 +316,96 @@ test('negative: missing, foreign, or corrupted baselineCandidate cannot certify 
     evidence: { ...facts.evidence, speculativePatchApplied: true },
   });
   assert.equal(patchedGrade.grade, 'fail', 'speculative patch applied must fail clarification grade');
+});
+
+test('CR249-BOM: actual production graph genuine NeedsInfo clarification with unchanged BOM-prefixed protected test returned as bytes passes C02 grade; mutated or invalid bytes are refused', async () => {
+  const h = await setupClarificationHarness({ testPrefix: '\uFEFF' });
+  const result = await runUC03GraphV02(h.bound.task, h.bound.ports, h.config);
+
+  assert.equal(result.outcome, 'needs-info');
+  assert.ok(result.state);
+  assert.equal(result.state.node, 'NeedsInfo');
+
+  const observation: WorkflowObservation = {
+    repositoryId: result.state.repositoryId,
+    taskId: result.state.taskId,
+    runId: result.state.runId,
+    returnedModel: null,
+    graderDigest: null,
+    initialRepositoryDigest: h.bound.task.initialRevisionDigest,
+    workflowOutcome: 'waiting-info',
+    expectedWait: 'waiting-info',
+    blocked: null,
+    effects: 'observed',
+    usage: 'uncertain',
+    diagnostic: null,
+    artifacts: [],
+    limitations: [],
+  };
+
+  // Case 1: Unchanged BOM test file returned as bytes -> facts derived, passes C02 grade
+  const finalTreeBytes = createFinalTreeDouble(h.repositoryRoot, { returnBytes: true });
+  const facts = await deriveWorkflowEvidenceFacts({
+    caseId: 'C02',
+    task: h.bound.task,
+    result,
+    observation,
+    repository: h.bound.ports.repositoryPort,
+    statePort: h.bound.ports.statePort,
+    finalTree: finalTreeBytes,
+  });
+
+  assert.ok(facts, 'deriveWorkflowEvidenceFacts must succeed for unchanged BOM-prefixed test returned as bytes');
+  assert.equal(facts.evidence.testsProtected, true);
+  assert.equal(facts.evidence.sentinelsUnchanged, true);
+
+  const grader = createC02Grader();
+  const graded = await grader.grade('C02', { observation, snapshot: facts.snapshot, evidence: facts.evidence });
+  assert.equal(graded.grade, 'pass');
+  assert.equal(graded.reason, 'criteria-satisfied');
+
+  // Negative 1: Mutated test content in bytes -> refused
+  const mutatedTree = createFinalTreeDouble(h.repositoryRoot, {
+    protectedContent: Buffer.from('\uFEFFdef test_divide_zero():\n    assert True\n', 'utf8'),
+  });
+  const factsMutated = await deriveWorkflowEvidenceFacts({
+    caseId: 'C02',
+    task: h.bound.task,
+    result,
+    observation,
+    repository: h.bound.ports.repositoryPort,
+    statePort: h.bound.ports.statePort,
+    finalTree: mutatedTree,
+  });
+  assert.equal(factsMutated, undefined, 'mutated test content must be refused');
+
+  // Negative 2: Mutated BOM (stripped BOM from bytes) -> refused
+  const strippedBomTree = createFinalTreeDouble(h.repositoryRoot, {
+    protectedContent: Buffer.from('def test_divide_zero():\n    assert False\n', 'utf8'),
+  });
+  const factsStrippedBom = await deriveWorkflowEvidenceFacts({
+    caseId: 'C02',
+    task: h.bound.task,
+    result,
+    observation,
+    repository: h.bound.ports.repositoryPort,
+    statePort: h.bound.ports.statePort,
+    finalTree: strippedBomTree,
+  });
+  assert.equal(factsStrippedBom, undefined, 'stripped BOM bytes must be refused');
+
+  // Negative 3: Invalid UTF-8 bytes -> refused
+  const invalidUtf8Tree = createFinalTreeDouble(h.repositoryRoot, {
+    protectedContent: new Uint8Array([0xff, 0xfe, 0xfd]),
+  });
+  const factsInvalidUtf8 = await deriveWorkflowEvidenceFacts({
+    caseId: 'C02',
+    task: h.bound.task,
+    result,
+    observation,
+    repository: h.bound.ports.repositoryPort,
+    statePort: h.bound.ports.statePort,
+    finalTree: invalidUtf8Tree,
+  });
+  assert.equal(factsInvalidUtf8, undefined, 'invalid UTF-8 bytes must be refused');
 });

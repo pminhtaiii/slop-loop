@@ -5,7 +5,7 @@
  * enforcing safe IDs, no escaping/symlinked storage roots, no ambiguous duplicates, and
  * delegating continuation decisions to the original owner's recoveryGate.
  */
-import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import fs, { type Dirent, existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { isSafeStorageId } from '../../../src/persistence/store.ts';
@@ -30,7 +30,7 @@ function unlinkedChildExists(root: string, path: string): boolean {
   for (const part of relative(root, path).split(sep)) {
     if (!part || part === '..') throw new Error('Invalid recovery child');
     current = join(current, part);
-    const stat = lstatSync(current, { throwIfNoEntry: false });
+    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (stat === undefined) return false;
     if (stat.isSymbolicLink()) throw new Error('Linked recovery child');
   }
@@ -42,7 +42,7 @@ function checkRecordPresence(root: string, resumeRef: string): 'present' | 'abse
   if (resumeRef.startsWith(JOURNAL_OPERATION_PREFIX)) {
     const operationId = resumeRef.slice(JOURNAL_OPERATION_PREFIX.length);
     const claimsDir = join(storeDir, 'claims');
-    if (!unlinkedChildExists(root, claimsDir) || !lstatSync(claimsDir).isDirectory()) return 'absent';
+    if (!unlinkedChildExists(root, claimsDir) || !fs.lstatSync(claimsDir).isDirectory()) return 'absent';
     let taskEntries: string[];
     try {
       taskEntries = readdirSync(claimsDir);
@@ -70,13 +70,14 @@ function checkRecordPresence(root: string, resumeRef: string): 'present' | 'abse
 
   if (resumeRef.startsWith(BASELINE_OPERATION_PREFIX)) {
     const baselineDir = join(storeDir, 'baseline-evidence');
-    if (!unlinkedChildExists(root, baselineDir) || !lstatSync(baselineDir).isDirectory()) return 'absent';
+    if (!unlinkedChildExists(root, baselineDir) || !fs.lstatSync(baselineDir).isDirectory()) return 'absent';
     let entries: string[];
     try {
       entries = readdirSync(baselineDir);
     } catch {
       return 'corrupt';
     }
+    let matched = false;
     for (const keyHash of entries) {
       const recordPath = join(baselineDir, keyHash, 'record.json');
       const pendingPath = join(baselineDir, keyHash, 'record.pending');
@@ -88,13 +89,16 @@ function checkRecordPresence(root: string, resumeRef: string): 'present' | 'abse
           if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return 'corrupt';
           const rec = parsed as { operationRef?: unknown };
           if (typeof rec.operationRef !== 'string') return 'corrupt';
-          if (rec.operationRef === resumeRef) return 'present';
+          if (!rec.operationRef.startsWith(BASELINE_OPERATION_PREFIX) || !OPERATION_HASH.test(rec.operationRef.slice(BASELINE_OPERATION_PREFIX.length))) {
+            return 'corrupt';
+          }
+          if (rec.operationRef === resumeRef) matched = true;
         } catch {
           return 'corrupt';
         }
       }
     }
-    return 'absent';
+    return matched ? 'present' : 'absent';
   }
 
   return 'absent';
@@ -123,7 +127,7 @@ export async function resolveCampaignRecoveryDecision(opts: ResolveRecoveryOptio
   }
 
   try {
-    if (lstatSync(baseStateRoot).isSymbolicLink()) return 'blocked';
+    if (fs.lstatSync(baseStateRoot).isSymbolicLink()) return 'blocked';
   } catch {
     return 'blocked';
   }
@@ -137,7 +141,7 @@ export async function resolveCampaignRecoveryDecision(opts: ResolveRecoveryOptio
 
   const isContained = (dir: string): boolean => {
     try {
-      if (lstatSync(dir).isSymbolicLink()) return false;
+      if (fs.lstatSync(dir).isSymbolicLink()) return false;
       const real = realpathSync(dir);
       return real === realBase || real.startsWith(realBase + sep);
     } catch {
@@ -147,7 +151,12 @@ export async function resolveCampaignRecoveryDecision(opts: ResolveRecoveryOptio
 
   const candidateRoots: string[] = [];
   const legacyStore = join(baseStateRoot, 'store');
-  const legacyStat = lstatSync(legacyStore, { throwIfNoEntry: false });
+  let legacyStat: ReturnType<typeof fs.lstatSync>;
+  try {
+    legacyStat = fs.lstatSync(legacyStore, { throwIfNoEntry: false });
+  } catch {
+    return 'blocked';
+  }
   if (legacyStat?.isSymbolicLink()) return 'blocked';
   if (legacyStat?.isDirectory()) {
     if (!isContained(legacyStore)) return 'blocked';
@@ -181,7 +190,12 @@ export async function resolveCampaignRecoveryDecision(opts: ResolveRecoveryOptio
       if (!caseEntry.isDirectory() || !SAFE_ID.test(caseEntry.name)) continue;
 
       const storePath = join(casePath, 'store');
-      const storeStat = lstatSync(storePath, { throwIfNoEntry: false });
+      let storeStat: ReturnType<typeof fs.lstatSync>;
+      try {
+        storeStat = fs.lstatSync(storePath, { throwIfNoEntry: false });
+      } catch {
+        return 'blocked';
+      }
       if (storeStat?.isSymbolicLink()) return 'blocked';
       if (storeStat?.isDirectory()) {
         if (!isContained(storePath)) return 'blocked';

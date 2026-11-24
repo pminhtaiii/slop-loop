@@ -274,7 +274,7 @@ function reviewFacts(evidence: UC03ExecutionEvidence, state: TaskState, diffDige
 
 function tryDecodeUtf8(b: Uint8Array): string | undefined {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(b);
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(b);
   } catch {
     return undefined;
   }
