@@ -101,7 +101,7 @@ export class DurableStatePortV02 implements StatePortV02 {
     this.provenance = options.provenance ?? 'real';
     if (this.provenance !== 'real' && this.provenance !== 'mock') throw new Error('Invalid state port provenance');
     this.store = options.store;
-    this.statePort = new StatePortStore(options.store);
+    this.statePort = new StatePortStore(options.store, options.taskId);
     this.boundTaskId = options.taskId;
     this.executionProfile = options.executionProfile;
     const seed = options.initialControl ?? {};
