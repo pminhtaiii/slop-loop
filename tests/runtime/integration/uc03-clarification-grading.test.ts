@@ -140,7 +140,8 @@ function createFinalTreeDouble(repositoryRoot: string, overrides: { modifyProtec
         if (overrides.protectedContent !== undefined && path.includes('test_calculator.py')) {
           return { path, content: overrides.protectedContent };
         }
-        let content: string | Uint8Array = readFileSync(join(repositoryRoot, path), overrides.returnBytes && path.includes('test_calculator.py') ? null : 'utf8');
+        const filePath = join(repositoryRoot, path);
+        let content: string | Uint8Array = overrides.returnBytes && path.includes('test_calculator.py') ? readFileSync(filePath) : readFileSync(filePath, 'utf8');
         if (overrides.modifyProtected && path.includes('test_calculator.py')) {
           content = typeof content === 'string' ? content + '\n# mutated test file\n' : Buffer.concat([content, Buffer.from('\n# mutated test file\n', 'utf8')]);
         }

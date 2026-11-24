@@ -29,7 +29,15 @@ async function seedSettledBaselineStore(targetDir: string): Promise<string> {
   const store = new DurableStore(targetDir);
   await store.init();
   const baselineStore = createBaselineEvidenceStore({ store });
-  const check = { checkId: 'chk-1', executable: 'pytest', argv: ['tests/test_app.py'], purpose: 'reproduction', workingDirectory: '/workspace', timeoutMs: 1000, maxOutputBytes: 1024 };
+  const check: BaselineEvidenceCandidate['requiredChecks'][number] = {
+    checkId: 'chk-1',
+    executable: 'pytest',
+    argv: ['tests/test_app.py'],
+    purpose: 'reproduction',
+    workingDirectory: '/workspace',
+    timeoutMs: 1000,
+    maxOutputBytes: 1024,
+  };
   const candidate: BaselineEvidenceCandidate = {
     taskId: 'task-fb-001',
     workspaceId: 'workspace-fb-001',
@@ -289,7 +297,7 @@ test('CR249-SCAN: valid store with multiple entries resumes through unique origi
 // ----------------------------------------------------------------------------
 // CR249-IO (probe-refusal): lstat permission/IO failures translate to blocked
 // ----------------------------------------------------------------------------
-test('CR249-IO: unexpected lstat error at legacy store translates to blocked recovery decision without throwing', async () => {
+test('CR249-IO: unexpected lstat error at legacy store translates to blocked recovery decision without throwing', async t => {
   const baseDir = mkdtempSync(join(tmpdir(), 't054-io-leg-'));
   const seedDir = mkdtempSync(join(tmpdir(), 't054-io-seed-'));
   const originalLstat = fs.lstatSync;
@@ -298,10 +306,10 @@ test('CR249-IO: unexpected lstat error at legacy store translates to blocked rec
     const legacyStore = join(baseDir, 'store');
     mkdirSync(legacyStore, { recursive: true });
 
-    fs.lstatSync = ((path: fs.PathLike, options?: unknown) => {
+    t.mock.method(fs, 'lstatSync', ((path: fs.PathLike, options?: unknown) => {
       if (String(path) === legacyStore) throw Object.assign(new Error('EACCES: permission denied, lstat'), { code: 'EACCES' });
       return originalLstat(path, options as never);
-    }) as typeof fs.lstatSync;
+    }) as typeof fs.lstatSync);
 
     let fetches = 0;
     let spawns = 0;
@@ -316,13 +324,13 @@ test('CR249-IO: unexpected lstat error at legacy store translates to blocked rec
     assert.equal(res.exitCode, 2, 'unexpected legacy store lstat error must block rather than throw');
     assert.equal(res.records[0]?.reasonCode, 'continuation-blocked');
   } finally {
-    fs.lstatSync = originalLstat;
+    t.mock.restoreAll();
     rmSync(baseDir, { recursive: true, force: true });
     rmSync(seedDir, { recursive: true, force: true });
   }
 });
 
-test('CR249-IO: unexpected lstat error at case storePath translates to blocked recovery decision without throwing', async () => {
+test('CR249-IO: unexpected lstat error at case storePath translates to blocked recovery decision without throwing', async t => {
   const baseDir = mkdtempSync(join(tmpdir(), 't054-io-case-'));
   const seedDir = mkdtempSync(join(tmpdir(), 't054-io-seed-'));
   const originalLstat = fs.lstatSync;
@@ -331,10 +339,10 @@ test('CR249-IO: unexpected lstat error at case storePath translates to blocked r
     const caseStore = join(baseDir, 'campaign-target', 'C01', 'store');
     mkdirSync(join(baseDir, 'campaign-target', 'C01'), { recursive: true });
 
-    fs.lstatSync = ((path: fs.PathLike, options?: unknown) => {
+    t.mock.method(fs, 'lstatSync', ((path: fs.PathLike, options?: unknown) => {
       if (String(path) === caseStore) throw Object.assign(new Error('EIO: i/o error, lstat'), { code: 'EIO' });
       return originalLstat(path, options as never);
-    }) as typeof fs.lstatSync;
+    }) as typeof fs.lstatSync);
 
     let fetches = 0;
     let spawns = 0;
@@ -349,7 +357,7 @@ test('CR249-IO: unexpected lstat error at case storePath translates to blocked r
     assert.equal(res.exitCode, 2, 'unexpected case store lstat error must block rather than throw');
     assert.equal(res.records[0]?.reasonCode, 'continuation-blocked');
   } finally {
-    fs.lstatSync = originalLstat;
+    t.mock.restoreAll();
     rmSync(baseDir, { recursive: true, force: true });
     rmSync(seedDir, { recursive: true, force: true });
   }
