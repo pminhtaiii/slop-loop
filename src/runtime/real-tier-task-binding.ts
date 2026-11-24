@@ -13,7 +13,7 @@
  * and host.json schemas are unchanged, because the catalog is already operator-resolved and the
  * catalog path is the loaded profile's own `catalog.path`, never a caller-supplied one.
  */
-import { readFileSync, realpathSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import { computeCanonicalSha256, validateBugTask } from '../contracts/foundation/uc03.ts';
 import type { BugTask, PolicyAuthorityRefV02, TaskState } from '../contracts/foundation/uc03.ts';
@@ -69,6 +69,11 @@ export interface RealTierBindingOptions {
   readonly maxFileBytes?: number | undefined;
   /** Overrides the profile's `artifacts.retainRoot`; tests point it at a temp directory. */
   readonly retainedRoot?: string | undefined;
+  /**
+   * When set, creates a unique working copy of the fixture repository under this directory.
+   * Reused per task on the same assembly; rebinds refuse with working-copy-unavailable if removed.
+   */
+  readonly workingCopyRoot?: string | undefined;
 }
 
 export type RealTierBindingRefusal = Readonly<{ status: 'unavailable'; reasonCode: string; path: string }>;
@@ -95,6 +100,9 @@ const BOUND = (value: unknown): number | undefined => (typeof value === 'number'
 let sequence = 0;
 /** Safe and unique per process: the allocator used when the caller supplies no id source. */
 const defaultIds = (kind: 'run' | 'workspace', caseId: string): string => `${kind}-${caseId}-${(sequence += 1)}`;
+
+/** Working copies recorded per assembly and task id so rebinds reuse the copy behind cached context sources. */
+const workingCopies = new WeakMap<RealTierAssembly, Map<string, string>>();
 
 /** The catalog entry for one case id, or a bounded refusal. */
 function entryOf(source: string, caseId: string): RealTierCatalogEntry | RealTierBindingRefusal {
@@ -195,7 +203,7 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   if ('status' in found) return found;
   const fixture = loadFixture(readText, found, catalogPath);
   if ('status' in fixture) return fixture;
-  const { task, repositoryRoot } = fixture;
+  const { task } = fixture;
 
   // Every finite bound is validated here, before any effect: a zero TTL or path bound is a bad
   // binding, not a task that should stay half-built.
@@ -240,6 +248,25 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
       ? { taskId: task.taskId, runId: allocate('run', options.caseId), workspaceId: allocate('workspace', options.caseId) }
       : { taskId: task.taskId, runId: existing.runId, workspaceId: existing.workspaceId };
   if (![ids.taskId, ids.runId, ids.workspaceId].every(id => SAFE_ID.test(id) && !id.includes('..'))) return refused('task-id-invalid', '$.ids');
+
+  let repositoryRoot = fixture.repositoryRoot;
+  if (options.workingCopyRoot !== undefined) {
+    let taskCopies = workingCopies.get(assembly);
+    const existingCopy = taskCopies?.get(task.taskId);
+    if (existingCopy !== undefined) {
+      if (!existsSync(existingCopy)) return refused('working-copy-unavailable', '$');
+      repositoryRoot = existingCopy;
+    } else {
+      const copyTarget = realpathSync(mkdtempSync(join(options.workingCopyRoot, 'repo-')));
+      cpSync(fixture.repositoryRoot, copyTarget, { recursive: true });
+      repositoryRoot = copyTarget;
+      if (taskCopies === undefined) {
+        taskCopies = new Map<string, string>();
+        workingCopies.set(assembly, taskCopies);
+      }
+      taskCopies.set(task.taskId, repositoryRoot);
+    }
+  }
 
   const policy = policyOf(task, options);
   // The authority ref the read fence will see: seeded as the task's control head, so a bound read is
