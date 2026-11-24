@@ -86,6 +86,7 @@ test('C02 expected wait: exit 0 and a selected pass while the suite stays incomp
   assert.equal(observed.taskId, null);
   assert.match(result.output, /UC-03 Workflow Evaluation \[MOCK\]: Selected = pass, Suite = incomplete, ExitCode = 0/);
   assert.equal(result.output.includes('C:/host-only'), false);
+  assert.equal(/(\b(Error|Exception):|\n\s+at\s+)/.test(result.output), false);
 });
 
 test('C01 unresolved wait: exit 3 with the case pending in the catalog suite', async () => {
@@ -105,6 +106,8 @@ test('C01 unresolved wait: exit 3 with the case pending in the catalog suite', a
   assert.equal(report.suiteAcceptance.outcome, 'incomplete');
   assert.equal(report.suiteAcceptance.satisfiedCases, 0);
   assert.match(result.output, /ExitCode = 3/);
+  assert.equal(result.output.includes('C:/host-only'), false);
+  assert.equal(/(\b(Error|Exception):|\n\s+at\s+)/.test(result.output), false);
 });
 
 /** A blocked precondition was never dispatched, so it is ungraded (not-run), never a pass. */
@@ -122,11 +125,14 @@ test('blocked driver entry never grades as a pass and never leaks a host path', 
 
   assert.equal(result.output.includes('C:/host-only'), false);
   assert.equal(result.output.includes('EVALUATION_REFUSED'), false);
+  assert.equal(/(\b(Error|Exception):|\n\s+at\s+)/.test(result.output), false);
   assert.equal(result.exitCode, 4);
   const report = parseOutput(result.output);
   assert.equal(report.cases[0]?.grade, 'not-run');
   assert.equal(report.cases[0]?.gradeReason, 'prerequisite-unavailable');
   assert.equal(report.selectionResult.outcome, 'incomplete');
+  assert.equal(report.suiteAcceptance.outcome, 'incomplete');
+  assert.equal(report.suiteAcceptance.satisfiedCases, 0);
 });
 
 test('host binding digests reach the report unchanged; no real-tier claim is made', async () => {
