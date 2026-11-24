@@ -5,7 +5,7 @@
  * enforcing safe IDs, no escaping/symlinked storage roots, no ambiguous duplicates, and
  * delegating continuation decisions to the original owner's recoveryGate.
  */
-import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { isSafeStorageId } from '../../../src/persistence/store.ts';
@@ -85,8 +85,9 @@ function checkRecordPresence(root: string, resumeRef: string): 'present' | 'abse
         try {
           const raw = readFileSync(candidatePath, 'utf8');
           const parsed: unknown = JSON.parse(raw);
-          if (parsed === null || typeof parsed !== 'object') return 'corrupt';
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return 'corrupt';
           const rec = parsed as { operationRef?: unknown };
+          if (typeof rec.operationRef !== 'string') return 'corrupt';
           if (rec.operationRef === resumeRef) return 'present';
         } catch {
           return 'corrupt';
@@ -146,7 +147,9 @@ export async function resolveCampaignRecoveryDecision(opts: ResolveRecoveryOptio
 
   const candidateRoots: string[] = [];
   const legacyStore = join(baseStateRoot, 'store');
-  if (existsSync(legacyStore) && statSync(legacyStore).isDirectory()) {
+  const legacyStat = lstatSync(legacyStore, { throwIfNoEntry: false });
+  if (legacyStat?.isSymbolicLink()) return 'blocked';
+  if (legacyStat?.isDirectory()) {
     if (!isContained(legacyStore)) return 'blocked';
     candidateRoots.push(baseStateRoot);
   }
@@ -178,7 +181,9 @@ export async function resolveCampaignRecoveryDecision(opts: ResolveRecoveryOptio
       if (!caseEntry.isDirectory() || !SAFE_ID.test(caseEntry.name)) continue;
 
       const storePath = join(casePath, 'store');
-      if (existsSync(storePath) && statSync(storePath).isDirectory()) {
+      const storeStat = lstatSync(storePath, { throwIfNoEntry: false });
+      if (storeStat?.isSymbolicLink()) return 'blocked';
+      if (storeStat?.isDirectory()) {
         if (!isContained(storePath)) return 'blocked';
         candidateRoots.push(casePath);
       }

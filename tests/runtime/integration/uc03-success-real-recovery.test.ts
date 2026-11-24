@@ -12,7 +12,7 @@
  * 8. Custom assemble seams and zero-effect constraints are preserved.
  */
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -409,3 +409,189 @@ test('seam preservation: custom assemble double without filesystem state remains
     rmSync(baseDir, { recursive: true, force: true });
   }
 });
+
+async function seedSettledBaselineStore(targetDir: string): Promise<string> {
+  const store = new DurableStore(targetDir);
+  await store.init();
+  const baselineStore = createBaselineEvidenceStore({ store });
+  const candidate: BaselineEvidenceCandidate = {
+    taskId: 'task-test-001',
+    workspaceId: 'workspace-test-001',
+    repositoryId: 'repo-test-001',
+    acceptanceCriteria: ['criteria-1'],
+    criteriaDigest: 'sha256:' + 'b'.repeat(64),
+    requiredChecks: [{ checkId: 'check-1', executable: 'pytest', argv: ['tests/test_calculator.py'], purpose: 'reproduction', workingDirectory: '/workspace', timeoutMs: 1000, maxOutputBytes: 1024 }],
+    expectedPassingCheckIds: ['check-1'],
+    reproductionCheckId: 'check-1',
+    expectedTestFiles: ['tests/test_calculator.py'],
+    repositorySnapshotDigest: 'sha256:' + 'a'.repeat(64),
+    checkSetDigest: 'sha256:' + 'c'.repeat(64),
+    reproductionFailureSignature: 'AssertionError: failure',
+    checkResults: [{ checkId: 'check-1', outcome: 'fail' }],
+    testProtectionDigest: 'sha256:' + 'd'.repeat(64),
+  };
+  await baselineStore.persist({
+    content: candidate,
+    contentDigest: computeCanonicalSha256(candidate),
+  });
+  const baselineDir = join(targetDir, 'baseline-evidence');
+  const [keyHash] = readdirSync(baselineDir);
+  assert.ok(keyHash);
+  const recordJson = JSON.parse(readFileSync(join(baselineDir, keyHash, 'record.json'), 'utf8')) as { operationRef: string };
+  return recordJson.operationRef;
+}
+
+test('CR247-001 regression: malformed baseline records fail closed and do not skip to valid root', async () => {
+  const malformedCases = [
+    { name: 'record.json is array', file: 'record.json', content: '[]' },
+    { name: 'record.json is empty object', file: 'record.json', content: '{}' },
+    { name: 'record.json has non-string operationRef', file: 'record.json', content: JSON.stringify({ operationRef: 12345 }) },
+    { name: 'record.pending is array', file: 'record.pending', content: '[]' },
+    { name: 'record.pending is empty object', file: 'record.pending', content: '{}' },
+    { name: 'record.pending has non-string operationRef', file: 'record.pending', content: JSON.stringify({ operationRef: true }) },
+  ];
+
+  for (const c of malformedCases) {
+    const baseDir = mkdtempSync(join(tmpdir(), 't054-rec-cr001-'));
+    const seedDir = mkdtempSync(join(tmpdir(), 't054-rec-cr001-seed-'));
+    try {
+      const ref = await seedSettledBaselineStore(seedDir);
+      const validStore = join(baseDir, 'campaign-valid', 'C01', 'store');
+      mkdirSync(join(baseDir, 'campaign-valid', 'C01'), { recursive: true });
+      cpSync(seedDir, validStore, { recursive: true });
+
+      const corruptDir = join(baseDir, 'campaign-corrupt', 'C01', 'store', 'baseline-evidence', 'corrupthash123');
+      mkdirSync(corruptDir, { recursive: true });
+      writeFileSync(join(corruptDir, c.file), c.content, 'utf8');
+
+      let fetches = 0;
+      let spawns = 0;
+      const baseOpts = baseCampaignOptions(baseDir, join(baseDir, 'evidence'));
+      const result = await runCampaign({
+        ...baseOpts,
+        mode: 'resume',
+        resumeRef: ref,
+        fetch: async () => {
+          fetches += 1;
+          throw new Error('forbidden fetch');
+        },
+        spawn: async () => {
+          spawns += 1;
+          throw new Error('forbidden spawn');
+        },
+      });
+
+      assert.equal(fetches, 0, `${c.name}: must make zero provider fetches`);
+      assert.equal(spawns, 0, `${c.name}: must make zero docker spawns`);
+      assert.equal(result.exitCode, 2, `${c.name}: malformed baseline record must block`);
+      assert.equal(result.records[0]?.outcome, 'fail');
+      assert.equal(result.records[0]?.reasonCode, 'continuation-blocked');
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(seedDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('CR247-001 positive: unrelated valid baseline operation remains absent and matching owner resumes', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 't054-rec-cr001-pos-'));
+  const seedDir = mkdtempSync(join(tmpdir(), 't054-rec-cr001-pos-seed-'));
+  try {
+    const ref = await seedSettledBaselineStore(seedDir);
+    const validStore = join(baseDir, 'campaign-valid', 'C01', 'store');
+    mkdirSync(join(baseDir, 'campaign-valid', 'C01'), { recursive: true });
+    cpSync(seedDir, validStore, { recursive: true });
+
+    const otherDir = join(baseDir, 'campaign-other', 'C01', 'store', 'baseline-evidence', 'otherhash456');
+    mkdirSync(otherDir, { recursive: true });
+    writeFileSync(join(otherDir, 'record.json'), JSON.stringify({ operationRef: 'uc04-baseline:' + 'f'.repeat(64) }), 'utf8');
+
+    let fetches = 0;
+    let spawns = 0;
+    const baseOpts = baseCampaignOptions(baseDir, join(baseDir, 'evidence'));
+    const result = await runCampaign({
+      ...baseOpts,
+      mode: 'resume',
+      resumeRef: ref,
+      fetch: async () => {
+        fetches += 1;
+        throw new Error('forbidden fetch');
+      },
+      spawn: async () => {
+        spawns += 1;
+        throw new Error('forbidden spawn');
+      },
+    });
+
+    assert.equal(fetches, 0);
+    assert.equal(spawns, 0);
+    assert.equal(result.exitCode, 0, 'unrelated valid baseline operation must not block matching resume');
+    assert.equal(result.records[0]?.outcome, 'pass');
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+    rmSync(seedDir, { recursive: true, force: true });
+  }
+});
+
+for (const target of ['legacy', 'case'] as const) {
+  test(`CR247-002 regression: file symlink at ${target} store blocks continuation before isDirectory`, async t => {
+    const baseDir = mkdtempSync(join(tmpdir(), `t054-rec-cr002-${target}-`));
+    const seedDir = mkdtempSync(join(tmpdir(), 't054-rec-cr002-seed-'));
+    const targetFile = join(baseDir, 'dummy-target.txt');
+    writeFileSync(targetFile, 'not-a-directory', 'utf8');
+
+    let linkPath: string;
+    if (target === 'legacy') {
+      linkPath = join(baseDir, 'store');
+    } else {
+      const linkedCaseDir = join(baseDir, 'campaign-linked', 'C01');
+      mkdirSync(linkedCaseDir, { recursive: true });
+      linkPath = join(linkedCaseDir, 'store');
+    }
+
+    try {
+      symlinkSync(targetFile, linkPath, 'file');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EPERM') {
+        t.skip('Windows file symlink requires developer mode (EPERM)');
+        rmSync(baseDir, { recursive: true, force: true });
+        rmSync(seedDir, { recursive: true, force: true });
+        return;
+      }
+      throw err;
+    }
+
+    try {
+      const ref = await seedSettledJournalStore(seedDir);
+      const validStore = join(baseDir, 'campaign-valid', 'C01', 'store');
+      mkdirSync(join(baseDir, 'campaign-valid', 'C01'), { recursive: true });
+      cpSync(seedDir, validStore, { recursive: true });
+
+      let fetches = 0;
+      let spawns = 0;
+      const baseOpts = baseCampaignOptions(baseDir, join(baseDir, 'evidence'));
+      const result = await runCampaign({
+        ...baseOpts,
+        mode: 'resume',
+        resumeRef: ref,
+        fetch: async () => {
+          fetches += 1;
+          throw new Error('forbidden fetch');
+        },
+        spawn: async () => {
+          spawns += 1;
+          throw new Error('forbidden spawn');
+        },
+      });
+
+      assert.equal(fetches, 0);
+      assert.equal(spawns, 0);
+      assert.equal(result.exitCode, 2, `${target} store file symlink must block continuation`);
+      assert.equal(result.records[0]?.reasonCode, 'continuation-blocked');
+      assert.equal(readFileSync(targetFile, 'utf8'), 'not-a-directory', 'state bytes preserved');
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(seedDir, { recursive: true, force: true });
+    }
+  });
+}
