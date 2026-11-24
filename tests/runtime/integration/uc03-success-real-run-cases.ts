@@ -11,7 +11,8 @@
  * The operator entry wires the real decision source and the real grader; the gate drives the same
  * seams with doubles, so nothing here reaches Docker, the network or a live endpoint.
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import type { RealTierAssembly, resolveRealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
@@ -117,9 +118,14 @@ const caseNotRun = (caseId: string, reasonCode: string, facts: StageRecord['fact
  * (SPEC-W5-003), never by the workflow status string alone.
  */
 async function runCaseAttempt(assembly: RealTierAssembly, caseId: string, attempt: number, options: CaseStageOptions): Promise<CaseOutcome> {
-  const binding = await bindRealTierTask(assembly, { caseId, pins: options.pins, identity: options.identity });
-  if (binding.status !== 'task-bound') return caseNotRun(caseId, binding.reasonCode, { attempt });
-  return attemptOnBound(assembly, binding, caseId, attempt, options);
+  const workingCopyRoot = mkdtempSync(join(tmpdir(), 'uc03-t054-copy-'));
+  try {
+    const binding = await bindRealTierTask(assembly, { caseId, pins: options.pins, identity: options.identity, workingCopyRoot });
+    if (binding.status !== 'task-bound') return caseNotRun(caseId, binding.reasonCode, { attempt });
+    return await attemptOnBound(assembly, binding, caseId, attempt, options);
+  } finally {
+    rmSync(workingCopyRoot, { recursive: true, force: true });
+  }
 }
 
 export function findSettledCommandAdmission(
