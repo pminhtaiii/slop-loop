@@ -286,6 +286,14 @@ function completionWasWithheld(result: UC03WorkflowResult, state: TaskState): bo
   return undefined;
 }
 
+function tryDecodeUtf8(b: Uint8Array): string | undefined {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(b);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function deriveWorkflowEvidenceFacts(input: {
   readonly caseId: string;
   readonly task: BugTask;
@@ -339,9 +347,15 @@ export async function deriveWorkflowEvidenceFacts(input: {
   const expectedTestFiles = resolveExpectedTestFiles(input.task);
   const protectedFiles: TrustedTestFileSnapshot[] = [];
   for (const path of expectedTestFiles) {
-    const file = parsedTree.tree.files.find(candidate => candidate.path === path);
+    const file = parsedTree.tree.files.find(c => c.path === path);
     if (!file) return undefined;
-    protectedFiles.push(file);
+    // The baseline snapshot reads test files as text.
+    if (typeof file.content === 'string') {
+      protectedFiles.push(file);
+    } else {
+      const decoded = tryDecodeUtf8(file.content);
+      protectedFiles.push({ path: file.path, content: decoded ?? file.content });
+    }
   }
   let protectedDigest: string;
   try {
