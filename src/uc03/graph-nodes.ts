@@ -122,7 +122,7 @@ export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphC
             terminalOutcome: 'INCOMPLETE' as const,
             reasons: ['The clarification record already answers this ask, so no question is open to pause on'],
           };
-        return { state: asked.state, terminalOutcome: 'needs-info' as const, reasons: ['Task paused on a bound coder question'] };
+        return { state: asked.state, terminalOutcome: 'needs-info' as const, reasons: ['Task paused on a bound coder question'], baselineCandidate };
       }
       if (generated.proposal.kind !== 'propose-plan')
         return { state: postBaseline.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [`Expected a plan proposal, received ${generated.proposal.kind}`] };

@@ -20,6 +20,8 @@ import { computeTestProtectionDigest, type BaselineEvidenceCandidate, type Trust
 import { loadVerifiedPatchAncestry } from '../../src/uc03/graph-patch-ancestry.ts';
 import { resolveExpectedTestFiles, samePaths, validDiffInfo } from '../../src/uc03/graph-validation.ts';
 import type { UC03ExecutionEvidence, UC03WorkflowResult } from '../../src/uc03/graph-types.ts';
+import { completionWasWithheld, patchFreeFacts } from './workflow-pause-facts.ts';
+export { patchFreeFacts } from './workflow-pause-facts.ts';
 import type { EvaluationSnapshotIdentity, WorkflowObservation } from './types.ts';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -136,16 +138,6 @@ export function budgetStopEvidence(reasons: readonly string[]): boolean {
   // `replan.ts:247` emits the cap reason alone only once the cap stop is saved; an appended error means it was not.
   if (reasons.length === 1 && reasons[0] === 'replan-cap-exceeded-fourth-replan-refused') return true;
   return reasons.some(reason => LEDGER_STOP.has(reason) || (reason.startsWith(CODER_STOP_PREFIX) && CODER_STOP.has(reason.slice(CODER_STOP_PREFIX.length))));
-}
-
-/**
- * A patch-free state proves nothing was applied only at a pre-patch wait, or at a Repair/Incomplete
- * stop whose own budget-exhaustion evidence says the route halted before the next effect.
- */
-export function patchFreeFacts(state: TaskState, stoppedOnBudget: boolean): boolean | undefined {
-  if (state.changedPaths.length !== 0) return undefined;
-  if (['Investigate', 'NeedsInfo', 'AwaitPlan', 'AwaitFeedback'].includes(state.node)) return false;
-  return (state.node === 'Repair' || state.node === 'Incomplete') && stoppedOnBudget ? false : undefined;
 }
 
 async function ownerAndPatchFacts(evidence: UC03ExecutionEvidence, task: BugTask, state: TaskState, owner: StatePortV02 | undefined, stoppedOnBudget: boolean): Promise<boolean | undefined> {
@@ -280,12 +272,6 @@ function reviewFacts(evidence: UC03ExecutionEvidence, state: TaskState, diffDige
   return { accepted: review.status === 'accepted', reviewedDiffDigest: review.diffDigest };
 }
 
-function completionWasWithheld(result: UC03WorkflowResult, state: TaskState): boolean | undefined {
-  if (state.outcome === 'COMPLETED' || result.finalReport?.isComplete === true) return false;
-  if (['Investigate', 'NeedsInfo', 'AwaitPlan', 'AwaitFeedback', 'Repair', 'Verify', 'Incomplete'].includes(state.node)) return true;
-  return undefined;
-}
-
 function tryDecodeUtf8(b: Uint8Array): string | undefined {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(b);
@@ -342,7 +328,7 @@ export async function deriveWorkflowEvidenceFacts(input: {
   const parsedTree = parseWorkflowFinalTree(rawTree, binding);
   if (!parsedTree || !validDiffInfo(diffInfo) || !samePaths(diffInfo.changedFiles, state.changedPaths)) return undefined;
 
-  const baseline = verifyBaseline(execution.baseline ?? input.retainedBaseline, input.task, state);
+  const baseline = verifyBaseline(execution.baseline ?? execution.baselineCandidate ?? input.retainedBaseline, input.task, state);
   if (!baseline) return undefined;
   const expectedTestFiles = resolveExpectedTestFiles(input.task);
   const protectedFiles: TrustedTestFileSnapshot[] = [];
