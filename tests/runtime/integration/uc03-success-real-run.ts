@@ -44,6 +44,7 @@ import {
 import { createOperatorDecisionSource, type OperatorIo } from './uc03-success-real-operator.ts';
 import { pinnedGraderOf, type GraderCapability } from './uc03-success-real-grader.ts';
 import { PINNED_MODEL, PINNED_RETURNED_MODEL } from './uc03-success-real-provider.ts';
+import { resolveCampaignRecoveryDecision } from './uc03-success-real-recovery.ts';
 
 const TEMPLATE_PROFILE_ID = 'uc03-runtime-evaluation-v1';
 /** The T028 case plan, in contract order. */
@@ -281,7 +282,11 @@ export async function runCampaign(options: CampaignOptions): Promise<CampaignRes
   // continuation and exits 0; `fresh-attempt` is not replay authority and `blocked` stays nonzero.
   // Neither branch performs any effect.
   if (options.mode === 'resume') {
-    const decision = await resolved.owners.recoveryGate.decide(options.resumeRef ?? '');
+    const decision = await resolveCampaignRecoveryDecision({
+      options,
+      resolved,
+      assembleRoot: stateRoot => assemble(dependenciesOf({ ...options, stateRoot }, candidateSha, countedFetch)),
+    });
     if (decision === 'resume') return done([stage('recovery', 'pass', undefined, { facts: { decision } })], true);
     if (decision === 'fresh-attempt') return done([stage('recovery', 'not-run', 'continuation-fresh-attempt', { facts: { decision } })], false);
     return done([stage('recovery', 'fail', `continuation-${decision}`, { facts: { decision } })], false);
