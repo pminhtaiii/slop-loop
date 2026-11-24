@@ -41,9 +41,11 @@ function validateControlRecord(value: unknown): ControlRecordV02 {
 
 export class StatePortStore {
   readonly store: DurableStore;
+  readonly taskId?: string | undefined;
 
-  constructor(store: DurableStore) {
+  constructor(store: DurableStore, taskId?: string) {
     this.store = store;
+    this.taskId = taskId;
   }
 
   taskDir(taskId: string): string {
@@ -206,9 +208,25 @@ export class StatePortStore {
     await this.writeJson(this.statePath(taskId, 'task.json'), task);
   }
 
-  /** Resolves the owning task of a claim without a taskId argument (begin/record/reconcile). */
+  /**
+   * Resolves the owning task of a claim without a taskId argument (begin/record/reconcile).
+   *
+   * When bound to a taskId:
+   * - Reads only the bound task; refuses missing/invalid bound task without global fallback.
+   *
+   * When unbound:
+   * - Scans all tasks in the store; if exactly one task owns the claim, returns it (legacy unambiguous support).
+   * - If multiple tasks own the claim, fails closed (returns null) rather than selecting an arbitrary first directory.
+   */
   async findClaimTask(claimId: string): Promise<{ readonly taskId: string; readonly claim: StoredClaimV02 } | null> {
     if (!isSafeStorageId(claimId)) return null;
+
+    if (this.taskId !== undefined) {
+      if (!isSafeStorageId(this.taskId)) return null;
+      const claim = await this.readClaim(this.taskId, claimId);
+      return claim ? { taskId: this.taskId, claim } : null;
+    }
+
     let taskIds: string[];
     try {
       taskIds = await readdir(this.store.claimDir);
@@ -216,11 +234,15 @@ export class StatePortStore {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw err;
     }
+    let match: { readonly taskId: string; readonly claim: StoredClaimV02 } | null = null;
     for (const taskId of taskIds) {
       if (!isSafeStorageId(taskId)) continue;
       const claim = await this.readClaim(taskId, claimId);
-      if (claim) return { taskId, claim };
+      if (claim) {
+        if (match !== null) return null;
+        match = { taskId, claim };
+      }
     }
-    return null;
+    return match;
   }
 }

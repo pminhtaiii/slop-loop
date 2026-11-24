@@ -356,7 +356,7 @@ async function runC10(assembly: RealTierAssembly, options: CaseStageOptions): Pr
  * from C01 and the C10 witness on its own host, in schedule order. A derived row this stage cannot
  * judge stays `not-run`, so the campaign is honest-incomplete.
  */
-export async function runCaseStage(assemble: () => ReturnType<typeof resolveRealTierAssembly>, options: CaseStageOptions): Promise<readonly CaseOutcome[]> {
+export async function runCaseStage(assemble: (caseId?: string) => ReturnType<typeof resolveRealTierAssembly>, options: CaseStageOptions): Promise<readonly CaseOutcome[]> {
   const outcomes: CaseOutcome[] = [];
   let c01: CaseOutcome | undefined;
   for (const caseId of options.caseIds) {
@@ -365,7 +365,7 @@ export async function runCaseStage(assemble: () => ReturnType<typeof resolveReal
       outcomes.push(c16Outcome(options, c01));
       continue;
     }
-    const assembled = assemble();
+    const assembled = assemble(caseId);
     if (assembled.status !== 'assembly-ready') {
       outcomes.push(caseNotRun(caseId, assembled.reasonCode, { attempt: 1 }));
       continue;

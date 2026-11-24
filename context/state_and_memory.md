@@ -43,6 +43,8 @@ Memory is advisory and may be stale. Confirm it against current repository evide
 
 ## Persistence boundaries
 
+The durable v0.2 state port binds claim lookup to its configured task. Begin, outcome, claim-state, control and recovery operations never resolve a same-named claim from another task. Unbound lookup retains unique legacy ownership and refuses ambiguous claim IDs; settled records remain available to outcome and recovery readers.
+
 Keep runtime-generated state, checkpoints, traces, and memory separate from human-authored context. Markdown context must not be the primary store for runtime state. State answers “what is true now?”; trace answers “how did we get here?” Resume from state and use traces for explanation, debugging, and evaluation.
 
 Contributor handoffs use one ignored `.agent-work/state/active-tasks.json` store in the primary checkout, shared by linked worktrees. [active_task.md](active_task.md) is an optional local snapshot refreshed only by the explicit `render` command; routine mutations update ignored state without changing tracked Markdown. This store is not the slop-loop product runtime's task state or checkpoint; runtime persistence remains governed by the structured records above.

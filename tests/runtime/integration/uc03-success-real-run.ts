@@ -341,7 +341,15 @@ export async function runCampaign(options: CampaignOptions): Promise<CampaignRes
     ...(decideApproval === undefined ? {} : { decideApproval }),
     ...(options.mode === 'campaign' ? { clarificationHold: (id: string) => id === 'C02' } : {}),
   };
-  const runCases = options.runCases ?? ((_: RealTierAssembly, stageOpts: CaseStageOptions) => defaultCaseStage(() => assemble(dependenciesOf(options, candidateSha, countedFetch)), stageOpts));
+  const baseStateRoot = options.stateRoot ?? resolved.profile?.stateRoot;
+  const runCases =
+    options.runCases ??
+    ((_: RealTierAssembly, stageOpts: CaseStageOptions) =>
+      defaultCaseStage(
+        (caseId?: string) =>
+          assemble(dependenciesOf(caseId === undefined || baseStateRoot === undefined ? options : { ...options, stateRoot: join(baseStateRoot, campaignId, caseId) }, candidateSha, countedFetch)),
+        stageOpts,
+      ));
   const cases = await runCases(resolved, stageOptions);
   const records = cases.map(entry => entry.record);
   const artifacts = artifactsOf(cases);
