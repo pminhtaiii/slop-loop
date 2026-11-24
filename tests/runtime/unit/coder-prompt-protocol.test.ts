@@ -242,3 +242,37 @@ test('task.plan is absent when state has no plan, and absent for reviewer role e
   };
   assert.equal('plan' in reviewerContent.task, false, 'task.plan must be absent for reviewer even when state has plan');
 });
+
+test('coder prompt protocol instructs request-info when clarification or user confirmation is required', () => {
+  const coderPayload = buildTransportPayload(
+    createFixtureTaskState(),
+    [],
+    createFixtureProviderRequest({
+      role: 'coder',
+      purpose: 'investigate-and-propose',
+      maxInputTokens: 50000,
+      maxBillableTokens: 60000,
+      maxCostUsd: 1.0,
+    }),
+  );
+
+  const admission = admit(coderPayload, PRICING, TARGET_ENDPOINT);
+  assert.equal(admission.ok, true, 'coder admission should succeed');
+  if (!admission.ok) return;
+
+  const parsedBody = JSON.parse(admission.body) as {
+    system: string;
+    messages: readonly [{ role: string; content: string }];
+  };
+  const systemText = parsedBody.system;
+
+  const expectedSentence =
+    "When the task's acceptance criteria or constraints require confirming the intended behavior with the user, or the expected behavior leaves a choice between alternatives open, reply with request-info (after the required inspect) asking which behavior is wanted, instead of propose-plan.";
+
+  assert.equal(systemText.includes(expectedSentence), true, 'missing clarification rule directing request-info when behavior confirmation is required');
+  assert.equal(
+    systemText.includes(`For request.purpose propose-plan/propose-replan, reply with inspect, propose-plan, request-info or stop. ${expectedSentence}`),
+    true,
+    'clarification rule must immediately follow purpose-mapping sentence',
+  );
+});
