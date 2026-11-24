@@ -40,7 +40,8 @@ import type { CoderAgent, CoderBudget, UC03CoderAdmission } from './agent.ts';
 import type { MaterialReplanPortV02, UC03GraphGenerationV02 } from './graph-types-v02.ts';
 
 export type { UC03CoderAdmission } from './agent.ts';
-import type { BaselineEvidenceWriter, InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort } from './investigation.ts';
+import type { BaselineEvidenceCandidate, BaselineEvidenceWriter, InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort } from './investigation.ts';
+import { validateBaselineEvidenceCandidate } from './investigation-baseline-evidence.ts';
 import type { RepairPatchProposal, TrustedReplanDirection } from './repair.ts';
 import type { FinalReport, Milestone } from './report.ts';
 import type { EvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts';
@@ -205,6 +206,7 @@ export interface UC03WorkflowResult {
 
 export interface UC03ExecutionEvidence {
   readonly baseline?: Baseline | undefined;
+  readonly baselineCandidate?: BaselineEvidenceCandidate | undefined;
   readonly verificationResults?: readonly VerificationResult[] | undefined;
   readonly reviewRequest?: ProviderRequest | undefined;
   readonly reviewResult?: ReviewResult | undefined;
@@ -226,6 +228,7 @@ export function attachUC03ExecutionEvidence(
   result: UC03WorkflowResult,
   raw: {
     readonly baseline?: unknown;
+    readonly baselineCandidate?: unknown;
     readonly verificationResults?: unknown;
     readonly reviewRequest?: unknown;
     readonly reviewResult?: unknown;
@@ -235,18 +238,21 @@ export function attachUC03ExecutionEvidence(
     readonly state?: unknown;
   },
 ): UC03WorkflowResult {
+  const candidateState = raw.finalState === undefined ? raw.state : raw.finalState;
+  const finalState = candidateState === undefined || candidateState === null ? undefined : validateTaskState(candidateState);
   const baseline = raw.baseline === undefined ? undefined : validateBaseline(raw.baseline);
+  const candidateValidation = raw.baselineCandidate !== undefined && finalState?.ok ? validateBaselineEvidenceCandidate(raw.baselineCandidate, finalState.value) : undefined;
+  const baselineCandidate = candidateValidation?.ok ? candidateValidation.candidate : undefined;
   const verificationResults = Array.isArray(raw.verificationResults) ? raw.verificationResults.map(item => validateVerificationResult(item)) : undefined;
   const reviewRequest = raw.reviewRequest === undefined ? undefined : validateProviderRequest(raw.reviewRequest);
   const reviewResult = raw.reviewResult === undefined ? undefined : validateReviewResult(raw.reviewResult);
   const patchAdmission = raw.patchAdmission ? validateRepositoryAdmissionV02(raw.patchAdmission.context, raw.patchAdmission.trustedContext) : undefined;
   const patchReceipt = raw.patchReceipt === undefined || !patchAdmission?.ok ? undefined : validateRepositoryExecutionReceiptV02(raw.patchReceipt, patchAdmission.value);
-  const candidateState = raw.finalState === undefined ? raw.state : raw.finalState;
-  const finalState = candidateState === undefined || candidateState === null ? undefined : validateTaskState(candidateState);
   // Validators may return their input (or retain its arrays), so detach the projection before freezing it.
   const evidence = freezeProjection(
     structuredClone({
       ...(baseline?.ok ? { baseline: baseline.value } : {}),
+      ...(baselineCandidate ? { baselineCandidate } : {}),
       ...(verificationResults?.every(item => item.ok) ? { verificationResults: verificationResults.map(item => item.value) } : {}),
       ...(reviewRequest?.ok ? { reviewRequest: reviewRequest.value } : {}),
       ...(reviewResult?.ok ? { reviewResult: reviewResult.value } : {}),
