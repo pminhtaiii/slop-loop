@@ -11,7 +11,7 @@ import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
  * A bound task is a prerequisite, never G-OWNERS evidence, and never a real execution claim.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -900,4 +900,41 @@ test('(s) workingCopyRoot binds a dedicated copy and leaves the catalog fixture 
   assert.notEqual(binding2.repositoryRoot, binding1.repositoryRoot);
   assert.equal(binding2.repositoryRoot.startsWith(workingCopyRoot2), true);
   assert.equal(storeFingerprint(binding2.repositoryRoot), fixtureBefore);
+});
+
+test('(s2) a refused binding with workingCopyRoot set leaves the working-copy root empty', async () => {
+  const catalog = fixtureOf();
+  const { assembly } = assemblyFor(catalog);
+  const workingCopyRoot = tempRoot('working-copy-refused');
+  const refused = await bindRealTierTask(assembly, optionsOf(catalog, { workingCopyRoot, actionTtlMs: 0 }));
+  assert.equal(refused.status, 'unavailable');
+  if (refused.status === 'unavailable') {
+    assert.equal(refused.reasonCode, 'options-invalid');
+  }
+  assert.deepEqual(entriesUnder(workingCopyRoot), [], 'a refused binding leaves no working copy directory or file behind');
+});
+
+test('(s3) rebinding the same task on the same assembly with workingCopyRoot returns the same repositoryRoot as the first bind', async () => {
+  const catalog = fixtureOf();
+  const retainedRoot = join(tempRoot('retained-s3'), 'artifacts');
+  const workingCopyRoot = tempRoot('working-copy-s3');
+  const { assembly } = assemblyFor(catalog);
+  const binding1 = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot })));
+  const binding2 = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot })));
+  assert.equal(binding2.repositoryRoot, binding1.repositoryRoot);
+});
+
+test('(s4) after removing that recorded copy, a rebind refuses with working-copy-unavailable', async () => {
+  const catalog = fixtureOf();
+  const retainedRoot = join(tempRoot('retained-s4'), 'artifacts');
+  const workingCopyRoot = tempRoot('working-copy-s4');
+  const { assembly } = assemblyFor(catalog);
+  const binding1 = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot })));
+  rmSync(binding1.repositoryRoot, { recursive: true, force: true });
+  const rebind = await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot }));
+  assert.equal(rebind.status, 'unavailable');
+  if (rebind.status === 'unavailable') {
+    assert.equal(rebind.reasonCode, 'working-copy-unavailable');
+    assert.equal(rebind.path, '$');
+  }
 });
