@@ -201,21 +201,93 @@ function waitingDriver(outcome: 'waiting-info' | 'waiting-approval', expectedWai
 }
 
 test('an expected wait exits 0 with the task still paused, while an unresolved wait exits 3', async () => {
-  const expected = await runEvaluateCli(['--mode', 'mock', '--cases', 'C02'], { ...HOST_OPTIONS, driver: waitingDriver('waiting-info', 'waiting-info') });
+  const expected = await runEvaluateCli(['run', '--mode', 'mock', '--cases', 'C02'], { ...HOST_OPTIONS, driver: waitingDriver('waiting-info', 'waiting-info') });
   assert.equal(expected.exitCode, 0);
-  const expectedCase = (parseOutput(expected.output) as { readonly cases: readonly { readonly grade: string; readonly gradeReason: string; readonly workflowOutcome: string }[] }).cases[0];
+  const expectedReport = parseOutput(expected.output) as {
+    readonly selectionResult: { readonly outcome: string; readonly passed: number; readonly incomplete: number; readonly pendingWaits: readonly string[] };
+    readonly suiteAcceptance: { readonly scope: string; readonly requiredCases: number; readonly satisfiedCases: number; readonly outcome: string };
+    readonly cases: readonly { readonly caseId: string; readonly grade: string; readonly gradeReason: string; readonly taskId: string | null; readonly workflowOutcome: string }[];
+  };
+  assert.equal(expectedReport.selectionResult.outcome, 'pass');
+  assert.equal(expectedReport.selectionResult.passed, 1);
+  assert.deepEqual(expectedReport.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 1, outcome: 'incomplete' });
+  const expectedCase = expectedReport.cases[0];
   assert.deepEqual([expectedCase?.grade, expectedCase?.gradeReason, expectedCase?.workflowOutcome], ['pass', 'expected-wait-satisfied', 'waiting-info']);
+  assert.equal(expectedCase?.taskId, 'task-1');
+  assert.match(expected.output, /UC-03 Workflow Evaluation \[MOCK\]: Selected = pass, Suite = incomplete, ExitCode = 0/);
+  assert.equal(/(\b(Error|Exception):|\n\s+at\s+)/.test(expected.output), false);
+  assert.equal(expected.output.includes('C:/host-only'), false);
 
-  const unresolved = await runEvaluateCli(['--mode', 'mock', '--cases', 'C01'], { ...HOST_OPTIONS, driver: waitingDriver('waiting-approval', null) });
+  const unresolved = await runEvaluateCli(['run', '--mode', 'mock', '--cases', 'C01'], { ...HOST_OPTIONS, driver: waitingDriver('waiting-approval', null) });
   assert.equal(unresolved.exitCode, 3);
-  const unresolvedCase = (parseOutput(unresolved.output) as { readonly cases: readonly { readonly gradeReason: string }[] }).cases[0];
-  assert.equal(unresolvedCase?.gradeReason, 'unresolved-wait');
+  const unresolvedReport = parseOutput(unresolved.output) as {
+    readonly selectionResult: { readonly outcome: string; readonly passed: number; readonly incomplete: number; readonly pendingWaits: readonly string[] };
+    readonly suiteAcceptance: { readonly scope: string; readonly requiredCases: number; readonly satisfiedCases: number; readonly outcome: string };
+    readonly cases: readonly { readonly caseId: string; readonly grade: string; readonly gradeReason: string; readonly taskId: string | null; readonly workflowOutcome: string }[];
+  };
+  assert.equal(unresolvedReport.selectionResult.outcome, 'incomplete');
+  assert.deepEqual(unresolvedReport.selectionResult.pendingWaits, ['C01']);
+  assert.deepEqual(unresolvedReport.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 0, outcome: 'incomplete' });
+  const unresolvedCase = unresolvedReport.cases[0];
+  assert.deepEqual([unresolvedCase?.grade, unresolvedCase?.gradeReason, unresolvedCase?.workflowOutcome], ['not-run', 'unresolved-wait', 'waiting-approval']);
+  assert.match(unresolved.output, /UC-03 Workflow Evaluation \[MOCK\]: Selected = incomplete, Suite = incomplete, ExitCode = 3/);
+  assert.equal(/(\b(Error|Exception):|\n\s+at\s+)/.test(unresolved.output), false);
+  assert.equal(unresolved.output.includes('C:/host-only'), false);
 });
 
 test('a blocked prerequisite exits 4, never 1 and never a mock fallback', async () => {
   const driver: WorkflowDriver = { executeCase: () => observed({ blocked: 'prerequisite-unavailable' }) };
-  const result = await runEvaluateCli(['--mode', 'mock', '--cases', 'C01'], { ...HOST_OPTIONS, driver });
+  const result = await runEvaluateCli(['run', '--mode', 'mock', '--cases', 'C01'], { ...HOST_OPTIONS, driver });
 
   assert.equal(result.exitCode, 4);
   assert.equal(/mock fallback/iu.test(result.output), false);
+  const report = parseOutput(result.output) as {
+    readonly selectionResult: { readonly outcome: string };
+    readonly suiteAcceptance: { readonly scope: string; readonly requiredCases: number; readonly satisfiedCases: number; readonly outcome: string };
+    readonly cases: readonly { readonly grade: string; readonly gradeReason: string }[];
+  };
+  assert.equal(report.cases[0]?.grade, 'not-run');
+  assert.equal(report.cases[0]?.gradeReason, 'prerequisite-unavailable');
+  assert.equal(report.selectionResult.outcome, 'incomplete');
+  assert.deepEqual(report.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 0, outcome: 'incomplete' });
+  assert.equal(/(\b(Error|Exception):|\n\s+at\s+)/.test(result.output), false);
+  assert.equal(result.output.includes('C:/host-only'), false);
+});
+
+test('a required case not run never auto-skips or passes and leaves suite incomplete', async () => {
+  // 1. Partial selection (C02 passing alone): unselected required cases do not pass/auto-skip.
+  const partial = await runEvaluateCli(['run', '--mode', 'mock', '--cases', 'C02'], { ...HOST_OPTIONS, driver: waitingDriver('waiting-info', 'waiting-info') });
+  assert.equal(partial.exitCode, 0);
+  const partialReport = parseOutput(partial.output) as {
+    readonly selectionResult: { readonly passed: number; readonly incomplete: number; readonly outcome: string };
+    readonly suiteAcceptance: { readonly scope: string; readonly requiredCases: number; readonly satisfiedCases: number; readonly outcome: string };
+    readonly cases: readonly { readonly caseId: string; readonly grade: string }[];
+  };
+  assert.equal(partialReport.selectionResult.outcome, 'pass');
+  assert.equal(partialReport.selectionResult.passed, 1);
+  assert.deepEqual(partialReport.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 1, outcome: 'incomplete' });
+  assert.equal(/(\b(Error|Exception):|\n\s+at\s+)/.test(partial.output), false);
+  assert.equal(partial.output.includes('C:/host-only'), false);
+
+  // 2. Full catalog execution with test driver: C17 is always not-run (private-grading) and never auto-skips or passes.
+  const allCasesDriver: WorkflowDriver = {
+    executeCase: spec => observed({ workflowOutcome: spec.expectedOutcome, expectedWait: null }),
+  };
+  const full = await runEvaluateCli(['run', '--mode', 'mock'], { ...HOST_OPTIONS, driver: allCasesDriver });
+  assert.equal(full.exitCode, 1);
+  const fullReport = parseOutput(full.output) as {
+    readonly selectionResult: { readonly passed: number; readonly incomplete: number; readonly outcome: string };
+    readonly suiteAcceptance: { readonly scope: string; readonly requiredCases: number; readonly satisfiedCases: number; readonly outcome: string };
+    readonly cases: readonly { readonly caseId: string; readonly grade: string; readonly gradeReason: string }[];
+  };
+  const c17 = fullReport.cases.find(c => c.caseId === 'C17');
+  assert.equal(c17?.grade, 'not-run');
+  assert.equal(c17?.gradeReason, 'private-grading');
+  assert.deepEqual(fullReport.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 16, outcome: 'incomplete' });
+  assert.equal(fullReport.selectionResult.passed, 16);
+  assert.equal(fullReport.selectionResult.incomplete, 1);
+  assert.equal(fullReport.selectionResult.outcome, 'incomplete');
+  assert.match(full.output, /Selected = incomplete, Suite = incomplete, ExitCode = 1/);
+  assert.equal(/(\b(Error|Exception):|\n\s+at\s+)/.test(full.output), false);
+  assert.equal(full.output.includes('C:/host-only'), false);
 });
