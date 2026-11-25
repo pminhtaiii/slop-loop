@@ -3,16 +3,23 @@
  * (PR #260 CodeRabbit findings).
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
-import type { CommandView } from '../../../src/contracts/foundation/uc03.ts';
-import type { RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
-import { findSettledCommandAdmission } from '../../../src/runtime/real-tier-case-run.ts';
+import type { BugTask, CommandView, TaskState } from '../../../src/contracts/foundation/uc03.ts';
+import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
+import { resolveRealTierAssembly, type RealTierAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import { createOperatorDecisionSource, type DecisionTarget, type OperatorIo } from '../../../src/runtime/real-tier-case-operator.ts';
+import { abandonRealTierWorkingCopy, executeRealTierCase, findSettledCommandAdmission } from '../../../src/runtime/real-tier-case-run.ts';
+import { REAL_TIER_DELIVERY_CONTRACT } from '../../../src/runtime/real-tier-owners.ts';
+import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
+import type { UC03WorkflowResult } from '../../../src/uc03/graph-types.ts';
 import { buildCaseEvidence } from '../integration/uc03-success-real-run-cases.ts';
+import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
+import { createScanFixture } from './real-tier-scan-fixtures.ts';
 
 function createMockAssemblyWithClaimDir(claimDir: string): RealTierAssembly {
   return {
@@ -239,4 +246,232 @@ test('finding 4683701653: C02 drops reportDigest while C01 keeps judged value', 
   };
   const c01Evidence = buildCaseEvidence('C01', executionEvidence, judgedReport as never);
   assert.strictEqual(c01Evidence.reportDigest, 'sha256:judged-c16-report-digest', 'C01 retains judged reportDigest');
+});
+
+async function createWorkingCopyFixture(tag: string) {
+  const fixture = createScanFixture(`rtc-copy-${tag}-`, `rtc-copy-key-${tag}`);
+  const root = mkdtempSync(join(tmpdir(), `rtc-cat-${tag}-`));
+  const repoDir = join(root, 'repository');
+  mkdirSync(join(repoDir, 'src'), { recursive: true });
+  mkdirSync(join(repoDir, 'tests'), { recursive: true });
+  writeFileSync(join(repoDir, 'src', 'calculator.py'), 'def divide(a, b):\n    return a / b\n', 'utf8');
+  writeFileSync(join(repoDir, 'tests', 'test_calculator.py'), 'from src.calculator import divide\n\ndef test_div():\n    assert divide(4, 2) == 2\n', 'utf8');
+  const initialDigest = await new WorkspaceFilesystemPort({ root: repoDir }).getCurrentRevisionDigest();
+  const task: BugTask = {
+    taskId: `task-copy-${tag}`,
+    repositoryId: `repo-copy-${tag}`,
+    initialRevisionDigest: initialDigest,
+    goal: 'Fix division',
+    observedBehavior: 'ZeroDivisionError',
+    expectedBehavior: 'CalculationError',
+    reproduction: 'pytest -q tests/test_calculator.py',
+    acceptanceCriteria: ['Raises domain error'],
+    constraints: [],
+    requiredChecks: [
+      {
+        checkId: 'check-1',
+        executable: 'pytest',
+        argv: ['-q', 'tests/test_calculator.py'],
+        purpose: 'reproduction',
+        workingDirectory: '/workspace/repo',
+        timeoutMs: 30_000,
+        maxOutputBytes: 1_048_576,
+      },
+    ],
+    limits: { timeoutMs: 30_000, maxOutputBytes: 1_048_576, maxCpuCores: 2, maxMemoryBytes: 2_147_483_648, maxPids: 64 },
+    budgetLimits: { maxReplanCount: 3, maxTokens: 200_000, maxCostUsd: 2, maxRepairAttempts: 2, maxReviewIterations: 2 },
+    configId: 'config-v1',
+    configVersion: '1.0.0',
+  };
+  const doc = JSON.stringify({ task, repositoryRoot: 'repository' });
+  const fixturePath = join(root, 'case.json');
+  writeFileSync(fixturePath, doc, 'utf8');
+  const catalogPath = join(root, 'catalog.json');
+  writeFileSync(
+    catalogPath,
+    JSON.stringify({
+      catalog: [
+        {
+          caseId: 'C01',
+          initialRepositoryDigest: initialDigest.replace(/^sha256:/u, ''),
+          fixturePath,
+          fixtureDigest: sha256Text(doc),
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const stateRoot = mkdtempSync(join(tmpdir(), `rtc-state-${tag}-`));
+  const spawn = createVolumeSpawn();
+  const rev = 'b'.repeat(40);
+  const resolved = resolveRealTierAssembly({
+    env: fixture.envOf({ catalog: { path: catalogPath } }),
+    spawn: spawn.spawn,
+    stateRoot,
+    revision: rev,
+  });
+  assert.equal(resolved.status, 'assembly-ready');
+  const assembly = resolved;
+  const pins = {
+    contractVersion: REAL_TIER_DELIVERY_CONTRACT,
+    revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(c => [c, rev])),
+  };
+  const identity = {
+    profileId: 'profile-copy',
+    profileDigest: assembly.metadata.profileDigest,
+    configDigest: `sha256:${sha256Text('cfg')}`,
+    pricingDigest: `sha256:${sha256Text('prc')}`,
+  };
+  return {
+    assembly,
+    pins,
+    identity,
+    cleanup: () => {
+      rmSync(fixture.OUTSIDE, { recursive: true, force: true });
+      rmSync(fixture.REPO, { recursive: true, force: true });
+      rmSync(fixture.BASE, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+      rmSync(stateRoot, { recursive: true, force: true });
+    },
+  };
+}
+
+test('AC7: core-owned working copy stays alive across approvalRequired pause, resumes cleanly, and is deleted on terminal return', async () => {
+  const ctx = await createWorkingCopyFixture('resume');
+  try {
+    let phase: 'pause' | 'complete' = 'pause';
+    const fakeRunGraph = (async task => {
+      if (phase === 'pause') {
+        return {
+          outcome: 'pending-approval',
+          state: { activeDecisionId: 'dec-plan', repositoryRevisionDigest: task.initialRevisionDigest } as unknown as TaskState,
+          reasons: ['pending-approval'],
+        } as unknown as UC03WorkflowResult;
+      }
+      return {
+        outcome: 'COMPLETED',
+        state: { repositoryRevisionDigest: task.initialRevisionDigest } as unknown as TaskState,
+        reasons: [],
+      } as unknown as UC03WorkflowResult;
+    }) as NonNullable<Parameters<typeof executeRealTierCase>[0]['runGraph']>;
+
+    const paused = await executeRealTierCase({
+      assembly: ctx.assembly,
+      caseId: 'C01',
+      pins: ctx.pins,
+      identity: ctx.identity,
+      decideApproval: async () => undefined,
+      runGraph: fakeRunGraph,
+    });
+    assert.equal(paused.status, 'task-bound', `paused failed with ${paused.reasonCode}`);
+    assert.equal(paused.approvalRequired, true);
+    assert.ok(paused.repositoryRoot);
+    assert.equal(existsSync(paused.repositoryRoot), true, 'core-owned copy must survive approvalRequired pause');
+    const coreCopyParent = dirname(paused.repositoryRoot);
+    assert.equal(existsSync(coreCopyParent), true);
+
+    phase = 'complete';
+    const resumed = await executeRealTierCase({
+      assembly: ctx.assembly,
+      caseId: 'C01',
+      pins: ctx.pins,
+      identity: ctx.identity,
+      decideApproval: async () => 'approve',
+      runGraph: fakeRunGraph,
+    });
+    assert.equal(resumed.status, 'task-bound', `resume should not fail with ${resumed.reasonCode}`);
+    assert.equal(resumed.repositoryRoot, paused.repositoryRoot);
+    assert.equal(resumed.result?.outcome, 'COMPLETED');
+    assert.equal(existsSync(paused.repositoryRoot), false, 'core-owned copy must be removed on terminal completion');
+    assert.equal(existsSync(coreCopyParent), false);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('AC7: abandonRealTierWorkingCopy releases a paused core-owned working copy exactly once', async () => {
+  const ctx = await createWorkingCopyFixture('abandon');
+  try {
+    const fakeRunGraph = (async task =>
+      ({
+        outcome: 'pending-approval',
+        state: { activeDecisionId: 'dec-plan', repositoryRevisionDigest: task.initialRevisionDigest } as unknown as TaskState,
+        reasons: ['pending-approval'],
+      }) as unknown as UC03WorkflowResult) as NonNullable<Parameters<typeof executeRealTierCase>[0]['runGraph']>;
+
+    const paused = await executeRealTierCase({
+      assembly: ctx.assembly,
+      caseId: 'C01',
+      pins: ctx.pins,
+      identity: ctx.identity,
+      decideApproval: async () => undefined,
+      runGraph: fakeRunGraph,
+    });
+    assert.equal(paused.status, 'task-bound', `abandon paused failed with ${paused.reasonCode}`);
+    assert.equal(paused.approvalRequired, true);
+    assert.ok(paused.repositoryRoot);
+    assert.equal(existsSync(paused.repositoryRoot), true);
+
+    assert.equal(abandonRealTierWorkingCopy(ctx.assembly, 'C01'), true);
+    assert.equal(existsSync(paused.repositoryRoot), false);
+    assert.equal(existsSync(dirname(paused.repositoryRoot)), false);
+    assert.equal(abandonRealTierWorkingCopy(ctx.assembly, 'C01'), false);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('AC7: caller-owned workingCopyRoot survives both pause and terminal completion until caller cleans up', async () => {
+  const ctx = await createWorkingCopyFixture('caller');
+  const callerRoot = mkdtempSync(join(tmpdir(), 'rtc-caller-root-'));
+  try {
+    let phase: 'pause' | 'complete' = 'pause';
+    const fakeRunGraph = (async task => {
+      if (phase === 'pause') {
+        return {
+          outcome: 'pending-approval',
+          state: { activeDecisionId: 'dec-plan', repositoryRevisionDigest: task.initialRevisionDigest } as unknown as TaskState,
+          reasons: ['pending-approval'],
+        } as unknown as UC03WorkflowResult;
+      }
+      return {
+        outcome: 'COMPLETED',
+        state: { repositoryRevisionDigest: task.initialRevisionDigest } as unknown as TaskState,
+        reasons: [],
+      } as unknown as UC03WorkflowResult;
+    }) as NonNullable<Parameters<typeof executeRealTierCase>[0]['runGraph']>;
+
+    const paused = await executeRealTierCase({
+      assembly: ctx.assembly,
+      caseId: 'C01',
+      pins: ctx.pins,
+      identity: ctx.identity,
+      workingCopyRoot: callerRoot,
+      decideApproval: async () => undefined,
+      runGraph: fakeRunGraph,
+    });
+    assert.equal(paused.status, 'task-bound', `caller paused failed with ${paused.reasonCode}`);
+    assert.equal(paused.approvalRequired, true);
+    assert.ok(paused.repositoryRoot);
+    assert.equal(existsSync(callerRoot), true);
+    assert.equal(existsSync(paused.repositoryRoot), true);
+
+    phase = 'complete';
+    const resumed = await executeRealTierCase({
+      assembly: ctx.assembly,
+      caseId: 'C01',
+      pins: ctx.pins,
+      identity: ctx.identity,
+      workingCopyRoot: callerRoot,
+      decideApproval: async () => 'approve',
+      runGraph: fakeRunGraph,
+    });
+    assert.equal(resumed.status, 'task-bound');
+    assert.equal(resumed.repositoryRoot, paused.repositoryRoot);
+    assert.equal(existsSync(callerRoot), true);
+    assert.equal(existsSync(resumed.repositoryRoot), true);
+  } finally {
+    rmSync(callerRoot, { recursive: true, force: true });
+    ctx.cleanup();
+  }
 });

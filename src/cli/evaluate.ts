@@ -4,6 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runEvaluation } from '../../eval/uc03/runner.ts';
+import defaultManifest from '../../eval/uc03/manifest.json' with { type: 'json' };
 import type { RealExecutionAdmission } from '../../eval/shared-types.ts';
 import { WORKFLOW_EVALUATION_VERSION, type WorkflowDriver, type WorkflowEvaluationOptions, type WorkflowEvaluationReport } from '../../eval/uc03/types.ts';
 import type { UC03HostReadiness } from '../runtime/uc03-host-bootstrap.ts';
@@ -24,13 +25,26 @@ import {
   type HostMetadata,
   type HostOperational,
   type HostProduction,
+  type HostProductionContext,
+  type HostProductionResult,
   type UC03HostReady,
 } from './evaluate-host.ts';
 
 // The host seam stays importable from here: `uc03.ts`, the console CLI and the CLI tests all bind it
 // through this module, so the extraction to `evaluate-host.ts` is invisible to them.
 export { loadHostConfiguration, prepareAssembly, resolveHostAssembly } from './evaluate-host.ts';
-export type { EvaluateCliResult, HostAssembly, HostAssemblyResolution, HostConfiguration, HostConfigurationLoad, HostMetadata, HostProduction, UC03HostReady } from './evaluate-host.ts';
+export type {
+  EvaluateCliResult,
+  HostAssembly,
+  HostAssemblyResolution,
+  HostConfiguration,
+  HostConfigurationLoad,
+  HostMetadata,
+  HostProduction,
+  HostProductionContext,
+  HostProductionResult,
+  UC03HostReady,
+} from './evaluate-host.ts';
 
 /** Host-supplied authority. Digests, adapter versions, model and driver never come from argv. */
 export interface EvaluateCliOptions {
@@ -245,13 +259,37 @@ export async function runEvaluateCli(args: readonly string[], options?: Evaluate
     if (!assembled.ok) return assembled.result;
     const production = assembled.production;
     if (production === undefined) return cliError(4, 'HOST_ROUTE_UNAVAILABLE', 'No production route is configured');
-    let driver: WorkflowDriver;
+    const selected = new Set(parsed.cases ?? defaultManifest.cases.map(item => item.caseId));
+    const caseIds = defaultManifest.cases.filter(item => selected.has(item.caseId)).map(item => item.caseId);
+    const cfg = assembled.configuration;
+    const context: HostProductionContext = {
+      mode: parsed.mode,
+      binding: {
+        profileDigest: cfg.profileDigest,
+        configDigest: cfg.configDigest,
+        pricingDigest: cfg.pricingDigest,
+        adapterVersions: cfg.adapterVersions,
+        requestedModel: cfg.requestedModel,
+      },
+      caseIds,
+      pins: cfg.pins,
+    };
+    let produced: HostProductionResult;
     try {
-      driver = production(assembled.readiness);
+      produced = production(assembled.readiness, context);
     } catch {
       return cliError(4, 'HOST_ROUTE_UNAVAILABLE', 'No production route is configured');
     }
-    const bound: EvaluateCliOptions = { ...options, ...assembled.configuration, driver };
+    const isEnvelope = (value: HostProductionResult): value is Exclude<HostProductionResult, WorkflowDriver> =>
+      typeof value === 'object' && value !== null && 'driver' in value && !('executeCase' in value);
+    const driver = isEnvelope(produced) ? produced.driver : produced;
+    const realAdmission = isEnvelope(produced) ? (options?.realAdmission ?? produced.realAdmission) : options?.realAdmission;
+    const bound: EvaluateCliOptions = {
+      ...options,
+      ...cfg,
+      driver,
+      ...(realAdmission === undefined ? {} : { realAdmission }),
+    };
     const report = await run(parsed, bound);
     return finish(parsed, report);
   }
