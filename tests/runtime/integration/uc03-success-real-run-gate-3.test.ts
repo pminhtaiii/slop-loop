@@ -244,6 +244,7 @@ function graphDouble(): NonNullable<Parameters<typeof runCaseStage>[1]['runGraph
         writeFileSync(
           claimFile,
           JSON.stringify({
+            status: 'settled',
             context: {
               subjectKind: 'repository-action',
               commandView: validView,
@@ -492,6 +493,7 @@ function graphDoubleWithTwoPauses(counters: { resumed: number }): NonNullable<Pa
       writeFileSync(
         claimFile,
         JSON.stringify({
+          status: 'settled',
           context: {
             subjectKind: 'repository-action',
             commandView: validView,
