@@ -343,6 +343,7 @@ test('copied, stale, and foreign admission and observation receipts are refused 
     repository: undefined,
     host: { grader, finalTree: { freezeFinalTree: snap, recheckCurrentFinalTree: snap } },
   });
+  assert.notEqual(workflowEvidenceDecision('C02', 'real', checkedObs), undefined);
   assert.equal(workflowEvidenceDecision('C02', 'real', { ...checkedObs }), undefined);
   assert.equal(workflowEvidenceDecision('C02', 'real', Object.assign(checkedObs, { returnedModel: 'other/model' })), undefined);
 });
@@ -406,7 +407,16 @@ test('adjacent shared registration and v2 selection accept slash adapterVersion/
   assert.equal(report.results[0]?.adapterVersion, VER);
 
   assert.throws(() =>
-    registerEvaluation({ contractVersion: 'shared-evaluation-v1', ucId: 'UC-08', datasetId: 'bad/id', datasetVersion: '1', adapterVersion: VER, graderVersion: 'g1', provenance: 'real', cases: [] }),
+    registerEvaluation({
+      contractVersion: 'shared-evaluation-v1',
+      ucId: 'UC-08',
+      datasetId: 'bad/id',
+      datasetVersion: '1',
+      adapterVersion: VER,
+      graderVersion: 'g1',
+      provenance: 'real',
+      cases: reg.cases,
+    }),
   );
   assert.throws(() =>
     registerEvaluation({
