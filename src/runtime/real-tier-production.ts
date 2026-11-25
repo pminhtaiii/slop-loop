@@ -7,7 +7,7 @@
  * T046 operator decision source, and attaches snapshot-bound grades via `produceWorkflowEvidence`.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,7 +27,7 @@ import { boundedText } from '../uc03/report/sanitize.ts';
 import { gitHead } from './git-head.ts';
 import type { RealTierAssembly, RealTierDependencies, RealTierResolution } from './real-tier-assembly.ts';
 import { PINS, resolvePinnedGrader, type GraderResolution } from './real-tier-case-grade.ts';
-import { executeRealTierCase, type RealTierCaseExecution } from './real-tier-case-run.ts';
+import { executeRealTierCase, type AttemptIdentity, type RealTierCaseExecution } from './real-tier-case-run.ts';
 import { createRealTierGraderCapability } from './real-tier-grader.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import type { UC03HostInputs } from './uc03-host-bootstrap.ts';
@@ -67,6 +67,17 @@ function expectedBindingsOf(assembly: RealTierAssembly) {
   };
 }
 
+function matchesDigests(source: { readonly profileDigest?: unknown; readonly configDigest?: unknown; readonly pricingDigest?: unknown }, expected: ReturnType<typeof expectedBindingsOf>): boolean {
+  return (
+    typeof source.profileDigest === 'string' &&
+    sameDigest(source.profileDigest, expected.profileDigest) &&
+    typeof source.configDigest === 'string' &&
+    sameDigest(source.configDigest, expected.configDigest) &&
+    typeof source.pricingDigest === 'string' &&
+    sameDigest(source.pricingDigest, expected.pricingDigest)
+  );
+}
+
 function canIssueAdmission(
   assembly: RealTierAssembly,
   ready: UC03HostReady,
@@ -74,23 +85,20 @@ function canIssueAdmission(
   expected: ReturnType<typeof expectedBindingsOf>,
 ): context is HostProductionContext {
   if (context === undefined || context.mode !== 'real' || context.caseIds.length === 0 || ready.status !== 'ready') return false;
-  if (
-    !sameDigest(ready.identity['profileDigest'], expected.profileDigest) ||
-    !sameDigest(ready.identity['configDigest'], expected.configDigest) ||
-    !sameDigest(ready.identity['pricingDigest'], expected.pricingDigest)
-  ) {
-    return false;
-  }
-  if (
-    !sameDigest(context.binding.profileDigest, expected.profileDigest) ||
-    !sameDigest(context.binding.configDigest, expected.configDigest) ||
-    !sameDigest(context.binding.pricingDigest, expected.pricingDigest) ||
-    context.binding.requestedModel !== expected.model
-  ) {
+  if (!matchesDigests(ready.identity, expected) || !matchesDigests(context.binding, expected) || context.binding.requestedModel !== expected.model) {
     return false;
   }
   if (context.pins.contractVersion !== REAL_TIER_DELIVERY_CONTRACT) return false;
-  return UC03_PRODUCTION_COMPONENTS_V02.every(component => context.pins.revisions[component] === assembly.revision);
+  return UC03_PRODUCTION_COMPONENTS_V02.every(c => context.pins.revisions[c] === assembly.revision);
+}
+
+function coreArtifacts(assembly: RealTierAssembly, candidateSha: string, ownerRev: string, returnedModel: string | null): readonly string[] {
+  return [
+    safeLine(`candidate:${candidateSha};owner-rev:${ownerRev}`, 256),
+    safeLine(`profile:${assembly.metadata.profileDigest}`, 256),
+    safeLine(`image:${assembly.metadata.imageId}`, 256),
+    safeLine(`model:req=${assembly.metadata.model};ret=${returnedModel ?? 'none'}`, 256),
+  ];
 }
 
 function blockedObservation(spec: EvaluationCaseSpec, assembly: RealTierAssembly, candidateSha: string, ownerRevision: string, graderDigest: string | null, reason: string): WorkflowObservation {
@@ -108,13 +116,7 @@ function blockedObservation(spec: EvaluationCaseSpec, assembly: RealTierAssembly
     effects: 'none',
     usage: 'unavailable',
     diagnostic: safeLine(reason, 512),
-    artifacts: [
-      safeLine(`candidate:${candidateSha};owner-rev:${ownerRevision}`, 256),
-      safeLine(`profile:${assembly.metadata.profileDigest}`, 256),
-      safeLine(`image:${assembly.metadata.imageId}`, 256),
-      safeLine(`model:req=${assembly.metadata.model};ret=none`, 256),
-      'usage:tokens=unknown;cost=unknown;costLabel=unknown',
-    ],
+    artifacts: [...coreArtifacts(assembly, candidateSha, ownerRevision, null), 'usage:tokens=unknown;cost=unknown;costLabel=unknown'],
     limitations: [safeReason],
   };
 }
@@ -125,6 +127,43 @@ function returnedModelOf(assembly: RealTierAssembly, execution: RealTierCaseExec
   return port.options.transport.identityForRun(execution.identity.taskId, execution.identity.runId)?.returned ?? null;
 }
 
+interface PausedCaseContext {
+  readonly caseAssembly: RealTierAssembly;
+  readonly stateRoot: string;
+  readonly workingCopyRoot: string;
+  readonly graderRes: Extract<GraderResolution, { readonly status: 'ready' }>;
+  readonly graderDigest: string;
+  readonly expectedOutcome: EvaluationCaseSpec['expectedOutcome'];
+  readonly identity: AttemptIdentity;
+  readonly repositoryRoot: string;
+}
+
+const driverDisposers = new WeakMap<WorkflowDriver, (caseId?: string) => boolean>();
+
+/** Releases retained paused working copies scoped to a production workflow driver. */
+export function abandonRealTierProductionCase(driver: WorkflowDriver, caseId?: string): boolean {
+  return driverDisposers.get(driver)?.(caseId) ?? false;
+}
+
+function matchesAdmittedAssembly(
+  candidate: RealTierAssembly,
+  initialRevision: string,
+  expected: ReturnType<typeof expectedBindingsOf>,
+  pins: UC03HostInputs['pins'],
+  paused?: PausedCaseContext,
+): boolean {
+  const b = expectedBindingsOf(candidate);
+  if (!matchesDigests(b, expected) || b.model !== expected.model || candidate.revision !== initialRevision || UC03_PRODUCTION_COMPONENTS_V02.some(c => pins.revisions[c] !== candidate.revision)) {
+    return false;
+  }
+  if (paused === undefined) return true;
+  const p = paused.caseAssembly;
+  return candidate.metadata.imageId === p.metadata.imageId && candidate.metadata.endpointDigest === p.metadata.endpointDigest && candidate.profile.catalog.path === p.profile.catalog.path;
+}
+
+const PAUSED_MSG = 'Task remains paused awaiting explicit operator approval.';
+const REJECTED_MSG = 'Operator rejected approval; explicit direction or termination is required before continuing.';
+
 function buildObservation(
   spec: EvaluationCaseSpec,
   assembly: RealTierAssembly,
@@ -132,31 +171,23 @@ function buildObservation(
   candidateSha: string,
   pins: UC03HostInputs['pins'],
   graderDigest: string | null,
+  rejectedByOperator: boolean,
 ): WorkflowObservation {
-  const task = execution.task;
-  const result = execution.result;
+  const { task, result, evidence, commandAdmission } = execution;
   const finalState = result?.executionEvidence?.finalState ?? result?.state ?? null;
   const finalReport = result?.finalReport;
   const rawReturned = returnedModelOf(assembly, execution);
-  const ownerRevision = execution.evidence?.ownerRevisions?.['statePort'] ?? pins.revisions['statePort'] ?? assembly.revision;
-  const diffDigest = execution.evidence?.diffDigest && execution.evidence.diffDigest.length > 0 ? execution.evidence.diffDigest : 'none';
-  const reportDigest = execution.evidence?.reportDigest && execution.evidence.reportDigest.length > 0 ? execution.evidence.reportDigest : 'none';
-  const cmdRef = execution.commandAdmission?.commandAdmissionRef ?? 'none';
-  const cmdViewDigest = execution.commandAdmission?.commandViewDigest ?? 'none';
-  const usage = execution.evidence?.usage;
-  const tokensText = usage ? String(usage.tokens) : 'unknown';
-  const costText = usage ? String(usage.cost) : 'unknown';
-  const costLabel = usage ? usage.costLabel : 'unknown';
-  const workflowOutcome = execution.approvalRequired === true ? 'waiting-approval' : result ? lifecycleOf(result.outcome) : 'not-observed';
+  const ownerRev = evidence?.ownerRevisions?.['statePort'] ?? pins.revisions['statePort'] ?? assembly.revision;
+  const u = evidence?.usage;
+  const pausedForApproval = execution.approvalRequired === true;
+  const rejectedApproval = rejectedByOperator || (!pausedForApproval && result?.outcome === 'pending-approval');
+  const workflowOutcome = pausedForApproval ? 'waiting-approval' : result ? lifecycleOf(result.outcome) : 'not-observed';
   const specificReason = result?.reasons.find(r => r !== 'Incomplete verification or review evidence for completion') ?? result?.reasons[0];
-  const diagnosticText =
-    execution.approvalRequired === true ? 'Operator decision was not completed; task remains paused.' : result?.outcome === 'INCOMPLETE' ? (specificReason ?? 'Task did not complete.') : null;
+  const diagnostic = pausedForApproval ? PAUSED_MSG : rejectedApproval ? REJECTED_MSG : result?.outcome === 'INCOMPLETE' ? (specificReason ?? 'Task did not complete.') : null;
   const limitations: string[] = [];
-  if (execution.approvalRequired === true) {
-    limitations.push('Operator decision was not completed; task remains paused.');
-  } else if (finalReport === undefined) {
-    limitations.push('No authoritative final report was produced.');
-  }
+  if (pausedForApproval) limitations.push(PAUSED_MSG);
+  else if (rejectedApproval) limitations.push('Operator rejected approval; explicit direction or termination is required and no approval or replay occurred.');
+  else if (finalReport === undefined) limitations.push('No authoritative final report was produced.');
   return {
     repositoryId: safeIdentifier(finalState?.repositoryId ?? task?.repositoryId),
     taskId: safeIdentifier(execution.identity?.taskId ?? finalState?.taskId),
@@ -169,24 +200,18 @@ function buildObservation(
     blocked: null,
     effects: finalState !== null ? 'observed' : 'uncertain',
     usage: finalReport?.usage !== undefined ? 'observed' : finalState !== null ? 'uncertain' : 'unavailable',
-    diagnostic: diagnosticText === null ? null : safeLine(diagnosticText, 512),
+    diagnostic: diagnostic === null ? null : safeLine(diagnostic, 512),
     artifacts: [
-      safeLine(`candidate:${candidateSha};owner-rev:${ownerRevision}`, 256),
-      safeLine(`profile:${assembly.metadata.profileDigest}`, 256),
-      safeLine(`image:${assembly.metadata.imageId}`, 256),
-      safeLine(`model:req=${assembly.metadata.model};ret=${rawReturned ?? 'unknown'}`, 256),
-      safeLine(`evidence:diff=${diffDigest};report=${reportDigest}`, 256),
-      safeLine(`evidence-cmd:${cmdRef};view=${cmdViewDigest}`, 256),
-      safeLine(`usage:tokens=${tokensText};cost=${costText};costLabel=${costLabel}`, 256),
+      ...coreArtifacts(assembly, candidateSha, ownerRev, rawReturned ?? 'unknown'),
+      safeLine(`evidence:diff=${evidence?.diffDigest || 'none'};report=${evidence?.reportDigest || 'none'}`, 256),
+      safeLine(`evidence-cmd:${commandAdmission?.commandAdmissionRef ?? 'none'};view=${commandAdmission?.commandViewDigest ?? 'none'}`, 256),
+      safeLine(`usage:tokens=${u ? String(u.tokens) : 'unknown'};cost=${u ? String(u.cost) : 'unknown'};costLabel=${u ? u.costLabel : 'unknown'}`, 256),
     ],
     limitations: limitations.map(item => safeLine(item, 256)),
   };
 }
 
-/**
- * Builds the `HostProduction` route for `real-tier-assembly.ts`.
- * Passes `resolveAssembly` as a callback to avoid circular module initialization.
- */
+/** Builds the `HostProduction` route for `real-tier-assembly.ts`, receiving `resolveAssembly` to avoid circular imports. */
 export function createRealTierProductionRoute(
   initialAssembly: RealTierAssembly,
   dependencies: RealTierDependencies,
@@ -201,56 +226,81 @@ export function createRealTierProductionRoute(
     const realAdmission = admissionOk ? issueRealExecutionAdmission({ ...context.binding, caseIds: context.caseIds }) : undefined;
     const pins: UC03HostInputs['pins'] = context?.pins ?? {
       contractVersion: REAL_TIER_DELIVERY_CONTRACT,
-      revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(component => [component, initialAssembly.revision])),
+      revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(c => [c, initialAssembly.revision])),
     };
     const identity = ready.identity;
-    let cachedIo: OperatorIo | undefined;
-    let cachedDecide: ((caseId: string, target: DecisionTarget) => Promise<'approve' | 'reject' | undefined>) | undefined;
-    const decideApproval = (caseId: string, target: DecisionTarget) => {
-      cachedIo ??= dependencies.operatorIo ?? stdioOperator();
-      cachedDecide ??= createOperatorDecisionSource(cachedIo);
-      return cachedDecide(caseId, target);
-    };
     const runNonce = randomUUID().slice(0, 12);
+    let attemptSeq = 0;
+    const pausedCases = new Map<string, PausedCaseContext>();
+
+    const dropPaused = (id: string, root: string): void => {
+      pausedCases.delete(id);
+      rmSync(root, { recursive: true, force: true });
+    };
 
     const driver: WorkflowDriver = {
       async executeCase(spec: EvaluationCaseSpec, caseContext: WorkflowCaseContext): Promise<WorkflowObservation> {
         const ownerFallback = pins.revisions['statePort'] ?? initialAssembly.revision;
-        if (
-          caseContext.mode !== 'real' ||
-          !sameDigest(caseContext.profileDigest, expected.profileDigest) ||
-          !sameDigest(caseContext.configDigest, expected.configDigest) ||
-          !sameDigest(caseContext.pricingDigest, expected.pricingDigest) ||
-          caseContext.requestedModel !== expected.model
-        ) {
-          return blockedObservation(spec, initialAssembly, candidateSha, ownerFallback, null, 'Real-tier production route requires real mode and matching host bindings.');
+        const fail = (assembly: RealTierAssembly, graderDigest: string | null, reason: string) => blockedObservation(spec, assembly, candidateSha, ownerFallback, graderDigest, reason);
+
+        if (caseContext.mode !== 'real' || !matchesDigests(caseContext, expected) || caseContext.requestedModel !== expected.model) {
+          return fail(initialAssembly, null, 'Real-tier production route requires real mode and matching host bindings.');
         }
 
-        // An unpinned case has no grader, so a real run could only end ungraded: refuse before any spend.
-        if (PINS[spec.caseId] === undefined) {
-          return blockedObservation(spec, initialAssembly, candidateSha, ownerFallback, null, 'No pinned grader exists for this case.');
+        // An unpinned case has no grader: refuse before any spend.
+        if (PINS[spec.caseId] === undefined) return fail(initialAssembly, null, 'No pinned grader exists for this case.');
+
+        const paused = pausedCases.get(spec.caseId);
+        if (paused !== undefined && spec.expectedOutcome !== paused.expectedOutcome) {
+          return fail(paused.caseAssembly, paused.graderDigest, 'Case specification does not match the paused run.');
         }
-        const caseAssemblyRes = resolveAssembly({ ...dependencies, stateRoot: join(baseStateRoot, `run-${runNonce}-${spec.caseId}`) });
-        if (caseAssemblyRes.status !== 'assembly-ready') {
-          return blockedObservation(spec, initialAssembly, candidateSha, ownerFallback, null, `Case assembly unavailable (${caseAssemblyRes.reasonCode}).`);
+
+        const stateRoot = paused ? paused.stateRoot : join(baseStateRoot, `run-${runNonce}-${++attemptSeq}-${spec.caseId}`);
+        const fresh = resolveAssembly({ ...dependencies, stateRoot });
+        if (fresh.status !== 'assembly-ready') return fail(initialAssembly, null, `Case assembly unavailable (${fresh.reasonCode}).`);
+        if (!matchesAdmittedAssembly(fresh, initialAssembly.revision, expected, pins, paused)) {
+          return fail(initialAssembly, null, 'Case assembly does not match the admitted bindings.');
         }
-        const caseAssembly = caseAssemblyRes;
+
         const capability = dependencies.graderCapability ?? createRealTierGraderCapability({ spawn: dependencies.spawn ?? structuredSpawn });
-        const graderRes: GraderResolution = resolvePinnedGrader(caseAssembly, spec.caseId, capability);
-        if (graderRes.status !== 'ready') {
-          const reasonCode = graderRes.status === 'unavailable' ? graderRes.reasonCode : 'grader-unavailable';
-          return blockedObservation(spec, caseAssembly, candidateSha, ownerFallback, null, `Grader prerequisite unavailable (${reasonCode}).`);
+        const grader: GraderResolution = resolvePinnedGrader(fresh, spec.caseId, capability);
+        if (grader.status !== 'ready') {
+          return fail(fresh, null, `Grader prerequisite unavailable (${grader.status === 'unavailable' ? grader.reasonCode : 'grader-unavailable'}).`);
         }
-        if (!graderRes.hasCriterion) {
-          return blockedObservation(spec, caseAssembly, candidateSha, ownerFallback, graderRes.graderDigest, 'Grader criterion is missing for pinned case.');
+        if (!grader.hasCriterion) return fail(fresh, grader.graderDigest, 'Grader criterion is missing for pinned case.');
+        if (dependencies.graderCapability === undefined && PINS[spec.caseId] === 'repair-success' && !grader.hasValidPayload) {
+          return fail(fresh, grader.graderDigest, 'Grader payload is missing or invalid for pinned case.');
         }
-        if (dependencies.graderCapability === undefined && PINS[spec.caseId] === 'repair-success' && !graderRes.hasValidPayload) {
-          return blockedObservation(spec, caseAssembly, candidateSha, ownerFallback, graderRes.graderDigest, 'Grader payload is missing or invalid for pinned case.');
+        if (paused !== undefined && grader.graderDigest !== paused.graderDigest) {
+          return fail(paused.caseAssembly, grader.graderDigest, 'Grader binding does not match the paused run.');
         }
 
-        const graderDigest = graderRes.graderDigest;
-        // Caller-owned copy stays alive until `produceWorkflowEvidence` finishes freezing & rechecking.
-        const workingCopyRoot = mkdtempSync(join(tmpdir(), `uc03-real-prod-copy-${process.pid}-`));
+        if (paused !== undefined) {
+          if (!existsSync(paused.workingCopyRoot) || !existsSync(paused.repositoryRoot)) {
+            dropPaused(spec.caseId, paused.workingCopyRoot);
+            return fail(paused.caseAssembly, paused.graderDigest, 'Paused working copy is unavailable for continuation.');
+          }
+          const persisted = await paused.caseAssembly.owners.components.statePort.loadTask(paused.identity.taskId);
+          if (persisted === null || persisted.runId !== paused.identity.runId || persisted.workspaceId !== paused.identity.workspaceId) {
+            return fail(paused.caseAssembly, paused.graderDigest, 'Paused task state does not match the retained run identity.');
+          }
+        }
+
+        const caseAssembly = paused?.caseAssembly ?? fresh;
+        const graderRes = paused?.graderRes ?? grader;
+        const graderDigest = paused?.graderDigest ?? grader.graderDigest;
+        const workingCopyRoot = paused?.workingCopyRoot ?? mkdtempSync(join(tmpdir(), `uc03-real-prod-copy-${process.pid}-`));
+        let routeOwnedIo: OperatorIo | undefined;
+        let caseDecide: ((caseId: string, target: DecisionTarget) => Promise<'approve' | 'reject' | undefined>) | undefined;
+        let rejectedOp = false;
+        const decideApproval = async (caseId: string, target: DecisionTarget) => {
+          const io = dependencies.operatorIo ?? (routeOwnedIo ??= stdioOperator());
+          caseDecide ??= createOperatorDecisionSource(io);
+          const decision = await caseDecide(caseId, target);
+          if (decision === 'reject') rejectedOp = true;
+          return decision;
+        };
+        let retainCopy = false;
         try {
           const execution = await executeRealTierCase({
             assembly: caseAssembly,
@@ -264,18 +314,28 @@ export function createRealTierProductionRoute(
             binding: { model: caseAssembly.metadata.model },
           });
           if (execution.status !== 'task-bound') {
-            return blockedObservation(spec, caseAssembly, candidateSha, ownerFallback, graderDigest, `Task binding unavailable (${execution.reasonCode ?? 'binding-failed'}).`);
+            return fail(caseAssembly, graderDigest, `Task binding unavailable (${execution.reasonCode ?? 'binding-failed'}).`);
           }
 
-          const observation = buildObservation(spec, caseAssembly, execution, candidateSha, pins, graderDigest);
-          if (
-            execution.approvalRequired !== true &&
-            execution.result?.outcome !== 'pending-approval' &&
-            execution.task !== undefined &&
-            execution.ports !== undefined &&
-            execution.result !== undefined &&
-            execution.repositoryRoot !== undefined
-          ) {
+          const observation = buildObservation(spec, caseAssembly, execution, candidateSha, pins, graderDigest, rejectedOp);
+          const pausedOut = execution.approvalRequired === true;
+          const rejected = rejectedOp || (!pausedOut && execution.result?.outcome === 'pending-approval');
+          if (pausedOut && execution.identity && execution.repositoryRoot) {
+            retainCopy = true;
+            pausedCases.set(spec.caseId, {
+              caseAssembly,
+              stateRoot,
+              workingCopyRoot,
+              graderRes,
+              graderDigest,
+              expectedOutcome: spec.expectedOutcome,
+              identity: execution.identity,
+              repositoryRoot: execution.repositoryRoot,
+            });
+            return observation;
+          }
+
+          if (!rejected && execution.task && execution.ports && execution.result && execution.repositoryRoot) {
             await produceWorkflowEvidence({
               caseId: spec.caseId,
               mode: 'real',
@@ -290,10 +350,27 @@ export function createRealTierProductionRoute(
           }
           return observation;
         } finally {
-          rmSync(workingCopyRoot, { recursive: true, force: true });
+          try {
+            routeOwnedIo?.close?.();
+          } finally {
+            if (!retainCopy) dropPaused(spec.caseId, workingCopyRoot);
+          }
         }
       },
     };
+
+    driverDisposers.set(driver, (targetCaseId?: string) => {
+      if (targetCaseId !== undefined) {
+        const entry = pausedCases.get(targetCaseId);
+        if (entry === undefined) return false;
+        dropPaused(targetCaseId, entry.workingCopyRoot);
+        return true;
+      }
+      if (pausedCases.size === 0) return false;
+      for (const entry of pausedCases.values()) rmSync(entry.workingCopyRoot, { recursive: true, force: true });
+      pausedCases.clear();
+      return true;
+    });
 
     return realAdmission === undefined ? { driver } : { driver, realAdmission };
   };

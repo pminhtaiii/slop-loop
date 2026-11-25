@@ -272,3 +272,43 @@ test('AC3: forged, copied, stale, withheld, and foreign real-execution admission
     s.cleanup();
   }
 });
+
+test('AC1/AC5: C01 hidden grading succeeds under a non-1000 POSIX host uid without weakening admission checks', async () => {
+  const uidDesc = Object.getOwnPropertyDescriptor(process, 'getuid');
+  const gidDesc = Object.getOwnPropertyDescriptor(process, 'getgid');
+  Object.defineProperty(process, 'getuid', { value: () => 1001, configurable: true, writable: true });
+  Object.defineProperty(process, 'getgid', { value: () => 127, configurable: true, writable: true });
+  try {
+    const s = await setupProductionScenario({ tag: 'posix-uid-ok', fetchMode: 'repair', decisions: ['approve', 'approve'] });
+    try {
+      const cliResult = await runEvaluateCli(['run', '--host', s.hostFile, '--mode', 'real', '--cases', 'C01']);
+      assert.equal(cliResult.exitCode, 0, cliResult.output);
+      const c01 = parseCliReport(cliResult.output).cases[0] as WorkflowCaseResult;
+      assert.equal(c01.workflowOutcome, 'COMPLETED');
+      assert.equal(c01.grade, 'pass');
+      assert.equal(c01.gradeReason, 'criteria-satisfied');
+      assert.equal(s.spawnSpy.hiddenChecks.length, 1);
+      assert.ok(s.spawnSpy.hiddenChecks[0]?.args.includes('--user=1001:127'));
+    } finally {
+      s.cleanup();
+    }
+
+    const mismatched = await setupProductionScenario({ tag: 'posix-uid-mismatch', fetchMode: 'repair', decisions: ['approve', 'approve'], imageUser: '1000:1000' });
+    try {
+      const cliResult = await runEvaluateCli(['run', '--host', mismatched.hostFile, '--mode', 'real', '--cases', 'C01']);
+      assert.equal(cliResult.exitCode, 1, cliResult.output);
+      const c01 = parseCliReport(cliResult.output).cases[0] as WorkflowCaseResult;
+      assert.equal(c01.workflowOutcome, 'COMPLETED');
+      assert.equal(c01.grade, 'not-run');
+      assert.equal(c01.gradeReason, 'private-grading');
+      assert.equal(mismatched.spawnSpy.hiddenChecks.length, 0);
+    } finally {
+      mismatched.cleanup();
+    }
+  } finally {
+    if (uidDesc !== undefined) Object.defineProperty(process, 'getuid', uidDesc);
+    else delete (process as { getuid?: (() => number) | undefined }).getuid;
+    if (gidDesc !== undefined) Object.defineProperty(process, 'getgid', gidDesc);
+    else delete (process as { getgid?: (() => number) | undefined }).getgid;
+  }
+});

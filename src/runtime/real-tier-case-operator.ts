@@ -22,6 +22,8 @@ export interface OperatorIo {
   readonly write: (line: string) => void;
   /** Reads one line; `undefined` at end of input. */
   readonly read: () => Promise<string | undefined>;
+  /** Closes route-owned reader resources when no more reads will occur. */
+  readonly close?: (() => void) | undefined;
 }
 
 /** The bound task a decision belongs to, plus its own console port. */
@@ -36,15 +38,17 @@ export function stdioOperator(): OperatorIo {
   const lines: string[] = [];
   const waiting: ((line: string | undefined) => void)[] = [];
   let closed = false;
+  const finish = () => {
+    closed = true;
+    for (const resolve of waiting.splice(0)) resolve(undefined);
+  };
   rl.on('line', line => {
+    if (closed) return;
     const resolve = waiting.shift();
     if (resolve) resolve(line);
     else lines.push(line);
   });
-  rl.on('close', () => {
-    closed = true;
-    for (const resolve of waiting.splice(0)) resolve(undefined);
-  });
+  rl.on('close', finish);
   return {
     write: line => process.stdout.write(`${line}\n`),
     read: async () => {
@@ -52,6 +56,11 @@ export function stdioOperator(): OperatorIo {
       if (ready !== undefined) return ready;
       if (closed) return undefined;
       return new Promise(resolve => waiting.push(resolve));
+    },
+    close: () => {
+      lines.length = 0;
+      finish();
+      rl.close();
     },
   };
 }

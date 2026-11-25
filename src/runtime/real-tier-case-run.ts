@@ -247,7 +247,21 @@ async function executeOnBound(
 
   let result = await runGraph(binding.task, binding.ports, config);
   let approval: RealTierCaseEvidence['approval'];
+  let rejected = false;
   const maxPauses = options.maxApprovalPauses ?? MAX_APPROVAL_PAUSES;
+
+  const pausedExecution = (): RealTierCaseExecution => ({
+    caseId,
+    attempt,
+    status: 'task-bound',
+    identity: { taskId: binding.ids.taskId, runId: binding.ids.runId, workspaceId: binding.ids.workspaceId },
+    task: binding.task,
+    repositoryRoot: binding.repositoryRoot,
+    ports: { repositoryPort: binding.ports.repositoryPort, statePort: binding.ports.statePort },
+    result,
+    approvalRequired: true,
+    accounting: accountingOf(assembly, binding.ids),
+  });
 
   for (let pause = 0; pause < maxPauses && result.outcome === 'pending-approval' && !options.clarificationHold?.(caseId); pause++) {
     const decision = await options.decideApproval?.(caseId, {
@@ -255,22 +269,18 @@ async function executeOnBound(
       console: ownersOf(assembly, binding.ids, binding.task.repositoryId).console,
     });
     if (decision === undefined) {
-      return {
-        caseId,
-        attempt,
-        status: 'task-bound',
-        identity: { taskId: binding.ids.taskId, runId: binding.ids.runId, workspaceId: binding.ids.workspaceId },
-        task: binding.task,
-        repositoryRoot: binding.repositoryRoot,
-        ports: { repositoryPort: binding.ports.repositoryPort, statePort: binding.ports.statePort },
-        result,
-        approvalRequired: true,
-        accounting: accountingOf(assembly, binding.ids),
-      };
+      return pausedExecution();
     }
     approval ??= { decisionId: result.state?.activeDecisionId ?? '', decided: decision };
-    if (decision === 'reject') break;
+    if (decision === 'reject') {
+      rejected = true;
+      break;
+    }
     result = await runGraph(binding.task, binding.ports, config, result.state ?? undefined);
+  }
+
+  if (result.outcome === 'pending-approval' && !rejected) {
+    return pausedExecution();
   }
 
   const accounting = accountingOf(assembly, binding.ids);

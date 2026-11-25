@@ -67,10 +67,54 @@ const GRADER_CRITERIA = {
   ],
 };
 
-interface FetchRecord {
+export interface FetchRecord {
   readonly role: string;
   readonly purpose: string;
   readonly bodyText: string;
+}
+
+export interface ProductionScenarioOptions {
+  readonly tag: string;
+  readonly fetchMode?: 'repair' | 'clarify';
+  readonly dockerMode?: 'ok' | 'down' | 'mismatch';
+  readonly decisions?: readonly ('approve' | 'reject' | undefined)[];
+  readonly envOverrides?: Record<string, string | undefined>;
+  readonly omitCatalogC01?: boolean;
+  readonly graderMode?: 'valid' | 'bad-digest' | 'missing-file' | 'null-payload';
+  readonly imageUser?: string;
+  readonly hostPatch?: Record<string, unknown>;
+}
+
+export interface ProductionScenarioBinding {
+  readonly profileDigest: string;
+  readonly configDigest: string;
+  readonly pricingDigest: string;
+  readonly adapterVersions: readonly ['uc03-adapter-1'];
+  readonly requestedModel: string;
+}
+
+export interface ProductionScenario {
+  readonly hostFile: string;
+  readonly binding: ProductionScenarioBinding;
+  readonly c01InitialDigest: string;
+  readonly c01GraderDigest: string;
+  readonly fetchSpy: { readonly fetch: typeof globalThis.fetch; readonly requests: readonly FetchRecord[] };
+  readonly spawnSpy: {
+    readonly spawn: StructuredSpawn;
+    readonly hiddenChecks: readonly { readonly args: readonly string[] }[];
+    readonly spawnCalls: readonly { readonly command: string; readonly args: readonly string[] }[];
+  };
+  readonly operatorPrompts: readonly string[];
+  readonly getOperatorReads: () => number;
+  readonly cleanup: () => void;
+}
+
+function hostImageUser(): string {
+  if (typeof process.getuid !== 'function') return '1000:1000';
+  const uid = process.getuid();
+  if (uid === 0) return '1000:1000';
+  const gid = typeof process.getgid === 'function' ? process.getgid() : uid;
+  return `${uid}:${gid > 0 ? gid : uid}`;
 }
 
 interface HarnessState {
@@ -250,16 +294,7 @@ export function createHostAssembly() {
   return path;
 }
 
-export async function setupProductionScenario(opts: {
-  tag: string;
-  fetchMode?: 'repair' | 'clarify';
-  dockerMode?: 'ok' | 'down' | 'mismatch';
-  decisions?: readonly ('approve' | 'reject' | undefined)[];
-  envOverrides?: Record<string, string | undefined>;
-  omitCatalogC01?: boolean;
-  graderMode?: 'valid' | 'bad-digest' | 'missing-file' | 'null-payload';
-  hostPatch?: Record<string, unknown>;
-}) {
+export async function setupProductionScenario(opts: ProductionScenarioOptions): Promise<ProductionScenario> {
   const fixture = createScanFixture(`t011-${opts.tag}-`, `t011-key-${opts.tag}`);
   const root = mkdtempSync(join(tmpdir(), `t011-root-${opts.tag}-`));
   const stateRoot = mkdtempSync(join(tmpdir(), `t011-state-${opts.tag}-`));
@@ -324,7 +359,16 @@ export async function setupProductionScenario(opts: {
   const catalogPath = join(root, 'catalog.json');
   writeFileSync(catalogPath, JSON.stringify({ catalog: catalogEntries }), 'utf8');
 
-  const baseEnv = fixture.envOf({ catalog: { path: catalogPath } });
+  const baseEnv = fixture.envOf({
+    catalog: { path: catalogPath },
+    image: {
+      label: 'uc03-pytest:real-tier',
+      imageId: `sha256:${sha256Text('image')}`,
+      base: `python:3.12-alpine@sha256:${sha256Text('base')}`,
+      platform: 'linux/amd64',
+      user: opts.imageUser ?? hostImageUser(),
+    },
+  });
   const env = { ...baseEnv, ...(opts.envOverrides ?? {}) };
 
   const fetchSpy = createFetchDouble(opts.fetchMode ?? 'repair');
