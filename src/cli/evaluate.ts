@@ -8,6 +8,7 @@ import defaultManifest from '../../eval/uc03/manifest.json' with { type: 'json' 
 import type { RealExecutionAdmission } from '../../eval/shared-types.ts';
 import { WORKFLOW_EVALUATION_VERSION, type WorkflowDriver, type WorkflowEvaluationOptions, type WorkflowEvaluationReport } from '../../eval/uc03/types.ts';
 import type { UC03HostReadiness } from '../runtime/uc03-host-bootstrap.ts';
+import { abandonRealTierProductionCase } from '../runtime/real-tier-production.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
 import { isEvaluationControlCommand, parseEvaluationControlArgs, runEvaluationControlCli, type EvaluationControlBindings } from './evaluate-control.ts';
 import { runEvaluationConsoleCli } from './evaluate-console.ts';
@@ -290,8 +291,16 @@ export async function runEvaluateCli(args: readonly string[], options?: Evaluate
       driver,
       ...(realAdmission === undefined ? {} : { realAdmission }),
     };
-    const report = await run(parsed, bound);
-    return finish(parsed, report);
+    let disposed = false;
+    let report: WorkflowEvaluationReport | EvaluateCliResult;
+    try {
+      report = await run(parsed, bound);
+    } finally {
+      disposed = abandonRealTierProductionCase(driver);
+    }
+    const teardownNote = 'One-shot CLI released retained paused working copies on exit; cross-process continuation and restart are unsupported.';
+    const finalized = disposed && 'selectionResult' in report ? { ...report, limitations: [...report.limitations, teardownNote].slice(0, 16) } : report;
+    return finish(parsed, finalized);
   }
 
   if (options === undefined) return cliError(4, 'HOST_ASSEMBLY_UNAVAILABLE', 'No host assembly is configured');

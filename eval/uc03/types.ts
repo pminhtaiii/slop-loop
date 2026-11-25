@@ -210,6 +210,7 @@ export type WorkflowUsage = 'observed' | 'uncertain' | 'unavailable';
 export type WorkflowTier = 'controlled' | 'real-integration';
 export type WorkflowGrade = 'pass' | 'fail' | 'not-run';
 export type WorkflowWait = 'waiting-approval' | 'waiting-info';
+export type WorkflowApprovalDisposition = 'unanswered' | 'rejected';
 export type WorkflowBlock = 'prerequisite-unavailable' | 'busy' | 'reconciliation-required';
 export type WorkflowReason =
   | 'criteria-satisfied'
@@ -247,6 +248,8 @@ export interface WorkflowObservation {
   readonly initialRepositoryDigest: string | null;
   readonly workflowOutcome: WorkflowLifecycle;
   readonly expectedWait: WorkflowWait | null;
+  /** Presentation-only disposition for waiting-approval; optional for backward compatibility and never grants authority. */
+  readonly approvalDisposition?: WorkflowApprovalDisposition | undefined;
   readonly blocked: WorkflowBlock | null;
   readonly effects: WorkflowEffects;
   readonly usage: WorkflowUsage;

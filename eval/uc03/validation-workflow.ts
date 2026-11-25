@@ -6,6 +6,7 @@ import {
   WORKFLOW_EVALUATION_VERSION,
   type EvaluationCaseId,
   type EvaluationOutcome,
+  type WorkflowApprovalDisposition,
   type WorkflowBlock,
   type WorkflowCaseResult,
   type WorkflowDriver,
@@ -30,6 +31,7 @@ const WORKFLOW_EFFECTS = new Set<string>(['none', 'observed', 'uncertain']);
 const WORKFLOW_USAGES = new Set<string>(['observed', 'uncertain', 'unavailable']);
 const WORKFLOW_GRADES = new Set<string>(['pass', 'fail', 'not-run']);
 const WORKFLOW_WAITS = new Set<string>(['waiting-approval', 'waiting-info']);
+const WORKFLOW_APPROVAL_DISPOSITIONS = new Set<string>(['unanswered', 'rejected']);
 const WORKFLOW_BLOCKS = new Set<string>(['prerequisite-unavailable', 'busy', 'reconciliation-required']);
 const WORKFLOW_REASONS = new Set<string>([
   'criteria-satisfied',
@@ -94,6 +96,7 @@ const observationKeys = [
   'artifacts',
   'limitations',
 ] as const;
+const observationKeySet = new Set<string>([...observationKeys, 'approvalDisposition']);
 
 function optionalIdentifier(value: unknown): string | null {
   return value === null ? null : workflowIdentifier(value);
@@ -101,15 +104,17 @@ function optionalIdentifier(value: unknown): string | null {
 
 /** Validates host-held driver output. Ports, credentials and grader payloads are rejected by exact-key enumeration. */
 export function validateWorkflowObservation(data: unknown): WorkflowObservation {
-  if (!isRecord(data) || Reflect.ownKeys(data).length !== observationKeys.length) invalidWorkflow();
+  if (!isRecord(data) || Reflect.ownKeys(data).some(key => typeof key !== 'string' || !observationKeySet.has(key))) invalidWorkflow();
   for (const key of observationKeys) if (!Object.hasOwn(data, key)) invalidWorkflow();
   const workflowOutcome = data['workflowOutcome'];
   const expectedWait = data['expectedWait'];
+  const rawDisposition = data['approvalDisposition'];
   const blocked = data['blocked'];
   const effects = data['effects'];
   const usage = data['usage'];
   if (typeof workflowOutcome !== 'string' || !WORKFLOW_LIFECYCLES.has(workflowOutcome)) invalidWorkflow();
   if (expectedWait !== null && (typeof expectedWait !== 'string' || !WORKFLOW_WAITS.has(expectedWait))) invalidWorkflow();
+  if (rawDisposition !== undefined && (typeof rawDisposition !== 'string' || !WORKFLOW_APPROVAL_DISPOSITIONS.has(rawDisposition))) invalidWorkflow();
   if (blocked !== null && (typeof blocked !== 'string' || !WORKFLOW_BLOCKS.has(blocked))) invalidWorkflow();
   if (typeof effects !== 'string' || !WORKFLOW_EFFECTS.has(effects) || typeof usage !== 'string' || !WORKFLOW_USAGES.has(usage)) invalidWorkflow();
   return {
@@ -121,6 +126,7 @@ export function validateWorkflowObservation(data: unknown): WorkflowObservation 
     initialRepositoryDigest: data['initialRepositoryDigest'] === null ? null : workflowDigest(data['initialRepositoryDigest']),
     workflowOutcome: workflowOutcome as WorkflowLifecycle,
     expectedWait: expectedWait as WorkflowWait | null,
+    ...(rawDisposition !== undefined ? { approvalDisposition: rawDisposition as WorkflowApprovalDisposition } : {}),
     blocked: blocked as WorkflowBlock | null,
     effects: effects as WorkflowEffects,
     usage: usage as WorkflowUsage,

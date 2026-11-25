@@ -43,6 +43,8 @@ Memory is advisory and may be stale. Confirm it against current repository evide
 
 ## Persistence boundaries
 
+The local filesystem lock implementation coordinates in-process waiters in FIFO order using canonical resource paths, while exclusive lock-file creation remains the cross-process authority. Observed in-process release advances waiting callers; stalled holders retain bounded retry refusal. Owner token and inode checks still govern unlinking. Controlled concurrency tests do not establish process-kill recovery or production durability.
+
 The durable v0.2 state port binds claim lookup to its configured task. Begin, outcome, claim-state, control and recovery operations never resolve a same-named claim from another task. Unbound lookup retains unique legacy ownership and refuses ambiguous claim IDs; settled records remain available to outcome and recovery readers.
 
 Keep runtime-generated state, checkpoints, traces, and memory separate from human-authored context. Markdown context must not be the primary store for runtime state. State answers “what is true now?”; trace answers “how did we get here?” Resume from state and use traces for explanation, debugging, and evaluation.

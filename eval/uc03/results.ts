@@ -192,6 +192,7 @@ function isWait(outcome: WorkflowLifecycle): outcome is WorkflowWait {
 
 export function workflowCaseResult(spec: EvaluationCaseSpec, observation: WorkflowObservation, binding: WorkflowBinding, independentGrade?: WorkflowGradeDecision | undefined): WorkflowCaseResult {
   const realWaitPending = independentGrade === undefined && binding.tier === 'real-integration' && observation.blocked === null && observation.workflowOutcome === 'waiting-approval';
+  const unansweredRealWait = realWaitPending && observation.approvalDisposition === 'unanswered';
   const verdict = independentGrade
     ? { grade: independentGrade.grade, reason: independentGrade.reason }
     : binding.tier === 'real-integration'
@@ -203,7 +204,7 @@ export function workflowCaseResult(spec: EvaluationCaseSpec, observation: Workfl
       ? []
       : binding.tier === 'real-integration'
         ? [
-            realWaitPending
+            unansweredRealWait
               ? 'Task remains paused awaiting explicit operator approval; no independent final-snapshot grade was produced.'
               : 'No independently validated final-snapshot grade was produced; real workflow evidence remains unverified.',
           ]
