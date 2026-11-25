@@ -4,7 +4,7 @@ import type * as ST from './shared-types.ts';
 import { SHARED_EVALUATION_VERSION, SHARED_EVALUATION_V2_VERSION } from './shared-types.ts';
 export * from './shared-types.ts';
 export { isAdmittedRealExecutionAdmission, issueRealExecutionAdmission } from './shared-admission.ts';
-import { isAdmittedRealExecutionAdmission } from './shared-admission.ts';
+import * as sa from './shared-admission.ts';
 
 const callbacks = new WeakMap<ST.RegisteredEvaluation, ST.EvaluationCallbacks | ST.EvaluationCallbacksV2>();
 const executions = new WeakMap<ST.RegisteredEvaluation, Set<string>>();
@@ -91,7 +91,7 @@ export function registerEvaluation<C extends ST.EvaluationCallbacks | ST.Evaluat
     ucId,
     datasetId: text(input.datasetId),
     datasetVersion: text(input.datasetVersion),
-    adapterVersion: text(input.adapterVersion),
+    adapterVersion: sa.adapterText(input.adapterVersion),
     graderVersion: text(input.graderVersion),
     provenance: input.provenance as 'mock' | 'real',
     cases,
@@ -170,8 +170,8 @@ function parseOptions<T extends ST.SharedEvaluationOptions | ST.SharedEvaluation
     if (isV2) {
       if (selection.profileDigest !== undefined) sha(selection.profileDigest);
       if (selection.pricingDigest !== undefined) sha(selection.pricingDigest);
-      if (selection.requestedModel !== undefined) text(selection.requestedModel);
-      if (selection.adapterVersions !== undefined) array(selection.adapterVersions).forEach(text);
+      if (selection.requestedModel !== undefined) sa.modelText(selection.requestedModel);
+      if (selection.adapterVersions !== undefined) array(selection.adapterVersions).forEach(sa.adapterText);
     }
     if (!/^UC-\d{2}$/u.test(uc) || selectedUcs.has(uc) || typeof selection.level !== 'string' || !levels.has(selection.level)) fail();
     selectedUcs.add(uc);
@@ -326,7 +326,7 @@ async function executeEvaluation(request: ST.SharedEvaluationOptions | ST.Shared
           };
           if (request.mode === 'real' && registration.provenance !== 'real') {
             outcomeReason = 'real-execution-unavailable';
-          } else if ((sel.adapterVersions && !sel.adapterVersions.includes(registration.adapterVersion)) || !isAdmittedRealExecutionAdmission(sel.realAdmission, binding)) {
+          } else if ((sel.adapterVersions && !sel.adapterVersions.includes(registration.adapterVersion)) || !sa.isAdmittedRealExecutionAdmission(sel.realAdmission, binding)) {
             outcomeReason = 'real-admission-missing-or-invalid';
           } else {
             provenance = 'real';
