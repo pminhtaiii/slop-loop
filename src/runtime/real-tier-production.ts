@@ -31,7 +31,7 @@ import { createOperatorDecisionSource, stdioOperator, type DecisionTarget, type 
 import { isDeepSeekTransport } from '../foundation/deepseek-transport.ts';
 import { structuredSpawn } from '../foundation/docker-spawn.ts';
 import { HostModelPortV02 } from '../foundation/model-v02.ts';
-import { sanitizeText } from '../foundation/telemetry.ts';
+import { isProtectedPayload, sanitizeText } from '../foundation/telemetry.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
 import { boundedText } from '../uc03/report/sanitize.ts';
 import { gitHead } from './git-head.ts';
@@ -43,12 +43,19 @@ import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import type { UC03HostInputs } from './uc03-host-bootstrap.ts';
 
 const WORKFLOW_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const MODEL_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9][A-Za-z0-9._:-]*)*$/u;
 const WORKFLOW_DIGEST = /^(?:sha256:)?[a-f0-9]{64}$/u;
 
 function safeIdentifier(value: string | null | undefined): string | null {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== 'string' || isProtectedPayload(value)) return null;
   const sanitized = sanitizeText(value);
   return sanitized === value && WORKFLOW_IDENTIFIER.test(value) ? value : null;
+}
+
+function safeModelIdentifier(value: string | null | undefined): string | null {
+  if (typeof value !== 'string' || value.length > 192 || value.includes('..') || /^[A-Za-z]:\//u.test(value) || isProtectedPayload(value)) return null;
+  const sanitized = sanitizeText(value);
+  return sanitized === value && MODEL_IDENTIFIER.test(value) ? value : null;
 }
 
 function safeDigest(value: string | null | undefined): string | null {
@@ -127,7 +134,7 @@ function buildObservation(
   const { task, result, evidence, commandAdmission } = execution;
   const finalState = result?.executionEvidence?.finalState ?? result?.state ?? null;
   const finalReport = result?.finalReport;
-  const rawReturned = returnedModelOf(assembly, execution);
+  const returnedModel = safeModelIdentifier(returnedModelOf(assembly, execution));
   const ownerRev = evidence?.ownerRevisions?.['statePort'] ?? pins.revisions['statePort'] ?? assembly.revision;
   const u = evidence?.usage;
   const pausedForApproval = execution.approvalRequired === true;
@@ -144,7 +151,7 @@ function buildObservation(
     repositoryId: safeIdentifier(finalState?.repositoryId ?? task?.repositoryId),
     taskId: safeIdentifier(execution.identity?.taskId ?? finalState?.taskId),
     runId: safeIdentifier(execution.identity?.runId ?? finalState?.runId),
-    returnedModel: safeIdentifier(rawReturned),
+    returnedModel,
     graderDigest: safeDigest(graderDigest),
     initialRepositoryDigest: safeDigest(task?.initialRevisionDigest),
     workflowOutcome,
@@ -155,7 +162,7 @@ function buildObservation(
     usage: finalReport?.usage !== undefined ? 'observed' : finalState !== null ? 'uncertain' : 'unavailable',
     diagnostic: diagnostic === null ? null : safeLine(diagnostic, 512),
     artifacts: [
-      ...coreArtifacts(assembly, candidateSha, ownerRev, rawReturned ?? 'unknown'),
+      ...coreArtifacts(assembly, candidateSha, ownerRev, returnedModel ?? 'unknown'),
       safeLine(`evidence:diff=${evidence?.diffDigest || 'none'};report=${evidence?.reportDigest || 'none'}`, 256),
       safeLine(`evidence-cmd:${commandAdmission?.commandAdmissionRef ?? 'none'};view=${commandAdmission?.commandViewDigest ?? 'none'}`, 256),
       safeLine(`usage:tokens=${u ? String(u.tokens) : 'unknown'};cost=${u ? String(u.cost) : 'unknown'};costLabel=${u ? u.costLabel : 'unknown'}`, 256),

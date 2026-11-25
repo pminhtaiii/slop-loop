@@ -1,4 +1,4 @@
-import { sanitizeText } from '../../src/foundation/telemetry.ts';
+import { isProtectedPayload, sanitizeText } from '../../src/foundation/telemetry.ts';
 import { boundedText } from '../../src/uc03/report/sanitize.ts';
 import { exitCodeFor, suiteAcceptanceFor } from './results.ts';
 import {
@@ -47,6 +47,8 @@ const WORKFLOW_REASONS = new Set<string>([
   ...WORKFLOW_BLOCKS,
 ]);
 const WORKFLOW_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const BOUNDED_SLASH_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9][A-Za-z0-9._:-]*)*$/u;
+const WINDOWS_DRIVE_PATH = /^[A-Za-z]:\//u;
 const WORKFLOW_DIGEST = /^(?:sha256:)?[a-f0-9]{64}$/u;
 /** Every reason that leaves a case without a verdict, including blocks (never dispatched); a graded case must never carry one. */
 const NOT_RUN_REASONS = new Set<string>([
@@ -61,7 +63,24 @@ const NOT_RUN_REASONS = new Set<string>([
 ]);
 
 function workflowIdentifier(value: unknown): string {
-  if (typeof value !== 'string' || !WORKFLOW_IDENTIFIER.test(value) || sanitizeText(value) !== value) invalidWorkflow();
+  if (typeof value !== 'string' || !WORKFLOW_IDENTIFIER.test(value) || sanitizeText(value) !== value || isProtectedPayload(value)) invalidWorkflow();
+  return value;
+}
+
+function isSafeSlashIdentifier(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= 192 &&
+    BOUNDED_SLASH_IDENTIFIER.test(value) &&
+    !WINDOWS_DRIVE_PATH.test(value) &&
+    !value.includes('..') &&
+    sanitizeText(value) === value &&
+    !isProtectedPayload(value)
+  );
+}
+
+function workflowSlashIdentifier(value: unknown): string {
+  if (!isSafeSlashIdentifier(value)) invalidWorkflow();
   return value;
 }
 
@@ -102,6 +121,10 @@ function optionalIdentifier(value: unknown): string | null {
   return value === null ? null : workflowIdentifier(value);
 }
 
+function optionalModelIdentifier(value: unknown): string | null {
+  return value === null ? null : workflowSlashIdentifier(value);
+}
+
 /** Validates host-held driver output. Ports, credentials and grader payloads are rejected by exact-key enumeration. */
 export function validateWorkflowObservation(data: unknown): WorkflowObservation {
   if (!isRecord(data) || Reflect.ownKeys(data).some(key => typeof key !== 'string' || !observationKeySet.has(key))) invalidWorkflow();
@@ -121,7 +144,7 @@ export function validateWorkflowObservation(data: unknown): WorkflowObservation 
     repositoryId: optionalIdentifier(data['repositoryId']),
     taskId: optionalIdentifier(data['taskId']),
     runId: optionalIdentifier(data['runId']),
-    returnedModel: optionalIdentifier(data['returnedModel']),
+    returnedModel: optionalModelIdentifier(data['returnedModel']),
     graderDigest: data['graderDigest'] === null ? null : workflowDigest(data['graderDigest']),
     initialRepositoryDigest: data['initialRepositoryDigest'] === null ? null : workflowDigest(data['initialRepositoryDigest']),
     workflowOutcome: workflowOutcome as WorkflowLifecycle,
@@ -187,7 +210,7 @@ export function validateWorkflowEvaluationOptions(data: unknown): WorkflowEvalua
   const adapterVersions = data['adapterVersions'];
   if (!Array.isArray(adapterVersions) || adapterVersions.length === 0 || adapterVersions.length > 16) invalidWorkflowOptions();
   const requestedModel = data['requestedModel'];
-  if (typeof requestedModel !== 'string' || !validText(requestedModel, 128)) invalidWorkflowOptions();
+  if (!isSafeSlashIdentifier(requestedModel)) invalidWorkflowOptions();
   const rawAdmission = data['realAdmission'];
   let realAdmission: WorkflowEvaluationOptions['realAdmission'];
   if (rawAdmission !== undefined) {
@@ -210,7 +233,7 @@ export function validateWorkflowEvaluationOptions(data: unknown): WorkflowEvalua
     pricingDigest: digestField('pricingDigest'),
     adapterVersions: adapterVersions.map((value: unknown): string => {
       // Same vocabulary as the report validator, so an unsupported version is refused before dispatch.
-      if (typeof value !== 'string' || !WORKFLOW_IDENTIFIER.test(value) || sanitizeText(value) !== value) invalidWorkflowOptions();
+      if (!isSafeSlashIdentifier(value)) invalidWorkflowOptions();
       return value;
     }),
     requestedModel,
@@ -266,7 +289,7 @@ function parseWorkflowCase(entry: unknown, tier: WorkflowTier, configDigest: str
   const adapterVersions = entry['adapterVersions'];
   if (!Array.isArray(adapterVersions) || adapterVersions.length > 16) invalidWorkflow();
   const requestedModel = entry['requestedModel'];
-  if (typeof requestedModel !== 'string' || (requestedModel.length > 0 && !validText(requestedModel, 128))) invalidWorkflow();
+  if (typeof requestedModel !== 'string' || (requestedModel.length > 0 && !isSafeSlashIdentifier(requestedModel))) invalidWorkflow();
   if (!WORKFLOW_DIGEST.test(String(entry['profileDigest'])) || !WORKFLOW_DIGEST.test(String(entry['pricingDigest']))) invalidWorkflow();
   return {
     caseId,
@@ -274,12 +297,12 @@ function parseWorkflowCase(entry: unknown, tier: WorkflowTier, configDigest: str
     taskId: optionalIdentifier(entry['taskId']),
     runId: optionalIdentifier(entry['runId']),
     requestedModel,
-    returnedModel: optionalIdentifier(entry['returnedModel']),
+    returnedModel: optionalModelIdentifier(entry['returnedModel']),
     tier,
     profileDigest: String(entry['profileDigest']),
     configDigest,
     pricingDigest: String(entry['pricingDigest']),
-    adapterVersions: adapterVersions.map((value: unknown): string => workflowIdentifier(value)),
+    adapterVersions: adapterVersions.map((value: unknown): string => workflowSlashIdentifier(value)),
     graderDigest: entry['graderDigest'] === null ? null : workflowDigest(entry['graderDigest']),
     initialRepositoryDigest: entry['initialRepositoryDigest'] === null ? null : workflowDigest(entry['initialRepositoryDigest']),
     workflowOutcome: workflowOutcome as WorkflowLifecycle,

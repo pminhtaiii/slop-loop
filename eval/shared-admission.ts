@@ -13,10 +13,21 @@ function bindingDigestValue(value: unknown): string {
   return value;
 }
 
-function bindingModelValue(value: unknown): string {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._/-]{0,191}$/u.test(value) || value.includes('..') || isProtectedPayload(value)) fail();
+const BOUNDED_SLASH_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]*(?:\/[A-Za-z0-9][A-Za-z0-9:._-]*)*$/u;
+
+export function bindingModelValue(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 192 || !BOUNDED_SLASH_ID.test(value) || value.includes('..') || /^[A-Za-z]:\//u.test(value) || isProtectedPayload(value)) fail();
   return value;
 }
+
+export function bindingAdapterVersionValue(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 192 || !BOUNDED_SLASH_ID.test(value) || value.includes('..') || /^[A-Za-z]:\//u.test(value) || isProtectedPayload(value)) {
+    fail();
+  }
+  return value;
+}
+
+export { bindingAdapterVersionValue as adapterText, bindingModelValue as modelText };
 
 function digestOf(binding: RealExecutionBinding): string {
   return sha256Text(JSON.stringify([binding.profileDigest, binding.configDigest, binding.pricingDigest, binding.adapterVersions, binding.caseIds, binding.requestedModel]));
@@ -31,7 +42,7 @@ export function issueRealExecutionAdmission(value: unknown): RealExecutionAdmiss
     profileDigest: bindingDigestValue(input.profileDigest),
     configDigest: bindingDigestValue(input.configDigest),
     pricingDigest: bindingDigestValue(input.pricingDigest),
-    adapterVersions: array(input.adapterVersions).map(text),
+    adapterVersions: array(input.adapterVersions).map(bindingAdapterVersionValue),
     caseIds: array(input.caseIds).map(text),
     requestedModel: bindingModelValue(input.requestedModel),
   };
