@@ -83,6 +83,7 @@ Task state and authorization come from each feature's `tasks.md` and `contracts/
 - UC-03 real adapters and configuration, durable persistence, containment/restart, and full Phase 5/6 acceptance remain gated. Candidate-specific review and test evidence belongs to its pinned snapshot.
 - Real-tier evaluation commands are executed locally on the operator host and are never run by CI:
   - Host operational preflight: `node dist/src/cli/evaluate.js preflight --host <host.json>`
+  - Product CLI live evaluation (operator host only): `node dist/src/cli/evaluate.js run --host <host.json> --mode real --cases C01` (explicit plan/verification stdin approvals) and `--cases C02` (empty stdin; no speculative edits)
   - Real containment probe: `node dist/tests/runtime/security/uc03-real-containment-probe.js`
   - Real approvals probe: `node dist/tests/runtime/integration/uc03-approvals-real-probe.js`
   - Real success campaign runner: `node dist/tests/runtime/integration/uc03-success-real-run.js --campaign`
