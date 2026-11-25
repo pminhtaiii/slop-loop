@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { RealExecutionAdmission, RealExecutionBinding } from '../../eval/shared-types.ts';
 import type { WorkflowDriver } from '../../eval/uc03/types.ts';
 import type { EvaluationConsoleFactory } from '../runtime/evaluation-console-host.ts';
 import { prepareUC03Host, type UC03HostInputs, type UC03HostPins, type UC03HostReadiness } from '../runtime/uc03-host-bootstrap.ts';
@@ -35,7 +36,21 @@ export interface HostConfiguration {
 
 export type HostConfigurationLoad = Readonly<{ ok: true; value: HostConfiguration }> | Readonly<{ ok: false; error: EvaluateCliResult }>;
 
-export type HostProduction = (ready: UC03HostReady) => WorkflowDriver;
+export type HostProductionContext = Readonly<{
+  mode: 'mock' | 'real';
+  binding: Omit<RealExecutionBinding, 'caseIds'>;
+  caseIds: readonly string[];
+  pins: UC03HostPins;
+}>;
+
+export type HostProductionResult =
+  | WorkflowDriver
+  | Readonly<{
+      driver: WorkflowDriver;
+      realAdmission?: RealExecutionAdmission | undefined;
+    }>;
+
+export type HostProduction = (ready: UC03HostReady, context?: HostProductionContext) => HostProductionResult;
 
 /** The validated §(i) projection. Exactly these keys, each already checked against its pattern. */
 export type HostMetadata = Readonly<{

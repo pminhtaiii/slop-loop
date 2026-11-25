@@ -1,24 +1,7 @@
 /**
- * The independent snapshot grader for the T028 campaign (real-tier contract §(f) T028; UC-03 T028).
- *
- * `createSnapshotGrader` needs five host-held inputs. Three are pinned material the operator's catalog
- * already carries: the criterion set, the grading profile and the grader payload, read from the
- * entry's digest-checked `grader.path`. Two are live host capabilities no serializable pinned input
- * can supply: the isolation authority that admits a hidden check, and the executor that runs it. A
- * third host port freezes and rechecks the final tree. Those arrive through `GraderCapability` from
- * the operator entry; the gate supplies doubles.
- *
- * A ready grader is called with the case's real inputs: the observation built from the graph result,
- * the measured final snapshot and the evidence derived from the same run (SPEC-W5-202). The receipt
- * must name that snapshot and evidence digest, and the final tree must be unchanged after grading.
- * Every accepted grade is returned with the host-measured `GradeReceiptBinding` it was issued on
- * (SPEC-W5-302): the case/run identity, expected criterion, snapshot, evidence and the tier plus the
- * admission and executor that actually graded it. A hidden-check grade without a valid admission is
- * refused, never accepted from an invented one.
- *
- * When a required input is absent this returns an unavailable resolution with a bounded reason, so
- * the case stays `grader-unavailable` (not-run). It never constructs a grader over a mock isolation
- * authority and never returns a verdict of its own.
+ * Independent snapshot grader resolver (real-tier contract §(f) T028; UC-03 T028).
+ * Binds pinned catalog material (`criteria`, `profile`, `graderPayload`) and live `GraderCapability`,
+ * failing closed with bounded unavailable reasons rather than throwing or inventing a verdict.
  */
 import { readFileSync, statSync } from 'node:fs';
 
@@ -26,7 +9,7 @@ import type { BugTask } from '../contracts/foundation/uc03.ts';
 import type { EvaluationGraderExecutor, EvaluationIsolationAuthority, WorkflowObservation } from '../../eval/uc03/types.ts';
 import { lifecycleOf } from '../../eval/uc03/workflow-driver.ts';
 import { deriveWorkflowEvidenceFacts, parseWorkflowFinalTree, type FinalTreeBinding, type TrustedFinalTreeSnapshotPort } from '../../eval/uc03/workflow-evidence-facts.ts';
-import { createSnapshotGrader, isSnapshotGradeCurrent, type SnapshotGradeResult, type SnapshotPredicate } from '../../eval/uc03/workflow-grade.ts';
+import { createSnapshotGrader, isSnapshotGradeCurrent, type SnapshotGradeResult, type SnapshotGrader, type SnapshotPredicate } from '../../eval/uc03/workflow-grade.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
 import type { UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
 import type { UC03WorkflowResult } from '../uc03/graph-types.ts';
@@ -110,7 +93,15 @@ interface CatalogEntry {
 }
 
 export type GraderResolution =
-  Readonly<{ status: 'ready'; grade: (request: CaseGradeRequest) => Promise<GradeOutcome> }> | Readonly<{ status: 'unavailable'; reasonCode: string; missing: readonly string[] }>;
+  | Readonly<{
+      status: 'ready';
+      graderDigest: string;
+      hasCriterion: boolean;
+      hasValidPayload: boolean;
+      grade: (request: CaseGradeRequest) => Promise<GradeOutcome>;
+      evidenceHost: (task: BugTask, repositoryRoot: string) => Readonly<{ grader: SnapshotGrader; finalTree: GraderCapability['finalTree'] }>;
+    }>
+  | Readonly<{ status: 'unavailable'; reasonCode: string; missing: readonly string[] }>;
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
@@ -294,6 +285,18 @@ async function gradeCase(
  * a grade. A pinned file that lacks criteria or profile names those. Nothing here invents a criterion,
  * a hidden check or a verdict.
  */
+function hasGraderPayloadShape(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const files = value['files'];
+  const argv = value['argv'];
+  if (!isRecord(files) || !Array.isArray(argv) || argv.length === 0 || argv[0] === '') return false;
+  return (
+    Object.entries(files).every(
+      ([p, body]) => p !== '' && !/[\0\\]/u.test(p) && !p.startsWith('/') && !/^[A-Za-z]:/u.test(p) && p.split('/').every(s => s !== '' && s !== '.' && s !== '..') && typeof body === 'string',
+    ) && argv.every(a => typeof a === 'string' && !a.includes('\0'))
+  );
+}
+
 export function resolvePinnedGrader(assembly: RealTierAssembly, caseId: string, capability: GraderCapability | undefined): GraderResolution {
   const catalog = entryOf(assembly.profile.catalog.path, caseId);
   if (catalog.status === 'unavailable') return catalog;
@@ -307,17 +310,32 @@ export function resolvePinnedGrader(assembly: RealTierAssembly, caseId: string, 
   if (capability === undefined) missing.push('grader.isolationAuthority', 'grader.executor', 'grader.finalTree');
   if (missing.length > 0 || capability === undefined) return { status: 'unavailable', reasonCode: capability === undefined ? 'grader-capability-unavailable' : 'grader-material-incomplete', missing };
   const observed = observeAdmissions(capability.isolationAuthority);
-  const grader = createSnapshotGrader({
-    criteria: pinned.criteria,
-    profile: pinned.profile,
-    graderPayload: pinned.graderPayload,
-    isolationAuthority: observed.authority,
-    executor: capability.executor,
-  });
+  let grader: SnapshotGrader;
+  try {
+    grader = createSnapshotGrader({
+      criteria: pinned.criteria,
+      profile: pinned.profile,
+      graderPayload: pinned.graderPayload,
+      isolationAuthority: observed.authority,
+      executor: capability.executor,
+    });
+  } catch {
+    return { status: 'unavailable', reasonCode: 'grader-material-incomplete', missing: ['grader.criteria', 'grader.profile'] };
+  }
+  const rawCriteria = (pinned.criteria as { readonly criteria?: unknown }).criteria;
+  const hasCriterion = Array.isArray(rawCriteria) && rawCriteria.some(entry => isRecord(entry) && entry['caseId'] === caseId);
+  const hasValidPayload = hasGraderPayloadShape(pinned.graderPayload);
   const image = { imageId: assembly.metadata.imageId, platform: assembly.profile.image.platform, user: assembly.profile.image.user };
   let tail = Promise.resolve();
   return {
     status: 'ready',
+    graderDigest: catalog.entry.graderDigest,
+    hasCriterion,
+    hasValidPayload,
+    evidenceHost: (task, repositoryRoot) => {
+      capability.bindCase?.({ taskId: task.taskId, repositoryRoot, profile: pinned.profile, image });
+      return { grader, finalTree: capability.finalTree };
+    },
     grade: async request => {
       const prior = tail;
       let release!: () => void;

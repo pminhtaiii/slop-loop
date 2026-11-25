@@ -12,10 +12,11 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import type { CommandView } from '../contracts/foundation/uc03.ts';
+import type { BugTask, CommandView } from '../contracts/foundation/uc03.ts';
 import { canonicalJsonStringify } from '../contracts/foundation/uc03/identity.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import type { UC03WorkflowResult } from '../uc03/graph-types.ts';
+import type { UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
 import { runUC03GraphV02 } from '../uc03/graph-v02.ts';
 import { createHostCoderGeneration } from './host-coder.ts';
 import type { RealTierAssembly } from './real-tier-assembly.ts';
@@ -26,6 +27,9 @@ import { bindRealTierTask, type RealTierBoundTask } from './real-tier-task-bindi
 import type { UC03HostInputs } from './uc03-host-bootstrap.ts';
 
 const MAX_APPROVAL_PAUSES = 3;
+
+/** Core-owned temporary working-copy roots retained across `approvalRequired` pauses per assembly & case. */
+const coreOwnedCopies = new WeakMap<RealTierAssembly, Map<string, string>>();
 
 /** The bound task / run / workspace identity for one attempt. */
 export interface AttemptIdentity {
@@ -63,6 +67,12 @@ export interface ExecuteRealTierCaseOptions {
   readonly attempt?: number | undefined;
   readonly pins: UC03HostInputs['pins'];
   readonly identity?: Readonly<Record<string, string>> | undefined;
+  /**
+   * Caller-owned directory for the task working copy. A caller resuming a paused (`approvalRequired`)
+   * run must supply `workingCopyRoot` and manage its cleanup; when omitted, the core retains a
+   * temporary copy for the same assembly and case until the run reaches a terminal outcome or is
+   * explicitly abandoned via `abandonRealTierWorkingCopy`.
+   */
   readonly workingCopyRoot?: string | undefined;
   readonly model?: string | undefined;
   /** Explicit operator decision source. */
@@ -83,6 +93,9 @@ export interface RealTierCaseExecution {
   readonly status: 'task-bound' | 'binding-failed';
   readonly reasonCode?: string | undefined;
   readonly identity?: AttemptIdentity | undefined;
+  readonly task?: BugTask | undefined;
+  readonly repositoryRoot?: string | undefined;
+  readonly ports?: Pick<UC03GraphPortsV02, 'repositoryPort' | 'statePort'> | undefined;
   readonly result?: UC03WorkflowResult | undefined;
   readonly approval?: Readonly<{ decisionId: string; decided: 'approve' | 'reject' }> | undefined;
   readonly approvalRequired?: boolean | undefined;
@@ -157,6 +170,16 @@ export function accountingOf(assembly: RealTierAssembly, ids: Readonly<{ taskId:
   return Object.freeze({ claims, attempts, outcomes });
 }
 
+/** Releases a core-owned temporary working copy retained across a paused run. */
+export function abandonRealTierWorkingCopy(assembly: RealTierAssembly, caseId: string): boolean {
+  const byCase = coreOwnedCopies.get(assembly);
+  const retained = byCase?.get(caseId);
+  if (retained === undefined) return false;
+  byCase?.delete(caseId);
+  rmSync(retained, { recursive: true, force: true });
+  return true;
+}
+
 /**
  * Runs one real-tier case attempt: binds the catalog task, executes the v0.2 workflow graph with
  * explicit operator approval pauses, and runs independent snapshot grading.
@@ -165,17 +188,32 @@ export async function executeRealTierCase(options: ExecuteRealTierCaseOptions): 
   const { assembly, caseId, pins } = options;
   const attempt = options.attempt ?? 1;
   const identity = options.identity ?? {};
-  const shouldClean = options.workingCopyRoot === undefined;
-  const workingCopyRoot = options.workingCopyRoot ?? mkdtempSync(join(tmpdir(), 'uc03-t054-copy-'));
+  const callerOwned = options.workingCopyRoot !== undefined;
+  const retainedRoot = callerOwned ? undefined : coreOwnedCopies.get(assembly)?.get(caseId);
+  const workingCopyRoot = options.workingCopyRoot ?? retainedRoot ?? mkdtempSync(join(tmpdir(), 'uc03-t054-copy-'));
+  if (!callerOwned && retainedRoot === undefined) {
+    let byCase = coreOwnedCopies.get(assembly);
+    if (byCase === undefined) {
+      byCase = new Map();
+      coreOwnedCopies.set(assembly, byCase);
+    }
+    byCase.set(caseId, workingCopyRoot);
+  }
 
+  let keepCoreCopy = false;
   try {
     const binding = await bindRealTierTask(assembly, { caseId, pins, identity, workingCopyRoot });
     if (binding.status !== 'task-bound') {
       return { caseId, attempt, status: 'binding-failed', reasonCode: binding.reasonCode };
     }
-    return await executeOnBound(assembly, binding, caseId, attempt, pins, options);
+    const execution = await executeOnBound(assembly, binding, caseId, attempt, pins, options);
+    if (!callerOwned && execution.approvalRequired === true) {
+      keepCoreCopy = true;
+    }
+    return execution;
   } finally {
-    if (shouldClean) {
+    if (!callerOwned && !keepCoreCopy) {
+      coreOwnedCopies.get(assembly)?.delete(caseId);
       rmSync(workingCopyRoot, { recursive: true, force: true });
     }
   }
@@ -209,7 +247,21 @@ async function executeOnBound(
 
   let result = await runGraph(binding.task, binding.ports, config);
   let approval: RealTierCaseEvidence['approval'];
+  let rejected = false;
   const maxPauses = options.maxApprovalPauses ?? MAX_APPROVAL_PAUSES;
+
+  const pausedExecution = (): RealTierCaseExecution => ({
+    caseId,
+    attempt,
+    status: 'task-bound',
+    identity: { taskId: binding.ids.taskId, runId: binding.ids.runId, workspaceId: binding.ids.workspaceId },
+    task: binding.task,
+    repositoryRoot: binding.repositoryRoot,
+    ports: { repositoryPort: binding.ports.repositoryPort, statePort: binding.ports.statePort },
+    result,
+    approvalRequired: true,
+    accounting: accountingOf(assembly, binding.ids),
+  });
 
   for (let pause = 0; pause < maxPauses && result.outcome === 'pending-approval' && !options.clarificationHold?.(caseId); pause++) {
     const decision = await options.decideApproval?.(caseId, {
@@ -217,19 +269,18 @@ async function executeOnBound(
       console: ownersOf(assembly, binding.ids, binding.task.repositoryId).console,
     });
     if (decision === undefined) {
-      return {
-        caseId,
-        attempt,
-        status: 'task-bound',
-        identity: { taskId: binding.ids.taskId, runId: binding.ids.runId, workspaceId: binding.ids.workspaceId },
-        result,
-        approvalRequired: true,
-        accounting: accountingOf(assembly, binding.ids),
-      };
+      return pausedExecution();
     }
     approval ??= { decisionId: result.state?.activeDecisionId ?? '', decided: decision };
-    if (decision === 'reject') break;
+    if (decision === 'reject') {
+      rejected = true;
+      break;
+    }
     result = await runGraph(binding.task, binding.ports, config, result.state ?? undefined);
+  }
+
+  if (result.outcome === 'pending-approval' && !rejected) {
+    return pausedExecution();
   }
 
   const accounting = accountingOf(assembly, binding.ids);
@@ -283,6 +334,9 @@ async function executeOnBound(
     attempt,
     status: 'task-bound',
     identity: { taskId: binding.ids.taskId, runId: binding.ids.runId, workspaceId: binding.ids.workspaceId },
+    task: binding.task,
+    repositoryRoot: binding.repositoryRoot,
+    ports: { repositoryPort: binding.ports.repositoryPort, statePort: binding.ports.statePort },
     result,
     approval,
     gradeOutcome: graded,

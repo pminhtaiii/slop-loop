@@ -1,20 +1,11 @@
 /**
- * Real-tier assembly (contract §(a), §(i); host contract §1 first stage; T050 + T061).
+ * Real-tier assembly (contract §(a), §(i); host contract §1 first stage; T050 + T061 + Feature 007 T011).
  *
- * `createHostAssembly()` takes no arguments because the operator CLI calls it that way
- * (`src/cli/evaluate.ts`), and returns `{ host, metadata[ , preflight] }` for the CLI loader. It is
- * synchronous and effect-free: it loads the profile, reads the credential, pins the endpoint and model,
- * and builds the real adapters. It never fetches, spawns, writes a task or touches the filesystem.
- *
- * The host is assembly-ready but task-less; T061 (`real-tier-task-binding.ts`) binds its refusing producers.
- *
- * `dependencies` is the test seam: `{ env, fetch, spawn, stateRoot, revision, components }`, each
- * defaulting to the real value. Every refusal is a `RealTierUnavailable` with a bounded reason code,
- * and never carries the endpoint URL, the host or the credential.
- *
- * A complete set is a prerequisite, not G-OWNERS evidence.
+ * `createHostAssembly()` is synchronous and effect-free: it loads the profile, pins the endpoint
+ * and model, builds real adapters, and returns `{ host, metadata, preflight, production, assembly }`.
  */
 import { randomUUID } from 'node:crypto';
+import type { HostProduction } from '../cli/evaluate-host.ts';
 import { DEEPSEEK_REVIEW_PROMPT } from '../foundation/deepseek-review-profile.ts';
 import { createRuntimeReviewer, type RuntimeReviewer } from '../foundation/reviewer.ts';
 import { HostModelPortV02, type DispatchAuthorityFacts } from '../foundation/model-v02.ts';
@@ -36,12 +27,14 @@ import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
 import type { UC03HostInputs, UC03HostProducers } from './uc03-host-bootstrap.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import type { OwnerDelivery } from './evaluation-composition.ts';
+import type { GraderCapability } from './real-tier-case-grade.ts';
+import type { OperatorIo } from './real-tier-case-operator.ts';
+import { createRealTierProductionRoute } from './real-tier-production.ts';
 import { UNBOUND_CONFIG, unboundHostPorts, unboundProducers, type RealTierHostPorts } from './real-tier-task-producers.ts';
 
 export { UNBOUND_CONFIG, TASK_UNBOUND, unboundHostPorts, unboundProducers } from './real-tier-task-producers.ts';
 export type { RealTierHostPorts } from './real-tier-task-producers.ts';
 
-/** Partial review profile: the pinned identity plus the two byte bounds the transport needs. */
 const REVIEW_PROMPT = Object.freeze({ ...DEEPSEEK_REVIEW_PROMPT, maxOutputBytes: 16_384, maxResponseBytes: 131_072 });
 
 export interface RealTierDependencies {
@@ -57,6 +50,8 @@ export interface RealTierDependencies {
   readonly verifyDirection?: RealTierOwnersOptions['verifyDirection'];
   /** Test seam: a substituted delivery (for example a `mock` one) is refused, never reached. */
   readonly components?: Partial<RealTierComponents> | undefined;
+  readonly operatorIo?: OperatorIo | undefined;
+  readonly graderCapability?: GraderCapability | undefined;
 }
 
 /** Safe, allowlisted projection of the pinned identity (contract §(i)); validated by the CLI in T060. */
@@ -324,21 +319,13 @@ export function resolveRealTierAssembly(dependencies: RealTierDependencies = {})
   return resolved.status === 'assembly-ready' && resolved.revision === '' ? unavailable('delivery-revision-unresolved', '$.revision') : resolved;
 }
 
-/**
- * The name the CLI loader requires. `metadata` and `preflight` sit beside `host` because that is where
- * T060 lifts them from (contract §(i)): the metadata is the frozen safe projection, and the preflight
- * is the operational Docker observation over the injected `spawn`, delegating to
- * `observeDockerReadiness`.
- *
- * T061 completes the static host: the four producers are unbound (full surface, `TASK_UNBOUND` on every
- * call) and the config names no task, so `prepareUC03Host` through `resolveHostAssembly` then
- * `prepareAssembly` is `ready` with zero fetches, spawns and task writes. That is assembly-ready only.
- */
+/** CLI loader entry returning `{ host, metadata, preflight, production, assembly }` with zero runtime effects. */
 export function createHostAssembly(dependencies: RealTierDependencies = {}):
   | {
       readonly host: UC03HostInputs;
       readonly metadata: RealTierMetadata;
       readonly preflight: () => ReturnType<typeof observeDockerReadiness>;
+      readonly production: HostProduction;
       readonly assembly: RealTierAssembly;
     }
   | RealTierUnavailable {
@@ -346,8 +333,6 @@ export function createHostAssembly(dependencies: RealTierDependencies = {}):
   if (resolved.status === 'unavailable') return resolved;
   const spawn = dependencies.spawn ?? structuredSpawn;
   const { imageId } = resolved.metadata;
-  // `prepareAssembly` spreads `pins` and `identity` from the host file over these, so the placeholders
-  // here are never the ones the bootstrap validates.
   const host: UC03HostInputs = Object.freeze({
     owner: hostDeliveries(resolved.owners.deliveries, resolved.components, resolved.hostPorts, () => resolved.revision),
     producers: resolved.producers,
@@ -359,6 +344,7 @@ export function createHostAssembly(dependencies: RealTierDependencies = {}):
     host,
     metadata: resolved.metadata,
     preflight: () => observeDockerReadiness(spawn, imageId),
+    production: createRealTierProductionRoute(resolved, dependencies, resolveRealTierAssembly),
     assembly: resolved,
   };
 }

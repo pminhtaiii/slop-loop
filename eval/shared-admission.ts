@@ -1,11 +1,22 @@
+import { isProtectedPayload } from '../src/foundation/telemetry.ts';
 import { sha256Text } from '../src/uc01/contracts.ts';
 
 import type { RealExecutionAdmission, RealExecutionBinding } from './shared-types.ts';
-import { array, object, sha, text } from './shared-validation.ts';
+import { array, fail, object, text } from './shared-validation.ts';
 
 /** Receipt identity is object identity: a spread copy or a caller-built shape is never present here. */
 const realAdmissions = new WeakSet<RealExecutionAdmission>();
 const issuedAdmissionIds = new Set<string>();
+
+function bindingDigestValue(value: unknown): string {
+  if (typeof value !== 'string' || !/^(?:sha256:)?[a-f0-9]{64}$/u.test(value)) fail();
+  return value;
+}
+
+function bindingModelValue(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._/-]{0,191}$/u.test(value) || value.includes('..') || isProtectedPayload(value)) fail();
+  return value;
+}
 
 function digestOf(binding: RealExecutionBinding): string {
   return sha256Text(JSON.stringify([binding.profileDigest, binding.configDigest, binding.pricingDigest, binding.adapterVersions, binding.caseIds, binding.requestedModel]));
@@ -17,12 +28,12 @@ function digestOf(binding: RealExecutionBinding): string {
 export function issueRealExecutionAdmission(value: unknown): RealExecutionAdmission {
   const input = object(value, ['profileDigest', 'configDigest', 'pricingDigest', 'adapterVersions', 'caseIds', 'requestedModel']);
   const binding: RealExecutionBinding = {
-    profileDigest: sha(input.profileDigest),
-    configDigest: sha(input.configDigest),
-    pricingDigest: sha(input.pricingDigest),
+    profileDigest: bindingDigestValue(input.profileDigest),
+    configDigest: bindingDigestValue(input.configDigest),
+    pricingDigest: bindingDigestValue(input.pricingDigest),
     adapterVersions: array(input.adapterVersions).map(text),
     caseIds: array(input.caseIds).map(text),
-    requestedModel: text(input.requestedModel),
+    requestedModel: bindingModelValue(input.requestedModel),
   };
   const bindingDigest = digestOf(binding);
   const admissionId = sha256Text(`real-admission\u0000${bindingDigest}\u0000${issuedAdmissionIds.size}`);

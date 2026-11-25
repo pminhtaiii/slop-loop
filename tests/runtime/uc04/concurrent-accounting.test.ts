@@ -39,22 +39,26 @@ test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async t =
   await t.test('withLockRetry retries and succeeds when lock is briefly held', async () => {
     const resourceId = 'test-resource';
     let backgroundFinished = false;
-    let lockAcquired = false;
+    let markAcquired!: () => void;
+    const acquiredGate = new Promise<void>(resolve => {
+      markAcquired = resolve;
+    });
+    let releaseHold!: () => void;
+    const holdGate = new Promise<void>(resolve => {
+      releaseHold = resolve;
+    });
 
-    // Launch a background task that holds the lock for 60ms
     const backgroundHold = store.withLock(resourceId, async () => {
-      lockAcquired = true;
-      await new Promise(resolve => setTimeout(resolve, 60));
+      markAcquired();
+      await holdGate;
       backgroundFinished = true;
       return 'held';
     });
 
-    while (!lockAcquired) {
-      await new Promise(resolve => setTimeout(resolve, 5));
-    }
+    await acquiredGate;
 
-    // Try acquiring with retry (e.g. 15 retries with 15ms wait = up to 225ms wait)
-    const result = await store.withLockRetry(
+    // Launch contender while lock is definitely held, then release shortly after
+    const retryPromise = store.withLockRetry(
       resourceId,
       async () => {
         assert.equal(backgroundFinished, true, 'Lock must wait until background hold finishes');
@@ -63,36 +67,48 @@ test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async t =
       { maxRetries: 15, retryDelayMs: 15 },
     );
 
+    await new Promise(resolve => setTimeout(resolve, 30));
+    releaseHold();
+
+    const result = await retryPromise;
     assert.equal(result, 'acquired');
     await backgroundHold;
   });
 
   await t.test('withLockRetry throws when resource stays locked beyond retry limit', async () => {
     const resourceId = 'timeout-resource';
+    let markAcquired!: () => void;
+    const acquiredGate = new Promise<void>(resolve => {
+      markAcquired = resolve;
+    });
+    let releaseHold!: () => void;
+    const holdGate = new Promise<void>(resolve => {
+      releaseHold = resolve;
+    });
 
-    let lockAcquired = false;
     const backgroundHold = store.withLock(resourceId, async () => {
-      lockAcquired = true;
-      await new Promise(resolve => setTimeout(resolve, 300));
+      markAcquired();
+      await holdGate;
       return 'held';
     });
 
-    while (!lockAcquired) {
-      await new Promise(resolve => setTimeout(resolve, 5));
+    await acquiredGate;
+
+    // Keep the lock deterministically held until bounded retries exhaust
+    try {
+      await assert.rejects(async () => {
+        await store.withLockRetry(
+          resourceId,
+          async () => {
+            return 'should-not-reach';
+          },
+          { maxRetries: 2, retryDelayMs: 10 },
+        );
+      }, /Resource timeout-resource is busy \/ already locked after 2 attempts/);
+    } finally {
+      releaseHold();
+      await backgroundHold;
     }
-
-    // Attempt with tiny retry count so it times out
-    await assert.rejects(async () => {
-      await store.withLockRetry(
-        resourceId,
-        async () => {
-          return 'should-not-reach';
-        },
-        { maxRetries: 2, retryDelayMs: 10 },
-      );
-    }, /Resource timeout-resource is busy \/ already locked after 2 attempts/);
-
-    await backgroundHold;
   });
 
   await t.test('mutateBudgetJournal serializes concurrent reservations without lost updates (SPEC-C-006)', async () => {
@@ -108,39 +124,61 @@ test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async t =
       updatedAt: new Date().toISOString(),
     });
 
+    // Deterministic start barrier so all 5 operations contend on the same tick,
+    // plus an active-mutator guard and event-loop yield instead of a wall-clock sleep.
+    let startedCount = 0;
+    let releaseStart!: () => void;
+    const allStarted = new Promise<void>(resolve => {
+      releaseStart = resolve;
+    });
+    let activeMutators = 0;
+
     // Concurrently simulate 5 operations appending distinct reservations
     const operations = Array.from({ length: 5 }, (_, i) => async () => {
+      startedCount += 1;
+      if (startedCount === 5) {
+        releaseStart();
+      }
+      await allStarted;
+
       return store.mutateBudgetJournal(
         taskId,
         async current => {
-          assert.ok(current, 'Current journal must exist');
-          // Add a slight async delay to expose race conditions if unlocked
-          await new Promise(resolve => setTimeout(resolve, 15));
-          const baseLedger = current.ledgers[0];
-          assert.ok(baseLedger, 'Base ledger must exist');
+          activeMutators += 1;
+          assert.equal(activeMutators, 1, 'Lock must serialize mutator execution without overlap');
+          try {
+            assert.ok(current, 'Current journal must exist');
+            // Deterministic async yield across microtask/macrotask boundaries to expose races if unlocked
+            await Promise.resolve();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const baseLedger = current.ledgers[0];
+            assert.ok(baseLedger, 'Base ledger must exist');
 
-          const currentRes = baseLedger.reservations ?? [];
-          const newRes = [
-            ...currentRes,
-            {
-              reservationId: `res-worker-${i}`,
-              keyedId: `key-worker-${i}`,
-              amount: (i + 1) * 10,
-            },
-          ];
+            const currentRes = baseLedger.reservations ?? [];
+            const newRes = [
+              ...currentRes,
+              {
+                reservationId: `res-worker-${i}`,
+                keyedId: `key-worker-${i}`,
+                amount: (i + 1) * 10,
+              },
+            ];
 
-          const updatedLedger: BudgetLedger = {
-            ...baseLedger,
-            reservations: newRes,
-            version: baseLedger.version + 1,
-          };
+            const updatedLedger: BudgetLedger = {
+              ...baseLedger,
+              reservations: newRes,
+              version: baseLedger.version + 1,
+            };
 
-          const updated: BudgetJournalRecord = {
-            ...current,
-            ledgers: [updatedLedger],
-            updatedAt: new Date().toISOString(),
-          };
-          return updated;
+            const updated: BudgetJournalRecord = {
+              ...current,
+              ledgers: [updatedLedger],
+              updatedAt: new Date().toISOString(),
+            };
+            return updated;
+          } finally {
+            activeMutators -= 1;
+          }
         },
         { maxRetries: 50, retryDelayMs: 15 },
       );
@@ -239,5 +277,44 @@ test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async t =
     assert.equal(mutated.replanCount, 1);
     const reloaded = await store.loadBudgetJournal(longTaskId);
     assert.equal(reloaded?.replanCount, 1);
+  });
+
+  await t.test('withLockRetry enforces bounded retries for in-process contenders and leaves queue clean after timeout', async () => {
+    const resourceId = 'queued-timeout-resource';
+    let markAcquired!: () => void;
+    const acquiredGate = new Promise<void>(resolve => {
+      markAcquired = resolve;
+    });
+    let releaseHold!: () => void;
+    const holdGate = new Promise<void>(resolve => {
+      releaseHold = resolve;
+    });
+
+    const holder = store.withLockRetry(resourceId, async () => {
+      markAcquired();
+      await holdGate;
+      return 'held';
+    });
+
+    await acquiredGate;
+
+    try {
+      await assert.rejects(async () => {
+        await store.withLockRetry(resourceId, async () => 'should-not-acquire', {
+          maxRetries: 2,
+          retryDelayMs: 10,
+        });
+      }, /Resource queued-timeout-resource is busy \/ already locked after 2 attempts/);
+    } finally {
+      releaseHold();
+      assert.equal(await holder, 'held');
+    }
+
+    // Subsequent acquisition with zero retries proves neither the lock file nor in-process queue state leaked.
+    const nextResult = await store.withLockRetry(resourceId, async () => 'clean-after-timeout', {
+      maxRetries: 0,
+      retryDelayMs: 1,
+    });
+    assert.equal(nextResult, 'clean-after-timeout');
   });
 });
