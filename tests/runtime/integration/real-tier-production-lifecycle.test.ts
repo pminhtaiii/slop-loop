@@ -7,7 +7,8 @@ import test from 'node:test';
 
 import type { WorkflowCaseContext, WorkflowCaseResult, WorkflowObservation } from '../../../eval/uc03/types.ts';
 import { runEvaluateCli } from '../../../src/cli/evaluate.ts';
-import { createHostAssembly, resolveRealTierAssembly, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
+import { createHostAssembly, resolveRealTierAssembly, REAL_TIER_DELIVERY_CONTRACT, type RealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
+import { prepareUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { PINS, type GraderCapability } from '../../../src/runtime/real-tier-case-grade.ts';
 import { stdioOperator, type OperatorIo } from '../../../src/runtime/real-tier-case-operator.ts';
 import { createRealTierProductionRoute } from '../../../src/runtime/real-tier-production.ts';
@@ -71,11 +72,13 @@ test('4690270275: injected caller-owned operatorIo is left open across completed
   const s = await setupProductionScenario({ tag: 'injected-io-open', fetchMode: 'repair', decisions: [] });
   try {
     const h = (
-      globalThis as unknown as { __t011Harness: { env: Record<string, string | undefined>; fetch: typeof globalThis.fetch; spawn: typeof s.spawnSpy.spawn; stateRoot: string; revision: string } }
+      globalThis as unknown as {
+        __t011Harness: { env: Record<string, string | undefined>; fetch: typeof globalThis.fetch; spawn: typeof s.spawnSpy.spawn; stateRoot: string; revision: string; operatorIo: OperatorIo };
+      }
     ).__t011Harness;
     const queue: ('approve' | 'reject' | undefined)[] = ['approve', 'approve', undefined];
     const callerIo: OperatorIo = {
-      write: line => s.operatorPrompts.push(line),
+      write: h.operatorIo.write,
       read: async () => queue.shift(),
       close: () => {
         closeCalls += 1;
@@ -195,7 +198,14 @@ test('4690270278: per-case assembly drift in profile, config, pricing, model, or
     const initialRes = resolveRealTierAssembly(deps);
     assert.equal(initialRes.status, 'assembly-ready');
     const context = baseCaseContext(initialRes);
-    const ready = { status: 'ready' as const, identity: { profileDigest: context.profileDigest, configDigest: context.configDigest, pricingDigest: context.pricingDigest } };
+    const readyHost = createHostAssembly(deps);
+    assert.ok('host' in readyHost);
+    const ready = prepareUC03Host({
+      ...readyHost.host,
+      identity: { profileId: 't011-profile', profileDigest: context.profileDigest, configDigest: context.configDigest, pricingDigest: context.pricingDigest },
+      pins: { contractVersion: REAL_TIER_DELIVERY_CONTRACT, revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(c => [c, REV])) },
+    });
+    assert.equal(ready.status, 'ready');
 
     const variants: readonly (readonly [string, () => RealTierAssembly])[] = [
       [
@@ -298,6 +308,7 @@ test('4690270278: per-case assembly drift in profile, config, pricing, model, or
         diskGraderResolves += 1;
       }),
     });
+    assert.ok('assembly' in hostBuilt);
     assert.equal(hostBuilt.assembly.status, 'assembly-ready');
     const rawDiskProfile = JSON.parse(readFileSync(mutableProfilePath, 'utf8')) as Record<string, unknown>;
     const mutatedProfile = { ...rawDiskProfile, provider: { ...fixture.PROVIDER, model: 'cmc/deepseek/mutated-after-admission' } };

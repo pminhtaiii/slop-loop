@@ -10,6 +10,7 @@ import { WORKFLOW_EVALUATION_VERSION, type WorkflowCaseContext, type WorkflowCas
 import { runEvaluateCli } from '../../../src/cli/evaluate.ts';
 import { createHostAssembly } from '../../../src/runtime/real-tier-assembly.ts';
 import type { OperatorIo } from '../../../src/runtime/real-tier-case-operator.ts';
+import { prepareUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from '../../../src/runtime/real-tier-owners.ts';
 import { abandonRealTierProductionCase } from '../../../src/runtime/real-tier-production.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
@@ -32,20 +33,24 @@ function createDriverSetup(scenario: Awaited<ReturnType<typeof setupProductionSc
   const queue: ('approve' | 'reject' | undefined)[] = [...decisions];
   const harness: HarnessGlobals = {
     ...h,
-    operatorIo: { write: line => scenario.operatorPrompts.push(line), read: async () => queue.shift() },
+    operatorIo: { write: h.operatorIo.write, read: async () => queue.shift() },
   };
   const hostBuilt = createHostAssembly(harness);
   assert.notEqual((hostBuilt as { readonly status?: string }).status, 'unavailable');
   const resolved = hostBuilt as Exclude<ReturnType<typeof createHostAssembly>, { readonly status: 'unavailable' }>;
-  const produced = resolved.production(
-    { status: 'ready', identity: { profileId: 't011-profile', ...scenario.binding } },
-    {
-      mode: 'real',
-      binding: scenario.binding,
-      caseIds: ['C01'],
-      pins: { contractVersion: REAL_TIER_DELIVERY_CONTRACT, revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(c => [c, REV])) },
-    },
-  );
+  const { profileDigest, configDigest, pricingDigest } = scenario.binding;
+  const ready = prepareUC03Host({
+    ...resolved.host,
+    identity: { profileId: 't011-profile', profileDigest, configDigest, pricingDigest },
+    pins: { contractVersion: REAL_TIER_DELIVERY_CONTRACT, revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(c => [c, REV])) },
+  });
+  assert.equal(ready.status, 'ready');
+  const produced = resolved.production(ready, {
+    mode: 'real',
+    binding: scenario.binding,
+    caseIds: ['C01'],
+    pins: { contractVersion: REAL_TIER_DELIVERY_CONTRACT, revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(c => [c, REV])) },
+  });
   assert.ok('driver' in produced && produced.realAdmission !== undefined);
   const caseContext: WorkflowCaseContext = {
     spec: { caseId: 'C01', name: 'Bug repair', description: 'C01 repair', category: 'repair', required: true, expectedOutcome: 'COMPLETED', requirements: ['fix bug'] },
@@ -143,6 +148,7 @@ test('same-driver continuation pauses after patch and resumes with identical ide
     // Continue the exact same driver after explicit operator approval at verification.
     setup.queue.push('approve');
     const report2 = await runEvaluation(evalOpts);
+    assert.ok('cases' in report2);
     assert.equal(report2.exitCode, 0);
     assert.deepEqual(report2.selectionResult.pendingWaits, []);
     const doneCase = report2.cases[0] as WorkflowCaseResult;
@@ -357,6 +363,7 @@ test('real tier yields exact exit 3 for unresolved waiting-approval while requir
     realAdmission: c02Adm,
     driver: { executeCase: () => baseObs({ workflowOutcome: 'waiting-info', expectedWait: 'waiting-info' }) },
   });
+  assert.ok('cases' in c02UngradedReport);
   assert.equal(c02UngradedReport.exitCode, 1, 'C02 lifecycle alone must not pass real grading without independent grade');
   assert.equal(c02UngradedReport.cases[0]?.grade, 'not-run');
   assert.equal(c02UngradedReport.cases[0]?.gradeReason, 'private-grading');
@@ -367,6 +374,7 @@ test('real tier yields exact exit 3 for unresolved waiting-approval while requir
     realAdmission: c01WaitAdm,
     driver: { executeCase: () => baseObs({ workflowOutcome: 'COMPLETED' }) },
   });
+  assert.ok('cases' in c01UngradedReport);
   assert.equal(c01UngradedReport.exitCode, 1, 'C01 COMPLETED without independent grade must not pass');
   assert.equal(c01UngradedReport.cases[0]?.gradeReason, 'private-grading');
 });
