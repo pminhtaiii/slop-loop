@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import type { CommandView } from '../contracts/foundation/uc03.ts';
+import { canonicalJsonStringify } from '../contracts/foundation/uc03/identity.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import type { UC03WorkflowResult } from '../uc03/graph-types.ts';
 import { runUC03GraphV02 } from '../uc03/graph-v02.ts';
@@ -21,7 +22,6 @@ import type { RealTierAssembly } from './real-tier-assembly.ts';
 import type { CaseGradeRequest, GradeOutcome, GraderCapability, GradeReceiptBinding } from './real-tier-case-grade.ts';
 import { PINS, resolvePinnedGrader } from './real-tier-case-grade.ts';
 import type { DecisionTarget } from './real-tier-case-operator.ts';
-import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import { bindRealTierTask, type RealTierBoundTask } from './real-tier-task-binding.ts';
 import type { UC03HostInputs } from './uc03-host-bootstrap.ts';
 
@@ -61,7 +61,7 @@ export interface ExecuteRealTierCaseOptions {
   readonly assembly: RealTierAssembly;
   readonly caseId: string;
   readonly attempt?: number | undefined;
-  readonly pins?: UC03HostInputs['pins'] | undefined;
+  readonly pins: UC03HostInputs['pins'];
   readonly identity?: Readonly<Record<string, string>> | undefined;
   readonly workingCopyRoot?: string | undefined;
   readonly model?: string | undefined;
@@ -108,7 +108,7 @@ const ownersOf = (assembly: RealTierAssembly, ids: Readonly<{ taskId: string; wo
   assembly.owners.taskOwners({ taskId: ids.taskId, workspaceId: ids.workspaceId, repositoryId });
 
 function serialize(value: unknown): string {
-  return JSON.stringify(value, Object.keys(value as object).sort());
+  return canonicalJsonStringify(value);
 }
 
 function digestOf(content: string): string {
@@ -132,7 +132,7 @@ export function findSettledCommandAdmission(
       const content = readFileSync(join(claimDir, file), 'utf8');
       const claim = JSON.parse(content) as Record<string, unknown>;
       const ctx = claim['context'] as Record<string, unknown> | undefined;
-      if (ctx && ctx['subjectKind'] === 'repository-action' && ctx['commandView']) {
+      if (claim['status'] === 'settled' && ctx && ctx['subjectKind'] === 'repository-action' && ctx['commandView']) {
         const commandView = ctx['commandView'] as CommandView;
         const commandViewDigest = digestOf(serialize(commandView));
         const receipt = claim['receipt'] as Record<string, unknown> | undefined;
@@ -162,9 +162,8 @@ export function accountingOf(assembly: RealTierAssembly, ids: Readonly<{ taskId:
  * explicit operator approval pauses, and runs independent snapshot grading.
  */
 export async function executeRealTierCase(options: ExecuteRealTierCaseOptions): Promise<RealTierCaseExecution> {
-  const { assembly, caseId } = options;
+  const { assembly, caseId, pins } = options;
   const attempt = options.attempt ?? 1;
-  const pins = options.pins ?? { contractVersion: REAL_TIER_DELIVERY_CONTRACT, revisions: {} as Record<string, string> };
   const identity = options.identity ?? {};
   const shouldClean = options.workingCopyRoot === undefined;
   const workingCopyRoot = options.workingCopyRoot ?? mkdtempSync(join(tmpdir(), 'uc03-t054-copy-'));

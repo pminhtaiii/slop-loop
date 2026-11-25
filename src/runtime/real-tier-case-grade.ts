@@ -118,14 +118,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-type LoadedJson = Readonly<{ status: 'ok'; value: unknown }> | Readonly<{ status: 'unreadable' }> | Readonly<{ status: 'malformed' }>;
+type LoadedJson = Readonly<{ status: 'ok'; value: unknown; raw: string }> | Readonly<{ status: 'unreadable' }> | Readonly<{ status: 'malformed' }>;
 
 /**
  * Reads and parses one pinned JSON input. A missing or unreadable file and a malformed body are
  * distinct bounded outcomes (STD-W5-303); names and exception text never leave this boundary.
  */
 function loadJson(path: string): LoadedJson {
-  const stat = statSync(path, { throwIfNoEntry: false });
+  let stat;
+  try {
+    stat = statSync(path, { throwIfNoEntry: false });
+  } catch {
+    return { status: 'unreadable' };
+  }
   if (stat === undefined || !stat.isFile()) return { status: 'unreadable' };
   let text: string;
   try {
@@ -134,7 +139,7 @@ function loadJson(path: string): LoadedJson {
     return { status: 'unreadable' };
   }
   try {
-    return { status: 'ok', value: JSON.parse(text) as unknown };
+    return { status: 'ok', value: JSON.parse(text) as unknown, raw: text };
   } catch {
     return { status: 'malformed' };
   }
@@ -160,19 +165,7 @@ function pinnedOf(entry: CatalogEntry): Readonly<{ status: 'ok'; pinned: PinnedG
   const loaded = loadJson(entry.graderPath);
   if (loaded.status === 'unreadable') return { status: 'unavailable', reasonCode: 'grader-file-unreadable', missing: ['catalog.grader.path'] };
   if (loaded.status === 'malformed' || !isRecord(loaded.value)) return { status: 'unavailable', reasonCode: 'grader-file-malformed', missing: ['catalog.grader'] };
-  const text = JSON.stringify(loaded.value);
-  // The digest was computed over the file's exact bytes; re-read is avoided by hashing the parsed value
-  // only when the file is canonical JSON, so the byte digest is taken from a second bounded read.
-  const stat = statSync(entry.graderPath, { throwIfNoEntry: false });
-  if (stat === undefined || !stat.isFile()) return { status: 'unavailable', reasonCode: 'grader-file-unreadable', missing: ['catalog.grader.path'] };
-  let raw: string;
-  try {
-    raw = readFileSync(entry.graderPath, 'utf8');
-  } catch {
-    return { status: 'unavailable', reasonCode: 'grader-file-unreadable', missing: ['catalog.grader.path'] };
-  }
-  if (`sha256:${sha256Text(raw)}` !== entry.graderDigest) return { status: 'unavailable', reasonCode: 'grader-digest-mismatch', missing: ['catalog.grader.digest'] };
-  void text;
+  if (`sha256:${sha256Text(loaded.raw)}` !== entry.graderDigest) return { status: 'unavailable', reasonCode: 'grader-digest-mismatch', missing: ['catalog.grader.digest'] };
   return { status: 'ok', pinned: { criteria: loaded.value['criteria'], profile: loaded.value['profile'], graderPayload: loaded.value['graderPayload'] } };
 }
 
@@ -322,11 +315,22 @@ export function resolvePinnedGrader(assembly: RealTierAssembly, caseId: string, 
     executor: capability.executor,
   });
   const image = { imageId: assembly.metadata.imageId, platform: assembly.profile.image.platform, user: assembly.profile.image.user };
+  let tail = Promise.resolve();
   return {
     status: 'ready',
-    grade: request => {
-      capability.bindCase?.({ taskId: request.task.taskId, repositoryRoot: request.repositoryRoot, profile: pinned.profile, image });
-      return gradeCase(grader, capability, observed.admissions, catalog.entry.graderDigest, request);
+    grade: async request => {
+      const prior = tail;
+      let release!: () => void;
+      tail = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      await prior;
+      try {
+        capability.bindCase?.({ taskId: request.task.taskId, repositoryRoot: request.repositoryRoot, profile: pinned.profile, image });
+        return await gradeCase(grader, capability, observed.admissions, catalog.entry.graderDigest, request);
+      } finally {
+        release();
+      }
     },
   };
 }

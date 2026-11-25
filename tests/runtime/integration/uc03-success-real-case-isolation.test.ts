@@ -217,6 +217,7 @@ function revisionChangingGraphDouble() {
         writeFileSync(
           claimFile,
           JSON.stringify({
+            status: 'settled',
             context: { subjectKind: 'repository-action', commandView: { ...commandView, viewDigest }, action: { actionId: 'action-cmd-c01' } },
             receipt: { claimId: 'claim-cmd-c01' },
           }),

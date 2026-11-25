@@ -11,7 +11,7 @@ import { bindRealTierTask } from '../../../src/runtime/real-tier-task-binding.ts
 import type { runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
 import type { UC03HostInputs } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import type { TaskState } from '../../../src/contracts/foundation/uc03.ts';
-import { executeRealTierCase, findSettledCommandAdmission } from '../../../src/runtime/real-tier-case-run.ts';
+import { executeRealTierCase, findSettledCommandAdmission, type RealTierCaseEvidence } from '../../../src/runtime/real-tier-case-run.ts';
 import { PINS, type CaseGradeRequest, type GradeOutcome } from '../../../src/runtime/real-tier-case-grade.ts';
 import type { DecisionTarget } from '../../../src/runtime/real-tier-case-operator.ts';
 
@@ -91,6 +91,19 @@ const caseNotRun = (caseId: string, reasonCode: string, facts: StageRecord['fact
   record: { stage: 'case', outcome: 'not-run', reasonCode, caseId, facts },
 });
 
+/** Builds the stage's case evidence from the core run observation and C01's judged report. */
+export function buildCaseEvidence(caseId: string, executionEvidence: RealTierCaseEvidence | undefined, judgedReport: ReturnType<typeof judgeC16Report> | undefined): CaseEvidence {
+  const evidence: CaseEvidence = {
+    ...executionEvidence,
+  };
+  if (caseId === 'C01' && judgedReport?.facts.present) {
+    return { ...evidence, reportDigest: judgedReport.facts.reportDigest };
+  }
+  const { reportDigest, ...withoutReportDigest } = evidence;
+  void reportDigest;
+  return withoutReportDigest;
+}
+
 /**
  * One case attempt on its own fresh assembly. C01's plan pause is presented and decided explicitly
  * through the injected T046 decision source before the same bound task continues; C02's expected
@@ -138,10 +151,7 @@ async function runCaseAttempt(assembly: RealTierAssembly, caseId: string, attemp
   const finalReport = execution.result?.finalReport;
   const judgedReport = caseId === 'C01' ? judgeC16Report(finalReport) : undefined;
 
-  const evidence: CaseEvidence = {
-    ...execution.evidence,
-    ...(judgedReport?.facts.present ? { reportDigest: judgedReport.facts.reportDigest } : {}),
-  };
+  const evidence: CaseEvidence = buildCaseEvidence(caseId, execution.evidence, judgedReport);
 
   const facts: Record<string, string | number | boolean | null> = {
     attempt,

@@ -68,7 +68,24 @@ function isPresentation(value: unknown): value is Readonly<{ taskId: string; pre
   const presentation = record['presentation'];
   if (typeof record['taskId'] !== 'string' || typeof presentation !== 'object' || presentation === null) return false;
   const view = presentation as Record<string, unknown>;
-  return typeof view['presentationDigest'] === 'string' && typeof view['requestVersion'] === 'number' && typeof view['decisionId'] === 'string';
+  if (
+    typeof view['presentationDigest'] !== 'string' ||
+    typeof view['requestVersion'] !== 'number' ||
+    typeof view['decisionId'] !== 'string' ||
+    typeof view['elements'] !== 'object' ||
+    view['elements'] === null
+  ) {
+    return false;
+  }
+  const elements = view['elements'] as Record<string, unknown>;
+  return (
+    typeof elements['action'] === 'string' &&
+    typeof elements['necessity'] === 'string' &&
+    Array.isArray(elements['targets']) &&
+    elements['targets'].every((target: unknown) => typeof target === 'string') &&
+    typeof elements['consequences'] === 'string' &&
+    typeof elements['verificationStatus'] === 'string'
+  );
 }
 
 /**
