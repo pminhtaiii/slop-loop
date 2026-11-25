@@ -148,7 +148,7 @@ test('same-driver continuation pauses after patch and resumes with identical ide
     // Continue the exact same driver after explicit operator approval at verification.
     setup.queue.push('approve');
     const report2 = await runEvaluation(evalOpts);
-    assert.ok('cases' in report2);
+    assert.ok('selectionResult' in report2);
     assert.equal(report2.exitCode, 0);
     assert.deepEqual(report2.selectionResult.pendingWaits, []);
     const doneCase = report2.cases[0] as WorkflowCaseResult;
@@ -363,7 +363,7 @@ test('real tier yields exact exit 3 for unresolved waiting-approval while requir
     realAdmission: c02Adm,
     driver: { executeCase: () => baseObs({ workflowOutcome: 'waiting-info', expectedWait: 'waiting-info' }) },
   });
-  assert.ok('cases' in c02UngradedReport);
+  assert.ok('selectionResult' in c02UngradedReport);
   assert.equal(c02UngradedReport.exitCode, 1, 'C02 lifecycle alone must not pass real grading without independent grade');
   assert.equal(c02UngradedReport.cases[0]?.grade, 'not-run');
   assert.equal(c02UngradedReport.cases[0]?.gradeReason, 'private-grading');
@@ -374,7 +374,7 @@ test('real tier yields exact exit 3 for unresolved waiting-approval while requir
     realAdmission: c01WaitAdm,
     driver: { executeCase: () => baseObs({ workflowOutcome: 'COMPLETED' }) },
   });
-  assert.ok('cases' in c01UngradedReport);
+  assert.ok('selectionResult' in c01UngradedReport);
   assert.equal(c01UngradedReport.exitCode, 1, 'C01 COMPLETED without independent grade must not pass');
   assert.equal(c01UngradedReport.cases[0]?.gradeReason, 'private-grading');
 });
