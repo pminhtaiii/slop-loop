@@ -1,15 +1,18 @@
 /** Strict CLI entry and lifetime for the trusted same-process console. */
 
-import type { EvaluateCliResult, HostAssembly, HostAssemblyResolution, HostConfiguration, HostConfigurationLoad } from './evaluate.ts';
+import type { EvaluateCliResult, HostAssembly, HostAssemblyResolution, HostConfiguration, HostConfigurationLoad, HostMetadata, HostOperational } from './evaluate-host.ts';
+import { classifyPreflightResult, validateHostMetadata } from './evaluate-host.ts';
 import { createEvaluationConsoleHost } from '../runtime/evaluation-console-host.ts';
 import type { EvaluationConsoleFactory } from '../runtime/evaluation-console-host.ts';
 import type { UC03ControlledHostReadiness, UC03HostReadiness } from '../runtime/uc03-host-bootstrap.ts';
+
+export type ConsoleReadinessObservation = Readonly<{ metadata: HostMetadata; operational?: HostOperational | undefined }>;
 
 export interface EvaluationConsoleCliDependencies {
   readonly loadConfiguration: (path: string) => HostConfigurationLoad;
   readonly resolveAssembly: (configuration: HostConfiguration) => Promise<HostAssemblyResolution | undefined>;
   readonly prepareAssembly: (host: HostAssembly, configuration: HostConfiguration) => UC03HostReadiness | UC03ControlledHostReadiness | undefined;
-  readonly readinessReport: (readiness: UC03HostReadiness) => string;
+  readonly readinessReport: (readiness: UC03HostReadiness, observed?: ConsoleReadinessObservation | undefined) => string;
 }
 
 const refused = (exitCode: number, error: string): EvaluateCliResult => ({ exitCode, output: JSON.stringify({ error }) });
@@ -33,6 +36,21 @@ export async function runEvaluationConsoleCli(args: readonly string[], dependenc
   if (!readiness) return refused(4, 'HOST_CONSOLE_UNAVAILABLE');
   if (readiness.status !== 'ready') {
     return readiness.status === 'unavailable' ? { exitCode: 4, output: dependencies.readinessReport(readiness) } : refused(4, 'HOST_CONSOLE_UNAVAILABLE');
+  }
+  if (resolved.metadata !== undefined) {
+    const metadata = validateHostMetadata(resolved.metadata);
+    if (metadata === undefined) return refused(4, 'HOST_METADATA_INVALID');
+    if (loaded.value.requestedModel !== metadata.model) return refused(4, 'HOST_MODEL_MISMATCH');
+    const preflight = resolved.preflight;
+    if (preflight !== undefined) {
+      const probed = await Promise.resolve()
+        .then(() => preflight())
+        .catch(() => undefined);
+      const operational = classifyPreflightResult(probed);
+      if (operational !== 'ready') {
+        return { exitCode: 4, output: dependencies.readinessReport(readiness, { metadata, operational }) };
+      }
+    }
   }
 
   const started = await createEvaluationConsoleHost(readiness, loaded.value, resolved.console as EvaluationConsoleFactory);
