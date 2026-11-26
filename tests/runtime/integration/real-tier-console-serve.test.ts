@@ -597,7 +597,7 @@ test('serve --host real assembly: generated and env tokens, auth, catalog readin
     assert.equal(noTok.status, 403);
     const badTok = await client.post('/api/experiments', {}, { 'content-type': 'application/json', origin, 'x-operator-token': 'wrong-token-value-1234' });
     assert.equal(badTok.status, 403);
-    const badOrig = await client.post('/api/experiments', {}, { 'content-type': 'application/json', origin: 'http://evil.example', 'x-operator-token': generatedToken });
+    const badOrig = await client.post('/api/experiments', {}, { 'content-type': 'application/json', origin: 'http://evil.invalid', 'x-operator-token': generatedToken });
     assert.equal(badOrig.status, 403);
   } finally {
     await cliGen?.close?.();
