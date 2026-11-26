@@ -26,6 +26,29 @@ import { QUESTION_BEHAVIOR_CONTROLS, ScriptedQuestionTransport, controlledQuesti
 
 const control = () => ({ signal: new AbortController().signal, deadlineEpochMs: Date.now() + 20000 });
 
+test('direct graph continuation snapshots constraint elements once before validating model-visible intent', async () => {
+  let reads = 0;
+  const constraints: string[] = [];
+  Object.defineProperty(constraints, 0, { enumerable: true, get: () => (++reads === 1 ? 'Inspect source only' : 'MARKER_SECRET_CONSTRAINT') });
+  const f = fixture([
+    context => {
+      const serialized = JSON.parse(f.requests.at(-1)?.serialized ?? '{}') as { constraints: string[] };
+      assert.deepEqual(serialized.constraints, ['Inspect source only']);
+      return answer(context, ['entry.py']);
+    },
+  ]);
+  const graph = createQuestionInvestigation({
+    ...f.options,
+    continuation: { context: { taskId: 'task', binding: f.options.identity.binding, intent: 'Explain start.', constraints, pendingClarification: null, conversation: [] }, sourceReferences: [] },
+  });
+  assert.ok(graph.ok);
+  const result = await graph.value.run('Explain start.', control());
+  assert.equal(result.result.kind, 'answered');
+  assert.equal(reads, 1);
+  assert.equal(f.requests.length, 1);
+  assert.ok(!f.requests[0]?.serialized.includes('MARKER_SECRET_CONSTRAINT'));
+});
+
 test('session follow-up reissues earlier supplemental spans and sends mandatory goal and constraints to the model', async () => {
   let firstEvidenceId = '';
   const f = fixture([

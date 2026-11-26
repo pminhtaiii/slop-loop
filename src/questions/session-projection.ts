@@ -13,6 +13,21 @@ export function safeSessionText(value: unknown, limit: number): value is string 
   );
 }
 
+/** Read each borrowed element once before validation, size checks or projection can inspect it again. */
+export function copySessionConstraints(input: unknown, maxBytes: number): readonly string[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const length = input.length;
+  if (!Number.isSafeInteger(length) || length < 0 || length > 64) return undefined;
+  const captured: unknown[] = [];
+  for (let index = 0; index < length; index++) captured.push(input[index]);
+  const checked: string[] = [];
+  for (const value of captured) {
+    if (!safeSessionText(value, maxBytes)) return undefined;
+    checked.push(value);
+  }
+  return Object.freeze(checked);
+}
+
 /** Returns no projection if mandatory intent cannot fit; optional turns are dropped whole, newest first. */
 export function projectQuestionSession(input: QuestionSessionProjection, maxBytes: number): QuestionSessionProjection | undefined {
   const mandatory = { taskId: input.taskId, binding: input.binding, intent: input.intent, constraints: input.constraints, pendingClarification: input.pendingClarification };

@@ -55,6 +55,120 @@ const reply = (request: QuestionSessionRunRequest) => ({
   retrieval: null,
 });
 
+test('session snapshots constraint elements once before validation and retained projection', async () => {
+  let reads = 0;
+  let retained: readonly string[] | undefined;
+  const constraints: string[] = [];
+  Object.defineProperty(constraints, 0, { enumerable: true, get: () => (++reads === 1 ? 'Inspect source only' : 'MARKER_SECRET_CONSTRAINT') });
+  const made = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async request => {
+      retained = request.context.constraints;
+      return reply(request);
+    },
+  });
+  assert.ok(made.ok);
+  const outcome = await made.value.startTask({ ...task(), constraints }, control());
+  assert.ok(outcome.status === 'completed' && outcome.result.kind === 'insufficient-evidence');
+  assert.equal(reads, 1);
+  assert.deepEqual(retained, ['Inspect source only']);
+  assert.deepEqual(made.value.snapshot().projection?.constraints, ['Inspect source only']);
+});
+
+test('caller cancellation during task preparation prevents runner dispatch and closes the retained ledger', async () => {
+  const caller = new AbortController();
+  let calls = 0;
+  const made = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    now: () => {
+      caller.abort();
+      return 0;
+    },
+    run: async request => {
+      calls++;
+      return reply(request);
+    },
+  });
+  assert.ok(made.ok);
+  const outcome = await made.value.startTask(task(), { ...control(), signal: caller.signal });
+  assert.equal(calls, 0);
+  assert.ok(outcome.status === 'completed' && outcome.result.kind === 'cancelled');
+  assert.equal(made.value.snapshot().budget?.status, 'cancelled');
+});
+
+test('a runner outcome after the caller deadline cannot deliver source claims or citations', async t => {
+  const release = Promise.withResolvers<undefined>();
+  let runnerSignal: AbortSignal | undefined;
+  const made = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async (request, execution) => {
+      runnerSignal = execution.signal;
+      await release.promise;
+      return {
+        result: {
+          schemaVersion: 'repository-question/1',
+          identity: request.identity,
+          usage: { status: 'missing' },
+          kind: 'answered',
+          claims: [{ claimId: 'claim', text: 'The source returns one.', kind: 'observation', evidence: [{ evidenceId: 'evidence', range: { startLine: 1, endLine: 1 } }] }],
+          citations: [{ evidenceId: 'evidence', path: 'entry.py', range: { startLine: 1, endLine: 1 }, originalByteDigest: digest, excerptDigest: digest }],
+          limitations: [],
+        },
+        retrieval: null,
+      };
+    },
+  });
+  assert.ok(made.ok);
+  t.after(() => {
+    release.resolve(undefined);
+    made.value.closeSession();
+  });
+  const pending = made.value.startTask(task(), { ...control(), deadlineEpochMs: Date.now() + 20 });
+  await new Promise(resolve => setTimeout(resolve, 40));
+  release.resolve(undefined);
+  const outcome = await pending;
+  assert.ok(outcome.status === 'completed' && outcome.result.kind === 'budget-exhausted', JSON.stringify(outcome));
+  assert.ok(!('claims' in outcome.result));
+  assert.ok(!('citations' in outcome.result));
+  assert.equal(runnerSignal?.aborted, true);
+  assert.equal(made.value.snapshot().budget?.status, 'cancelled');
+});
+
+test('session expiry bounds an in-flight runner and prevents its later effect', async t => {
+  const release = Promise.withResolvers<undefined>();
+  let effects = 0;
+  let effectiveDeadline = Infinity;
+  let runnerSignal: AbortSignal | undefined;
+  const expiry = Date.now() + 30;
+  const made = openSession({
+    sessionId: 'session',
+    expiresAtEpochMs: expiry,
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async (request, execution) => {
+      effectiveDeadline = execution.deadlineEpochMs;
+      runnerSignal = execution.signal;
+      await release.promise;
+      if (!execution.signal.aborted && Date.now() < execution.deadlineEpochMs) effects++;
+      return reply(request);
+    },
+  });
+  assert.ok(made.ok);
+  t.after(() => {
+    release.resolve(undefined);
+    made.value.closeSession();
+  });
+  const pending = made.value.startTask(task(), control());
+  await new Promise(resolve => setTimeout(resolve, 45));
+  release.resolve(undefined);
+  assert.deepEqual(await pending, { status: 'refused', reasonCode: 'closed' });
+  assert.equal(effectiveDeadline, expiry);
+  assert.equal(runnerSignal?.aborted, true);
+  assert.equal(effects, 0);
+});
+
 test('explicit continuation retains one ledger and task while a new task receives a new ledger', async () => {
   const seen: QuestionSessionRunRequest[] = [];
   const created = openSession({

@@ -6,7 +6,7 @@ import type { QuestionRepositoryOperationControl } from '../foundation/repositor
 import type { QuestionEvidenceRegistryV1 } from './evidence.ts';
 import { questionStop, repositoryStop } from './graph-investigation.ts';
 import type { QuestionSourceReference } from './graph-types.ts';
-import { projectQuestionSession, safeSessionText } from './session-projection.ts';
+import { copySessionConstraints, projectQuestionSession, safeSessionText } from './session-projection.ts';
 import type { QuestionSessionProjection } from './session-types.ts';
 import { sameBinding } from './retrieval-admission.ts';
 
@@ -63,15 +63,14 @@ export function prepareQuestionContinuation(input: unknown, identity: QuestionId
   const { context, sourceReferences = [] } = input;
   if (!isRecord(context) || Object.keys(context).sort().join(',') !== 'binding,constraints,conversation,intent,pendingClarification,taskId') return undefined;
   const { binding: rawBinding, taskId, intent, constraints, pendingClarification, conversation } = context;
+  const checkedConstraints = copySessionConstraints(constraints, 8192);
   const binding = validateRepositoryBinding(isRecord(rawBinding) ? { ...rawBinding } : rawBinding);
   if (
     !binding.ok ||
     !sameBinding(binding.value, identity.binding) ||
     taskId !== identity.taskId ||
     !safeSessionText(intent, profile.repository.maxQueryBytes) ||
-    !Array.isArray(constraints) ||
-    constraints.length > 64 ||
-    !constraints.every(value => safeSessionText(value, 8192)) ||
+    !checkedConstraints ||
     (pendingClarification !== null && !safeSessionText(pendingClarification, 8192)) ||
     !Array.isArray(conversation) ||
     conversation.length > 1000
@@ -85,7 +84,7 @@ export function prepareQuestionContinuation(input: unknown, identity: QuestionId
     turns.push({ role, text });
   }
   const projected = projectQuestionSession(
-    { taskId: identity.taskId, binding: binding.value, intent, constraints: constraints as string[], pendingClarification, conversation: turns },
+    { taskId: identity.taskId, binding: binding.value, intent, constraints: checkedConstraints, pendingClarification, conversation: turns },
     profile.runtime.maxConversationBytes,
   );
   const references = copyQuestionSourceReferences(sourceReferences, identity, profile);

@@ -4,7 +4,7 @@ import { validateQuestionBudgetProfile, validateQuestionIdentity, validateQuesti
 import { validateId, validateDigest, isRecord } from '../contracts/questions/validation/shared.ts';
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import { createQuestionBudgetLedger, type QuestionBudgetLedger } from './budget.ts';
-import { projectQuestionSession, safeSessionText } from './session-projection.ts';
+import { copySessionConstraints, projectQuestionSession, safeSessionText } from './session-projection.ts';
 import { copyQuestionSourceReferences } from './graph-continuation.ts';
 import type { QuestionSourceReference } from './graph-types.ts';
 import { sameBinding } from './retrieval-admission.ts';
@@ -83,6 +83,8 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
     busy = true;
     const current = new AbortController();
     controller = current;
+    const deadlineEpochMs = Math.min(control.deadlineEpochMs, expiry ?? Infinity);
+    let interruption: 'cancelled' | 'deadline' | undefined;
     const abort = () => {
       current.abort();
       task.budget.cancel();
@@ -95,12 +97,41 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
       return refused('invalid-request');
     }
     task.turnId = turnId;
-    try {
-      const run = await runner(
-        Object.freeze({ identity: identity.value, question, profile: task.profile, budget: task.budget, context: task.projection, sourceReferences: task.sourceReferences }),
-        Object.freeze({ ...control, signal: current.signal }),
-      );
+    const stop = (): QuestionSessionTurn | undefined => {
+      if (control.signal.aborted) abort();
       if (isClosed()) return refused('closed');
+      const deadline = interruption === 'deadline' || Date.now() >= deadlineEpochMs;
+      if (!deadline && interruption !== 'cancelled' && !current.signal.aborted) return undefined;
+      abort();
+      const result: QuestionResultV1 = Object.freeze({
+        schemaVersion: 'repository-question/1',
+        identity: identity.value,
+        usage: { status: 'missing' as const },
+        ...(deadline ? { kind: 'budget-exhausted' as const, reasonCode: 'elapsed-deadline' as const } : { kind: 'cancelled' as const, reasonCode: 'cancelled' as const }),
+      });
+      task.result = result;
+      task.sourceReferences = [];
+      return Object.freeze({ status: 'completed', turnId, result, retrieval: null });
+    };
+    try {
+      const before = stop();
+      if (before) return before;
+      const run = await withRetrievalControl<Awaited<ReturnType<typeof runner>> | null>(
+        Object.freeze({ ...control, deadlineEpochMs, signal: current.signal }),
+        bounded =>
+          stop()
+            ? Promise.resolve(null)
+            : runner(Object.freeze({ identity: identity.value, question, profile: task.profile, budget: task.budget, context: task.projection, sourceReferences: task.sourceReferences }), bounded),
+        failure => {
+          interruption = failure.reasonCode === 'deadline' ? 'deadline' : 'cancelled';
+          if (expiry !== undefined && Date.now() >= expiry) closeSession();
+          else abort();
+          return null;
+        },
+      );
+      const after = stop();
+      if (after) return after;
+      if (!run) return refused('accounting-pending');
       const checked = validateQuestionResult(run.result);
       const result: QuestionResultV1 = current.signal.aborted
         ? Object.freeze({ schemaVersion: 'repository-question/1', identity: identity.value, usage: { status: 'missing' as const }, kind: 'cancelled', reasonCode: 'cancelled' })
@@ -121,9 +152,10 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
         });
       }
       task.projection = projected;
-      return Object.freeze({ status: 'completed', turnId, result, retrieval: run.retrieval });
+      return stop() ?? Object.freeze({ status: 'completed', turnId, result, retrieval: run.retrieval });
     } catch {
-      if (isClosed()) return refused('closed');
+      const stopped = stop();
+      if (stopped) return stopped;
       task.ownerBlocked = true;
       task.budget.cancel();
       return refused('accounting-pending');
@@ -141,10 +173,10 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
     const profile = validateQuestionBudgetProfile(suppliedProfile);
     const binding = validateRepositoryBinding(suppliedBinding);
     if (!profile.ok || !binding.ok || !safeSessionText(question, profile.value.repository.maxQueryBytes)) return refused('invalid-request');
-    const constraints = suppliedConstraints ?? [];
-    if (!Array.isArray(constraints) || constraints.length > 64 || !constraints.every(item => safeSessionText(item, profile.value.runtime.maxConversationBytes))) return refused('invalid-request');
+    const constraints = copySessionConstraints(suppliedConstraints ?? [], profile.value.runtime.maxConversationBytes);
+    if (!constraints) return refused('invalid-request');
     const projection = projectQuestionSession(
-      { taskId: taskId as string, binding: binding.value, intent: question, constraints: constraints as string[], pendingClarification: null, conversation: [] },
+      { taskId: taskId as string, binding: binding.value, intent: question, constraints, pendingClarification: null, conversation: [] },
       profile.value.runtime.maxConversationBytes,
     );
     if (!projection) return refused('context-limit');
