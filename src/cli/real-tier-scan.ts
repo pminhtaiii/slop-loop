@@ -22,15 +22,13 @@ import {
   type ScanOptions,
   type ScanResult,
 } from '../runtime/real-tier-endpoint-scan.ts';
+import { realTierHostDigestsOf } from '../runtime/real-tier-console-admission.ts';
 import type { RealTierProfile } from '../runtime/real-tier-profile.ts';
-import { sha256Text } from '../uc01/contracts.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
 
 export type RealTierScanCliOptions = Readonly<{ env: ScanOptions['env']; repositoryRoot: string; cwd?: string | undefined; git?: ScanGit | undefined }>;
 
-const TEMPLATE_PROFILE_ID = 'uc03-runtime-evaluation-v1';
 const TEMPLATE_ASSEMBLY = 'dist/src/runtime/real-tier-assembly.js';
-const TEMPLATE_ADAPTERS = ['uc03-real-tier/1'];
 const TEMPLATE_CONTRACT = 'uc03-host-composition/2';
 
 function parse(args: readonly string[]): Readonly<{ mode: 'staged' | 'all' | 'template' } | { mode: 'dir'; path: string } | { mode: 'range'; base: string }> | undefined {
@@ -54,13 +52,7 @@ async function hostTemplate(profile: RealTierProfile, git: ScanGit, scan: ScanOp
   if (!head.ok) return scanError('git-failure');
   const revision = (typeof head.stdout === 'string' ? head.stdout : head.stdout.toString('utf8')).trim();
   const template = {
-    profileId: TEMPLATE_PROFILE_ID,
-    profileDigest: `sha256:${profile.profileDigest}`,
-    // The configuration identity covers the numeric limits and the run limits; the endpoint stays in profileDigest.
-    configDigest: `sha256:${sha256Text(JSON.stringify({ limits: profile.limits, runLimits: profile.runLimits }))}`,
-    pricingDigest: `sha256:${sha256Text(JSON.stringify(profile.pricing))}`,
-    requestedModel: profile.endpoint.model,
-    adapterVersions: TEMPLATE_ADAPTERS,
+    ...realTierHostDigestsOf(profile),
     contractVersion: TEMPLATE_CONTRACT,
     revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(component => [component, revision])),
     assembly: TEMPLATE_ASSEMBLY,
