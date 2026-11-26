@@ -72,9 +72,10 @@
 **Goal**: Multiple tasks/turns without stale evidence or budget resets.
 **Independent test**: Same-revision reuse, ambiguous reference, drift/rebind, switching, compaction and concurrent submissions.
 
-- [ ] T011 [US3] Implement explicit session/task/continuation lifecycle and deterministic bounded context projection in src/questions/session.ts with tests/runtime/unit/question-session.test.ts.
+- [X] T011 [US3] Implement explicit session/task/continuation lifecycle and deterministic bounded context projection in src/questions/session.ts with tests/runtime/unit/question-session.test.ts.
   - **Dependencies**: T009.
   - **Acceptance**: Explicit new task vs continuation; serialized turns; summaries retain intent but cannot mint evidence/budgets; in-memory lifetime only.
+  - **Evidence**: Independent merger `/root/merger`, registered `rag-session-merger`, accepted `12896379ce0bab041bf49d6c2894642b739c51e1` on 2026-11-26: source/fresh emitted 16/16 each, including six independent public-boundary probes per layout; fresh build passed. Exact task/turn/clarification references, busy refusal without runner effects, cumulative ledger versus fresh task, charged bounded projection, mandatory-context overflow and process-local close/expiry were exercised. Local candidate-bound verdict: `.agent-work/2026-11-26/rag-active-session-followups/merger/T011-12896379-verdict.json`. Controlled lifecycle only; T012 integration and final batch/review/publication gates remain separate.
 - [ ] T012 [US3] Integrate continuation, re-admission, drift/repository switching and cancellation into src/questions/graph.ts and src/questions/session.ts with tests/runtime/integration/question-runtime.test.ts.
   - **Dependencies**: T011, T010.
   - **Acceptance**: Recheck/reissue source spans against admitted immutable snapshot/manifest; same-task drift preserves ledger; switch waits for cancellation/accounting reconciliation, excludes old source text; ABA/current-workspace changes cannot relabel snapshot bytes; no automatic drift loop/restart.
