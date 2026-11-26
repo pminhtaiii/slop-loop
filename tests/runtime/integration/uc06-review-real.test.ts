@@ -59,7 +59,7 @@ async function approveVerification(fixture: Awaited<ReturnType<typeof controlled
   fixture.approval.scriptDecision({ ...d1, status: 'approved' });
 }
 
-test('T011 live acceptance: execute real integrated review with live provider and durable persistence', { timeout: 45000 }, async (t) => {
+test('T011 live acceptance: execute real integrated review with live provider and durable persistence', { timeout: 45000 }, async t => {
   if (!API_KEY) {
     t.skip('OPENROUTER_API_KEY environment variable not set; live network dispatch skipped in unauthenticated environment');
     return;
@@ -101,7 +101,7 @@ test('T011 live acceptance: execute real integrated review with live provider an
     };
     // Wrap reviewerAdmission to set the real modelId
     const baseReviewerAdmission = fixture.config.reviewerAdmission;
-    const reviewerAdmission: typeof baseReviewerAdmission = async (input) => {
+    const reviewerAdmission: typeof baseReviewerAdmission = async input => {
       if (!baseReviewerAdmission) return undefined;
       const admission = await baseReviewerAdmission(input);
       if (!admission) return undefined;
@@ -149,10 +149,7 @@ test('T011 live acceptance: execute real integrated review with live provider an
     // Verify durable storage committed review observation
     const { readdirSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const walk = (d: string): string[] =>
-      readdirSync(d, { withFileTypes: true }).flatMap(e =>
-        e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)],
-      );
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap(e => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
     const persistedFiles = walk(dir);
     assert.ok(persistedFiles.length >= 3, `Expected at least 3 durable files, found: ${persistedFiles.length}`);
 

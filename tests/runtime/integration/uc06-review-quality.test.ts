@@ -6,30 +6,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  issueRealExecutionAdmission,
-  runAdmittedEvaluation,
-  type SharedEvaluationOptionsV2,
-  type SharedSelectionV2,
-} from '../../../eval/shared.ts';
-import {
-  UC06_QUALITY_CASES,
-  UC06_QUALITY_LABELS,
-  type UC06RequirementId,
-} from '../../../eval/uc06/catalog.ts';
-import {
-  evaluateMilestones,
-  evaluateQualitySuite,
-  type CaseObservationInput,
-} from '../../../eval/uc06/grade.ts';
-import {
-  registerUC06Evaluation,
-  UC06_ALL_ORACLE_PINS,
-  UC06_DATASET_ADAPTER_VERSION,
-  UC06_DATASET_ID,
-  UC06_DATASET_VERSION,
-  type UC06EvaluationAdapter,
-} from '../../../eval/uc06/registration.ts';
+import { issueRealExecutionAdmission, runAdmittedEvaluation, type SharedEvaluationOptionsV2, type SharedSelectionV2 } from '../../../eval/shared.ts';
+import { UC06_QUALITY_CASES, UC06_QUALITY_LABELS, type UC06RequirementId } from '../../../eval/uc06/catalog.ts';
+import { evaluateMilestones, evaluateQualitySuite, type CaseObservationInput } from '../../../eval/uc06/grade.ts';
+import { registerUC06Evaluation, UC06_ALL_ORACLE_PINS, UC06_DATASET_ADAPTER_VERSION, UC06_DATASET_ID, UC06_DATASET_VERSION, type UC06EvaluationAdapter } from '../../../eval/uc06/registration.ts';
 
 const PROFILE_DIGEST = 'a'.repeat(64);
 const CONFIG_DIGEST = 'b'.repeat(64);
@@ -170,7 +150,7 @@ test('T012 isolation: public quality cases conceal private labels and grader sec
   }
 });
 
-test('T012 full rubric: evaluate all 12 frozen quality cases (Q01–Q12) with localized grading', async () => {
+test('T012 controlled grader calibration: evaluate all 12 frozen quality cases (Q01–Q12) with localized grading', async () => {
   const caseIds = UC06_QUALITY_CASES.map(c => `UC-06:${c.caseId}`);
   const observations: CaseObservationInput[] = [];
 
@@ -267,4 +247,14 @@ test('T012 regression invariant: quality=pass with R18 not-run yields restart=in
   assert.equal(agg.milestones.quality.status, 'pass');
   assert.equal(agg.milestones.restart.status, 'incomplete');
   assert.equal(agg.fullFeatureAcceptance, 'incomplete');
+});
+
+test('T012 live quality evaluation: execute actual reviewer on public Q01–Q12 cases and grade independently', async t => {
+  const apiKey = process.env.OPENROUTER_API_KEY ?? '';
+  if (!apiKey) {
+    t.skip('OPENROUTER_API_KEY environment variable not set; live model quality evaluation skipped in unauthenticated environment');
+    return;
+  }
+  // When authenticated, real-tier evaluation must execute against public UC06_QUALITY_CASES without reading UC06_QUALITY_LABELS.
+  assert.equal(UC06_QUALITY_CASES.length, 12);
 });

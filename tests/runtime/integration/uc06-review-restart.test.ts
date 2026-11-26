@@ -5,17 +5,13 @@
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { computeCanonicalSha256 as hash } from '../../../src/contracts/foundation/uc03.ts';
-import type {
-  PersistReviewObservationRequestV1,
-  ReviewAuthorityV1,
-  ReviewObservationV1,
-} from '../../../src/contracts/review.ts';
+import type { PersistReviewObservationRequestV1, ReviewAuthorityV1, ReviewObservationV1 } from '../../../src/contracts/review.ts';
 import { createDurableReviewEvidenceStore } from '../../../src/persistence/adapters/review-evidence-store.ts';
 
 const TASK_ID = 'task-restart-001';
@@ -89,24 +85,32 @@ if (process.env.RESTART_CHILD_MODE) {
     };
 
     store.persistObservation(req).then(() => {
-      // Print confirmation before process crash
-      console.log(JSON.stringify({ pid: process.pid, status: 'COMMITTED_CRASHING' }));
-      process.exit(137); // Crash with SIGKILL exit code
+      // Flush confirmation synchronously before SIGKILL at the lost-ACK boundary
+      writeSync(1, `${JSON.stringify({ pid: process.pid, status: 'COMMITTED_CRASHING' })}\n`);
+      process.kill(process.pid, 'SIGKILL');
     });
   } else if (mode === 'recover-from-disk') {
-    store
-      .recoverObservation({
+    const obsDigest = hash(OBSERVATION);
+    const replayReq: PersistReviewObservationRequestV1 = {
+      observation: OBSERVATION,
+      observationDigest: obsDigest,
+      expectedAuthority: AUTHORITY,
+      idempotencyKey: `review-${obsDigest.slice(7)}`,
+    };
+    Promise.all([
+      store.recoverObservation({
         taskId: TASK_ID,
         workspaceId: WORKSPACE_ID,
         repositoryId: REPO_ID,
         headRevisionDigest: HEAD_REV,
         diffDigest: DIFF_DIGEST,
         expectedAuthority: AUTHORITY,
-      })
-      .then(res => {
-        console.log(JSON.stringify({ pid: process.pid, status: 'RECOVER_RESULT', res }));
-        process.exit(0);
-      });
+      }),
+      store.persistObservation(replayReq),
+    ]).then(([res, replayAck]) => {
+      console.log(JSON.stringify({ pid: process.pid, status: 'RECOVER_RESULT', res, replayAck }));
+      process.exit(0);
+    });
   } else if (mode === 'recover-unpersisted') {
     store
       .recoverObservation({
@@ -127,18 +131,18 @@ if (process.env.RESTART_CHILD_MODE) {
   test('T013 process termination: atomic persist before crash recovers without provider replay across distinct PIDs', () => {
     const dir = mkdtempSync(join(tmpdir(), 'uc06-restart-t013-'));
     try {
-      // Process 1: Persist observation into durable store and abruptly crash (137)
+      // Process 1: Persist observation into durable store and terminate via SIGKILL at lost-ACK boundary
       const p1 = spawnSync(process.execPath, [import.meta.filename], {
         env: { ...process.env, RESTART_CHILD_MODE: 'persist-and-crash', STORE_DIR: dir },
         encoding: 'utf8',
       });
-      assert.equal(p1.status, 137, `Expected child process 1 to crash with exit code 137, stderr: ${p1.stderr}`);
+      assert.ok(p1.signal === 'SIGKILL' || (p1.status !== null && p1.status !== 0), `Expected child process 1 to terminate abnormally, status=${p1.status}, signal=${p1.signal}`);
       const line1 = p1.stdout.trim().split('\n')[0] ?? '{}';
       const p1Out = JSON.parse(line1);
       assert.equal(p1Out.status, 'COMMITTED_CRASHING');
       const pid1 = p1Out.pid;
 
-      // Process 2: Fresh process starts up and recovers observation from disk without locator
+      // Process 2: Fresh process starts up, recovers observation from disk, and replays lost-ACK idempotently
       const p2 = spawnSync(process.execPath, [import.meta.filename], {
         env: { ...process.env, RESTART_CHILD_MODE: 'recover-from-disk', STORE_DIR: dir },
         encoding: 'utf8',
@@ -149,11 +153,13 @@ if (process.env.RESTART_CHILD_MODE) {
       assert.equal(p2Out.status, 'RECOVER_RESULT');
       const pid2 = p2Out.pid;
 
-      // Verify recovery output
+      // Verify recovery output and idempotent lost-ACK replay
       assert.equal(p2Out.res.outcome, 'found');
       assert.equal(p2Out.res.observation.reviewId, OBSERVATION.reviewId);
       assert.equal(p2Out.res.observation.status, 'accepted');
       assert.equal(p2Out.res.observation.evidenceTier, 'real-integration');
+      assert.equal(p2Out.replayAck.outcome, 'acknowledged');
+      assert.equal(p2Out.replayAck.ack.receiptId, p2Out.res.ack.receiptId);
 
       // Process 3: Recovery of unpersisted candidate returns missing safely without fallback
       const p3 = spawnSync(process.execPath, [import.meta.filename], {
