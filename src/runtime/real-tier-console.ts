@@ -47,7 +47,6 @@ interface BoundSession {
   readonly directionsByRef: Map<string, RecordedDirection>;
   directionsIssued: number;
   lastControlVersion: number;
-  lastSeenApprovalVer: number;
   terminal: boolean;
   cleanupCopy: () => void;
 }
@@ -87,7 +86,7 @@ function removeCopyDir(root: string): void {
   try {
     rmSync(root, { recursive: true, force: true });
   } catch {
-    /* Best-effort cleanup of finished attempt working copies. */
+    /* best-effort cleanup */
   }
 }
 
@@ -139,6 +138,7 @@ export function createRealTierConsoleFactory(
   const expected = expectedBindingsOf(initialAssembly);
   const capOpt = dependencies.graderCapability === undefined ? {} : { graderCapability: dependencies.graderCapability };
   const customCap = dependencies.graderCapability !== undefined;
+  const allowRevise = dependencies.verifyDirection !== undefined;
   const pins: UC03HostInputs['pins'] = {
     contractVersion: REAL_TIER_DELIVERY_CONTRACT,
     revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(c => [c, initialAssembly.revision])),
@@ -172,13 +172,13 @@ export function createRealTierConsoleFactory(
 
     const control: ServiceControl = {
       async issue(input) {
+        if (input.kind === 'revise' && !allowRevise) return INVALID_RECEIPT;
         const session = sessions.get(input.experimentId);
         if (!session) return INVALID_RECEIPT;
         const [ownerState, listed] = await Promise.all([session.statePort.loadTask(session.task.taskId), session.approvalService.list(session.task.taskId)]);
         if (!ownerState) return INVALID_RECEIPT;
 
-        const approvalVer = listed.control.version;
-        const expectedCtrl = approvalVer > session.lastSeenApprovalVer ? approvalVer : session.lastControlVersion;
+        const expectedCtrl = Math.max(listed.control.version, session.lastControlVersion);
         if (
           !validDir(
             input.kind,
@@ -205,7 +205,6 @@ export function createRealTierConsoleFactory(
         });
         session.directionsIssued += 1;
         session.lastControlVersion = nextVer;
-        session.lastSeenApprovalVer = approvalVer;
         session.directionsByRef.set(receipt.receiptRef, { receipt, taskVersion: ownerState.stateVersion });
         return receipt;
       },
@@ -251,71 +250,78 @@ export function createRealTierConsoleFactory(
           const fresh = resolveAssembly({ ...dependencies, stateRoot: join(baseStateRoot, `console-${runNonce}-${++caseSeq}-${entry.caseId}`) });
           if (fresh.status !== 'assembly-ready') return { ok: false, reasonCode: fresh.reasonCode };
           if (!freshMatchesInitial(fresh, initialAssembly, expected, pins)) return { ok: false, reasonCode: 'HOST_BINDING_DRIFT' };
+          const freshAdmitted = admitRealTierConsole({ profile: fresh.profile, configuration });
+          if (!freshAdmitted.ok) return { ok: false, reasonCode: freshAdmitted.reasonCode };
+          const freshEntry = freshAdmitted.value.catalog.find(c => c.caseId === entry.caseId);
+          if (!freshEntry || freshEntry.caseDigest !== entry.caseDigest || freshEntry.fixtureDigest !== entry.fixtureDigest || freshEntry.grader.digest !== entry.grader.digest) {
+            return { ok: false, reasonCode: 'HOST_BINDING_DRIFT' };
+          }
 
           const cap = dependencies.graderCapability ?? createRealTierGraderCapability({ spawn });
           const graderErr = checkGraderReady(fresh, entry.caseId, cap, customCap);
           if (graderErr !== undefined) return { ok: false, reasonCode: graderErr };
 
           const workingCopyRoot = mkdtempSync(join(tmpdir(), 'uc03-real-console-copy-'));
-          const bound = await bindRealTierTask(fresh, { caseId: entry.caseId, pins, identity: configuration.identity, workingCopyRoot, retainedRoot: fresh.profile.artifacts.retainRoot });
-          if (bound.status !== 'task-bound') {
-            removeCopyDir(workingCopyRoot);
-            return { ok: false, reasonCode: bound.reasonCode };
-          }
+          let keepCopy = false;
+          try {
+            const bound = await bindRealTierTask(fresh, { caseId: entry.caseId, pins, identity: configuration.identity, workingCopyRoot, retainedRoot: fresh.profile.artifacts.retainRoot });
+            if (bound.status !== 'task-bound') return { ok: false, reasonCode: bound.reasonCode };
 
-          const owners = fresh.owners.taskOwners({ taskId: bound.ids.taskId, workspaceId: bound.ids.workspaceId, repositoryId: bound.task.repositoryId });
-          const session: BoundSession = {
-            task: bound.task,
-            statePort: bound.ports.statePort,
-            approvalService: owners.approvalService,
-            approvalConsole: owners.console,
-            directionsByRef: new Map(),
-            directionsIssued: 0,
-            lastControlVersion: 0,
-            lastSeenApprovalVer: 0,
-            terminal: false,
-            cleanupCopy: () => removeCopyDir(workingCopyRoot),
-          };
-          sessions.set(experimentId, session);
+            const owners = fresh.owners.taskOwners({ taskId: bound.ids.taskId, workspaceId: bound.ids.workspaceId, repositoryId: bound.task.repositoryId });
+            const session: BoundSession = {
+              task: bound.task,
+              statePort: bound.ports.statePort,
+              approvalService: owners.approvalService,
+              approvalConsole: owners.console,
+              directionsByRef: new Map(),
+              directionsIssued: 0,
+              lastControlVersion: 0,
+              terminal: false,
+              cleanupCopy: () => removeCopyDir(workingCopyRoot),
+            };
+            sessions.set(experimentId, session);
+            keepCopy = true;
 
-          const baseEv = createRealTierReportEvidenceHost({ assembly: fresh, caseId: entry.caseId, task: bound.task, repositoryRoot: bound.repositoryRoot, spawn, ...capOpt });
-          const workflowEvidence = Object.freeze({
-            grader: Object.freeze({
-              grade: async (caseId: string, gradeInput: Parameters<typeof baseEv.grader.grade>[1]) => {
-                const outcome = await baseEv.grader.grade(caseId, gradeInput);
-                if (typeof gradeInput !== 'object' || gradeInput === null || !('snapshot' in gradeInput) || gradeInput.snapshot === undefined) {
-                  const st = await session.statePort.loadTask(session.task.taskId);
-                  if (st && TERMINAL_NODES.has(st.node)) {
-                    session.terminal = true;
-                    session.cleanupCopy();
-                  }
-                }
+            const baseEv = createRealTierReportEvidenceHost({ assembly: fresh, caseId: entry.caseId, task: bound.task, repositoryRoot: bound.repositoryRoot, spawn, ...capOpt });
+            const finishIfTerminal = async () => {
+              const st = await session.statePort.loadTask(session.task.taskId);
+              if (st && TERMINAL_NODES.has(st.node)) {
+                session.terminal = true;
+                session.cleanupCopy();
+              }
+            };
+            const grade: typeof baseEv.grader.grade = async (caseId, gradeInput) => {
+              const noSnap = typeof gradeInput !== 'object' || gradeInput === null || !('snapshot' in gradeInput) || gradeInput.snapshot === undefined;
+              let outcome: Awaited<ReturnType<typeof baseEv.grader.grade>> | undefined;
+              try {
+                outcome = await baseEv.grader.grade(caseId, gradeInput);
                 return outcome;
-              },
-            }),
-            finalTree: Object.freeze({
-              freezeFinalTree: (binding: Parameters<typeof baseEv.finalTree.freezeFinalTree>[0]) => baseEv.finalTree.freezeFinalTree(binding),
-              recheckCurrentFinalTree: async (binding: Parameters<typeof baseEv.finalTree.recheckCurrentFinalTree>[0], snap: Parameters<typeof baseEv.finalTree.recheckCurrentFinalTree>[1]) => {
-                try {
-                  return await baseEv.finalTree.recheckCurrentFinalTree(binding, snap);
-                } finally {
-                  const st = await session.statePort.loadTask(session.task.taskId);
-                  if (st && TERMINAL_NODES.has(st.node)) {
-                    session.terminal = true;
-                    session.cleanupCopy();
-                  }
-                }
-              },
-            }),
-          });
+              } finally {
+                if (noSnap || outcome === undefined || outcome.grade === 'not-run' || outcome.snapshot === null) await finishIfTerminal();
+              }
+            };
+            const recheck: typeof baseEv.finalTree.recheckCurrentFinalTree = async (binding, snap) => {
+              try {
+                return await baseEv.finalTree.recheckCurrentFinalTree(binding, snap);
+              } finally {
+                await finishIfTerminal();
+              }
+            };
+            const workflowEvidence = Object.freeze({
+              grader: Object.freeze({ grade }),
+              finalTree: Object.freeze({ freezeFinalTree: baseEv.finalTree.freezeFinalTree, recheckCurrentFinalTree: recheck }),
+            });
 
-          return { ok: true, task: bound.task, ports: bound.ports, config: bound.config, workflowEvidence };
+            return { ok: true, task: bound.task, ports: bound.ports, config: bound.config, workflowEvidence };
+          } finally {
+            if (!keepCopy) removeCopyDir(workingCopyRoot);
+          }
         },
         resolveDirection: ({ experimentId, currentState, direction }): TrustedReplanDirection | undefined => {
           if (direction === null) return undefined;
           const recorded = sessions.get(experimentId)?.directionsByRef.get(direction.receiptRef);
           if (!recorded || recorded.receipt.controlVersion !== direction.controlVersion || recorded.taskVersion !== currentState.stateVersion) return undefined;
-          if (currentState.node !== 'AwaitFeedback' || !currentState.plan?.decisionRef || (recorded.receipt.kind !== 'revise' && recorded.receipt.kind !== 'end')) return undefined;
+          if (currentState.node !== 'AwaitFeedback' || !currentState.plan?.decisionRef || (recorded.receipt.kind !== 'end' && (!allowRevise || recorded.receipt.kind !== 'revise'))) return undefined;
           return {
             directive: recorded.receipt.kind === 'end' ? 'terminate' : 'revise',
             taskId: currentState.taskId,

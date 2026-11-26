@@ -6,7 +6,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -16,8 +16,8 @@ import { runEvaluateCli } from '../../../src/cli/evaluate.ts';
 import type { BugTask } from '../../../src/contracts/foundation/uc03.ts';
 import type { StructuredSpawn } from '../../../src/foundation/docker-controller.ts';
 import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
-import { createHostAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
-import { REAL_CONSOLE_TOKEN_ENV } from '../../../src/runtime/real-tier-console.ts';
+import { createHostAssembly, resolveRealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
+import { createRealTierConsoleFactory, REAL_CONSOLE_TOKEN_ENV } from '../../../src/runtime/real-tier-console.ts';
 import { admitRealTierConsole, realTierHostDigestsOf } from '../../../src/runtime/real-tier-console-admission.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from '../../../src/runtime/real-tier-owners.ts';
 import { loadRealTierProfile, type RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
@@ -496,6 +496,8 @@ async function setupServeScenario(opts: {
     c02GraderPath,
     c02GraderDigest,
     profileId: digests.profileId,
+    digests,
+    deps,
     fetchSpy,
     spawnSpy,
     env,
@@ -527,27 +529,27 @@ function makeClient(origin: string, token: string) {
   };
   const issueAndContinue = async (
     experimentId: string,
-    input: { kind: 'resume' | 'revise' | 'end'; expectedTaskVersion: number; expectedControlVersion: number; decisionRef?: string; keyPrefix: string },
+    input: { kind: 'resume' | 'revise' | 'end'; expectedTaskVersion: number; expectedControlVersion: number; decisionRef?: string; label: string },
     expectedExpVersion: number,
   ) => {
     const dir = unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; controlVersion: number } }>(
       await post(`/api/experiments/${experimentId}/directions`, {
-        idempotencyKey: nextKey(`${input.keyPrefix}-dir`),
+        idempotencyKey: nextKey(`${input.label}-dir`),
         kind: input.kind,
         expectedTaskVersion: input.expectedTaskVersion,
         expectedControlVersion: input.expectedControlVersion,
         ...(input.decisionRef === undefined ? {} : { decisionRef: input.decisionRef }),
       }),
-      `${input.keyPrefix}-dir`,
+      `${input.label}-dir`,
     );
     assert.equal(dir.experiment.version, expectedExpVersion + 1);
     const cont = unwrap<{ experiment: ExperimentViewShape }>(
       await post(`/api/experiments/${experimentId}/continue`, {
-        idempotencyKey: nextKey(`${input.keyPrefix}-cont`),
+        idempotencyKey: nextKey(`${input.label}-cont`),
         directionRef: dir.receipt.receiptRef,
         expectedVersion: dir.experiment.version,
       }),
-      `${input.keyPrefix}-cont`,
+      `${input.label}-cont`,
     );
     return { experiment: cont.experiment, controlVersion: dir.receipt.controlVersion };
   };
@@ -703,7 +705,7 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
 
     const afterD0 = await client.issueAndContinue(
       c01Run1.id,
-      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, keyPrefix: 'c01-to-verify' },
+      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'c01-to-verify' },
       c01Run1.version,
     );
     assert.equal(afterD0.experiment.status, 'waiting-approval');
@@ -720,7 +722,7 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
     );
     const completed = await client.issueAndContinue(
       c01Run1.id,
-      { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, keyPrefix: 'c01-to-deliver' },
+      { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, label: 'c01-to-deliver' },
       afterD0.experiment.version,
     );
     assert.equal(completed.experiment.status, 'completed');
@@ -756,12 +758,12 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
     );
     const feedback = await client.issueAndContinue(
       c01Run2.id,
-      { kind: 'resume', expectedTaskVersion: rejected.controlVersion, expectedControlVersion: rejected.controlVersion, keyPrefix: 'c01-2-fb' },
+      { kind: 'resume', expectedTaskVersion: rejected.controlVersion, expectedControlVersion: rejected.controlVersion, label: 'c01-2-fb' },
       c01Run2.version,
     );
     assert.equal(feedback.experiment.status, 'waiting-info');
 
-    // Resume at AwaitFeedback must be refused (only revise | end permitted)
+    // Resume at AwaitFeedback must be refused, and revise must be refused without verifyDirection (only end permitted)
     const resumeAtFb = await client.post(`/api/experiments/${c01Run2.id}/directions`, {
       idempotencyKey: client.nextKey('c01-2-bad-resume'),
       kind: 'resume',
@@ -770,9 +772,21 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
     });
     assert.equal(resumeAtFb.status, 409);
 
+    const reviseAtFb = await client.post(`/api/experiments/${c01Run2.id}/directions`, {
+      idempotencyKey: client.nextKey('c01-2-refused-revise'),
+      kind: 'revise',
+      expectedTaskVersion: feedback.controlVersion,
+      expectedControlVersion: feedback.controlVersion,
+      decisionRef: p2.binding.decisionId,
+      feedback: 'Revise plan.',
+    });
+    assert.equal(reviseAtFb.status, 409);
+    assert.equal(reviseAtFb.body.ok, false);
+    if (!reviseAtFb.body.ok) assert.equal(reviseAtFb.body.error, 'INVALID_CONTROL_RECEIPT');
+
     const ended = await client.issueAndContinue(
       c01Run2.id,
-      { kind: 'end', expectedTaskVersion: feedback.controlVersion, expectedControlVersion: feedback.controlVersion, decisionRef: p2.binding.decisionId, keyPrefix: 'c01-2-end' },
+      { kind: 'end', expectedTaskVersion: feedback.controlVersion, expectedControlVersion: feedback.controlVersion, decisionRef: p2.binding.decisionId, label: 'c01-2-end' },
       feedback.experiment.version,
     );
     assert.equal(ended.experiment.status, 'incomplete');
@@ -834,7 +848,7 @@ test('serve --host real assembly: C02 clarification journey (pause -> answers ->
     assert.equal(answered.status, 'waiting-info');
     assert.equal(answered.answers.length, 1);
 
-    const afterClarify = await client.issueAndContinue(c02Start.id, { kind: 'resume', expectedTaskVersion: 0, expectedControlVersion: 0, keyPrefix: 'c02-resume' }, answered.version);
+    const afterClarify = await client.issueAndContinue(c02Start.id, { kind: 'resume', expectedTaskVersion: 0, expectedControlVersion: 0, label: 'c02-resume' }, answered.version);
     assert.equal(afterClarify.experiment.status, 'waiting-approval');
 
     const p0 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${c02Start.id}/approval`), 'c02-p0');
@@ -849,7 +863,7 @@ test('serve --host real assembly: C02 clarification journey (pause -> answers ->
     );
     const afterD0 = await client.issueAndContinue(
       c02Start.id,
-      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, keyPrefix: 'c02-verify' },
+      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'c02-verify' },
       afterClarify.experiment.version,
     );
     assert.equal(afterD0.experiment.status, 'waiting-approval');
@@ -866,7 +880,7 @@ test('serve --host real assembly: C02 clarification journey (pause -> answers ->
     );
     const completed = await client.issueAndContinue(
       c02Start.id,
-      { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, keyPrefix: 'c02-deliver' },
+      { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, label: 'c02-deliver' },
       afterD0.experiment.version,
     );
     assert.equal(completed.experiment.status, 'completed');
@@ -1083,9 +1097,10 @@ test('serve --host real assembly: prerequisite refusals (profile, credential, im
     scRuntime.cleanup();
   }
 
-  // 9. Mid-run grader corruption after bindCase yields not-run (private-grading) with zero leaks
+  // 9. Mid-run grader corruption after bindCase yields not-run (private-grading) with zero leaks and removes working copy
   const envTokenMid = ['real', 'serve', 'mid', 'token', '0123'].join('-');
   const scMid = await setupServeScenario({ tag: 'mid-grader', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envTokenMid } });
+  const copiesBeforeMid = countConsoleCopies();
   let cliMid: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
   try {
     const started = await scMid.captureStderr(() => runEvaluateCli(['serve', '--host', scMid.hostFile]));
@@ -1099,6 +1114,11 @@ test('serve --host real assembly: prerequisite refusals (profile, credential, im
       'mid-start',
     ).experiment;
     assert.equal(startedC01.status, 'waiting-approval');
+    assert.equal(
+      [...countConsoleCopies()].some(d => !copiesBeforeMid.has(d)),
+      true,
+      'working copy should exist while waiting-approval',
+    );
 
     writeFileSync(scMid.c01GraderPath, JSON.stringify({ corrupted: true }), 'utf8');
 
@@ -1114,7 +1134,7 @@ test('serve --host real assembly: prerequisite refusals (profile, credential, im
     );
     const afterD0 = await client.issueAndContinue(
       startedC01.id,
-      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, keyPrefix: 'mid-verify' },
+      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'mid-verify' },
       startedC01.version,
     );
     const p1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'mid-p1');
@@ -1129,15 +1149,249 @@ test('serve --host real assembly: prerequisite refusals (profile, credential, im
     );
     const done = await client.issueAndContinue(
       startedC01.id,
-      { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, keyPrefix: 'mid-deliver' },
+      { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, label: 'mid-deliver' },
       afterD0.experiment.version,
     );
     assert.equal(done.experiment.status, 'completed');
     assert.equal(done.experiment.workflowReport?.cases[0]?.grade, 'not-run');
     assert.equal(done.experiment.workflowReport?.cases[0]?.gradeReason, 'private-grading');
     assertNoLeaks(JSON.stringify(done.experiment), scMid.secrets(envTokenMid), 'mid-run grader refusal');
+    for (const dir of countConsoleCopies()) {
+      assert.equal(copiesBeforeMid.has(dir), true, `mid-run not-run working copy ${dir} should have been cleaned up`);
+    }
   } finally {
     await cliMid?.close?.();
     scMid.cleanup();
+  }
+});
+
+function listFilesRecursive(root: string): string[] {
+  const out: string[] = [];
+  if (!existsSync(root)) return out;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) out.push(...listFilesRecursive(full));
+    else out.push(full);
+  }
+  return out;
+}
+
+test('serve --host real assembly: monotonic control versions across NeedsInfo and approval advance', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+  const envToken = ['real', 'serve', 'mono', 'token', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'mono-ctrl', mode: 'clarify', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envToken } });
+  let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    const started = await sc.captureStderr(() => runEvaluateCli(['serve', '--host', sc.hostFile]));
+    cliResult = started.value;
+    assert.equal(cliResult.exitCode, 0);
+    const { host, port } = JSON.parse(cliResult.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, envToken);
+
+    const c02Start = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('mono-start'), source: { kind: 'catalog', caseIds: ['C02'] } }),
+      'mono-start',
+    ).experiment;
+    assert.equal(c02Start.status, 'waiting-info');
+    assert.ok(c02Start.workflowClarification);
+
+    const answered = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post(`/api/experiments/${c02Start.id}/answers`, {
+        idempotencyKey: client.nextKey('mono-ans'),
+        questionId: c02Start.workflowClarification.questionId,
+        questionDigest: c02Start.workflowClarification.questionDigest,
+        expectedVersion: c02Start.version,
+        answers: ['Raise CalculationError when divisor is zero.'],
+      }),
+      'mono-ans',
+    ).experiment;
+
+    // Issue three resume directions at NeedsInfo to advance session controlVersion to 3 before continuing
+    const d1 = client.unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; controlVersion: number } }>(
+      await client.post(`/api/experiments/${c02Start.id}/directions`, {
+        idempotencyKey: client.nextKey('mono-r1'),
+        kind: 'resume',
+        expectedTaskVersion: 0,
+        expectedControlVersion: 0,
+      }),
+      'mono-r1',
+    );
+    assert.equal(d1.receipt.controlVersion, 2);
+
+    const d2 = client.unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; controlVersion: number } }>(
+      await client.post(`/api/experiments/${c02Start.id}/directions`, {
+        idempotencyKey: client.nextKey('mono-r2'),
+        kind: 'resume',
+        expectedTaskVersion: d1.receipt.controlVersion,
+        expectedControlVersion: d1.receipt.controlVersion,
+      }),
+      'mono-r2',
+    );
+    assert.equal(d2.receipt.controlVersion, 3);
+
+    const d3 = client.unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; controlVersion: number } }>(
+      await client.post(`/api/experiments/${c02Start.id}/directions`, {
+        idempotencyKey: client.nextKey('mono-r3'),
+        kind: 'resume',
+        expectedTaskVersion: d2.receipt.controlVersion,
+        expectedControlVersion: d2.receipt.controlVersion,
+      }),
+      'mono-r3',
+    );
+    assert.equal(d3.receipt.controlVersion, 4);
+    assert.equal(d3.experiment.version, answered.version + 3);
+
+    const afterClarify = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post(`/api/experiments/${c02Start.id}/continue`, {
+        idempotencyKey: client.nextKey('mono-cont'),
+        directionRef: d3.receipt.receiptRef,
+        expectedVersion: d3.experiment.version,
+      }),
+      'mono-cont',
+    ).experiment;
+    assert.equal(afterClarify.status, 'waiting-approval');
+
+    const p0 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${c02Start.id}/approval`), 'mono-p0');
+    const approved = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${c02Start.id}/decision`, {
+        idempotencyKey: client.nextKey('mono-d0'),
+        decision: 'approve',
+        expectedVersion: p0.presentation.requestVersion,
+        presentationDigest: p0.presentation.presentationDigest,
+      }),
+      'mono-d0',
+    );
+    assert.ok(approved.controlVersion < d3.receipt.controlVersion, 'approval controlVersion is lower than session lastControlVersion');
+
+    // Dropping back to approval.controlVersion must be refused; monotonic controlVersion 4 -> 5 succeeds
+    const regressed = await client.post(`/api/experiments/${c02Start.id}/directions`, {
+      idempotencyKey: client.nextKey('mono-regress'),
+      kind: 'resume',
+      expectedTaskVersion: approved.controlVersion,
+      expectedControlVersion: approved.controlVersion,
+    });
+    assert.equal(regressed.status, 409);
+
+    const nextDir = client.unwrap<{ receipt: { controlVersion: number } }>(
+      await client.post(`/api/experiments/${c02Start.id}/directions`, {
+        idempotencyKey: client.nextKey('mono-next'),
+        kind: 'resume',
+        expectedTaskVersion: d3.receipt.controlVersion,
+        expectedControlVersion: d3.receipt.controlVersion,
+      }),
+      'mono-next',
+    );
+    assert.equal(nextDir.receipt.controlVersion, 5);
+  } finally {
+    await cliResult?.close?.();
+    sc.cleanup();
+    t.mock.timers.reset();
+  }
+});
+
+test('serve --host real assembly: refuses catalog identity drift at bindCase before task seed', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+  const envToken = ['real', 'serve', 'drift', 'token', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'cat-drift', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envToken } });
+  let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    const started = await sc.captureStderr(() => runEvaluateCli(['serve', '--host', sc.hostFile]));
+    cliResult = started.value;
+    assert.equal(cliResult.exitCode, 0);
+    const { host, port } = JSON.parse(cliResult.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, envToken);
+
+    // Replace the C01 fixture and update catalog.json at the same path so fresh admission succeeds with a drifted digest
+    const catDoc = JSON.parse(readFileSync(sc.catalogPath, 'utf8')) as {
+      catalog: { caseId: string; initialRepositoryDigest: string; fixturePath: string; fixtureDigest: string; grader: { path: string; digest: string } }[];
+    };
+    const c01Entry = catDoc.catalog.find(e => e.caseId === 'C01');
+    assert.ok(c01Entry);
+    const fixDoc = JSON.parse(readFileSync(c01Entry.fixturePath, 'utf8')) as { task: BugTask; repositoryRoot: string };
+    const replacedFix = JSON.stringify({ ...fixDoc, task: { ...fixDoc.task, goal: 'Replaced catalog task goal' } });
+    writeFileSync(c01Entry.fixturePath, replacedFix, 'utf8');
+    c01Entry.fixtureDigest = sha256Text(replacedFix);
+    writeFileSync(sc.catalogPath, JSON.stringify(catDoc), 'utf8');
+
+    const drifted = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('cat-drift'), source: { kind: 'catalog', caseIds: ['C01'] } }),
+      'cat-drift',
+    ).experiment;
+    assert.equal(drifted.status, 'incomplete');
+    assert.equal(drifted.taskId, null);
+    assert.equal(drifted.workflowReport, null);
+    assert.equal(sc.fetchSpy.requests.length, 0);
+    assert.deepEqual(listFilesRecursive(join(sc.outside, 'state')), [], 'catalog identity drift must not seed or write any task record');
+  } finally {
+    await cliResult?.close?.();
+    sc.cleanup();
+    t.mock.timers.reset();
+  }
+});
+
+test('real console factory: removes workingCopyRoot and rethrows when bindRealTierTask throws', async () => {
+  const sc = await setupServeScenario({ tag: 'bind-throw' });
+  const copiesBefore = countConsoleCopies();
+  try {
+    const initial = resolveRealTierAssembly(sc.deps);
+    assert.equal(initial.status, 'assembly-ready');
+    const factory = createRealTierConsoleFactory(initial, sc.deps, deps => {
+      const fresh = resolveRealTierAssembly(deps);
+      if (fresh.status !== 'assembly-ready') return fresh;
+      return {
+        ...fresh,
+        owners: {
+          ...fresh.owners,
+          components: {
+            ...fresh.owners.components,
+            statePort: {
+              ...fresh.owners.components.statePort,
+              loadTask: () => {
+                throw new Error('SIMULATED_BIND_THROW');
+              },
+            },
+          },
+        },
+      };
+    });
+    const hostDoc = JSON.parse(readFileSync(sc.hostFile, 'utf8')) as {
+      profileId: string;
+      profileDigest: string;
+      configDigest: string;
+      pricingDigest: string;
+      requestedModel: string;
+      adapterVersions: string[];
+    };
+    const readiness = { status: 'ready' } as Parameters<typeof factory>[0]['readiness'];
+    const consoleAssembly = factory({
+      readiness,
+      configuration: {
+        identity: {
+          profileId: hostDoc.profileId,
+          profileDigest: hostDoc.profileDigest,
+          configDigest: hostDoc.configDigest,
+          pricingDigest: hostDoc.pricingDigest,
+        },
+        profileDigest: hostDoc.profileDigest,
+        configDigest: hostDoc.configDigest,
+        pricingDigest: hostDoc.pricingDigest,
+        requestedModel: hostDoc.requestedModel,
+        adapterVersions: hostDoc.adapterVersions,
+      },
+    });
+    const entry = consoleAssembly.catalog.find(c => c.caseId === 'C01');
+    assert.ok(entry);
+    const route = consoleAssembly.routesFor(readiness, consoleAssembly.catalog).get('C01');
+    assert.ok(route);
+    const bindCase = route.bindCase;
+    assert.ok(bindCase);
+    const source = { kind: 'catalog' as const, status: 'bound' as const, bindings: [entry] };
+    const task = await route.resolveTask({ experimentId: 'exp-bind-throw', source, priorState: null, answers: [] });
+    await assert.rejects(async () => await bindCase({ experimentId: 'exp-bind-throw', source, task, priorState: null, answers: [] }), /SIMULATED_BIND_THROW/u);
+    for (const dir of countConsoleCopies()) {
+      assert.equal(copiesBefore.has(dir), true, `thrown bind working copy ${dir} should have been cleaned up`);
+    }
+  } finally {
+    sc.cleanup();
   }
 });
