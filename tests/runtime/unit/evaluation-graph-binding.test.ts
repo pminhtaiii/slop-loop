@@ -10,11 +10,12 @@ import test from 'node:test';
 import type { BugTask } from '../../../src/contracts/foundation/uc03.ts';
 import { createEvaluationConsoleHost, type EvaluationConsoleAssembly } from '../../../src/runtime/evaluation-console-host.ts';
 import { createUC03EvaluationGraph, type UC03EvaluationGraphRoute } from '../../../src/runtime/evaluation-graph.ts';
+import { reportUC03GraphResult, validateEvaluationGraphReportBinding, type EvaluationGraphReportBinding } from '../../../src/runtime/evaluation-graph-report.ts';
 import { admitEvaluationProfile, type CatalogEntry } from '../../../src/runtime/evaluation-profile.ts';
 import { createEvaluationService, type ServiceControlReceipt } from '../../../src/runtime/evaluation-service.ts';
 import { prepareControlledUC03Host, type UC03ControlledHostReadiness, type UC03HostReadiness } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
-import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
+import { checkProductionPortsV02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
 import { controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
 
 const digest = (seed: string): string => sha256Text(seed);
@@ -556,6 +557,16 @@ test('failing, throwing or malformed per-case bindings refuse without graph effe
       }),
     },
     {
+      name: 'invalid recursionLimit in config',
+      readiness: startupControlled,
+      bindCase: () => ({
+        ok: true,
+        task: fixture.task,
+        ports: trackedPorts,
+        config: { ...validBundle.config, recursionLimit: 0 },
+      }),
+    },
+    {
       name: 'missing admissionContextForCheck in config',
       readiness: startupControlled,
       bindCase: () => ({
@@ -775,6 +786,201 @@ test('unbound route without bindCase retains pre-resolution generation check', a
     assert.ok(started.ok);
     assert.equal(started.value.experiment.status, 'incomplete');
     assert.equal(resolveTaskCalls, 0);
+  } finally {
+    await rm(env.files, { recursive: true, force: true });
+  }
+});
+
+test('real-ready route refuses missing or malformed workflowEvidence at startup and rejects ungraded non-pending real reports', async () => {
+  const fixture = await controlledGeneratedPlanFixture();
+  const env = createCatalogProfile([{ caseId: 'C01', initialRevisionDigest: fixture.task.initialRevisionDigest }]);
+  const startupTouches: string[] = [];
+  const startupReal = throwingRealStartupReadiness(env.identity, startupTouches);
+  const bundle = prepareCaseBundle(fixture, env.identity);
+  const token = 'real-binding-operator-token';
+  let bindCalls = 0;
+
+  const baseBinding: EvaluationGraphReportBinding = {
+    profileDigest: env.profile.profileDigest,
+    configDigest: env.profile.configDigest,
+    pricingDigest: env.profile.pricingDigest,
+    adapterVersions: env.profile.adapterVersions,
+    requestedModel: env.profile.model,
+    timestamp: '2026-11-25T00:00:00.000Z',
+  };
+  const stubEvidence: NonNullable<EvaluationGraphReportBinding['workflowEvidence']> = {
+    grader: {
+      grade: async caseId => ({
+        caseId: caseId === 'C01' ? 'C01' : null,
+        criterionId: null,
+        grade: 'not-run',
+        reason: 'private-grading',
+        evidenceIds: [],
+        snapshot: null,
+        evidenceDigest: null,
+        criteriaDigest: `sha256:${digest('criteria')}`,
+        limitations: ['stub'],
+      }),
+    },
+    finalTree: {
+      freezeFinalTree: () => undefined,
+      recheckCurrentFinalTree: () => undefined,
+    },
+  };
+
+  try {
+    assert.throws(() => validateEvaluationGraphReportBinding('C01', env.identity, baseBinding, 'real'), /Real workflow report route requires host grading evidence/u);
+    assert.throws(
+      () => validateEvaluationGraphReportBinding('C01', env.identity, { ...baseBinding, workflowEvidence: {} as unknown as NonNullable<EvaluationGraphReportBinding['workflowEvidence']> }, 'real'),
+      /Invalid workflow report evidence binding/u,
+    );
+
+    const ungradedRoute = {
+      entry: env.catalog[0],
+      readiness: startupReal,
+      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+      expectedWait: 'waiting-approval' as const,
+      workflowReport: baseBinding,
+      resolveTask: () => fixture.task,
+      bindCase: () => {
+        bindCalls += 1;
+        return { ok: true as const, ...bundle };
+      },
+      resolveDirection: () => undefined,
+    };
+
+    assert.throws(() => createUC03EvaluationGraph({ catalogRoutes: new Map([['C01', ungradedRoute]]) }), /Real workflow report route requires host grading evidence/u);
+
+    const consoleRefused = await createEvaluationConsoleHost(startupReal, env.configuration, () => ({
+      profile: env.profile,
+      catalog: env.catalog,
+      repositoryIds: [fixture.task.repositoryId],
+      checkSetIds: ['checks-configured'],
+      control: { issue: input => ({ receiptRef: 'unused', kind: input.kind, taskId: fixture.task.taskId, controlVersion: input.expectedControlVersion + 1 }) },
+      approval: { presentation: () => ({ ok: true, value: { status: 'pending' } }), decide: () => ({ ok: true, value: { status: 'approved' } }) },
+      routesFor: () => new Map([['C01', ungradedRoute]]),
+      operatorToken: () => token,
+    }));
+    assert.deepEqual(consoleRefused, { ok: false, reasonCode: 'HOST_CONSOLE_UNAVAILABLE' });
+
+    const customRefused = await createEvaluationConsoleHost(startupReal, env.configuration, () => ({
+      profile: env.profile,
+      catalog: env.catalog,
+      repositoryIds: [fixture.task.repositoryId],
+      checkSetIds: ['checks-configured'],
+      control: { issue: input => ({ receiptRef: 'unused', kind: input.kind, taskId: fixture.task.taskId, controlVersion: input.expectedControlVersion + 1 }) },
+      approval: { presentation: () => ({ ok: true, value: { status: 'pending' } }), decide: () => ({ ok: true, value: { status: 'approved' } }) },
+      routesFor: () => new Map([['C01', { ...ungradedRoute, workflowReport: { ...baseBinding, workflowEvidence: stubEvidence } }]]),
+      customRoute: {
+        readiness: startupReal,
+        coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+        expectedWait: 'waiting-approval',
+        workflowReport: { ...baseBinding, workflowEvidence: stubEvidence },
+        resolveTask: () => fixture.task,
+        resolveDirection: () => undefined,
+      },
+      operatorToken: () => token,
+    }));
+    assert.deepEqual(customRefused, { ok: false, reasonCode: 'HOST_CONSOLE_UNAVAILABLE' });
+    assert.equal(bindCalls, 0);
+    assert.deepEqual(startupTouches, []);
+
+    const firstEntry = env.catalog[0];
+    assert.ok(firstEntry);
+    await assert.rejects(
+      () =>
+        reportUC03GraphResult({
+          host: { entry: firstEntry, task: fixture.task, expectedWait: 'waiting-approval' },
+          result: { outcome: 'COMPLETED', state: null, reasons: [], milestones: [] },
+          ports: bundle.ports,
+          generation: {},
+          trustedExpectedContext: bundle.config.trustedExpectedContext,
+          binding: baseBinding,
+          mode: 'real',
+        }),
+      /Real workflow report requires host grading evidence/u,
+    );
+
+    let loadCalls = 0;
+    const withRealProvenance = <T extends object>(port: T, extra?: Partial<T>): T =>
+      new Proxy(port, {
+        get(target, property) {
+          if (property === 'provenance') return 'real';
+          if (extra && Object.hasOwn(extra, property)) return Reflect.get(extra, property);
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    const realTrackedPorts: UC03GraphPortsV02 = {
+      ...bundle.ports,
+      statePort: withRealProvenance(bundle.ports.statePort, {
+        loadTask: async taskId => {
+          loadCalls += 1;
+          return bundle.ports.statePort.loadTask(taskId);
+        },
+      }),
+      approvalPort: withRealProvenance(bundle.ports.approvalPort),
+      repositoryPort: withRealProvenance(bundle.ports.repositoryPort),
+      modelPort: withRealProvenance(bundle.ports.modelPort),
+      reviewerModelPort: withRealProvenance(bundle.ports.reviewerModelPort),
+      executionGuard: withRealProvenance(bundle.ports.executionGuard),
+      guardedRead: withRealProvenance(bundle.ports.guardedRead),
+      baselineEvidence: withRealProvenance(bundle.ports.baselineEvidence),
+      contextSource: withRealProvenance(bundle.ports.contextSource),
+      replanPort: withRealProvenance(bundle.ports.replanPort),
+    };
+    assert.equal(checkProductionPortsV02(realTrackedPorts), null);
+
+    const runWithEvidence = async (id: string, workflowEvidence: NonNullable<EvaluationGraphReportBinding['workflowEvidence']>) => {
+      loadCalls = 0;
+      const graph = createUC03EvaluationGraph({
+        catalogRoutes: new Map([
+          [
+            'C01',
+            {
+              entry: env.catalog[0],
+              readiness: startupReal,
+              coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+              expectedWait: 'waiting-approval',
+              workflowReport: { ...baseBinding, workflowEvidence: stubEvidence },
+              resolveTask: () => fixture.task,
+              bindCase: () => ({
+                ok: true,
+                task: fixture.task,
+                ports: realTrackedPorts,
+                config: bundle.config,
+                workflowEvidence,
+              }),
+              resolveDirection: () => undefined,
+            },
+          ],
+        ]),
+      });
+      const service = createEvaluationService({
+        profile: env.profile,
+        catalog: env.catalog,
+        repositoryIds: [fixture.task.repositoryId],
+        checkSetIds: ['checks-configured'],
+        control: { issue: input => ({ receiptRef: 'unused', kind: input.kind, taskId: fixture.task.taskId, controlVersion: input.expectedControlVersion + 1 }) },
+        graph,
+        ids: () => id,
+      });
+      const started = await service.startExperiment({
+        source: { kind: 'catalog', caseIds: ['C01'] },
+        profileId: env.profile.profileId,
+        idempotencyKey: `${id}-start`,
+      });
+      return { started, loads: loadCalls };
+    };
+
+    const control = await runWithEvidence('exp-valid-evidence', stubEvidence);
+    assert.ok(control.started.ok);
+    assert.ok(control.loads > 0, 'control with valid workflowEvidence and real-provenance ports must reach loadTask');
+
+    const malformed = await runWithEvidence('exp-bad-evidence', { grader: {}, finalTree: {} } as unknown as NonNullable<EvaluationGraphReportBinding['workflowEvidence']>);
+    assert.ok(malformed.started.ok);
+    assert.equal(malformed.started.value.experiment.status, 'incomplete');
+    assert.equal(malformed.loads, 0);
   } finally {
     await rm(env.files, { recursive: true, force: true });
   }

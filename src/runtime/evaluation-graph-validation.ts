@@ -3,6 +3,8 @@
 import { computeCanonicalSha256, validateBugTask, type BugTask, type ClarificationQuestion, type TaskState } from '../contracts/foundation/uc03.ts';
 import { checkControlledPortsV02, checkProductionPortsV02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
 import type { TrustedReplanDirection } from '../uc03/repair-types.ts';
+import type { WorkflowCaseHost } from '../../eval/uc03/workflow-driver.ts';
+import { isWorkflowEvidenceHost } from './evaluation-graph-report.ts';
 import type { BoundSource, CaseBinding, CatalogEntry } from './evaluation-profile.ts';
 import type { AnswerRecord, EvaluationGraphResult, ServiceControlReceipt } from './evaluation-service-types.ts';
 
@@ -23,6 +25,7 @@ export interface ValidatedCaseBinding {
   readonly task: BugTask;
   readonly ports: UC03GraphPortsV02;
   readonly config: UC03GraphConfigV02;
+  readonly workflowEvidence?: WorkflowCaseHost['workflowEvidence'] | undefined;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -73,6 +76,8 @@ export function validateCaseBinding(candidate: unknown, status: 'ready' | 'contr
 
   const rawConfig = candidate['config'];
   if (!isPlainObject(rawConfig) || rawConfig['generation'] !== undefined) return undefined;
+  const recursionLimit = rawConfig['recursionLimit'];
+  if (recursionLimit !== undefined && (typeof recursionLimit !== 'number' || !Number.isSafeInteger(recursionLimit) || recursionLimit <= 0)) return undefined;
   const expected = rawConfig['trustedExpectedContext'];
   if (
     !isPlainObject(expected) ||
@@ -90,11 +95,15 @@ export function validateCaseBinding(candidate: unknown, status: 'ready' | 'contr
     return undefined;
   }
 
+  const rawEvidence = candidate['workflowEvidence'];
+  if (rawEvidence !== undefined && !isWorkflowEvidenceHost(rawEvidence)) return undefined;
+
   return {
     task,
     // Runtime checks above verify the v0.2 port surface and required trusted context fields.
     ports: rawPorts as UC03GraphPortsV02,
     config: rawConfig as unknown as UC03GraphConfigV02,
+    ...(rawEvidence === undefined ? {} : { workflowEvidence: rawEvidence }),
   };
 }
 
