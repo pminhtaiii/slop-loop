@@ -48,3 +48,9 @@ This release does not authorize successor graph/runtime composition, production 
 The user explicitly requested T007, T008, T009 and T010 and selected `feat/rag-question-model-and-investigation`. Execute these tasks in dependency order with the completed foundation and retrieval tasks as prerequisites. The release covers the question model protocol, deterministic complete-request compilation, supplied host transport/accounting boundaries, sequential investigation graph, typed clarification/stop outcomes and adversarial fixtures at the source/controlled-test tier.
 
 T011 onward, actual live-provider/owner admission, production defaults, real-model quality, embedding experiments and protected-branch merging remain separately gated. Controlled transports and counters establish only exercised protocol behavior. Contributor publication and independent merger/review checks follow the existing workflow.
+
+## 2026-11-26 — T011–T012 controlled implementation release
+
+The user explicitly requested T011–T012 and selected `feat/rag-active-session-followups`. Execute T011 before T012 using the accepted T009/T010 prerequisites. This releases the in-memory session/task lifecycle, bounded deterministic context projection, serialized continuation, guarded source re-admission, explicit same-task drift rebind, repository switching and cancellation/accounting barriers at the source/controlled-test tier.
+
+T013 onward, T024 absence delivery, live-provider/owner composition, production defaults, durable session recovery, embedding/semantic quality experiments and protected-branch merging remain separately gated. The existing contributor workflow governs independent merger acceptance, review and paired publication; controlled session checks do not establish real-model quality or restart recovery.
