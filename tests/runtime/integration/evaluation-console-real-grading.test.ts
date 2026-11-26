@@ -294,7 +294,7 @@ async function setupRealConsoleScenario(opts: {
     'utf8',
   );
 
-  const digestKey = '0123456789abcdef'.repeat(4);
+  const digestKey = sha256Text('uc03 console real grading synthetic digest key');
   const pricing = { pricingId: 'placeholder-unverified', denominator: 1000000, inputRate: 2000000, cacheRate: 2000000, outputRate: 8000000, overheadRate: 0 };
   const limits = {
     totalModelCalls: 24,

@@ -76,6 +76,8 @@ export function validateCaseBinding(candidate: unknown, status: 'ready' | 'contr
 
   const rawConfig = candidate['config'];
   if (!isPlainObject(rawConfig) || rawConfig['generation'] !== undefined) return undefined;
+  const recursionLimit = rawConfig['recursionLimit'];
+  if (recursionLimit !== undefined && (typeof recursionLimit !== 'number' || !Number.isSafeInteger(recursionLimit) || recursionLimit <= 0)) return undefined;
   const expected = rawConfig['trustedExpectedContext'];
   if (
     !isPlainObject(expected) ||

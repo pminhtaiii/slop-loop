@@ -15,7 +15,7 @@ import { admitEvaluationProfile, type CatalogEntry } from '../../../src/runtime/
 import { createEvaluationService, type ServiceControlReceipt } from '../../../src/runtime/evaluation-service.ts';
 import { prepareControlledUC03Host, type UC03ControlledHostReadiness, type UC03HostReadiness } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
-import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
+import { checkProductionPortsV02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
 import { controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
 
 const digest = (seed: string): string => sha256Text(seed);
@@ -557,6 +557,16 @@ test('failing, throwing or malformed per-case bindings refuse without graph effe
       }),
     },
     {
+      name: 'invalid recursionLimit in config',
+      readiness: startupControlled,
+      bindCase: () => ({
+        ok: true,
+        task: fixture.task,
+        ports: trackedPorts,
+        config: { ...validBundle.config, recursionLimit: 0 },
+      }),
+    },
+    {
       name: 'missing admissionContextForCheck in config',
       readiness: startupControlled,
       bindCase: () => ({
@@ -892,56 +902,85 @@ test('real-ready route refuses missing or malformed workflowEvidence at startup 
     );
 
     let loadCalls = 0;
-    const trackedPorts: UC03GraphPortsV02 = {
+    const withRealProvenance = <T extends object>(port: T, extra?: Partial<T>): T =>
+      new Proxy(port, {
+        get(target, property) {
+          if (property === 'provenance') return 'real';
+          if (extra && Object.hasOwn(extra, property)) return Reflect.get(extra, property);
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    const realTrackedPorts: UC03GraphPortsV02 = {
       ...bundle.ports,
-      statePort: {
-        ...bundle.ports.statePort,
+      statePort: withRealProvenance(bundle.ports.statePort, {
         loadTask: async taskId => {
           loadCalls += 1;
           return bundle.ports.statePort.loadTask(taskId);
         },
-      },
+      }),
+      approvalPort: withRealProvenance(bundle.ports.approvalPort),
+      repositoryPort: withRealProvenance(bundle.ports.repositoryPort),
+      modelPort: withRealProvenance(bundle.ports.modelPort),
+      reviewerModelPort: withRealProvenance(bundle.ports.reviewerModelPort),
+      executionGuard: withRealProvenance(bundle.ports.executionGuard),
+      guardedRead: withRealProvenance(bundle.ports.guardedRead),
+      baselineEvidence: withRealProvenance(bundle.ports.baselineEvidence),
+      contextSource: withRealProvenance(bundle.ports.contextSource),
+      replanPort: withRealProvenance(bundle.ports.replanPort),
     };
-    const badBindGraph = createUC03EvaluationGraph({
-      catalogRoutes: new Map([
-        [
-          'C01',
-          {
-            entry: env.catalog[0],
-            readiness: startupReal,
-            coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-            expectedWait: 'waiting-approval',
-            workflowReport: { ...baseBinding, workflowEvidence: stubEvidence },
-            resolveTask: () => fixture.task,
-            bindCase: () => ({
-              ok: true,
-              task: fixture.task,
-              ports: trackedPorts,
-              config: bundle.config,
-              workflowEvidence: { grader: {}, finalTree: {} } as unknown as NonNullable<EvaluationGraphReportBinding['workflowEvidence']>,
-            }),
-            resolveDirection: () => undefined,
-          },
-        ],
-      ]),
-    });
-    const service = createEvaluationService({
-      profile: env.profile,
-      catalog: env.catalog,
-      repositoryIds: [fixture.task.repositoryId],
-      checkSetIds: ['checks-configured'],
-      control: { issue: input => ({ receiptRef: 'unused', kind: input.kind, taskId: fixture.task.taskId, controlVersion: input.expectedControlVersion + 1 }) },
-      graph: badBindGraph,
-      ids: () => 'exp-bad-evidence',
-    });
-    const started = await service.startExperiment({
-      source: { kind: 'catalog', caseIds: ['C01'] },
-      profileId: env.profile.profileId,
-      idempotencyKey: 'bad-evidence-start',
-    });
-    assert.ok(started.ok);
-    assert.equal(started.value.experiment.status, 'incomplete');
-    assert.equal(loadCalls, 0);
+    assert.equal(checkProductionPortsV02(realTrackedPorts), null);
+
+    const runWithEvidence = async (id: string, workflowEvidence: NonNullable<EvaluationGraphReportBinding['workflowEvidence']>) => {
+      loadCalls = 0;
+      const graph = createUC03EvaluationGraph({
+        catalogRoutes: new Map([
+          [
+            'C01',
+            {
+              entry: env.catalog[0],
+              readiness: startupReal,
+              coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+              expectedWait: 'waiting-approval',
+              workflowReport: { ...baseBinding, workflowEvidence: stubEvidence },
+              resolveTask: () => fixture.task,
+              bindCase: () => ({
+                ok: true,
+                task: fixture.task,
+                ports: realTrackedPorts,
+                config: bundle.config,
+                workflowEvidence,
+              }),
+              resolveDirection: () => undefined,
+            },
+          ],
+        ]),
+      });
+      const service = createEvaluationService({
+        profile: env.profile,
+        catalog: env.catalog,
+        repositoryIds: [fixture.task.repositoryId],
+        checkSetIds: ['checks-configured'],
+        control: { issue: input => ({ receiptRef: 'unused', kind: input.kind, taskId: fixture.task.taskId, controlVersion: input.expectedControlVersion + 1 }) },
+        graph,
+        ids: () => id,
+      });
+      const started = await service.startExperiment({
+        source: { kind: 'catalog', caseIds: ['C01'] },
+        profileId: env.profile.profileId,
+        idempotencyKey: `${id}-start`,
+      });
+      return { started, loads: loadCalls };
+    };
+
+    const control = await runWithEvidence('exp-valid-evidence', stubEvidence);
+    assert.ok(control.started.ok);
+    assert.ok(control.loads > 0, 'control with valid workflowEvidence and real-provenance ports must reach loadTask');
+
+    const malformed = await runWithEvidence('exp-bad-evidence', { grader: {}, finalTree: {} } as unknown as NonNullable<EvaluationGraphReportBinding['workflowEvidence']>);
+    assert.ok(malformed.started.ok);
+    assert.equal(malformed.started.value.experiment.status, 'incomplete');
+    assert.equal(malformed.loads, 0);
   } finally {
     await rm(env.files, { recursive: true, force: true });
   }
