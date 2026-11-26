@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -59,7 +59,8 @@ function resolveRepoRoot(): string {
 
 function controlledAssemblyPath(repoRoot: string): string {
   const isEmitted = fileURLToPath(import.meta.url).endsWith('.js');
-  return resolve(repoRoot, isEmitted ? 'dist/tests/runtime/support/uc03/controlled-console-assembly.js' : 'tests/runtime/support/uc03/controlled-console-assembly.ts');
+  const repoRelative = isEmitted ? 'dist/tests/runtime/support/uc03/controlled-console-assembly.js' : 'tests/runtime/support/uc03/controlled-console-assembly.ts';
+  return resolve(process.cwd()) === resolve(repoRoot) ? repoRelative : relative(process.cwd(), resolve(repoRoot, repoRelative));
 }
 
 function writeTempHostFile(repoRoot: string): { readonly dir: string; readonly hostFile: string } {
@@ -141,7 +142,9 @@ test('serve --host with controlled console assembly serves loopback page, catalo
         { caseId: 'C02', ready: true },
       ],
     );
-    assert.match(stderrChunks.join(''), new RegExp(token), 'operator token is printed once to stderr on startup');
+    const stderrText = stderrChunks.join('');
+    assert.match(stderrText, /UC-03 controlled console operator token: using UC03_CONSOLE_OPERATOR_TOKEN from environment/u);
+    assert.equal(stderrText.includes(token), false, 'env operator token must not be printed to stderr');
 
     const loadPresentation = async (experimentId: string): Promise<ApprovalPresentation> =>
       unwrap<ApprovalPresentation>(await get(`/api/experiments/${experimentId}/approval`), `approval(${experimentId})`);
@@ -465,9 +468,11 @@ test('serve --host generates a per-process operator token to stderr when env var
     const listening = JSON.parse(cliResult.output) as { outcome: string; host: string; port: number };
     assert.equal(listening.outcome, 'listening');
 
-    const match = /UC-03 controlled console operator token \(generated per-process\): ([a-f0-9]{48})/u.exec(stderrChunks.join(''));
-    assert.ok(match?.[1], 'expected per-process generated 48-hex token on stderr');
-    const generatedToken = match[1];
+    const stderrText = stderrChunks.join('');
+    const matches = [...stderrText.matchAll(/^UC-03 controlled console operator token \(generated per-process\): ([a-f0-9]{48})\r?$/gmu)];
+    assert.equal(matches.length, 1, 'expected exactly one per-process generated 48-hex token line on stderr');
+    const generatedToken = matches[0]?.[1];
+    assert.ok(generatedToken, 'expected per-process generated 48-hex token on stderr');
     assert.equal(cliResult.output.includes(generatedToken), false, 'generated token must never appear in stdout');
 
     const origin = `http://${listening.host}:${listening.port}`;
@@ -500,6 +505,114 @@ test('serve --host generates a per-process operator token to stderr when env var
     process.stderr.write = originalWrite;
     await cliResult?.close?.();
     if (previousToken !== undefined) {
+      process.env[CONTROLLED_CONSOLE_TOKEN_ENV] = previousToken;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('serve --host replays an earlier rejection after revise and returns the original result', async () => {
+  const repoRoot = resolveRepoRoot();
+  const { dir, hostFile } = writeTempHostFile(repoRoot);
+  const token = ['controlled', 'serve', 'replay', '01'].join('-');
+  const previousToken = process.env[CONTROLLED_CONSOLE_TOKEN_ENV];
+  process.env[CONTROLLED_CONSOLE_TOKEN_ENV] = token;
+
+  let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    cliResult = await runEvaluateCli(['serve', '--host', hostFile]);
+    assert.equal(cliResult.exitCode, 0);
+    const listening = JSON.parse(cliResult.output) as { outcome: string; host: string; port: number };
+    const origin = `http://${listening.host}:${listening.port}`;
+    const headers = { 'content-type': 'application/json', origin, 'x-operator-token': token };
+
+    const get = async <T>(path: string): Promise<T> => {
+      const response = await fetch(`${origin}${path}`);
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as ConsoleEnvelope<T>;
+      if (!body.ok) assert.fail(body.error);
+      return body.result;
+    };
+    const post = async <T>(path: string, body: unknown): Promise<{ status: number; body: ConsoleEnvelope<T> }> => {
+      const response = await fetch(`${origin}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+      return { status: response.status, body: (await response.json()) as ConsoleEnvelope<T> };
+    };
+    const postOk = async <T>(path: string, body: unknown): Promise<T> => {
+      const reply = await post<T>(path, body);
+      assert.equal(reply.status, 200);
+      if (!reply.body.ok) assert.fail(reply.body.error);
+      return reply.body.result;
+    };
+
+    const catalog = await get<{ profileId: string }>('/api/catalog');
+    const started = await postOk<ExperimentReply>('/api/experiments', {
+      profileId: catalog.profileId,
+      idempotencyKey: 'replay-c01-start',
+      source: { kind: 'catalog', caseIds: ['C01'] },
+    });
+    let exp = started.experiment;
+    assert.equal(exp.status, 'waiting-approval', `expected waiting-approval after C01 start, got ${exp.status}: ${JSON.stringify(exp)}`);
+    const p0 = await get<ApprovalPresentation>(`/api/experiments/${exp.id}/approval`);
+
+    const rejectPayload = {
+      idempotencyKey: 'replay-c01-reject-d0',
+      decision: 'reject' as const,
+      expectedVersion: p0.presentationVersion,
+      presentationDigest: p0.presentationDigest,
+    };
+    const rejected = await postOk<DecisionReply>(`/api/experiments/${exp.id}/decision`, rejectPayload);
+    assert.equal(rejected.status, 'rejected');
+
+    const toFeedbackDir = await postOk<{ experiment: ExperimentView; receipt: ServiceControlReceipt }>(`/api/experiments/${exp.id}/directions`, {
+      idempotencyKey: 'replay-c01-to-feedback-dir',
+      kind: 'resume',
+      expectedTaskVersion: rejected.version,
+      expectedControlVersion: rejected.controlVersion,
+      decisionRef: p0.decisionId,
+    });
+    exp = (
+      await postOk<ExperimentReply>(`/api/experiments/${exp.id}/continue`, {
+        idempotencyKey: 'replay-c01-to-feedback-cont',
+        directionRef: toFeedbackDir.receipt.receiptRef,
+        expectedVersion: toFeedbackDir.experiment.version,
+      })
+    ).experiment;
+    assert.equal(exp.status, 'waiting-info');
+
+    const pFeedback = await get<ApprovalPresentation>(`/api/experiments/${exp.id}/approval`);
+    const reviseDir = await postOk<{ experiment: ExperimentView; receipt: ServiceControlReceipt }>(`/api/experiments/${exp.id}/directions`, {
+      idempotencyKey: 'replay-c01-revise-dir',
+      kind: 'revise',
+      expectedTaskVersion: pFeedback.taskStateVersion,
+      expectedControlVersion: pFeedback.controlVersion,
+      decisionRef: p0.decisionId,
+      feedback: 'Refine guard',
+    });
+    exp = (
+      await postOk<ExperimentReply>(`/api/experiments/${exp.id}/continue`, {
+        idempotencyKey: 'replay-c01-revise-cont',
+        directionRef: reviseDir.receipt.receiptRef,
+        expectedVersion: reviseDir.experiment.version,
+      })
+    ).experiment;
+    assert.equal(exp.status, 'waiting-approval');
+
+    const pRenewed = await get<ApprovalPresentation>(`/api/experiments/${exp.id}/approval`);
+    assert.notEqual(pRenewed.decisionId, p0.decisionId);
+
+    const replayed = await postOk<DecisionReply>(`/api/experiments/${exp.id}/decision`, rejectPayload);
+    assert.deepEqual(replayed, rejected);
+
+    const staleNewRequest = await post<DecisionReply>(`/api/experiments/${exp.id}/decision`, {
+      ...rejectPayload,
+      idempotencyKey: 'replay-c01-reject-d0-stale-new-key',
+    });
+    assert.equal(staleNewRequest.status, 409);
+  } finally {
+    await cliResult?.close?.();
+    if (previousToken === undefined) {
+      Reflect.deleteProperty(process.env, CONTROLLED_CONSOLE_TOKEN_ENV);
+    } else {
       process.env[CONTROLLED_CONSOLE_TOKEN_ENV] = previousToken;
     }
     await rm(dir, { recursive: true, force: true });

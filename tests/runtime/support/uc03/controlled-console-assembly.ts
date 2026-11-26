@@ -8,8 +8,9 @@
  * Operator token handling:
  * - Reads `UC03_CONSOLE_OPERATOR_TOKEN` when set (must be 16..512 printable ASCII characters), or
  *   generates a 48-hex-character (`randomBytes(24)`) token per assembly process.
- * - Prints the active operator token once to `process.stderr` when the console starts. Never writes
- *   the token to `stdout`, JSON reports, or `host.json`.
+ * - When set from the environment, logs only that the token came from the environment (without
+ *   printing the token value); a generated token is printed once to `process.stderr` on startup.
+ *   Never writes any token to `stdout`, JSON reports, or `host.json`.
  */
 
 // shortcut: duplicates small catalog/profile/completion builders from evaluation-console-journey.test.ts; deduplicate after PR #275 merges.
@@ -86,7 +87,7 @@ export const CONTROLLED_CONSOLE_ENDPOINT = 'https://provider.invalid/v1/messages
 export const CONTROLLED_CONSOLE_ADAPTER_VERSION = 'controlled-console-adapter-1';
 
 const TOKEN_PATTERN = /^[\x21-\x7e]{16,512}$/u;
-const INITIAL_SOURCE_TEXT = 'def divide(a, b): return a / b\n';
+const INITIAL_SOURCE_TEXT = ['class CalculationError(Exception): pass', 'def divide(a, b): return a / b', ''].join('\n');
 const PROTECTED_TEST_TEXT = 'def test_divide(): pass\n';
 const REPRO_COMMAND = 'pytest -q tests/test_calculator.py -k test_divide_zero';
 const REGRESSION_COMMAND = 'pytest -q tests/test_calculator.py';
@@ -94,7 +95,8 @@ const REGRESSION_COMMAND = 'pytest -q tests/test_calculator.py';
 const PATCH_DIFF = [
   '--- a/src/calculator.py',
   '+++ b/src/calculator.py',
-  '@@ -1,1 +1,3 @@',
+  '@@ -1,2 +1,4 @@',
+  ' class CalculationError(Exception): pass',
   '-def divide(a, b): return a / b',
   '+def divide(a, b):',
   '+    if b == 0: raise CalculationError("denominator must be non-zero")',
@@ -105,7 +107,8 @@ const PATCH_DIFF = [
 const REPAIR_DIFF = [
   '--- a/src/calculator.py',
   '+++ b/src/calculator.py',
-  '@@ -1,3 +1,3 @@',
+  '@@ -1,4 +1,4 @@',
+  ' class CalculationError(Exception): pass',
   ' def divide(a, b):',
   '     if b == 0: raise CalculationError("denominator must be non-zero")',
   '-    return a / b',
@@ -152,7 +155,7 @@ export interface ControlledCatalogEntryOptions {
   readonly graderPath: string;
 }
 
-/** Build a deterministic admitted catalog entry for controlled console hosts and tests. */
+/** Build a `CatalogEntry` input for profile admission by copying fields and supplying default versions (`'1.0.0'`); does not validate or admit the entry. */
 export function createControlledCatalogEntry(options: ControlledCatalogEntryOptions): CatalogEntry {
   return {
     catalogEntryId: options.catalogEntryId,
@@ -510,15 +513,15 @@ function createCoderProposalForFetch(parsedBody: unknown, sessionsByTaskId: Read
   };
 }
 
-function resolveOperatorToken(): { readonly token: string; readonly source: string } {
+function resolveOperatorToken(): { readonly token: string; readonly fromEnv: boolean } {
   const envToken = process.env[CONTROLLED_CONSOLE_TOKEN_ENV];
   if (envToken !== undefined && envToken.length > 0) {
     if (!TOKEN_PATTERN.test(envToken)) {
       throw new Error(`${CONTROLLED_CONSOLE_TOKEN_ENV} must be 16..512 printable ASCII characters`);
     }
-    return { token: envToken, source: `${CONTROLLED_CONSOLE_TOKEN_ENV} env` };
+    return { token: envToken, fromEnv: true };
   }
-  return { token: randomBytes(24).toString('hex'), source: 'generated per-process' };
+  return { token: randomBytes(24).toString('hex'), fromEnv: false };
 }
 
 function resolveSessionContext<T>(map: ReadonlyMap<string, T>, key: string | undefined, fallback: T | undefined): T {
@@ -534,6 +537,10 @@ export interface ControlledHostAssemblyExport {
   readonly host: HostAssembly;
   readonly console: EvaluationConsoleFactory;
 }
+
+// Module-scoped so multiple in-process createHostAssembly() runs do not reuse attempt IDs across HostModelPortV02.consumedAttempts.
+let taskSequence = 0;
+let admissionSequence = 0;
 
 /**
  * CLI `--host` assembly export for runnable controlled operator sessions.
@@ -557,7 +564,7 @@ export function createHostAssembly(): ControlledHostAssemblyExport {
   });
   const baseTask = createFixtureBugTask({ requiredChecks: [baseCheckRepro, baseCheckRegression] });
 
-  const { token, source: tokenSource } = resolveOperatorToken();
+  const { token, fromEnv } = resolveOperatorToken();
   let printedToken = false;
 
   const sessionsByTaskId = new Map<string, TaskSession>();
@@ -567,8 +574,6 @@ export function createHostAssembly(): ControlledHostAssemblyExport {
   const sessionsByDecisionId = new Map<string, TaskSession>();
   const sessionsByBaselineId = new Map<string, TaskSession>();
   let activeSession: TaskSession | undefined;
-  let taskSequence = 0;
-  let admissionSequence = 0;
 
   const getActiveSession = (): TaskSession => {
     if (!activeSession) throw new Error('No active controlled console task session');
@@ -1447,14 +1452,15 @@ export function createHostAssembly(): ControlledHostAssemblyExport {
 
           const decision = body['decision'] ?? body['choice'];
           const idempotencyKey = typeof body['idempotencyKey'] === 'string' && body['idempotencyKey'].trim() !== '' ? body['idempotencyKey'] : undefined;
-          const expectedVersion = typeof body['expectedVersion'] === 'number' ? body['expectedVersion'] : presentation.version;
+          const submittedExpectedVersion = typeof body['expectedVersion'] === 'number' ? body['expectedVersion'] : undefined;
+          const expectedVersion = submittedExpectedVersion ?? presentation.version;
           const presentationDigest = typeof body['presentationDigest'] === 'string' ? body['presentationDigest'] : undefined;
           const decisionIdBody = typeof body['decisionId'] === 'string' ? body['decisionId'] : undefined;
 
           if (decision !== 'approve' && decision !== 'reject') {
             return { ok: false, status: 'invalid-input', reasonCode: 'UNSUPPORTED_CHOICE' };
           }
-          const fingerprint = sha256Text(JSON.stringify([experimentId, decision, expectedVersion, presentationDigest ?? null, decisionIdBody ?? null, presentation.binding.decisionId]));
+          const fingerprint = sha256Text(JSON.stringify([experimentId, decision, submittedExpectedVersion ?? null, presentationDigest ?? null, decisionIdBody ?? null]));
           if (idempotencyKey !== undefined) {
             const replayed = target.decisionReplays.get(idempotencyKey);
             if (replayed) {
@@ -1553,7 +1559,11 @@ export function createHostAssembly(): ControlledHostAssemblyExport {
       operatorToken: () => {
         if (!printedToken) {
           printedToken = true;
-          process.stderr.write(`UC-03 controlled console operator token (${tokenSource}): ${token}\n`);
+          if (fromEnv) {
+            process.stderr.write(`UC-03 controlled console operator token: using ${CONTROLLED_CONSOLE_TOKEN_ENV} from environment\n`);
+          } else {
+            process.stderr.write(`UC-03 controlled console operator token (generated per-process): ${token}\n`);
+          }
         }
         return token;
       },

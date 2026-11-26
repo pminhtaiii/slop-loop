@@ -45,6 +45,10 @@ function parseArgs(argv) {
   return { out, assembly };
 }
 
+function quotePosixArg(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 async function main() {
   const repoRoot = resolveRepoRoot();
   const { out, assembly } = parseArgs(process.argv.slice(2));
@@ -70,7 +74,7 @@ async function main() {
 
   const displayOut = isAbsolute(out) ? outPath : relative(repoRoot, outPath).replaceAll('\\', '/');
   process.stdout.write(`Host file: ${displayOut}\n`);
-  process.stdout.write(`Serve command: node dist/src/cli/evaluate.js serve --host ${displayOut}\n`);
+  process.stdout.write(`Serve command: node dist/src/cli/evaluate.js serve --host ${quotePosixArg(displayOut)}\n`);
   process.stdout.write('Operator token: set UC03_CONSOLE_OPERATOR_TOKEN (16..512 printable ASCII chars) or copy the generated token printed once to stderr on startup.\n');
 }
 
