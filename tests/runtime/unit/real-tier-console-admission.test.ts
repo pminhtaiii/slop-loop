@@ -8,7 +8,7 @@
  * Uses RFC 5737 / `.invalid` addresses only; zero live model calls and zero Docker runs.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -436,19 +436,25 @@ test('AC3: insecure http endpoint is admitted only with acknowledgement; https a
     assert.equal(unackLoaded.ok ? '' : unackLoaded.reasonCode, 'insecure-endpoint-unacknowledged');
 
     // Crafted RealTierProfile claiming http without acknowledgement or with spoofed transport is refused by admitRealTierConsole.
-    const craftedUnack = Object.defineProperty(
-      {
-        ...httpProfile,
-        transport: 'https',
-        endpoint: Object.defineProperty({ ...httpProfile.endpoint, insecureHttpAcknowledged: false }, 'href', { value: httpProfile.endpoint.href, enumerable: false }),
-      },
-      'endpointDigestKey',
-      { value: httpProfile.endpointDigestKey, enumerable: false },
-    ) as RealTierProfile;
-    const unackAdmitted = admitRealTierConsole({ profile: craftedUnack, configuration: httpConfig });
-    assert.equal(unackAdmitted.ok, false);
-    assert.equal(unackAdmitted.ok ? '' : unackAdmitted.reasonCode, 'INSECURE_ENDPOINT_UNACKNOWLEDGED');
-    assert.equal(JSON.stringify(unackAdmitted).includes('192.0.2.10'), false);
+    for (const bad of [
+      { transport: 'https' as const, insecureHttpAcknowledged: false },
+      { transport: 'https' as const, insecureHttpAcknowledged: true },
+      { transport: 'insecure-http-acknowledged' as const, insecureHttpAcknowledged: false },
+    ]) {
+      const craftedUnack = Object.defineProperty(
+        {
+          ...httpProfile,
+          transport: bad.transport,
+          endpoint: Object.defineProperty({ ...httpProfile.endpoint, insecureHttpAcknowledged: bad.insecureHttpAcknowledged }, 'href', { value: httpProfile.endpoint.href, enumerable: false }),
+        },
+        'endpointDigestKey',
+        { value: httpProfile.endpointDigestKey, enumerable: false },
+      ) as RealTierProfile;
+      const unackAdmitted = admitRealTierConsole({ profile: craftedUnack, configuration: httpConfig });
+      assert.equal(unackAdmitted.ok, false);
+      assert.equal(unackAdmitted.ok ? '' : unackAdmitted.reasonCode, 'INSECURE_ENDPOINT_UNACKNOWLEDGED');
+      assert.equal(JSON.stringify(unackAdmitted).includes('192.0.2.10'), false);
+    }
 
     // 3. Default HTTPS public endpoint (without endpointDigestKey) -> admitted.
     const defaultEnv = fixture.envOf({
@@ -606,5 +612,266 @@ test('AC5: controlled evaluation-profile admission remains unchanged and still r
     assert.equal(rejectedPrefix.ok ? '' : rejectedPrefix.reasonCode, 'INVALID_DIGEST');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readUtf8 translates non-file paths to *_UNREADABLE while keeping MISSING_* for absent entries', () => {
+  const fixture = createScanFixture('t017-f1-dir-', 't017-key-f1-dir');
+  const catalogFiles = writeRealTierCatalog('t017-cat-f1-dir-');
+  const dirEntry = join(catalogFiles.dir, 'as-dir');
+  mkdirSync(dirEntry);
+  try {
+    const configOf = (profile: RealTierProfile): EvaluationConsoleConfiguration => {
+      const d = realTierHostDigestsOf(profile);
+      return { ...d, identity: { profileId: d.profileId, profileDigest: d.profileDigest, configDigest: d.configDigest, pricingDigest: d.pricingDigest } };
+    };
+
+    const missingCatalogProfile = loadProfileOrThrow(fixture.envOf({ catalog: { path: join(catalogFiles.dir, 'missing.json') } }), fixture.REPO);
+    const missingCatalog = admitRealTierConsole({ profile: missingCatalogProfile, configuration: configOf(missingCatalogProfile) });
+    assert.equal(missingCatalog.ok ? '' : missingCatalog.reasonCode, 'MISSING_CATALOG');
+
+    const dirCatalogProfile = loadProfileOrThrow(fixture.envOf({ catalog: { path: dirEntry } }), fixture.REPO);
+    const dirCatalog = admitRealTierConsole({ profile: dirCatalogProfile, configuration: configOf(dirCatalogProfile) });
+    assert.equal(dirCatalog.ok ? '' : dirCatalog.reasonCode, 'CATALOG_UNREADABLE');
+
+    const realProfile = loadProfileOrThrow(fixture.envOf({ catalog: { path: catalogFiles.catalogPath } }), fixture.REPO);
+    const configuration = configOf(realProfile);
+
+    writeFileSync(
+      catalogFiles.catalogPath,
+      JSON.stringify({
+        catalog: [
+          {
+            caseId: 'C01',
+            fixturePath: dirEntry,
+            fixtureDigest: sha256Text('{}'),
+            initialRepositoryDigest: catalogFiles.initialDigest,
+            grader: { path: catalogFiles.caseGraderPath, digest: sha256Text('{}') },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const dirFixture = admitRealTierConsole({ profile: realProfile, configuration });
+    assert.equal(dirFixture.ok ? '' : dirFixture.reasonCode, 'FIXTURE_UNREADABLE');
+
+    writeFileSync(
+      catalogFiles.catalogPath,
+      JSON.stringify({
+        catalog: [
+          {
+            caseId: 'C01',
+            fixturePath: catalogFiles.caseFixturePath,
+            fixtureDigest: sha256Text(JSON.stringify({ taskId: 'task-c01', initialRevisionDigest: catalogFiles.initialDigest })),
+            initialRepositoryDigest: catalogFiles.initialDigest,
+            grader: { path: dirEntry, digest: sha256Text('{}') },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const dirGrader = admitRealTierConsole({ profile: realProfile, configuration });
+    assert.equal(dirGrader.ok ? '' : dirGrader.reasonCode, 'GRADER_UNREADABLE');
+  } finally {
+    rmSync(catalogFiles.dir, { recursive: true, force: true });
+    rmSync(fixture.OUTSIDE, { recursive: true, force: true });
+    rmSync(fixture.REPO, { recursive: true, force: true });
+    rmSync(fixture.BASE, { recursive: true, force: true });
+  }
+});
+
+test('readUtf8 translates statSync errors other than no-entry to *_UNREADABLE', t => {
+  const fixture = createScanFixture('t017-f1-stat-', 't017-key-f1-stat');
+  const catalogFiles = writeRealTierCatalog('t017-cat-f1-stat-');
+  try {
+    const inaccessiblePath = join(catalogFiles.caseFixturePath, 'child.json');
+    let statError = false;
+    try {
+      statSync(inaccessiblePath, { throwIfNoEntry: false });
+    } catch {
+      statError = true;
+    }
+    if (!statError) {
+      t.skip('this platform reports a path below a regular file as absent, so no statSync error can be exercised');
+      return;
+    }
+
+    const configOf = (profile: RealTierProfile): EvaluationConsoleConfiguration => {
+      const d = realTierHostDigestsOf(profile);
+      return { ...d, identity: { profileId: d.profileId, profileDigest: d.profileDigest, configDigest: d.configDigest, pricingDigest: d.pricingDigest } };
+    };
+
+    const badCatalogProfile = loadProfileOrThrow(fixture.envOf({ catalog: { path: inaccessiblePath } }), fixture.REPO);
+    const badCatalog = admitRealTierConsole({ profile: badCatalogProfile, configuration: configOf(badCatalogProfile) });
+    assert.equal(badCatalog.ok ? '' : badCatalog.reasonCode, 'CATALOG_UNREADABLE');
+
+    const realProfile = loadProfileOrThrow(fixture.envOf({ catalog: { path: catalogFiles.catalogPath } }), fixture.REPO);
+    const configuration = configOf(realProfile);
+
+    writeFileSync(
+      catalogFiles.catalogPath,
+      JSON.stringify({
+        catalog: [
+          {
+            caseId: 'C01',
+            fixturePath: inaccessiblePath,
+            fixtureDigest: sha256Text('{}'),
+            initialRepositoryDigest: catalogFiles.initialDigest,
+            grader: { path: catalogFiles.caseGraderPath, digest: sha256Text('{}') },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const badFixture = admitRealTierConsole({ profile: realProfile, configuration });
+    assert.equal(badFixture.ok ? '' : badFixture.reasonCode, 'FIXTURE_UNREADABLE');
+
+    writeFileSync(
+      catalogFiles.catalogPath,
+      JSON.stringify({
+        catalog: [
+          {
+            caseId: 'C01',
+            fixturePath: catalogFiles.caseFixturePath,
+            fixtureDigest: sha256Text(JSON.stringify({ taskId: 'task-c01', initialRevisionDigest: catalogFiles.initialDigest })),
+            initialRepositoryDigest: catalogFiles.initialDigest,
+            grader: { path: inaccessiblePath, digest: sha256Text('{}') },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const badGrader = admitRealTierConsole({ profile: realProfile, configuration });
+    assert.equal(badGrader.ok ? '' : badGrader.reasonCode, 'GRADER_UNREADABLE');
+  } finally {
+    rmSync(catalogFiles.dir, { recursive: true, force: true });
+    rmSync(fixture.OUTSIDE, { recursive: true, force: true });
+    rmSync(fixture.REPO, { recursive: true, force: true });
+    rmSync(fixture.BASE, { recursive: true, force: true });
+  }
+});
+
+test('configurationMismatch rejects sparse adapterVersions array while admitting valid one-element array', () => {
+  const fixture = createScanFixture('t017-f2-', 't017-key-f2');
+  const catalogFiles = writeRealTierCatalog('t017-cat-f2-');
+  try {
+    const env = fixture.envOf({ catalog: { path: catalogFiles.catalogPath } });
+    const realProfile = loadProfileOrThrow(env, fixture.REPO);
+    const d = realTierHostDigestsOf(realProfile);
+    const validConfig: EvaluationConsoleConfiguration = {
+      ...d,
+      identity: { profileId: d.profileId, profileDigest: d.profileDigest, configDigest: d.configDigest, pricingDigest: d.pricingDigest },
+    };
+    const baseline = admitRealTierConsole({ profile: realProfile, configuration: validConfig });
+    assert.equal(baseline.ok, true);
+    if (!baseline.ok) return;
+
+    const sparseConfig: EvaluationConsoleConfiguration = {
+      ...validConfig,
+      adapterVersions: new Array<string>(1),
+    };
+    assert.equal(isAdmittedRealTierConsole(baseline.value, sparseConfig), false);
+    const sparseRefused = admitRealTierConsole({ profile: realProfile, configuration: sparseConfig });
+    assert.equal(sparseRefused.ok, false);
+    assert.equal(sparseRefused.ok ? '' : sparseRefused.reasonCode, 'ADAPTER_MISMATCH');
+  } finally {
+    rmSync(catalogFiles.dir, { recursive: true, force: true });
+    rmSync(fixture.OUTSIDE, { recursive: true, force: true });
+    rmSync(fixture.REPO, { recursive: true, force: true });
+    rmSync(fixture.BASE, { recursive: true, force: true });
+  }
+});
+
+test('catalog secret scan reports nearest schema-owned path without appending untrusted keys, leaving controlled admission unchanged', () => {
+  const fixture = createScanFixture('t017-f3-', 't017-key-f3');
+  const catalogFiles = writeRealTierCatalog('t017-cat-f3-');
+  try {
+    const realProfile = loadProfileOrThrow(fixture.envOf({ catalog: { path: catalogFiles.catalogPath } }), fixture.REPO);
+    const d = realTierHostDigestsOf(realProfile);
+    const configuration: EvaluationConsoleConfiguration = {
+      ...d,
+      identity: { profileId: d.profileId, profileDigest: d.profileDigest, configDigest: d.configDigest, pricingDigest: d.pricingDigest },
+    };
+    const secretVal = 'sk-ant-abcdefghijklmnopqrstuvwx';
+    const baseEntry = {
+      caseId: 'C01',
+      fixturePath: catalogFiles.caseFixturePath,
+      fixtureDigest: sha256Text(JSON.stringify({ taskId: 'task-c01', initialRevisionDigest: catalogFiles.initialDigest })),
+      initialRepositoryDigest: catalogFiles.initialDigest,
+      grader: { path: catalogFiles.caseGraderPath, digest: sha256Text(JSON.stringify({ criteria: { criteria: [{ caseId: 'C01' }] }, profile: { kind: 'real-tier' }, graderPayload: null })) },
+    };
+
+    const cases: readonly { readonly payload: unknown; readonly expectedPath: string; readonly hiddenKey?: string }[] = [
+      { payload: { catalog: [], untrustedRootKey: secretVal }, expectedPath: '$.catalog', hiddenKey: 'untrustedRootKey' },
+      { payload: { catalog: [{ ...baseEntry, untrustedEntryKey: secretVal }] }, expectedPath: '$.catalog.catalog[0]', hiddenKey: 'untrustedEntryKey' },
+      { payload: { catalog: [{ ...baseEntry, criteria: { nestedCriteriaKey: secretVal } }] }, expectedPath: '$.catalog.catalog[0].criteria', hiddenKey: 'nestedCriteriaKey' },
+      { payload: { catalog: [{ ...baseEntry, grader: { ...baseEntry.grader, untrustedGraderKey: secretVal } }] }, expectedPath: '$.catalog.catalog[0].grader', hiddenKey: 'untrustedGraderKey' },
+      { payload: { catalog: [{ ...baseEntry, fixturePath: secretVal }] }, expectedPath: '$.catalog.catalog[0].fixturePath' },
+    ];
+
+    for (const item of cases) {
+      writeFileSync(catalogFiles.catalogPath, JSON.stringify(item.payload), 'utf8');
+      const refused = admitRealTierConsole({ profile: realProfile, configuration });
+      assert.equal(refused.ok, false);
+      if (!refused.ok) {
+        assert.equal(refused.reasonCode, 'SECRET_MATERIAL');
+        assert.equal(refused.path, item.expectedPath);
+        assert.equal(JSON.stringify(refused).includes(secretVal), false);
+        if (item.hiddenKey) assert.equal(JSON.stringify(refused).includes(item.hiddenKey), false);
+      }
+    }
+
+    // Controlled admitEvaluationProfile continues to use assertNoSecret with full key paths.
+    const controlledRefused = admitEvaluationProfile({
+      endpoint: 'https://model.invalid/v1/messages',
+      model: 'deepseek-v4.1',
+      mode: 'nonstreaming',
+      credentialRef: 'host-deepseek-key',
+      codeDigest: sha256Text('code'),
+      configDigest: sha256Text('config'),
+      imageDigest: `sha256:${sha256Text('image')}`,
+      platform: 'linux/amd64',
+      adapterVersions: ['uc03-adapter@1'],
+      pricing: { pricingId: 'p1', inputRate: 10, outputRate: 20, cacheRate: 5, overheadRate: 0, denominator: 1 },
+      limits: {
+        totalModelCalls: 8,
+        inputTokensPerRequest: 4096,
+        outputTokensPerRequest: 1024,
+        providerTimeoutMs: 30000,
+        activeExecutionMs: 60000,
+        repairs: 2,
+        reviewerIterations: 2,
+        materialReplans: 3,
+        commandTimeoutMs: 10000,
+        outputBytes: 65536,
+        memoryBytes: 536870912,
+        cpus: 1,
+        processes: 32,
+      },
+      catalog: [
+        {
+          catalogEntryId: 'entry-C01',
+          caseId: 'C01',
+          version: '1.0.0',
+          caseDigest: sha256Text('case'),
+          publicTaskDigest: sha256Text('task'),
+          initialRepositoryDigest: sha256Text('repo'),
+          fixturePath: catalogFiles.caseFixturePath,
+          fixtureDigest: sha256Text('fixture'),
+          grader: { version: '1.0.0', digest: sha256Text('grader'), path: catalogFiles.caseGraderPath },
+          extraSecretKey: secretVal,
+        },
+      ],
+    });
+    assert.equal(controlledRefused.ok, false);
+    if (!controlledRefused.ok) {
+      assert.equal(controlledRefused.reasonCode, 'SECRET_MATERIAL');
+      assert.equal(controlledRefused.path, '$.catalog[0].extraSecretKey');
+    }
+  } finally {
+    rmSync(catalogFiles.dir, { recursive: true, force: true });
+    rmSync(fixture.OUTSIDE, { recursive: true, force: true });
+    rmSync(fixture.REPO, { recursive: true, force: true });
+    rmSync(fixture.BASE, { recursive: true, force: true });
   }
 });

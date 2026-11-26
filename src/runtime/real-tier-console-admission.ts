@@ -99,14 +99,15 @@ function bareSha256(value: unknown, path: string): string {
 }
 
 function readUtf8(filePath: string, missingCode: string, unreadableCode: string, path: string): string {
-  const stat = statSync(filePath, { throwIfNoEntry: false });
-  if (stat === undefined) deny(missingCode, path);
-  if (!stat.isFile()) deny(unreadableCode, path);
+  let stat: ReturnType<typeof statSync>;
   try {
-    return readFileSync(filePath, 'utf8');
+    stat = statSync(filePath, { throwIfNoEntry: false });
+    if (stat !== undefined && stat.isFile()) return readFileSync(filePath, 'utf8');
   } catch {
     deny(unreadableCode, path);
   }
+  if (stat === undefined) deny(missingCode, path);
+  deny(unreadableCode, path);
 }
 
 function parseJson(raw: string, path: string): unknown {
@@ -212,10 +213,67 @@ function configurationMismatch(expected: RealTierHostDigests, candidate: unknown
   if (config.configDigest !== expected.configDigest || id.configDigest !== expected.configDigest) return ['CONFIG_DIGEST_MISMATCH', '$.configuration.configDigest'];
   if (config.pricingDigest !== expected.pricingDigest || id.pricingDigest !== expected.pricingDigest) return ['PRICING_DIGEST_MISMATCH', '$.configuration.pricingDigest'];
   if (config.requestedModel !== expected.requestedModel) return ['MODEL_MISMATCH', '$.configuration.requestedModel'];
-  if (!Array.isArray(config.adapterVersions) || config.adapterVersions.length !== expected.adapterVersions.length || config.adapterVersions.some((v, i) => v !== expected.adapterVersions[i])) {
+  if (
+    !Array.isArray(config.adapterVersions) ||
+    config.adapterVersions.length !== expected.adapterVersions.length ||
+    expected.adapterVersions.some((v, i) => (config.adapterVersions as readonly unknown[])[i] !== v)
+  ) {
     return ['ADAPTER_MISMATCH', '$.configuration.adapterVersions'];
   }
   return undefined;
+}
+
+function assertNoSecretAt(value: unknown, schemaPath: string): void {
+  if (typeof value === 'string') {
+    assertNoSecret(value, schemaPath);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) assertNoSecretAt(item, schemaPath);
+    return;
+  }
+  if (plain(value)) {
+    for (const item of Object.values(value)) assertNoSecretAt(item, schemaPath);
+  }
+}
+
+function assertCatalogNoSecret(parsed: unknown): void {
+  if (!plain(parsed)) {
+    assertNoSecretAt(parsed, '$.catalog');
+    return;
+  }
+  for (const [rootKey, rootVal] of Object.entries(parsed)) {
+    if (rootKey !== 'catalog') {
+      assertNoSecretAt(rootVal, '$.catalog');
+      continue;
+    }
+    if (!Array.isArray(rootVal)) {
+      assertNoSecretAt(rootVal, '$.catalog.catalog');
+      continue;
+    }
+    rootVal.forEach((item, index) => {
+      const ep = `$.catalog.catalog[${index}]`;
+      if (!plain(item)) {
+        assertNoSecretAt(item, ep);
+        return;
+      }
+      for (const [key, val] of Object.entries(item)) {
+        if (key === 'caseId' || key === 'fixturePath' || key === 'fixtureDigest' || key === 'initialRepositoryDigest' || key === 'criteria') {
+          assertNoSecretAt(val, `${ep}.${key}`);
+        } else if (key === 'grader') {
+          if (!plain(val)) {
+            assertNoSecretAt(val, `${ep}.grader`);
+          } else {
+            for (const [gk, gv] of Object.entries(val)) {
+              assertNoSecretAt(gv, gk === 'path' || gk === 'digest' ? `${ep}.grader.${gk}` : `${ep}.grader`);
+            }
+          }
+        } else {
+          assertNoSecretAt(val, ep);
+        }
+      }
+    });
+  }
 }
 
 function checkCriteria(criteria: unknown, path: string): void {
@@ -229,7 +287,7 @@ function checkCriteria(criteria: unknown, path: string): void {
 
 function deriveRealTierCatalog(catalogPath: string): readonly CatalogEntry[] {
   const parsed = parseJson(readUtf8(catalogPath, 'MISSING_CATALOG', 'CATALOG_UNREADABLE', '$.profile.catalog.path'), '$.catalog');
-  assertNoSecret(parsed, '$.catalog');
+  assertCatalogNoSecret(parsed);
   const root = keysOf(parsed, ['catalog'], '$.catalog');
   if (!Array.isArray(root.catalog) || root.catalog.length === 0) deny('MISSING_CATALOG', '$.catalog.catalog');
 
