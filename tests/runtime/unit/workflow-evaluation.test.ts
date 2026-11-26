@@ -1997,6 +1997,14 @@ test('service allows one active experiment and forwards directions to control', 
     idempotencyKey: 'key-continue-2',
   });
   assert.equal(unknownDirection.ok ? '' : unknownDirection.reasonCode, 'UNKNOWN_DIRECTION');
+
+  const consumedDirection = await service.continueExperiment({
+    id: first.value.experiment.id,
+    expectedVersion: continuation.value.experiment.version,
+    directionRef: direction.value.receipt.receiptRef,
+    idempotencyKey: `${direction.value.receipt.receiptRef}-consumed`,
+  });
+  assert.equal(consumedDirection.ok ? '' : consumedDirection.reasonCode, 'DIRECTION_ALREADY_CONSUMED');
 });
 
 test('service forwards a direction for a task-bearing graph wait to control and accepts continuation', async () => {

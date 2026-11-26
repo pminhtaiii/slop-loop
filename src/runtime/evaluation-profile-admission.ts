@@ -16,6 +16,7 @@ import {
   text,
 } from './evaluation-profile-primitives.ts';
 import type { EvaluationProfile } from './evaluation-profile-types.ts';
+import { isAdmittedRealTierEvaluationProfile } from './real-tier-console-admission.ts';
 
 const admitted = new WeakSet<EvaluationProfile>();
 
@@ -93,5 +94,5 @@ export function admitEvaluationProfile(value: unknown): Validation<EvaluationPro
 }
 
 export function isAdmittedEvaluationProfile(value: unknown): value is EvaluationProfile {
-  return typeof value === 'object' && value !== null && admitted.has(value as EvaluationProfile);
+  return typeof value === 'object' && value !== null && (admitted.has(value as EvaluationProfile) || isAdmittedRealTierEvaluationProfile(value));
 }
