@@ -29,6 +29,8 @@ import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import type { OwnerDelivery } from './evaluation-composition.ts';
 import type { GraderCapability } from './real-tier-case-grade.ts';
 import type { OperatorIo } from './real-tier-case-operator.ts';
+import type { EvaluationConsoleFactory } from './evaluation-console-host.ts';
+import { createRealTierConsoleFactory } from './real-tier-console.ts';
 import { createRealTierProductionRoute } from './real-tier-production.ts';
 import { UNBOUND_CONFIG, unboundHostPorts, unboundProducers, type RealTierHostPorts } from './real-tier-task-producers.ts';
 
@@ -319,13 +321,14 @@ export function resolveRealTierAssembly(dependencies: RealTierDependencies = {})
   return resolved.status === 'assembly-ready' && resolved.revision === '' ? unavailable('delivery-revision-unresolved', '$.revision') : resolved;
 }
 
-/** CLI loader entry returning `{ host, metadata, preflight, production, assembly }` with zero runtime effects. */
+/** CLI loader entry returning `{ host, metadata, preflight, production, console, assembly }` with zero runtime effects. */
 export function createHostAssembly(dependencies: RealTierDependencies = {}):
   | {
       readonly host: UC03HostInputs;
       readonly metadata: RealTierMetadata;
       readonly preflight: () => ReturnType<typeof observeDockerReadiness>;
       readonly production: HostProduction;
+      readonly console: EvaluationConsoleFactory;
       readonly assembly: RealTierAssembly;
     }
   | RealTierUnavailable {
@@ -345,6 +348,7 @@ export function createHostAssembly(dependencies: RealTierDependencies = {}):
     metadata: resolved.metadata,
     preflight: () => observeDockerReadiness(spawn, imageId),
     production: createRealTierProductionRoute(resolved, dependencies, resolveRealTierAssembly),
+    console: createRealTierConsoleFactory(resolved, dependencies, resolveRealTierAssembly),
     assembly: resolved,
   };
 }
