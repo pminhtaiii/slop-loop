@@ -1,7 +1,7 @@
 # Tasks: Evidence-backed repository questions
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [contracts](contracts/decisions.md).
-**Authorization**: Scoped implementation releases are recorded in [decisions](contracts/decisions.md), including the 2026-11-22 T007–T010 source/controlled release. Checked tasks record accepted evidence, not successor authorization. External G-LIVE/G-QUALITY prerequisites are not waived by controlled checks.
+**Authorization**: Scoped implementation releases are recorded in [decisions](contracts/decisions.md), including the 2026-11-22 T007–T010 and 2026-11-26 T011–T012 source/controlled releases. Checked tasks record accepted evidence, not successor authorization. External G-LIVE/G-QUALITY prerequisites are not waived by controlled checks.
 **Tests**: Explicitly required by user; exercise behavior and authority boundaries, not mirror implementation. Contributor batches require registered merger verification and end-of-batch review under the existing workflow when implementation is released.
 
 ## Phase 1: Setup
@@ -76,9 +76,10 @@
   - **Dependencies**: T009.
   - **Acceptance**: Explicit new task vs continuation; serialized turns; summaries retain intent but cannot mint evidence/budgets; in-memory lifetime only.
   - **Evidence**: Independent merger `/root/merger`, registered `rag-session-merger`, accepted `12896379ce0bab041bf49d6c2894642b739c51e1` on 2026-11-26: source/fresh emitted 16/16 each, including six independent public-boundary probes per layout; fresh build passed. Exact task/turn/clarification references, busy refusal without runner effects, cumulative ledger versus fresh task, charged bounded projection, mandatory-context overflow and process-local close/expiry were exercised. Local candidate-bound verdict: `.agent-work/2026-11-26/rag-active-session-followups/merger/T011-12896379-verdict.json`. Controlled lifecycle only; T012 integration and final batch/review/publication gates remain separate.
-- [ ] T012 [US3] Integrate continuation, re-admission, drift/repository switching and cancellation into src/questions/graph.ts and src/questions/session.ts with tests/runtime/integration/question-runtime.test.ts.
+- [X] T012 [US3] Integrate continuation, re-admission, drift/repository switching and cancellation into src/questions/graph.ts and src/questions/session.ts with tests/runtime/integration/question-runtime.test.ts.
   - **Dependencies**: T011, T010.
   - **Acceptance**: Recheck/reissue source spans against admitted immutable snapshot/manifest; same-task drift preserves ledger; switch waits for cancellation/accounting reconciliation, excludes old source text; ABA/current-workspace changes cannot relabel snapshot bytes; no automatic drift loop/restart.
+  - **Evidence**: Independent merger `/root/merger`, registered `rag-session-merger`, accepted the final T011–T012 runtime batch at `52708451d42aad8fa834d6466389a96eeee6bd76` on 2026-11-27 against all 11 criteria (eight task groups plus STD001/STD002/SPEC001 review corrections). Bound worker source/fresh emitted suites passed 178/178 each; independent source probes passed 19/19; the merger's fresh emitted group passed 127/127 (19 independent plus 108 focused). Three isolated turn-binding, source-re-admission and switch-accounting faults failed their intended assertions; restored baseline passed 19/19 and live source hashes remained unchanged. Repeated snapshot/final-validation admission now reserves remaining finite capacity without resetting totals. Expiry/deadline, preparation-time abort and nested-constraint snapshots passed corrected public-boundary probes; both review axes passed. Original independent fixture identity/callback/headroom failures remain retained as setup failures, not passing runs or product defects. Local verdict: `.agent-work/2026-11-26/rag-active-session-followups/merger/batch-52708451-verdict.json`. Controlled in-memory acceptance only; final context/CI/linked-PR contributor completion, T024 absence, live composition, quality and durable session recovery remain separate gates.
 
 ## Phase 6: User Story 4 — Inspectable evaluation (P2)
 
