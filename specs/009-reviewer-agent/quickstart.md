@@ -51,4 +51,13 @@ Future test entry points are tests/runtime/integration/uc06-review-real.test.ts,
 
 ## Handoff
 
-Use current candidate snapshot and two planning lanes, independent merger/review for any later implementation batch, exact criterion evidence and managed context updater. Keep local artifacts under .agent-work/2026-11-12/uc06-reviewer-planning/. No push/merge/issue closure is authorized; report local planning quality without claiming published contributor completion.
+Phase 1–6 (T001–T013) are implemented and merged on `development` (`6b1bbf09` / PR #274 for UC-04 `DurableReviewEvidenceStore`; `5d652b83` / PR #273 for UC-06 Phase 6).
+
+Run UC-04 and UC-06 Phase 6 acceptance tests:
+
+```powershell
+node --test tests/runtime/uc04/review-evidence-store.test.ts tests/runtime/integration/uc06-review-real.test.ts tests/runtime/integration/uc06-review-quality.test.ts tests/runtime/integration/uc06-review-restart.test.ts
+node scripts/ci/check-context.mjs
+```
+
+Set `OPENROUTER_API_KEY` before running to exercise live OpenRouter dispatch in `uc06-review-real.test.ts` and `uc06-review-quality.test.ts`; when unset, live-network tests skip cleanly. Phase 7 (`T014`) completes the context refresh through `node scripts/agents/update-context.mjs --apply`.
