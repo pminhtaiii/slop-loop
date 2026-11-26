@@ -69,7 +69,7 @@ function createCatalogProfile(entries: readonly { caseId: string; initialRevisio
     };
   });
   const admitted = admitEvaluationProfile({
-    endpoint: 'https://api.deepseek.com/v1/messages',
+    endpoint: 'https://provider.invalid/v1/messages',
     model: 'controlled-model',
     mode: 'nonstreaming',
     credentialRef: 'controlled-binding-key',
