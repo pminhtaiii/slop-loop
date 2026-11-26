@@ -111,9 +111,10 @@
 
 ## Phase 7: Polish and local batch handoff
 
-- [ ] T014 Refresh implementation evidence and affected context through specs/009-reviewer-agent/quickstart.md, context/progress_checker.md, context/architecture.md, context/architecture-evaluation.md and context/testing.md using the managed context updater.
+- [x] T014 Refresh implementation evidence and affected context through specs/009-reviewer-agent/quickstart.md, context/progress_checker.md, context/architecture.md, context/architecture-evaluation.md and context/testing.md using the managed context updater.
   - **Dependencies**: T010.
   - **Owned Paths**: specs/009-reviewer-agent/quickstart.md; context/progress_checker.md; context/architecture.md; context/architecture-evaluation.md; context/testing.md.
+  - **Verification Evidence**: Updated `context/progress_checker.md`, `context/architecture.md`, and `context/testing.md` via `node scripts/agents/update-context.mjs --updates ... --apply` (inspected `context/architecture-evaluation.md`, no changes required), and updated `specs/009-reviewer-agent/quickstart.md` with Phase 6–7 handoff commands. `node scripts/ci/check-context.mjs` passed (139 Markdown files; 3 canonical facts).
   - **Acceptance Checks**: Record exact released batch/candidate/commands/criterion-level evidence, independent merger/review and unchanged source hashes; updater apply/context check passes. Local controlled handoff leaves T011–T013 unchecked and real/quality/restart explicitly not-run. Full feature completion additionally requires T011, T012 and T013, their external gates and all SCs. Contributor publication is a separate user request/gate.
 
 ## Dependencies and execution order
