@@ -83,6 +83,7 @@ function validRoute(route: UC03EvaluationGraphRoute, readiness: ReadyHost, profi
     route.readiness === readiness &&
     typeof route.resolveTask === 'function' &&
     typeof route.resolveDirection === 'function' &&
+    (route.bindCase === undefined || typeof route.bindCase === 'function') &&
     budgetFits(route, profile) &&
     (route.expectedWait === null || route.expectedWait === 'waiting-approval' || route.expectedWait === 'waiting-info')
   );
