@@ -445,6 +445,8 @@ test('shipped exemptions validate and clear exactly the reviewed synthetic findi
     ['generic-api-key', 'tests/runtime/integration/evaluation-console-real-grading.test.ts', 297, 'bda3a97ec392980a5755b07183c3b0d3236c5c75'],
     ['generic-api-key', 'tests/runtime/integration/real-tier-console-serve.test.ts', 706, '0d6ea9f848cf1590f7a6d6d21a51144176e6e9ab'],
     ['generic-api-key', 'tests/runtime/integration/real-tier-console-serve.test.ts', 723, '0d6ea9f848cf1590f7a6d6d21a51144176e6e9ab'],
+    ['generic-api-key', 'config/secret-scan-exemptions.json', 441, 'bca79ecc76e020cd87ee183db6efe75dc0497584'],
+    ['generic-api-key', 'config/secret-scan-exemptions.json', 448, 'bca79ecc76e020cd87ee183db6efe75dc0497584'],
   ];
   const findings = reviewed.map(([ruleId, path, line, commit]) => ({ ruleId, path, line, commit }));
   // applyExemptions validates every entry (exact path, reason, commit) and rejects duplicates.
