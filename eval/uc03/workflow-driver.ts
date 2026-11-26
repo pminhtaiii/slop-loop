@@ -147,9 +147,9 @@ export async function observeAndGradeWorkflowResult(
   trustedExpectedContext?: TrustedHostExpectedContext | undefined,
 ): Promise<WorkflowObservation> {
   const observation = observationFor(host, result, ports, requestedModel);
-  // The existing grader is explicitly controlled-only. Real repair acceptance still needs its
-  // separately admitted isolation delivery and cannot borrow this injected mock boundary.
-  if (mode === 'mock' && host.workflowEvidence) {
+  // Register private snapshot evidence whenever the host provides a grading host; produceWorkflowEvidence
+  // isolates verdicts by object identity, case id, and mode.
+  if (host.workflowEvidence) {
     const repository = ports?.repositoryPort ?? host.ports?.repositoryPort;
     let retainedBaseline: BaselineEvidenceCandidate | undefined;
     const finalState = result.executionEvidence?.finalState;

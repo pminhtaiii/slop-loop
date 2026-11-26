@@ -52,7 +52,9 @@ export interface EvaluationCaseBindingInput {
   readonly answers: readonly AnswerRecord[];
 }
 
-export type EvaluationCaseBinding = Readonly<{ ok: true; task: BugTask; ports: UC03GraphPortsV02; config: UC03GraphConfigV02 }> | Readonly<{ ok: false; reasonCode: string }>;
+export type EvaluationCaseBinding =
+  | Readonly<{ ok: true; task: BugTask; ports: UC03GraphPortsV02; config: UC03GraphConfigV02; workflowEvidence?: WorkflowCaseHost['workflowEvidence'] | undefined }>
+  | Readonly<{ ok: false; reasonCode: string }>;
 
 export interface EvaluationDirectionResolutionInput {
   readonly experimentId: string;
@@ -107,6 +109,7 @@ interface RunSession {
   readonly ports: UC03GraphPortsV02;
   readonly config: UC03GraphConfigV02;
   readonly generation: NonNullable<UC03GraphConfigV02['generation']>;
+  readonly workflowEvidence?: WorkflowCaseHost['workflowEvidence'] | undefined;
 }
 
 const incomplete = (state: EvaluationTaskIdentity | null): EvaluationGraphResult => ({ outcome: 'INCOMPLETE', state });
@@ -121,8 +124,9 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
   const reportBindings = new Map<UC03EvaluationGraphRoute, EvaluationGraphReportBinding>();
   for (const [caseId, route] of catalogRoutes) {
     if (route.workflowReport === undefined) continue;
-    if (route.readiness.status !== 'controlled-ready' || route.entry?.caseId !== caseId) throw new Error('Invalid controlled workflow report route');
-    reportBindings.set(route, validateEvaluationGraphReportBinding(caseId, route.readiness.identity, route.workflowReport));
+    if ((route.readiness.status !== 'controlled-ready' && route.readiness.status !== 'ready') || route.entry?.caseId !== caseId) throw new Error('Invalid workflow report route');
+    const mode = route.readiness.status === 'ready' ? 'real' : 'mock';
+    reportBindings.set(route, validateEvaluationGraphReportBinding(caseId, route.readiness.identity, route.workflowReport, mode));
   }
   if (options.customRoute?.workflowReport !== undefined) throw new Error('Custom workflow submissions cannot carry a catalog report binding');
   const portTokens = new WeakMap<object, GraphPortToken>();
@@ -186,10 +190,12 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
       let task: BugTask;
       let activePorts: UC03GraphPortsV02;
       let activeConfig: UC03GraphConfigV02;
+      let boundEvidence: WorkflowCaseHost['workflowEvidence'] | undefined;
       if (priorSession) {
         task = priorSession.task;
         activePorts = priorSession.ports;
         activeConfig = priorSession.config;
+        boundEvidence = priorSession.workflowEvidence;
       } else if (route.bindCase !== undefined) {
         let bound: ReturnType<typeof validateCaseBinding>;
         try {
@@ -208,6 +214,7 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         task = bound.task;
         activePorts = bound.ports;
         activeConfig = bound.config;
+        boundEvidence = bound.workflowEvidence;
       } else {
         task = resolvedTask;
         activePorts = readiness.ports;
@@ -235,7 +242,16 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
             admissionContextForCheck: activeConfig.trustedExpectedContext.admissionContextForCheck,
             budget: route.coderBudget,
           });
-          session = { route, resolvedTaskDigest, taskDigest: computeCanonicalSha256(task), task, ports: activePorts, config: activeConfig, generation };
+          session = {
+            route,
+            resolvedTaskDigest,
+            taskDigest: computeCanonicalSha256(task),
+            task,
+            ports: activePorts,
+            config: activeConfig,
+            generation,
+            ...(boundEvidence === undefined ? {} : { workflowEvidence: boundEvidence }),
+          };
           sessions.set(input.experimentId, session);
         } catch {
           return incomplete(input.priorState);
@@ -319,7 +335,8 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
       const graphResult =
         readiness.status === 'ready' ? await runUC03GraphV02(task, activePorts, config, graphInitialState) : await runControlledUC03GraphV02(task, activePorts, config, graphInitialState);
       const state = graphResult.executionEvidence?.finalState ?? graphResult.state;
-      const reportBinding = readiness.status === 'controlled-ready' ? reportBindings.get(route) : undefined;
+      const reportBinding = reportBindings.get(route);
+      const workflowEvidence = session.workflowEvidence ?? reportBinding?.workflowEvidence;
       const workflowReport =
         reportBinding && route.entry
           ? await reportUC03GraphResult({
@@ -327,14 +344,14 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
                 entry: route.entry,
                 task,
                 expectedWait: route.expectedWait,
-                ...(reportBinding.workflowEvidence === undefined ? {} : { workflowEvidence: reportBinding.workflowEvidence }),
+                ...(workflowEvidence === undefined ? {} : { workflowEvidence }),
               } satisfies WorkflowCaseHost,
               result: graphResult,
               ports: activePorts,
               generation: session.generation,
               trustedExpectedContext: activeConfig.trustedExpectedContext,
               binding: reportBinding,
-              mode: 'mock',
+              mode: readiness.status === 'ready' ? 'real' : 'mock',
             })
           : undefined;
       return {
