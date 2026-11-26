@@ -2,7 +2,7 @@
 import type { QuestionBudgetProfileV1, QuestionIdentityV1, QuestionResultV1, RepositoryBindingV1 } from '../contracts/questions/contracts.ts';
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import type { QuestionBudgetLedger, QuestionBudgetLedgerSnapshotV1 } from './budget.ts';
-import type { QuestionInvestigationRun } from './graph-types.ts';
+import type { QuestionInvestigationRun, QuestionSourceReference } from './graph-types.ts';
 
 export interface QuestionSessionProjection {
   readonly taskId: string;
@@ -19,6 +19,7 @@ export interface QuestionSessionRunRequest {
   readonly profile: QuestionBudgetProfileV1;
   readonly budget: QuestionBudgetLedger;
   readonly context: QuestionSessionProjection;
+  readonly sourceReferences: readonly QuestionSourceReference[];
 }
 
 export interface OpenQuestionSessionOptions {
@@ -31,7 +32,17 @@ export interface OpenQuestionSessionOptions {
 }
 
 export type QuestionSessionRefusal =
-  'invalid-request' | 'busy' | 'closed' | 'task-mismatch' | 'turn-mismatch' | 'clarification-required' | 'context-limit' | 'accounting-pending' | 'budget-closed' | 'rebind-required';
+  | 'invalid-request'
+  | 'busy'
+  | 'closed'
+  | 'task-mismatch'
+  | 'turn-mismatch'
+  | 'clarification-required'
+  | 'context-limit'
+  | 'accounting-pending'
+  | 'budget-closed'
+  | 'rebind-required'
+  | 'switch-required';
 export type QuestionSessionTurn =
   | { readonly status: 'completed'; readonly turnId: string; readonly result: QuestionResultV1; readonly retrieval: QuestionInvestigationRun['retrieval'] }
   | { readonly status: 'refused'; readonly reasonCode: QuestionSessionRefusal };
@@ -52,6 +63,8 @@ export interface QuestionSession {
   startTask(input: unknown, control: QuestionRepositoryOperationControl): Promise<QuestionSessionTurn>;
   /** Requires exact current task/turn and pending clarification identity, when present. */
   continueTask(input: unknown, control: QuestionRepositoryOperationControl): Promise<QuestionSessionTurn>;
+  /** Explicit new-repository task. Cancels active work, waits for its run and refuses until authoritative accounting is settled. */
+  switchRepository(input: unknown, control: QuestionRepositoryOperationControl): Promise<QuestionSessionTurn>;
   compactSession(): Promise<{ readonly status: 'compacted'; readonly projection: QuestionSessionProjection } | Extract<QuestionSessionTurn, { status: 'refused' }>>;
   cancelTask(input: unknown): { readonly status: 'cancelled' } | Extract<QuestionSessionTurn, { status: 'refused' }>;
   closeSession(): void;

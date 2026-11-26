@@ -21,6 +21,7 @@ import { createQuestionConversationNodes } from './graph-outcomes.ts';
 import { admitInvestigationBinding, budgetStop, definitionHint, investigateQuestionTool, investigationRepository, questionStop, repositoryStop } from './graph-investigation.ts';
 import type { QuestionInvestigationConfiguration, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
 import { createQuestionNavigation } from './graph-navigation.ts';
+import { prepareQuestionContinuation, readQuestionContinuation, retainQuestionSourceReferences } from './graph-continuation.ts';
 
 export type { QuestionInvestigation, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
 
@@ -54,6 +55,9 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
     typeof options?.budget?.snapshot !== 'function'
   )
     return { ok: false, reasonCode: 'invalid-config' };
+  const preparedContinuation = prepareQuestionContinuation(options.continuation, identity.value, profile.value);
+  if (!preparedContinuation) return { ok: false, reasonCode: 'invalid-config' };
+  const continuation = preparedContinuation;
   const config: QuestionInvestigationConfiguration = Object.freeze({
     ...options,
     identity: identity.value,
@@ -191,6 +195,8 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
           const hint = definitionHint(chunk, evidence, config.profile.repository.maxSpanLines);
           if (hint) observations.push(hint);
         }
+        const reuseFailure = await readQuestionContinuation(continuation.references, config.snapshot, evidenceRegistry, evidence, control, stop);
+        if (reuseFailure) return { ...close(reuseFailure, state), retrieval: observation };
         return { retrieval: observation, evidence: Object.freeze(evidence), observations: Object.freeze(observations) };
       })
       .addNode('Decide', async (state: State) => {
@@ -198,7 +204,19 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
         if (before) return close(before, state);
         const response = await withRetrievalControl<QuestionModelOutcomeV1>(
           control,
-          bounded => modelPort.decide({ question, evidence: state.evidence, observations: state.observations }, bounded.signal, bounded.deadlineEpochMs),
+          bounded =>
+            modelPort.decide(
+              {
+                question: continuation.context ? 'Original task goal:\n' + continuation.context.intent + '\nCurrent user turn:\n' + question : question,
+                constraints: continuation.context?.constraints ?? [],
+                ...(continuation.context?.pendingClarification ? { pendingClarification: continuation.context.pendingClarification } : {}),
+                conversation: continuation.context?.conversation ?? [],
+                evidence: state.evidence,
+                observations: state.observations,
+              },
+              bounded.signal,
+              bounded.deadlineEpochMs,
+            ),
           failure => ({
             status: 'stopped',
             reasonCode: failure.reasonCode === 'deadline' ? 'elapsed-deadline' : 'cancelled',
@@ -278,7 +296,9 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
         { evidence: [], observations: [], decision: null, visibleEvidenceIds: [], usage: initialUsage, result: null, retrieval: null },
         { recursionLimit: Math.min(100000, config.profile.runtime.maxModelCalls * 4 + 8) },
       );
-      return Object.freeze({ result: final.result ?? closedResult(questionStop('invalid-decision'), final.usage), retrieval: final.retrieval });
+      const result = final.result ?? closedResult(questionStop('invalid-decision'), final.usage);
+      const reusable = result.kind === 'answered' || result.kind === 'awaiting-clarification' || result.kind === 'insufficient-evidence';
+      return Object.freeze({ result, retrieval: final.retrieval, sourceReferences: reusable ? retainQuestionSourceReferences(final.evidence, config.profile) : [] });
     } catch {
       return failed(stop() ?? questionStop('unavailable'));
     } finally {

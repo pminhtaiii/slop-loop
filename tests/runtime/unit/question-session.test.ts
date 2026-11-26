@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { openSession } from '../../../src/questions/session.ts';
 import type { QuestionSessionRunRequest } from '../../../src/questions/session-types.ts';
+import type { QuestionBudgetReservation } from '../../../src/questions/budget.ts';
 
 const digest = 'sha256:' + 'a'.repeat(64);
 const binding = { repositoryId: 'repo', workspaceId: 'workspace', revisionDigest: digest, policyDigest: digest };
@@ -326,4 +327,84 @@ test('expired session capabilities refuse operations instead of accepting recons
   assert.deepEqual(await created.value.startTask(task(), control()), { status: 'refused', reasonCode: 'closed' });
   assert.equal(created.value.snapshot().closed, true);
   assert.equal(calls, 0);
+});
+
+test('explicit stale rebind preserves task ledger and clears old source context without automatic retries', async () => {
+  const seen: QuestionSessionRunRequest[] = [];
+  const created = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async (request: QuestionSessionRunRequest) => {
+      seen.push(request);
+      if (seen.length === 1)
+        return {
+          ...reply(request),
+          result: { schemaVersion: 'repository-question/1', identity: request.identity, usage: { status: 'missing' }, kind: 'stale-repository', reasonCode: 'binding-mismatch' },
+        };
+      return reply(request);
+    },
+  });
+  assert.ok(created.ok);
+  const first = await created.value.startTask(task(), control());
+  assert.equal(first.status, 'completed');
+  if (first.status !== 'completed') return;
+  assert.deepEqual(await created.value.continueTask({ taskId: 'task', turnId: first.turnId, question: 'Retry' }, control()), { status: 'refused', reasonCode: 'rebind-required' });
+  assert.equal(seen.length, 1);
+  const rebound = await created.value.continueTask(
+    { taskId: 'task', turnId: first.turnId, question: 'Inspect current revision', rebind: { binding: { ...binding, revisionDigest: 'sha256:' + 'b'.repeat(64) } } },
+    control(),
+  );
+  assert.equal(rebound.status, 'completed');
+  assert.equal(seen[0]?.budget, seen[1]?.budget);
+  assert.equal(seen[1]?.profile, seen[0]?.profile);
+  assert.equal(seen[1]?.identity.taskId, 'task');
+  assert.equal(seen[1]?.identity.binding.revisionDigest, 'sha256:' + 'b'.repeat(64));
+  assert.equal(seen[1]?.context.intent, 'Explain recovery');
+  assert.deepEqual(seen[1]?.sourceReferences, []);
+});
+
+test('repository switch cancels work but cannot replace an unknown held ledger until trusted reconciliation', async t => {
+  const provider = Promise.withResolvers<undefined>();
+  const seen: QuestionSessionRunRequest[] = [];
+  let held: QuestionBudgetReservation | undefined;
+  const created = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async (request: QuestionSessionRunRequest) => {
+      seen.push(request);
+      if (seen.length === 1) {
+        const admission = request.budget.reserveModelCall(10);
+        assert.ok(admission.ok);
+        held = admission.value;
+        await admission.value.execute(
+          async () => provider.promise,
+          () => ({ kind: 'model-usage', usage: { status: 'complete', inputTokens: 10, outputTokens: 1 } }),
+        );
+      }
+      return reply(request);
+    },
+  });
+  assert.ok(created.ok);
+  t.after(() => {
+    created.value.closeSession();
+    provider.resolve(undefined);
+  });
+  const initial = created.value.startTask(task(), control());
+  const other = { ...task('new'), binding: { ...binding, repositoryId: 'other-repo' }, question: 'Inspect other source' };
+  const switched = await created.value.switchRepository(other, control());
+  assert.deepEqual(switched, { status: 'refused', reasonCode: 'accounting-pending' });
+  const old = await initial;
+  assert.equal(old.status, 'completed');
+  assert.ok(old.status === 'completed' && old.result.kind === 'cancelled');
+  assert.equal(seen.length, 1);
+  assert.deepEqual(await created.value.startTask(task('same-repo-new-task'), control()), { status: 'refused', reasonCode: 'accounting-pending' });
+  assert.ok(held);
+  assert.ok(held.reconcile({ kind: 'model-usage', usage: { status: 'complete', inputTokens: 10, outputTokens: 1 } }).ok);
+  assert.deepEqual(await created.value.startTask(other, control()), { status: 'refused', reasonCode: 'switch-required' });
+  assert.equal((await created.value.switchRepository(other, control())).status, 'completed');
+  assert.equal(seen.length, 2);
+  assert.notEqual(seen[0]?.budget, seen[1]?.budget);
+  assert.deepEqual(seen[1]?.sourceReferences, []);
+  assert.deepEqual(seen[1]?.context.conversation, []);
+  provider.resolve(undefined);
 });
