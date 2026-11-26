@@ -82,7 +82,7 @@ export const CONTROLLED_CONSOLE_CHECK_SET = 'checks-configured';
 export const CONTROLLED_CONSOLE_MODEL = 'controlled-model';
 export const CONTROLLED_CONSOLE_CONTRACT_VERSION = 'uc03-owner-delivery/1';
 export const CONTROLLED_CONSOLE_TOKEN_ENV = 'UC03_CONSOLE_OPERATOR_TOKEN';
-export const CONTROLLED_CONSOLE_ENDPOINT = 'https://api.deepseek.com/v1/messages';
+export const CONTROLLED_CONSOLE_ENDPOINT = 'https://provider.invalid/v1/messages';
 export const CONTROLLED_CONSOLE_ADAPTER_VERSION = 'controlled-console-adapter-1';
 
 const TOKEN_PATTERN = /^[\x21-\x7e]{16,512}$/u;
