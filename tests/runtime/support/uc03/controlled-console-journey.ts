@@ -264,388 +264,393 @@ export async function composeControlledConsole(options: ControlledConsoleOptions
   }
 
   const files = mkdtempSync(join(tmpdir(), 'uc03-console-journey-'));
-  const fixturePath = join(files, 'case.json');
-  const graderPath = join(files, 'grader.json');
-  writeFileSync(fixturePath, '{}', 'utf8');
-  writeFileSync(graderPath, '{}', 'utf8');
+  try {
+    const fixturePath = join(files, 'case.json');
+    const graderPath = join(files, 'grader.json');
+    writeFileSync(fixturePath, '{}', 'utf8');
+    writeFileSync(graderPath, '{}', 'utf8');
 
-  const defaultEntry: CatalogEntry = {
-    catalogEntryId: 'entry-C01-journey',
-    caseId: 'C01',
-    version: '1.0.0',
-    caseDigest: sha256Text('journey-case'),
-    publicTaskDigest: sha256Text('journey-task'),
-    initialRepositoryDigest: fixture.task.initialRevisionDigest.replace(/^sha256:/u, ''),
-    fixturePath,
-    fixtureDigest: sha256Text('journey-fixture'),
-    grader: { version: '1.0.0', digest: sha256Text('journey-grader'), path: graderPath },
-  };
-  const entry: CatalogEntry = {
-    ...defaultEntry,
-    ...options.entryOverrides,
-    fixturePath: options.entryOverrides?.fixturePath || fixturePath,
-    grader: options.entryOverrides?.grader ? { ...options.entryOverrides.grader, path: options.entryOverrides.grader.path || graderPath } : defaultEntry.grader,
-  };
+    const defaultEntry: CatalogEntry = {
+      catalogEntryId: 'entry-C01-journey',
+      caseId: 'C01',
+      version: '1.0.0',
+      caseDigest: sha256Text('journey-case'),
+      publicTaskDigest: sha256Text('journey-task'),
+      initialRepositoryDigest: fixture.task.initialRevisionDigest.replace(/^sha256:/u, ''),
+      fixturePath,
+      fixtureDigest: sha256Text('journey-fixture'),
+      grader: { version: '1.0.0', digest: sha256Text('journey-grader'), path: graderPath },
+    };
+    const entry: CatalogEntry = {
+      ...defaultEntry,
+      ...options.entryOverrides,
+      fixturePath: options.entryOverrides?.fixturePath || fixturePath,
+      grader: options.entryOverrides?.grader ? { ...options.entryOverrides.grader, path: options.entryOverrides.grader.path || graderPath } : defaultEntry.grader,
+    };
 
-  const seedSuffix = options.seed ? `-${options.seed}` : '';
-  const admitted = admitEvaluationProfile({
-    endpoint: 'https://api.deepseek.com/v1/messages',
-    model: 'controlled-model',
-    mode: 'nonstreaming',
-    credentialRef: 'controlled-journey-key',
-    codeDigest: sha256Text(`journey-code${seedSuffix}`),
-    configDigest: sha256Text(`journey-config${seedSuffix}`),
-    imageDigest: `sha256:${sha256Text(`journey-image${seedSuffix}`)}`,
-    platform: 'linux/amd64',
-    adapterVersions: ['controlled-journey-adapter-1'],
-    pricing: { pricingId: 'journey-price-1', inputRate: 1, outputRate: 1, cacheRate: 0, overheadRate: 0, denominator: 1 },
-    limits: {
-      totalModelCalls: 24,
-      inputTokensPerRequest: 32768,
-      outputTokensPerRequest: 8192,
-      providerTimeoutMs: 60000,
-      activeExecutionMs: 900000,
-      repairs: 2,
-      reviewerIterations: 2,
-      materialReplans: 3,
-      commandTimeoutMs: 30000,
-      outputBytes: 1048576,
-      memoryBytes: 2147483648,
-      cpus: 2,
-      processes: 64,
-    },
-    catalog: [entry],
-  });
-  assert.ok(admitted.ok, admitted.ok ? '' : admitted.reasonCode);
-  const profile = admitted.value;
-  const configuration: EvaluationConsoleConfiguration = {
-    identity: { profileId: profile.profileId, profileDigest: profile.profileDigest, configDigest: profile.configDigest, pricingDigest: profile.pricingDigest },
-    profileDigest: profile.profileDigest,
-    configDigest: profile.configDigest,
-    pricingDigest: profile.pricingDigest,
-    requestedModel: profile.model,
-    adapterVersions: profile.adapterVersions,
-  };
-
-  const approvals = fixture.route.approvalPort;
-  runtimeRefs.approvals = approvals;
-  const baseValidateBinding = approvals.validateBinding.bind(approvals);
-  approvals.validateBinding = async (binding: ApprovalBinding): Promise<boolean> => {
-    const boundContext = planApprovalContexts.get(binding.decisionId);
-    if (!boundContext) return baseValidateBinding(binding);
-    const known = approvals.getRecordedBindings().some(item => item.decisionId === binding.decisionId);
-    if (!known) return false;
-    const resolved = await approvals.resolve(binding.decisionId);
-    if (computeCanonicalSha256(resolved) !== computeCanonicalSha256(binding)) return false;
-    const checked = validateApprovalBinding(binding, boundContext);
-    return checked.ok && checked.value.status === 'approved';
-  };
-
-  const replanPortAdapter: MaterialReplanPortV02 = {
-    provenance: 'mock',
-    async accept(request) {
-      const owner = fixture.statePort.getUnderlying();
-      const current = await owner.loadTask(request.taskId);
-      assert.ok(current);
-      const replanLedger = owner.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'replan');
-      assert.ok(replanLedger);
-      const reservationId = `reservation-${request.proposalId}`;
-      owner.internalSetLedger({
-        ...replanLedger,
-        reservations: [...replanLedger.reservations, { reservationId, keyedId: request.proposalId, amount: 1 }],
-        version: replanLedger.version + 1,
-      });
-      const nextPlanVersion = request.priorPlanVersion + 1;
-      const renewedDecisionId = `dec-plan-${request.taskId}-v${nextPlanVersion}`;
-      const nextPlan: FixPlan = { ...request.candidatePlan, planVersion: nextPlanVersion, decisionRef: renewedDecisionId };
-      const next: TaskState = {
-        ...current,
-        stateVersion: request.priorStateVersion + 2,
-        node: 'AwaitPlan',
-        nextAction: 'approve-fix-plan',
-        planVersion: nextPlanVersion,
-        plan: nextPlan,
-        activeDecisionId: renewedDecisionId,
-        latestReviewRef: undefined,
-        reviewRefs: [],
-        replanCount: request.expectedNextReplanCount,
-        budgetLedgers: owner.getLedgers(),
-      };
-      const { binding, freshness } = buildPlanApprovalBinding(renewedDecisionId, resolvedTask, next, nextPlan);
-      approvals.scriptDecision(binding);
-      await approvals.requestDecision(binding);
-      planApprovalContexts.set(renewedDecisionId, freshness);
-      transitionContexts.set(next.stateVersion + 1, { approval: { binding: { ...binding, status: 'approved' }, freshness } });
-      owner.internalSetTask(next);
-      const saved = await owner.loadTask(request.taskId);
-      assert.ok(saved);
-      return { outcome: 'accepted', state: saved, reservationReceipt: reservationId, transitionReceipt: `transition-${request.proposalId}` };
-    },
-  };
-  const ownerDeliveries: readonly OwnerDelivery[] = fixture.host.inputs.owner.map(delivery => (delivery.component === 'replanPort' ? { ...delivery, adapter: replanPortAdapter } : delivery));
-
-  const readiness = prepareControlledUC03Host({
-    ...fixture.host.inputs,
-    owner: ownerDeliveries,
-    identity: configuration.identity,
-    config: { ...fixture.host.inputs.config, generation: undefined },
-  });
-  assert.equal(readiness.status, 'controlled-ready');
-  if (readiness.status !== 'controlled-ready') throw new Error('Controlled readiness was refused');
-
-  Object.assign(readiness.config, {
-    async completionContextFor(input: UC03CompletionContextRequest): Promise<UC03TrustedCompletion | undefined> {
-      const record: UC03TrustedCompletion = {
-        taskId: input.task.taskId,
-        runId: input.state.runId,
-        repositoryRevisionDigest: input.state.repositoryRevisionDigest,
-        diffDigest: input.diffInfo.diffDigest,
-        checkSetDigest: input.checkSetDigest,
-        baselineRef: input.baseline.evidenceId,
-        criteriaDigest: computeCanonicalSha256(input.task.acceptanceCriteria),
-        authorizedDiffDigest: input.diffInfo.diffDigest,
-        protectedTestsDigest: input.protectedTestsDigest,
-        originalProtectedTestsDigest: input.originalProtectedTestsDigest,
-        reviewerRoleConfigId: input.reviewResult.reviewerRoleConfigId,
-        reviewIterationReservationRef: input.reviewRequest.reservationRef,
-        checks: input.verificationResults,
-        review: input.reviewResult,
-      };
-      const prior = transitionContexts.get(input.state.stateVersion);
-      if (prior?.completion) return structuredClone(prior.completion);
-      transitionContexts.set(input.state.stateVersion, { completion: structuredClone(record) });
-      return record;
-    },
-  });
-
-  const finalTreeFor = async (binding: { taskId: string; runId: string; workspaceId: string; repositoryId: string; initialRevisionDigest: string; finalRevisionDigest: string }) => {
-    const source = await fixture.route.repositoryPort.readFile('src/calculator.py');
-    const snapshot = await readiness.ports.hostAuthority.loadSnapshot({
-      taskId: binding.taskId,
-      workspaceId: binding.workspaceId,
-      repositoryId: binding.repositoryId,
-      expectedRevisionDigest: binding.finalRevisionDigest,
-      expectedCriteriaDigest: computeCanonicalSha256(fixture.task.acceptanceCriteria),
-      expectedCheckSetDigest: computeCheckSetDigest(fixture.task.requiredChecks),
-      expectedTestFiles: ['tests/test_calculator.py'],
+    const seedSuffix = options.seed ? `-${options.seed}` : '';
+    const admitted = admitEvaluationProfile({
+      endpoint: 'https://api.deepseek.com/v1/messages',
+      model: 'controlled-model',
+      mode: 'nonstreaming',
+      credentialRef: 'controlled-journey-key',
+      codeDigest: sha256Text(`journey-code${seedSuffix}`),
+      configDigest: sha256Text(`journey-config${seedSuffix}`),
+      imageDigest: `sha256:${sha256Text(`journey-image${seedSuffix}`)}`,
+      platform: 'linux/amd64',
+      adapterVersions: ['controlled-journey-adapter-1'],
+      pricing: { pricingId: 'journey-price-1', inputRate: 1, outputRate: 1, cacheRate: 0, overheadRate: 0, denominator: 1 },
+      limits: {
+        totalModelCalls: 24,
+        inputTokensPerRequest: 32768,
+        outputTokensPerRequest: 8192,
+        providerTimeoutMs: 60000,
+        activeExecutionMs: 900000,
+        repairs: 2,
+        reviewerIterations: 2,
+        materialReplans: 3,
+        commandTimeoutMs: 30000,
+        outputBytes: 1048576,
+        memoryBytes: 2147483648,
+        cpus: 2,
+        processes: 64,
+      },
+      catalog: [entry],
     });
-    const protectedTest = snapshot?.testFiles.find(file => file.path === 'tests/test_calculator.py');
-    assert.ok(protectedTest);
-    return {
-      ...binding,
-      snapshotId: `full.tree.${binding.finalRevisionDigest.replace(/^sha256:/u, '')}`,
-      complete: true as const,
-      files: [
-        { path: 'src/calculator.py', content: source.boundedExcerpt },
-        { path: protectedTest.path, content: protectedTest.content },
-      ],
+    assert.ok(admitted.ok, admitted.ok ? '' : admitted.reasonCode);
+    const profile = admitted.value;
+    const configuration: EvaluationConsoleConfiguration = {
+      identity: { profileId: profile.profileId, profileDigest: profile.profileDigest, configDigest: profile.configDigest, pricingDigest: profile.pricingDigest },
+      profileDigest: profile.profileDigest,
+      configDigest: profile.configDigest,
+      pricingDigest: profile.pricingDigest,
+      requestedModel: profile.model,
+      adapterVersions: profile.adapterVersions,
     };
-  };
 
-  let graderExecutions = 0;
-  const grader = createControlledSnapshotGrader({
-    seed: options.seed ?? entry.version,
-    status: options.graderStatus,
-    onExecute: () => {
-      graderExecutions += 1;
-    },
-  });
-
-  const decided = new Set<string>();
-  const approvalEffects: string[] = [];
-  const directions: { kind: string; expectedTaskVersion: number; expectedControlVersion: number; controlVersion: number }[] = [];
-  const ownerDirections = new Map<string, Readonly<{ receipt: ServiceControlReceipt; taskVersion: number }>>();
-  let currentControlVersion = 0;
-  let routeCalls = 0;
-
-  const resolveClarificationResume = async (input: { readonly direction: ServiceControlReceipt | null; readonly expectedAnswerDigest: string }): Promise<ClarificationResumeReceipt | undefined> => {
-    const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
-    const stored = input.direction ? ownerDirections.get(input.direction.receiptRef) : undefined;
-    if (
-      !ownerState ||
-      !stored ||
-      !input.direction ||
-      stored.receipt.receiptRef !== input.direction.receiptRef ||
-      stored.receipt.kind !== input.direction.kind ||
-      stored.receipt.taskId !== input.direction.taskId ||
-      stored.receipt.controlVersion !== input.direction.controlVersion ||
-      stored.taskVersion !== ownerState.stateVersion
-    )
-      return undefined;
-    if (ownerState.node !== 'NeedsInfo' || !ownerState.clarification || ownerState.clarification.answer) return undefined;
-    return {
-      receiptRef: input.direction.receiptRef,
-      controlVersion: input.direction.controlVersion,
-      taskId: ownerState.taskId,
-      runId: ownerState.runId,
-      workspaceId: ownerState.workspaceId,
-      stateVersion: ownerState.stateVersion,
-      questionId: ownerState.clarification.questionId,
-      questionDigest: ownerState.clarification.questionDigest,
-      answerDigest: input.expectedAnswerDigest,
+    const approvals = fixture.route.approvalPort;
+    runtimeRefs.approvals = approvals;
+    const baseValidateBinding = approvals.validateBinding.bind(approvals);
+    approvals.validateBinding = async (binding: ApprovalBinding): Promise<boolean> => {
+      const boundContext = planApprovalContexts.get(binding.decisionId);
+      if (!boundContext) return baseValidateBinding(binding);
+      const known = approvals.getRecordedBindings().some(item => item.decisionId === binding.decisionId);
+      if (!known) return false;
+      const resolved = await approvals.resolve(binding.decisionId);
+      if (computeCanonicalSha256(resolved) !== computeCanonicalSha256(binding)) return false;
+      const checked = validateApprovalBinding(binding, boundContext);
+      return checked.ok && checked.value.status === 'approved';
     };
-  };
 
-  const resolveDirection = (input: { readonly currentState: TaskState; readonly direction: ServiceControlReceipt | null }) => {
-    const { currentState, direction } = input;
-    if (!direction || currentState.node !== 'AwaitFeedback' || !currentState.plan?.decisionRef || currentState.activeDecisionId !== currentState.plan.decisionRef) {
-      return undefined;
-    }
-    if (direction.kind !== 'revise' && direction.kind !== 'end') return undefined;
-    return {
-      directive: direction.kind === 'end' ? ('terminate' as const) : ('revise' as const),
-      taskId: currentState.taskId,
-      workspaceId: currentState.workspaceId,
-      repositoryRevisionDigest: currentState.repositoryRevisionDigest,
-      stateVersion: currentState.stateVersion,
-      planVersion: currentState.planVersion,
-      rejectedDecisionId: currentState.activeDecisionId,
-      strategyDigest: currentState.plan.strategyDigest,
-    };
-  };
-
-  const workflowReportBinding: EvaluationGraphReportBinding = {
-    profileDigest: profile.profileDigest,
-    configDigest: profile.configDigest,
-    pricingDigest: profile.pricingDigest,
-    adapterVersions: profile.adapterVersions,
-    requestedModel: profile.model,
-    timestamp: '2026-11-13T00:00:00.000Z',
-    workflowEvidence: {
-      grader,
-      finalTree: {
-        async freezeFinalTree(binding: Parameters<typeof finalTreeFor>[0]) {
-          return finalTreeFor(binding);
-        },
-        async recheckCurrentFinalTree(binding: Parameters<typeof finalTreeFor>[0]) {
-          return finalTreeFor(binding);
-        },
-      },
-    },
-  };
-
-  const customRoute = options.includeCustomRoute
-    ? {
-        readiness,
-        coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-        expectedWait: null,
-        ...(options.customRouteWorkflowReport === undefined ? {} : { workflowReport: options.customRouteWorkflowReport }),
-        resolveTask: (input: { readonly source: { readonly kind: string; readonly bugInput?: CustomBugInputConfig } }) =>
-          input.source.kind === 'bug' && input.source.bugInput
-            ? {
-                ...fixture.task,
-                goal: input.source.bugInput.goal,
-                observedBehavior: input.source.bugInput.observedBehavior,
-                expectedBehavior: input.source.bugInput.expectedBehavior,
-                reproduction: input.source.bugInput.reproduction,
-                acceptanceCriteria: [...input.source.bugInput.acceptanceCriteria],
-                constraints: [...(input.source.bugInput.constraints ?? [])],
-              }
-            : fixture.task,
-        resolveDirection,
-        resolveClarificationResume,
-      }
-    : undefined;
-
-  const assembly: EvaluationConsoleAssembly = {
-    profile,
-    catalog: [entry],
-    repositoryIds: [fixture.task.repositoryId],
-    checkSetIds: [DEFAULT_CHECK_SET],
-    control: {
-      async issue(input) {
-        const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
-        // Refusal returns a malformed receipt so EvaluationService returns 409 INVALID_CONTROL_RECEIPT
-        // without changing experiment version, directions log, or owner state.
-        if (
-          !ownerState ||
-          input.expectedTaskVersion !== ownerState.stateVersion ||
-          input.expectedControlVersion !== currentControlVersion ||
-          !isDirectionPermitted(ownerState, input.kind, input.decisionRef)
-        ) {
-          return { receiptRef: '', kind: input.kind, taskId: fixture.task.taskId, controlVersion: -1 };
-        }
-        currentControlVersion += 1;
-        const receipt: ServiceControlReceipt = Object.freeze({
-          receiptRef: `journey-direction-${directions.length + 1}`,
-          kind: input.kind,
-          taskId: fixture.task.taskId,
-          controlVersion: currentControlVersion,
+    const replanPortAdapter: MaterialReplanPortV02 = {
+      provenance: 'mock',
+      async accept(request) {
+        const owner = fixture.statePort.getUnderlying();
+        const current = await owner.loadTask(request.taskId);
+        assert.ok(current);
+        const replanLedger = owner.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'replan');
+        assert.ok(replanLedger);
+        const reservationId = `reservation-${request.proposalId}`;
+        owner.internalSetLedger({
+          ...replanLedger,
+          reservations: [...replanLedger.reservations, { reservationId, keyedId: request.proposalId, amount: 1 }],
+          version: replanLedger.version + 1,
         });
-        directions.push({ kind: input.kind, expectedTaskVersion: input.expectedTaskVersion, expectedControlVersion: input.expectedControlVersion, controlVersion: currentControlVersion });
-        ownerDirections.set(receipt.receiptRef, { receipt, taskVersion: ownerState.stateVersion });
-        return receipt;
+        const nextPlanVersion = request.priorPlanVersion + 1;
+        const renewedDecisionId = `dec-plan-${request.taskId}-v${nextPlanVersion}`;
+        const nextPlan: FixPlan = { ...request.candidatePlan, planVersion: nextPlanVersion, decisionRef: renewedDecisionId };
+        const next: TaskState = {
+          ...current,
+          stateVersion: request.priorStateVersion + 2,
+          node: 'AwaitPlan',
+          nextAction: 'approve-fix-plan',
+          planVersion: nextPlanVersion,
+          plan: nextPlan,
+          activeDecisionId: renewedDecisionId,
+          latestReviewRef: undefined,
+          reviewRefs: [],
+          replanCount: request.expectedNextReplanCount,
+          budgetLedgers: owner.getLedgers(),
+        };
+        const { binding, freshness } = buildPlanApprovalBinding(renewedDecisionId, resolvedTask, next, nextPlan);
+        approvals.scriptDecision(binding);
+        await approvals.requestDecision(binding);
+        planApprovalContexts.set(renewedDecisionId, freshness);
+        transitionContexts.set(next.stateVersion + 1, { approval: { binding: { ...binding, status: 'approved' }, freshness } });
+        owner.internalSetTask(next);
+        const saved = await owner.loadTask(request.taskId);
+        assert.ok(saved);
+        return { outcome: 'accepted', state: saved, reservationReceipt: reservationId, transitionReceipt: `transition-${request.proposalId}` };
       },
-    },
-    approval: {
-      presentation() {
-        const pending = approvals.getRecordedBindings().at(-1);
-        if (!pending) return { ok: false, status: 'not-found', reasonCode: 'NO_PRESENTATION' };
-        return { ok: true, value: { taskId: pending.taskId, decisionId: pending.decisionId, actionKind: pending.actionKind, status: decided.has(pending.decisionId) ? 'decided' : pending.status } };
+    };
+    const ownerDeliveries: readonly OwnerDelivery[] = fixture.host.inputs.owner.map(delivery => (delivery.component === 'replanPort' ? { ...delivery, adapter: replanPortAdapter } : delivery));
+
+    const readiness = prepareControlledUC03Host({
+      ...fixture.host.inputs,
+      owner: ownerDeliveries,
+      identity: configuration.identity,
+      config: { ...fixture.host.inputs.config, generation: undefined },
+    });
+    assert.equal(readiness.status, 'controlled-ready');
+    if (readiness.status !== 'controlled-ready') throw new Error('Controlled readiness was refused');
+
+    Object.assign(readiness.config, {
+      async completionContextFor(input: UC03CompletionContextRequest): Promise<UC03TrustedCompletion | undefined> {
+        const record: UC03TrustedCompletion = {
+          taskId: input.task.taskId,
+          runId: input.state.runId,
+          repositoryRevisionDigest: input.state.repositoryRevisionDigest,
+          diffDigest: input.diffInfo.diffDigest,
+          checkSetDigest: input.checkSetDigest,
+          baselineRef: input.baseline.evidenceId,
+          criteriaDigest: computeCanonicalSha256(input.task.acceptanceCriteria),
+          authorizedDiffDigest: input.diffInfo.diffDigest,
+          protectedTestsDigest: input.protectedTestsDigest,
+          originalProtectedTestsDigest: input.originalProtectedTestsDigest,
+          reviewerRoleConfigId: input.reviewResult.reviewerRoleConfigId,
+          reviewIterationReservationRef: input.reviewRequest.reservationRef,
+          checks: input.verificationResults,
+          review: input.reviewResult,
+        };
+        const prior = transitionContexts.get(input.state.stateVersion);
+        if (prior?.completion) return structuredClone(prior.completion);
+        transitionContexts.set(input.state.stateVersion, { completion: structuredClone(record) });
+        return record;
       },
-      async decide(input) {
-        const body = input as { decisionId?: unknown; choice?: unknown };
-        const pending = approvals.getRecordedBindings().at(-1);
-        if (!pending || body.decisionId !== pending.decisionId) return { ok: false, status: 'conflict', reasonCode: 'STALE_DECISION' };
-        if (decided.has(pending.decisionId)) return { ok: false, status: 'conflict', reasonCode: 'DECISION_ALREADY_RECORDED' };
-        if (body.choice !== 'approve' && body.choice !== 'reject') return { ok: false, status: 'invalid-input', reasonCode: 'UNSUPPORTED_CHOICE' };
-        const snapshot = await fixture.statePort.readVerificationAuthoritySnapshot(fixture.task.taskId);
-        assert.ok(snapshot);
-        const next = { ...snapshot.policyIdentity, decisionAuthorityGeneration: snapshot.decisionAuthorityGeneration + 1 };
-        assert.equal((await fixture.statePort.publishAuthority({ authorityRef: next })).status, 'published');
-        approvals.setV02AuthorityRef(next);
-        const nextStatus = body.choice === 'approve' ? 'approved' : 'rejected';
-        approvals.scriptDecision({
-          ...pending,
-          status: nextStatus,
-          ...(nextStatus === 'rejected' ? { reason: 'Operator rejected proposed fix plan' } : {}),
-        });
-        decided.add(pending.decisionId);
-        approvalEffects.push(pending.decisionId);
-        // The route scripts the pre-patch reproduction as failing; after the patch the same command passes.
-        if (nextStatus === 'approved' && pending.decisionId.startsWith('dec-verify-')) {
-          fixture.route.repositoryPort.setCommandResult('pytest -q tests/test_calculator.py -k test_divide_zero', { exitCode: 0, stdout: '1 passed', stderr: '' });
-        }
-        return { ok: true, value: { decisionId: pending.decisionId, status: nextStatus } };
-      },
-    },
-    routesFor(ready, catalog) {
-      routeCalls += 1;
-      return new Map([
-        [
-          'C01',
-          {
-            entry: catalog[0],
-            readiness: ready,
-            coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
-            expectedWait: null,
-            workflowReport: workflowReportBinding,
-            resolveTask: () => fixture.task,
-            resolveDirection,
-            resolveClarificationResume,
-          },
+    });
+
+    const finalTreeFor = async (binding: { taskId: string; runId: string; workspaceId: string; repositoryId: string; initialRevisionDigest: string; finalRevisionDigest: string }) => {
+      const source = await fixture.route.repositoryPort.readFile('src/calculator.py');
+      const snapshot = await readiness.ports.hostAuthority.loadSnapshot({
+        taskId: binding.taskId,
+        workspaceId: binding.workspaceId,
+        repositoryId: binding.repositoryId,
+        expectedRevisionDigest: binding.finalRevisionDigest,
+        expectedCriteriaDigest: computeCanonicalSha256(fixture.task.acceptanceCriteria),
+        expectedCheckSetDigest: computeCheckSetDigest(fixture.task.requiredChecks),
+        expectedTestFiles: ['tests/test_calculator.py'],
+      });
+      const protectedTest = snapshot?.testFiles.find(file => file.path === 'tests/test_calculator.py');
+      assert.ok(protectedTest);
+      return {
+        ...binding,
+        snapshotId: `full.tree.${binding.finalRevisionDigest.replace(/^sha256:/u, '')}`,
+        complete: true as const,
+        files: [
+          { path: 'src/calculator.py', content: source.boundedExcerpt },
+          { path: protectedTest.path, content: protectedTest.content },
         ],
-      ]);
-    },
-    ...(customRoute === undefined ? {} : { customRoute }),
-    operatorToken: () => token,
-  };
+      };
+    };
 
-  return {
-    files,
-    entry,
-    fixture,
-    profile,
-    configuration,
-    readiness,
-    assembly,
-    grader,
-    workflowReportBinding,
-    approvalEffects,
-    directions,
-    counters: () => ({ routeCalls }),
-    graderExecutions: () => graderExecutions,
-  };
+    let graderExecutions = 0;
+    const grader = createControlledSnapshotGrader({
+      seed: options.seed ?? entry.version,
+      status: options.graderStatus,
+      onExecute: () => {
+        graderExecutions += 1;
+      },
+    });
+
+    const decided = new Set<string>();
+    const approvalEffects: string[] = [];
+    const directions: { kind: string; expectedTaskVersion: number; expectedControlVersion: number; controlVersion: number }[] = [];
+    const ownerDirections = new Map<string, Readonly<{ receipt: ServiceControlReceipt; taskVersion: number }>>();
+    let currentControlVersion = 0;
+    let routeCalls = 0;
+
+    const resolveClarificationResume = async (input: { readonly direction: ServiceControlReceipt | null; readonly expectedAnswerDigest: string }): Promise<ClarificationResumeReceipt | undefined> => {
+      const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
+      const stored = input.direction ? ownerDirections.get(input.direction.receiptRef) : undefined;
+      if (
+        !ownerState ||
+        !stored ||
+        !input.direction ||
+        stored.receipt.receiptRef !== input.direction.receiptRef ||
+        stored.receipt.kind !== input.direction.kind ||
+        stored.receipt.taskId !== input.direction.taskId ||
+        stored.receipt.controlVersion !== input.direction.controlVersion ||
+        stored.taskVersion !== ownerState.stateVersion
+      )
+        return undefined;
+      if (ownerState.node !== 'NeedsInfo' || !ownerState.clarification || ownerState.clarification.answer) return undefined;
+      return {
+        receiptRef: input.direction.receiptRef,
+        controlVersion: input.direction.controlVersion,
+        taskId: ownerState.taskId,
+        runId: ownerState.runId,
+        workspaceId: ownerState.workspaceId,
+        stateVersion: ownerState.stateVersion,
+        questionId: ownerState.clarification.questionId,
+        questionDigest: ownerState.clarification.questionDigest,
+        answerDigest: input.expectedAnswerDigest,
+      };
+    };
+
+    const resolveDirection = (input: { readonly currentState: TaskState; readonly direction: ServiceControlReceipt | null }) => {
+      const { currentState, direction } = input;
+      if (!direction || currentState.node !== 'AwaitFeedback' || !currentState.plan?.decisionRef || currentState.activeDecisionId !== currentState.plan.decisionRef) {
+        return undefined;
+      }
+      if (direction.kind !== 'revise' && direction.kind !== 'end') return undefined;
+      return {
+        directive: direction.kind === 'end' ? ('terminate' as const) : ('revise' as const),
+        taskId: currentState.taskId,
+        workspaceId: currentState.workspaceId,
+        repositoryRevisionDigest: currentState.repositoryRevisionDigest,
+        stateVersion: currentState.stateVersion,
+        planVersion: currentState.planVersion,
+        rejectedDecisionId: currentState.activeDecisionId,
+        strategyDigest: currentState.plan.strategyDigest,
+      };
+    };
+
+    const workflowReportBinding: EvaluationGraphReportBinding = {
+      profileDigest: profile.profileDigest,
+      configDigest: profile.configDigest,
+      pricingDigest: profile.pricingDigest,
+      adapterVersions: profile.adapterVersions,
+      requestedModel: profile.model,
+      timestamp: '2026-11-13T00:00:00.000Z',
+      workflowEvidence: {
+        grader,
+        finalTree: {
+          async freezeFinalTree(binding: Parameters<typeof finalTreeFor>[0]) {
+            return finalTreeFor(binding);
+          },
+          async recheckCurrentFinalTree(binding: Parameters<typeof finalTreeFor>[0]) {
+            return finalTreeFor(binding);
+          },
+        },
+      },
+    };
+
+    const customRoute = options.includeCustomRoute
+      ? {
+          readiness,
+          coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+          expectedWait: null,
+          ...(options.customRouteWorkflowReport === undefined ? {} : { workflowReport: options.customRouteWorkflowReport }),
+          resolveTask: (input: { readonly source: { readonly kind: string; readonly bugInput?: CustomBugInputConfig } }) =>
+            input.source.kind === 'bug' && input.source.bugInput
+              ? {
+                  ...fixture.task,
+                  goal: input.source.bugInput.goal,
+                  observedBehavior: input.source.bugInput.observedBehavior,
+                  expectedBehavior: input.source.bugInput.expectedBehavior,
+                  reproduction: input.source.bugInput.reproduction,
+                  acceptanceCriteria: [...input.source.bugInput.acceptanceCriteria],
+                  constraints: [...(input.source.bugInput.constraints ?? [])],
+                }
+              : fixture.task,
+          resolveDirection,
+          resolveClarificationResume,
+        }
+      : undefined;
+
+    const assembly: EvaluationConsoleAssembly = {
+      profile,
+      catalog: [entry],
+      repositoryIds: [fixture.task.repositoryId],
+      checkSetIds: [DEFAULT_CHECK_SET],
+      control: {
+        async issue(input) {
+          const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
+          // Refusal returns a malformed receipt so EvaluationService returns 409 INVALID_CONTROL_RECEIPT
+          // without changing experiment version, directions log, or owner state.
+          if (
+            !ownerState ||
+            input.expectedTaskVersion !== ownerState.stateVersion ||
+            input.expectedControlVersion !== currentControlVersion ||
+            !isDirectionPermitted(ownerState, input.kind, input.decisionRef)
+          ) {
+            return { receiptRef: '', kind: input.kind, taskId: fixture.task.taskId, controlVersion: -1 };
+          }
+          currentControlVersion += 1;
+          const receipt: ServiceControlReceipt = Object.freeze({
+            receiptRef: `journey-direction-${directions.length + 1}`,
+            kind: input.kind,
+            taskId: fixture.task.taskId,
+            controlVersion: currentControlVersion,
+          });
+          directions.push({ kind: input.kind, expectedTaskVersion: input.expectedTaskVersion, expectedControlVersion: input.expectedControlVersion, controlVersion: currentControlVersion });
+          ownerDirections.set(receipt.receiptRef, { receipt, taskVersion: ownerState.stateVersion });
+          return receipt;
+        },
+      },
+      approval: {
+        presentation() {
+          const pending = approvals.getRecordedBindings().at(-1);
+          if (!pending) return { ok: false, status: 'not-found', reasonCode: 'NO_PRESENTATION' };
+          return { ok: true, value: { taskId: pending.taskId, decisionId: pending.decisionId, actionKind: pending.actionKind, status: decided.has(pending.decisionId) ? 'decided' : pending.status } };
+        },
+        async decide(input) {
+          const body = input as { decisionId?: unknown; choice?: unknown };
+          const pending = approvals.getRecordedBindings().at(-1);
+          if (!pending || body.decisionId !== pending.decisionId) return { ok: false, status: 'conflict', reasonCode: 'STALE_DECISION' };
+          if (decided.has(pending.decisionId)) return { ok: false, status: 'conflict', reasonCode: 'DECISION_ALREADY_RECORDED' };
+          if (body.choice !== 'approve' && body.choice !== 'reject') return { ok: false, status: 'invalid-input', reasonCode: 'UNSUPPORTED_CHOICE' };
+          const snapshot = await fixture.statePort.readVerificationAuthoritySnapshot(fixture.task.taskId);
+          assert.ok(snapshot);
+          const next = { ...snapshot.policyIdentity, decisionAuthorityGeneration: snapshot.decisionAuthorityGeneration + 1 };
+          assert.equal((await fixture.statePort.publishAuthority({ authorityRef: next })).status, 'published');
+          approvals.setV02AuthorityRef(next);
+          const nextStatus = body.choice === 'approve' ? 'approved' : 'rejected';
+          approvals.scriptDecision({
+            ...pending,
+            status: nextStatus,
+            ...(nextStatus === 'rejected' ? { reason: 'Operator rejected proposed fix plan' } : {}),
+          });
+          decided.add(pending.decisionId);
+          approvalEffects.push(pending.decisionId);
+          // The route scripts the pre-patch reproduction as failing; after the patch the same command passes.
+          if (nextStatus === 'approved' && pending.decisionId.startsWith('dec-verify-')) {
+            fixture.route.repositoryPort.setCommandResult('pytest -q tests/test_calculator.py -k test_divide_zero', { exitCode: 0, stdout: '1 passed', stderr: '' });
+          }
+          return { ok: true, value: { decisionId: pending.decisionId, status: nextStatus } };
+        },
+      },
+      routesFor(ready, catalog) {
+        routeCalls += 1;
+        return new Map([
+          [
+            'C01',
+            {
+              entry: catalog[0],
+              readiness: ready,
+              coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+              expectedWait: null,
+              workflowReport: workflowReportBinding,
+              resolveTask: () => fixture.task,
+              resolveDirection,
+              resolveClarificationResume,
+            },
+          ],
+        ]);
+      },
+      ...(customRoute === undefined ? {} : { customRoute }),
+      operatorToken: () => token,
+    };
+
+    return {
+      files,
+      entry,
+      fixture,
+      profile,
+      configuration,
+      readiness,
+      assembly,
+      grader,
+      workflowReportBinding,
+      approvalEffects,
+      directions,
+      counters: () => ({ routeCalls }),
+      graderExecutions: () => graderExecutions,
+    };
+  } catch (error) {
+    await rm(files, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export function createConsoleHttpClient(origin: string, token = DEFAULT_CONSOLE_TOKEN): ConsoleHttpClient {

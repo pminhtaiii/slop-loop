@@ -36,6 +36,7 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
   const host = { profile: deps.profile as EvaluationProfile, catalog: deps.catalog, repositoryIds: deps.repositoryIds, checkSetIds: deps.checkSetIds };
   const experiments = new Map<string, ExperimentRecord>();
   const receipts = new Map<string, Readonly<{ fingerprint: string; receipt: ExperimentReceipt }>>();
+  const consumedDirections = new Set<string>();
   let activeId: string | undefined;
 
   /** Callers deny a conflicting or stale replay before reaching here. */
@@ -307,11 +308,13 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
       const experiment = experiments.get(experimentId);
       if (!experiment) return fail('not-found', 'UNKNOWN_EXPERIMENT');
       if (experiment.version !== version) return fail('conflict', 'STALE_VERSION');
-      if (!experiment.directions.some(receipt => receipt.receiptRef === directionRef)) return fail('conflict', 'UNKNOWN_DIRECTION');
 
       // Reload owner state; continuation preserves task identity and accumulated usage.
       const direction = experiment.directions.find(receipt => receipt.receiptRef === directionRef);
       if (!direction) return fail('conflict', 'UNKNOWN_DIRECTION');
+      const consumedKey = `${experiment.id}\0${directionRef}`;
+      if (consumedDirections.has(consumedKey)) return fail('conflict', 'DIRECTION_ALREADY_CONSUMED');
+      consumedDirections.add(consumedKey);
       applyResult(experiment, await execute(experiment, direction));
       const receipt = remember(key, fingerprint, {
         receiptId: `rcpt-continue-${experiment.id}-${experiment.version}`,

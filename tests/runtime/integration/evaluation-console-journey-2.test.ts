@@ -39,15 +39,20 @@ import {
 type DirectionKind = 'resume' | 'revise' | 'end';
 
 function createSnapshotGuard(client: ConsoleHttpClient, composed: ComposedControlledConsole, expId: string) {
-  const capture = async () => ({
-    view: (await client.get(`/api/experiments/${expId}`)).body.result,
-    ownerState: await composed.fixture.statePort.loadTask(composed.fixture.task.taskId),
-    journal: composed.fixture.statePort.getJournalSnapshot(),
-    modelCalls: composed.fixture.modelCalls.length,
-    patches: composed.fixture.route.repositoryPort.patches.length,
-    approvals: composed.approvalEffects.length,
-    directions: composed.directions.length,
-  });
+  const capture = async () => {
+    const viewReply = await client.get(`/api/experiments/${expId}`);
+    assert.equal(viewReply.status, 200, 'experiment view fetch must succeed');
+    assert.equal(viewReply.body.ok, true, 'experiment view reply must be ok');
+    return {
+      view: viewReply.body.result,
+      ownerState: await composed.fixture.statePort.loadTask(composed.fixture.task.taskId),
+      journal: composed.fixture.statePort.getJournalSnapshot(),
+      modelCalls: composed.fixture.modelCalls.length,
+      patches: composed.fixture.route.repositoryPort.patches.length,
+      approvals: composed.approvalEffects.length,
+      directions: composed.directions.length,
+    };
+  };
   type Snapshot = Awaited<ReturnType<typeof capture>>;
 
   const assertUnchanged = async (before: Snapshot, label: string): Promise<void> => {
@@ -372,6 +377,13 @@ test('controlled loopback HTTP: stale, duplicate, and missing-question commands 
       await guard.assertUnchanged(afterAwaitPlan, 'duplicate continue replay');
       await guard.refuse('continue', { ...continueBody, expectedVersion: afterDir.view.version, idempotencyKey: 'ac2-resume-cont-2' }, 'STALE_VERSION', 'duplicate continue new key', afterAwaitPlan);
       await guard.refuse(
+        'continue',
+        { ...continueBody, expectedVersion: afterAwaitPlan.view.version, idempotencyKey: `${continueBody.idempotencyKey}-consumed` },
+        'DIRECTION_ALREADY_CONSUMED',
+        'consumed directionRef at current version',
+        afterAwaitPlan,
+      );
+      await guard.refuse(
         'answers',
         ans(clar.questionId, clar.questionDigest, afterAwaitPlan.view.version, ['Late answer'], 'ac2-no-sub-ans'),
         'NO_SUBMISSION',
@@ -397,16 +409,18 @@ test('controlled loopback HTTP: custom bug submission stays exploratory, is neve
     acceptanceCriteria: [...probeComposed.fixture.task.acceptanceCriteria],
     constraints: [...(probeComposed.fixture.task.constraints ?? [])],
   };
+  let refusedHost: Awaited<ReturnType<typeof createEvaluationConsoleHost>> | undefined;
   try {
     const customRoute = probeComposed.assembly.customRoute;
     assert.ok(customRoute);
-    const refusedHost = await createEvaluationConsoleHost(probeComposed.readiness, probeComposed.configuration, () => ({
+    refusedHost = await createEvaluationConsoleHost(probeComposed.readiness, probeComposed.configuration, () => ({
       ...probeComposed.assembly,
       customRoute: { ...customRoute, workflowReport: probeComposed.workflowReportBinding },
     }));
     assert.deepEqual(refusedHost, { ok: false, reasonCode: 'HOST_CONSOLE_UNAVAILABLE' });
     assert.deepEqual(probeComposed.fixture.modelCalls, []);
   } finally {
+    if (refusedHost?.ok) await refusedHost.host.close();
     await rm(probeComposed.files, { recursive: true, force: true });
   }
 
@@ -454,10 +468,16 @@ test('controlled loopback HTTP: material catalog change refuses misbound host/ro
       grader: { version: '2.0.0', digest: sha256Text('journey2-grader-v2'), path: composed.entry.grader.path },
     };
 
-    assert.deepEqual(await createEvaluationConsoleHost(composed.readiness, composed.configuration, () => ({ ...composed.assembly, catalog: [materialV2Entry] })), {
-      ok: false,
-      reasonCode: 'HOST_CONSOLE_UNAVAILABLE',
-    });
+    let refusedV2Host: Awaited<ReturnType<typeof createEvaluationConsoleHost>> | undefined;
+    try {
+      refusedV2Host = await createEvaluationConsoleHost(composed.readiness, composed.configuration, () => ({ ...composed.assembly, catalog: [materialV2Entry] }));
+      assert.deepEqual(refusedV2Host, {
+        ok: false,
+        reasonCode: 'HOST_CONSOLE_UNAVAILABLE',
+      });
+    } finally {
+      if (refusedV2Host?.ok) await refusedV2Host.host.close();
+    }
 
     const serviceCatalogMismatch = createEvaluationService({
       profile: composed.profile,
@@ -541,6 +561,23 @@ test('controlled loopback HTTP: material catalog change refuses misbound host/ro
   assert.equal(report2.cases[0]?.grade, 'fail', 'materially updated catalog entry runs its own grader instead of reusing v1 pass');
   assert.equal(report2.cases[0]?.gradeReason, 'criteria-violation');
   assert.equal(report2.cases[0]?.graderDigest, host1.materialV2Entry.grader.digest);
+
+  // Third run keeps the v1 seed and config, changing only the catalog entry to v2.
+  const report3 = await withControlledConsole(
+    { seed: 'v1', graderStatus: 'fail', entryOverrides: { ...host1.materialV2Entry, fixturePath: '', grader: { ...host1.materialV2Entry.grader, path: '' } } },
+    async ({ composed, client }) => {
+      assert.equal(composed.profile.configDigest, host1.report1.configDigest);
+      const exp = await startCatalogC01(client, composed.profile.profileId, 'ac4-host3-start');
+      const done = await completeTwoApprovals(client, composed, exp.id, 'ac4-h3');
+      assert.equal(composed.graderExecutions(), 1);
+      assert.ok(done.workflowReport);
+      return done.workflowReport;
+    },
+  );
+  assert.equal(report3.cases[0]?.workflowOutcome, 'COMPLETED');
+  assert.equal(report3.cases[0]?.grade, 'fail', 'catalog change alone runs its own grader instead of reusing v1 pass');
+  assert.equal(report3.cases[0]?.gradeReason, 'criteria-violation');
+  assert.equal(report3.cases[0]?.graderDigest, host1.materialV2Entry.grader.digest);
 
   // Snapshot-level grade currency also invalidates once snapshot or evidence changes.
   const [snap1, snap2] = [
