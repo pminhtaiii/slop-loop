@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import type {
+  ReviewAuthorityV1,
   ReviewEvidencePortV1,
   PersistReviewObservationRequestV1,
   PersistReviewObservationResultV1,
@@ -19,12 +20,9 @@ import type {
   RecoverReviewObservationResultV1,
   ReviewEvidenceAckV1,
   ReviewEvidenceFoundV1,
+  ReviewObservationV1,
 } from '../../contracts/review.ts';
-import {
-  validatePersistReviewObservationRequest,
-  validateLoadReviewObservationRequest,
-  validateRecoverReviewObservationRequest,
-} from '../../uc06/validation.ts';
+import { validatePersistReviewObservationRequest, validateLoadReviewObservationRequest, validateRecoverReviewObservationRequest } from '../../uc06/validation.ts';
 
 const ROOT_DIR = 'review-evidence';
 const RECORD_DIR = 'records';
@@ -53,9 +51,24 @@ function safeId(id: string): string {
 }
 
 function candidateKey(taskId: string, workspaceId: string, repositoryId: string, headRevisionDigest: string, diffDigest: string): string {
-  return createHash('sha256')
-    .update(JSON.stringify({ taskId, workspaceId, repositoryId, headRevisionDigest, diffDigest }))
-    .digest('hex');
+  return createHash('sha256').update(JSON.stringify({ taskId, workspaceId, repositoryId, headRevisionDigest, diffDigest })).digest('hex');
+}
+
+function writeAtomic(targetPath: string, content: string): void {
+  const pendingFile = `${targetPath}.${process.pid}.pending`;
+  writeFileSync(pendingFile, content, 'utf8');
+  renameSync(pendingFile, targetPath);
+}
+
+function hasMatchingAuthority(actual: ReviewObservationV1['authority'], expected: ReviewAuthorityV1): boolean {
+  return (
+    actual.taskStateVersion === expected.taskStateVersion &&
+    actual.controlVersion === expected.controlVersion &&
+    actual.epoch === expected.epoch &&
+    actual.decisionAuthorityGeneration === expected.decisionAuthorityGeneration &&
+    actual.planDecisionRef === expected.planDecisionRef &&
+    actual.planBindingDigest === expected.planBindingDigest
+  );
 }
 
 export class DurableReviewEvidenceStore implements ReviewEvidencePortV1 {
@@ -135,9 +148,7 @@ export class DurableReviewEvidenceStore implements ReviewEvidencePortV1 {
     };
 
     const recordFile = join(this.baseDir, RECORD_DIR, `${safeId(observationDigest)}.json`);
-    const pendingFile = join(this.baseDir, RECORD_DIR, `${safeId(observationDigest)}.pending`);
-    writeFileSync(pendingFile, JSON.stringify(record, null, 2), 'utf8');
-    renameSync(pendingFile, recordFile);
+    writeAtomic(recordFile, JSON.stringify(record, null, 2));
 
     const cKey = candidateKey(b.taskId, b.workspaceId, b.repositoryId, b.headRevisionDigest, b.diffDigest);
     const discoveryRecord: DiscoveryIndexRecord = {
@@ -151,9 +162,9 @@ export class DurableReviewEvidenceStore implements ReviewEvidencePortV1 {
       timestamp: Date.now(),
     };
     const discoveryFile = join(this.baseDir, DISCOVERY_DIR, `${cKey}.json`);
-    writeFileSync(discoveryFile, JSON.stringify(discoveryRecord, null, 2), 'utf8');
+    writeAtomic(discoveryFile, JSON.stringify(discoveryRecord, null, 2));
 
-    writeFileSync(keyFile, observationDigest, 'utf8');
+    writeAtomic(keyFile, observationDigest);
 
     return { outcome: 'acknowledged', ack };
   }
@@ -176,7 +187,8 @@ export class DurableReviewEvidenceStore implements ReviewEvidencePortV1 {
       ack.taskId !== request.taskId ||
       ack.runId !== request.runId ||
       ack.providerRequestId !== request.providerRequestId ||
-      ack.contextDigest !== request.contextDigest
+      ack.contextDigest !== request.contextDigest ||
+      !hasMatchingAuthority(observation.authority, request.expectedAuthority)
     ) {
       return { outcome: 'denied', reasonCode: 'BINDING_STALE' };
     }
@@ -195,13 +207,7 @@ export class DurableReviewEvidenceStore implements ReviewEvidencePortV1 {
       return { outcome: 'denied', reasonCode: 'BINDING_STALE' };
     }
 
-    const cKey = candidateKey(
-      request.taskId,
-      request.workspaceId,
-      request.repositoryId,
-      request.headRevisionDigest,
-      request.diffDigest,
-    );
+    const cKey = candidateKey(request.taskId, request.workspaceId, request.repositoryId, request.headRevisionDigest, request.diffDigest);
     const discoveryFile = join(this.baseDir, DISCOVERY_DIR, `${cKey}.json`);
     if (!existsSync(discoveryFile)) {
       return { outcome: 'missing' };
@@ -214,16 +220,7 @@ export class DurableReviewEvidenceStore implements ReviewEvidencePortV1 {
     }
 
     const record = JSON.parse(readFileSync(recordFile, 'utf8')) as StoredObservationRecord;
-    const obs = record.observation;
-    const exp = request.expectedAuthority;
-    if (
-      obs.authority.taskStateVersion !== exp.taskStateVersion ||
-      obs.authority.controlVersion !== exp.controlVersion ||
-      obs.authority.epoch !== exp.epoch ||
-      obs.authority.decisionAuthorityGeneration !== exp.decisionAuthorityGeneration ||
-      obs.authority.planDecisionRef !== exp.planDecisionRef ||
-      obs.authority.planBindingDigest !== exp.planBindingDigest
-    ) {
+    if (!hasMatchingAuthority(record.observation.authority, request.expectedAuthority)) {
       return { outcome: 'denied', reasonCode: 'BINDING_STALE' };
     }
 

@@ -152,6 +152,20 @@ test('DurableReviewEvidenceStore: persist, load, and recover across fresh store 
       assert.equal(loadRes.ack.receiptId, persistRes.ack.receiptId);
     }
 
+    // Load with drifted authority returns denied
+    const staleLoadRes = await store2.loadObservation({
+      taskId: 'task',
+      runId: 'run',
+      providerRequestId: 'provider',
+      contextDigest: obs.contextDigest,
+      observationDigest: oDigest,
+      expectedAuthority: { ...authority, decisionAuthorityGeneration: authority.decisionAuthorityGeneration + 1 },
+    });
+    assert.equal(staleLoadRes.outcome, 'denied');
+    if (staleLoadRes.outcome === 'denied') {
+      assert.equal(staleLoadRes.reasonCode, 'BINDING_STALE');
+    }
+
     // Candidate recovery without graph locator
     const recoverRes = await store2.recoverObservation({
       taskId: 'task',
