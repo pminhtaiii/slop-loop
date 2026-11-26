@@ -14,13 +14,25 @@ import { recordClarificationAnswer } from '../uc03/clarification.ts';
 import { reuseClarificationBaseline } from '../uc03/graph-investigation-baseline.ts';
 import type { TrustedReplanDirection } from '../uc03/repair-types.ts';
 import { runControlledUC03GraphV02, runUC03GraphV02 } from '../uc03/graph-v02.ts';
-import type { UC03GraphConfigV02 } from '../uc03/graph-types-v02.ts';
+import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
 import type { UC03ControlledHostReadiness, UC03HostReadiness } from './uc03-host-bootstrap.ts';
 import { createHostCoderGeneration } from './host-coder.ts';
-import type { BoundSource, CaseBinding, CatalogEntry } from './evaluation-profile.ts';
+import type { BoundSource, CatalogEntry } from './evaluation-profile.ts';
 import type { AnswerRecord, EvaluationGraph, EvaluationGraphResult, EvaluationTaskIdentity, ServiceControlReceipt } from './evaluation-service-types.ts';
 import { reportUC03GraphResult, validateEvaluationGraphReportBinding, type EvaluationGraphReportBinding } from './evaluation-graph-report.ts';
+import {
+  answerItems,
+  clarificationView,
+  sameBinding,
+  taskMatchesSource,
+  validateCaseBinding,
+  validClarificationReceipt,
+  validDirection,
+  type ClarificationResumeReceipt,
+} from './evaluation-graph-validation.ts';
 import type { WorkflowCaseHost } from '../../eval/uc03/workflow-driver.ts';
+
+export type { ClarificationResumeReceipt };
 
 type ReadyHost = Extract<UC03HostReadiness, { readonly status: 'ready' }> | Extract<UC03ControlledHostReadiness, { readonly status: 'controlled-ready' }>;
 
@@ -31,6 +43,16 @@ export interface EvaluationTaskResolutionInput {
   readonly priorState: EvaluationTaskIdentity | null;
   readonly answers: readonly AnswerRecord[];
 }
+
+export interface EvaluationCaseBindingInput {
+  readonly experimentId: string;
+  readonly source: BoundSource;
+  readonly task: BugTask;
+  readonly priorState: EvaluationTaskIdentity | null;
+  readonly answers: readonly AnswerRecord[];
+}
+
+export type EvaluationCaseBinding = Readonly<{ ok: true; task: BugTask; ports: UC03GraphPortsV02; config: UC03GraphConfigV02 }> | Readonly<{ ok: false; reasonCode: string }>;
 
 export interface EvaluationDirectionResolutionInput {
   readonly experimentId: string;
@@ -47,25 +69,14 @@ export interface ClarificationResumeResolutionInput extends EvaluationDirectionR
   readonly expectedAnswerDigest: string;
 }
 
-/** Owner-read receipt for the exact current NeedsInfo continuation; it carries no task authority itself. */
-export interface ClarificationResumeReceipt {
-  readonly receiptRef: string;
-  readonly controlVersion: number;
-  readonly taskId: string;
-  readonly runId: string;
-  readonly workspaceId: string;
-  readonly stateVersion: number;
-  readonly questionId: string;
-  readonly questionDigest: string;
-  readonly answerDigest: string;
-}
-
 export interface UC03EvaluationGraphRoute {
   readonly entry?: CatalogEntry | undefined;
   readonly readiness: ReadyHost;
   readonly coderBudget: CoderBudget;
   readonly expectedWait: 'waiting-approval' | 'waiting-info' | null;
   readonly resolveTask: (input: EvaluationTaskResolutionInput) => BugTask | Promise<BugTask>;
+  /** Optional per-case binding resolved once per experiment after task resolution; overrides startup readiness ports and config. */
+  readonly bindCase?: ((input: EvaluationCaseBindingInput) => EvaluationCaseBinding | Promise<EvaluationCaseBinding>) | undefined;
   /** Called for every invocation after task allocation and current owner state reload. */
   readonly resolveDirection: (input: EvaluationDirectionResolutionInput) => TrustedReplanDirection | undefined | Promise<TrustedReplanDirection | undefined>;
   /** Resolves current owner control/state and binds the complete reporter answer set before its CAS write. */
@@ -90,108 +101,19 @@ interface GraphPortToken {
 
 interface RunSession {
   readonly route: UC03EvaluationGraphRoute;
+  readonly resolvedTaskDigest: string;
   readonly taskDigest: string;
   readonly task: BugTask;
+  readonly ports: UC03GraphPortsV02;
+  readonly config: UC03GraphConfigV02;
   readonly generation: NonNullable<UC03GraphConfigV02['generation']>;
 }
 
 const incomplete = (state: EvaluationTaskIdentity | null): EvaluationGraphResult => ({ outcome: 'INCOMPLETE', state });
 
-function sameBinding(entry: CatalogEntry, binding: CaseBinding): boolean {
-  return (
-    entry.catalogEntryId === binding.catalogEntryId &&
-    entry.caseId === binding.caseId &&
-    entry.version === binding.version &&
-    entry.caseDigest === binding.caseDigest &&
-    entry.publicTaskDigest === binding.publicTaskDigest &&
-    entry.initialRepositoryDigest === binding.initialRepositoryDigest &&
-    entry.grader.version === binding.grader.version &&
-    entry.grader.digest === binding.grader.digest
-  );
-}
-
-function taskMatchesSource(task: BugTask, source: BoundSource): boolean {
-  if (source.kind !== 'bug') return true;
-  const input = source.bugInput;
-  return (
-    task.repositoryId === source.repositoryId &&
-    task.goal === input.goal &&
-    task.observedBehavior === input.observedBehavior &&
-    task.expectedBehavior === input.expectedBehavior &&
-    task.reproduction === input.reproduction &&
-    computeCanonicalSha256(task.acceptanceCriteria) === computeCanonicalSha256(input.acceptanceCriteria) &&
-    computeCanonicalSha256(task.constraints) === computeCanonicalSha256(input.constraints ?? [])
-  );
-}
-
-function validDirection(direction: TrustedReplanDirection, state: TaskState, receipt: ServiceControlReceipt): boolean {
-  const directive = receipt.kind === 'revise' ? 'revise' : receipt.kind === 'end' ? 'terminate' : 'resume';
-  return (
-    state.node === 'AwaitFeedback' &&
-    direction.directive === directive &&
-    direction.taskId === state.taskId &&
-    direction.workspaceId === state.workspaceId &&
-    direction.repositoryRevisionDigest === state.repositoryRevisionDigest &&
-    direction.stateVersion === state.stateVersion &&
-    direction.planVersion === state.planVersion &&
-    !!state.plan?.decisionRef &&
-    state.activeDecisionId === state.plan.decisionRef &&
-    direction.rejectedDecisionId === state.activeDecisionId &&
-    direction.strategyDigest === state.plan.strategyDigest &&
-    receipt.taskId === state.taskId
-  );
-}
-
-function answerItems(record: TaskState['clarification'], answers: readonly AnswerRecord[]): Readonly<{ answer: AnswerRecord; items: readonly ClarificationQuestion[] }> | undefined {
-  if (!record || record.answer) return undefined;
-  const matching = answers.filter(answer => answer.questionId === record.questionId);
-  if (matching.length !== 1) return undefined;
-  const answer = matching[0];
-  if (!answer || answer.questionDigest !== record.questionDigest || answer.answers.length !== record.questions.length) return undefined;
-  const items = record.questions.map((question, index) => {
-    const text = answer.answers[index];
-    if (typeof text !== 'string' || !text.trim() || Buffer.byteLength(text, 'utf8') > 1024) return undefined;
-    return Object.freeze({ questionId: question.questionId, text });
-  });
-  if (items.some(item => item === undefined)) return undefined;
-  return { answer, items: Object.freeze(items as ClarificationQuestion[]) };
-}
-
-function validClarificationReceipt(
-  receipt: ClarificationResumeReceipt | undefined,
-  direction: ServiceControlReceipt,
-  state: TaskState,
-  questionId: string,
-  questionDigest: string,
-  answerDigest: string,
-): receipt is ClarificationResumeReceipt {
-  return (
-    receipt !== undefined &&
-    receipt.receiptRef === direction.receiptRef &&
-    receipt.controlVersion === direction.controlVersion &&
-    receipt.taskId === state.taskId &&
-    receipt.runId === state.runId &&
-    receipt.workspaceId === state.workspaceId &&
-    receipt.stateVersion === state.stateVersion &&
-    receipt.questionId === questionId &&
-    receipt.questionDigest === questionDigest &&
-    receipt.answerDigest === answerDigest
-  );
-}
-
-function clarificationView(state: TaskState | null): EvaluationGraphResult['workflowClarification'] {
-  const record = state?.node === 'NeedsInfo' ? state.clarification : undefined;
-  if (!record || record.answer) return null;
-  return Object.freeze({
-    questionId: record.questionId,
-    questionDigest: record.questionDigest,
-    questions: Object.freeze(record.questions.map(question => Object.freeze({ questionId: question.questionId, text: question.text }))),
-  });
-}
-
 /**
  * Uses only a previously assembled route in `portsFor`; owner allocation, state lookup and direction
- * resolution happen in `run`. Continuations retain the route's task-scoped coder generation.
+ * resolution happen in `run`. Continuations retain the experiment's bound task, ports, config and coder generation.
  */
 export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): EvaluationGraph {
   if (!(options?.catalogRoutes instanceof Map)) throw new Error('Invalid UC-03 evaluation graph routes');
@@ -233,12 +155,16 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
       if (!token || token.experimentId !== input.experimentId || token.source !== input.source || token.refusal || !token.route) return incomplete(input.priorState);
       const route = token.route;
       const readiness = route.readiness;
-      if (readiness.status !== 'ready' && readiness.status !== 'controlled-ready') return incomplete(input.priorState);
-      if (readiness.config.generation !== undefined) return incomplete(input.priorState);
+      if (readiness?.status !== 'ready' && readiness?.status !== 'controlled-ready') return incomplete(input.priorState);
+      if (route.bindCase === undefined) {
+        if (readiness.config.generation !== undefined) return incomplete(input.priorState);
+      } else if (typeof route.bindCase !== 'function') {
+        return incomplete(input.priorState);
+      }
 
-      let task: BugTask;
+      let resolvedTask: BugTask;
       try {
-        task = await route.resolveTask({
+        resolvedTask = await route.resolveTask({
           experimentId: input.experimentId,
           source: input.source,
           priorState: input.priorState,
@@ -247,13 +173,50 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
       } catch {
         return incomplete(input.priorState);
       }
-      if (!validateBugTask(task).ok || !taskMatchesSource(task, input.source)) return incomplete(input.priorState);
+      if (!validateBugTask(resolvedTask).ok || !taskMatchesSource(resolvedTask, input.source)) return incomplete(input.priorState);
       const expectedInitialRevision = input.source.kind === 'catalog' ? input.source.bindings[0]?.initialRepositoryDigest : undefined;
-      if (expectedInitialRevision !== undefined && task.initialRevisionDigest.replace(/^sha256:/u, '') !== expectedInitialRevision) return incomplete(input.priorState);
+      if (expectedInitialRevision !== undefined && resolvedTask.initialRevisionDigest.replace(/^sha256:/u, '') !== expectedInitialRevision) return incomplete(input.priorState);
+
+      const resolvedTaskDigest = computeCanonicalSha256(resolvedTask);
+      const priorSession = sessions.get(input.experimentId);
+      if (priorSession && (priorSession.route !== route || (priorSession.resolvedTaskDigest !== resolvedTaskDigest && priorSession.taskDigest !== resolvedTaskDigest))) {
+        return incomplete(input.priorState);
+      }
+
+      let task: BugTask;
+      let activePorts: UC03GraphPortsV02;
+      let activeConfig: UC03GraphConfigV02;
+      if (priorSession) {
+        task = priorSession.task;
+        activePorts = priorSession.ports;
+        activeConfig = priorSession.config;
+      } else if (route.bindCase !== undefined) {
+        let bound: ReturnType<typeof validateCaseBinding>;
+        try {
+          const rawBinding = await route.bindCase({
+            experimentId: input.experimentId,
+            source: input.source,
+            task: resolvedTask,
+            priorState: input.priorState,
+            answers: input.answers,
+          });
+          bound = validateCaseBinding(rawBinding, readiness.status, input.source, expectedInitialRevision);
+        } catch {
+          return incomplete(input.priorState);
+        }
+        if (!bound) return incomplete(input.priorState);
+        task = bound.task;
+        activePorts = bound.ports;
+        activeConfig = bound.config;
+      } else {
+        task = resolvedTask;
+        activePorts = readiness.ports;
+        activeConfig = readiness.config;
+      }
 
       let current: TaskState | null;
       try {
-        current = await readiness.ports.statePort.loadTask(task.taskId);
+        current = await activePorts.statePort.loadTask(task.taskId);
       } catch {
         return incomplete(input.priorState);
       }
@@ -262,19 +225,17 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         return incomplete(input.priorState);
       if (input.direction && input.direction.taskId !== current.taskId) return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
 
-      const priorSession = sessions.get(input.experimentId);
-      if (priorSession && (priorSession.route !== route || priorSession.taskDigest !== computeCanonicalSha256(task))) return incomplete(input.priorState);
       let session = priorSession;
       if (!session) {
         try {
           const generation = createHostCoderGeneration({
-            model: readiness.ports.modelPort,
-            repository: readiness.ports.repositoryPort,
-            guardedRead: readiness.ports.guardedRead,
-            admissionContextForCheck: readiness.config.trustedExpectedContext.admissionContextForCheck,
+            model: activePorts.modelPort,
+            repository: activePorts.repositoryPort,
+            guardedRead: activePorts.guardedRead,
+            admissionContextForCheck: activeConfig.trustedExpectedContext.admissionContextForCheck,
             budget: route.coderBudget,
           });
-          session = { route, taskDigest: computeCanonicalSha256(task), task, generation };
+          session = { route, resolvedTaskDigest, taskDigest: computeCanonicalSha256(task), task, ports: activePorts, config: activeConfig, generation };
           sessions.set(input.experimentId, session);
         } catch {
           return incomplete(input.priorState);
@@ -327,14 +288,14 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
           generation: session.generation,
           task,
           state: current,
-          statePort: readiness.ports.statePort,
-          hostAuthority: readiness.ports.hostAuthority,
-          expectedContext: readiness.config.trustedExpectedContext,
+          statePort: activePorts.statePort,
+          hostAuthority: activePorts.hostAuthority,
+          expectedContext: activeConfig.trustedExpectedContext,
         });
         if (!retainedBaseline.ok) return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
         try {
           const answered = await recordClarificationAnswer({
-            statePort: readiness.ports.statePort,
+            statePort: activePorts.statePort,
             prior: current,
             answer: { recorderRef: receipt.receiptRef, items: answer.items },
           });
@@ -351,12 +312,12 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
       }
       const config: UC03GraphConfigV02 = {
-        ...readiness.config,
+        ...activeConfig,
         generation: session.generation,
         trustedDirection,
       };
       const graphResult =
-        readiness.status === 'ready' ? await runUC03GraphV02(task, readiness.ports, config, graphInitialState) : await runControlledUC03GraphV02(task, readiness.ports, config, graphInitialState);
+        readiness.status === 'ready' ? await runUC03GraphV02(task, activePorts, config, graphInitialState) : await runControlledUC03GraphV02(task, activePorts, config, graphInitialState);
       const state = graphResult.executionEvidence?.finalState ?? graphResult.state;
       const reportBinding = readiness.status === 'controlled-ready' ? reportBindings.get(route) : undefined;
       const workflowReport =
@@ -369,9 +330,9 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
                 ...(reportBinding.workflowEvidence === undefined ? {} : { workflowEvidence: reportBinding.workflowEvidence }),
               } satisfies WorkflowCaseHost,
               result: graphResult,
-              ports: readiness.ports,
+              ports: activePorts,
               generation: session.generation,
-              trustedExpectedContext: readiness.config.trustedExpectedContext,
+              trustedExpectedContext: activeConfig.trustedExpectedContext,
               binding: reportBinding,
               mode: 'mock',
             })
