@@ -76,6 +76,8 @@ export interface UC03EvaluationGraphRoute {
   readonly resolveClarificationResume?: ((input: ClarificationResumeResolutionInput) => ClarificationResumeReceipt | undefined | Promise<ClarificationResumeReceipt | undefined>) | undefined;
   /** Resolves current owner control/state for ending an unresolved NeedsInfo wait without resuming the graph. */
   readonly resolveClarificationEnd?: ((input: EvaluationDirectionResolutionInput) => ClarificationEndReceipt | undefined | Promise<ClarificationEndReceipt | undefined>) | undefined;
+  /** Runs terminal host effects only after the NeedsInfo end receipt is accepted. */
+  readonly onClarificationEndAccepted?: ((experimentId: string) => void) | undefined;
   /** Host-only report identity and optional controlled grader wiring; never accepted from service input. */
   readonly workflowReport?: EvaluationGraphReportBinding | undefined;
 }
@@ -282,8 +284,10 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         if (resolvedNeeds.kind === 'refused') {
           return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
         }
-        if (resolvedNeeds.kind === 'end') endedNeedsInfo = resolvedNeeds.result;
-        else graphInitialState = resolvedNeeds.initialState;
+        if (resolvedNeeds.kind === 'end') {
+          route.onClarificationEndAccepted?.(input.experimentId);
+          endedNeedsInfo = resolvedNeeds.result;
+        } else graphInitialState = resolvedNeeds.initialState;
       }
       if (input.direction === null && trustedDirection !== undefined) return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
       if (trustedDirection && (!input.direction || !validDirection(trustedDirection, current, input.direction))) {

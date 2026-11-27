@@ -290,6 +290,13 @@ export function createRealTierConsoleFactory(
         resolveDirection: input => resolveRealConsoleDirection(sessions, allowRevise, input),
         resolveClarificationResume: input => resolveRealConsoleClarificationResume(sessions, input),
         resolveClarificationEnd: input => resolveRealConsoleClarificationEnd(sessions, input),
+        onClarificationEndAccepted: experimentId => {
+          const session = sessions.get(experimentId);
+          if (session) {
+            session.terminal = true;
+            session.cleanupCopy();
+          }
+        },
       };
     };
 
