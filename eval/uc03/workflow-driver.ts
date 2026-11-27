@@ -132,7 +132,10 @@ function observationFor(host: WorkflowCaseHost, result: UC03WorkflowResult, port
     usage: usageOf(report?.usage !== undefined, state !== null),
     diagnostic: safeText(`UC-03 outcome ${outcome}${state ? ` at ${state.node}` : ''}${codes}`, MAX_DIAGNOSTIC),
     artifacts: safeList([...(report?.evidence.verificationRefs ?? []), ...(report?.evidence.reviewRef ? [report.evidence.reviewRef] : [])]),
-    limitations: safeList(report === undefined ? ['No authoritative final report was produced.'] : []),
+    limitations: safeList([
+      ...(result.diagnostic?.limitations.filter(item => item.startsWith('Thrown error class: ')) ?? []),
+      ...(report === undefined ? ['No authoritative final report was produced.'] : []),
+    ]),
   };
 }
 
@@ -147,6 +150,10 @@ export async function observeAndGradeWorkflowResult(
   trustedExpectedContext?: TrustedHostExpectedContext | undefined,
 ): Promise<WorkflowObservation> {
   const observation = observationFor(host, result, ports, requestedModel);
+  const thrown = observation.limitations.filter(item => item.startsWith('Thrown error class: '));
+  if (mode === 'real' && thrown.length > 0) {
+    process.stderr.write(`${JSON.stringify({ event: 'uc03-route-thrown', caseId: host.entry.caseId, diagnostic: observation.diagnostic, limitations: thrown })}\n`);
+  }
   // Register private snapshot evidence whenever the host provides a grading host; produceWorkflowEvidence
   // isolates verdicts by object identity, case id, and mode.
   if (host.workflowEvidence) {

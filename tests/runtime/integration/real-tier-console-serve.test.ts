@@ -1924,3 +1924,104 @@ test('serve --host real assembly: ending NeedsInfo wait closes bounded incomplet
     t.mock.timers.reset();
   }
 });
+
+test('serve --host real assembly: long baseline and investigation reach the plan pause', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+  const token = ['real', 'serve', 'long', 'steps', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'long-steps', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: token } });
+  let baselineRuns = 0;
+  let providerCalls = 0;
+  const deps: RealTierDependencies = {
+    ...sc.deps,
+    spawn: async (command, args, options) => {
+      const result = await sc.spawnSpy.spawn(command, args, options);
+      if (args[0] === 'run' && args.some(arg => arg.includes('target=/workspace/scratch'))) {
+        baselineRuns += 1;
+        t.mock.timers.tick(180_000);
+      }
+      return result;
+    },
+    fetch: async (input, init) => {
+      const response = await sc.fetchSpy.fetch(input, init);
+      providerCalls += 1;
+      t.mock.timers.tick(61_000);
+      return response;
+    },
+  };
+  (globalThis as Record<string, unknown>)[HOOK_KEY] = () => deps;
+  let cli: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    cli = await runEvaluateCli(['serve', '--host', sc.hostFile]);
+    assert.equal(cli.exitCode, 0);
+    const { host, port } = JSON.parse(cli.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, token);
+    const experiment = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('long-start'), source: { kind: 'catalog', caseIds: ['C01'] } }),
+      'long-start',
+    ).experiment;
+    assert.ok(baselineRuns > 0);
+    assert.ok(providerCalls > 0);
+    assert.ok(Date.now() - FIXED_NOW_MS > 240_000);
+    assert.equal(experiment.status, 'waiting-approval', JSON.stringify(experiment.workflowReport));
+    assert.equal(experiment.workflowReport?.cases[0]?.workflowOutcome, 'waiting-approval');
+    const pending = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${experiment.id}/approval`), 'long-pending');
+    assert.equal(pending.binding.status, 'pending');
+    assert.equal(pending.control.mode, 'waiting');
+  } finally {
+    await cli?.close?.();
+    sc.cleanup();
+    t.mock.timers.reset();
+  }
+});
+
+test('serve --host real assembly: slow plan request deadline does not reproduce the thrown-route fallback', async t => {
+  const { DurableApprovalStore } = await import('../../../src/persistence/adapters/approval-store-adapter.ts');
+  const token = ['real', 'serve', 'slow', 'approval', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'slow-approval', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: token } });
+  const readRequest = DurableApprovalStore.prototype.readRequest;
+  const measure = WorkspaceFilesystemPort.prototype.getCurrentRevisionDigest;
+  let delayNextMeasurement = false;
+  let delayedMeasurements = 0;
+  let finishMeasurement: (() => void) | undefined;
+  const measurementFinished = new Promise<void>(resolve => {
+    finishMeasurement = resolve;
+  });
+  t.mock.method(DurableApprovalStore.prototype, 'readRequest', function (this: InstanceType<typeof DurableApprovalStore>, ...args: Parameters<typeof readRequest>) {
+    const response = readRequest.apply(this, args);
+    if (!response.value && delayedMeasurements === 0) delayNextMeasurement = true;
+    return response;
+  });
+  t.mock.method(WorkspaceFilesystemPort.prototype, 'getCurrentRevisionDigest', async function (this: WorkspaceFilesystemPort, ...args: Parameters<typeof measure>) {
+    if (delayNextMeasurement) {
+      delayNextMeasurement = false;
+      delayedMeasurements += 1;
+      await new Promise(resolve => setTimeout(resolve, 2_100));
+    }
+    try {
+      return await measure.apply(this, args);
+    } finally {
+      if (delayedMeasurements > 0) finishMeasurement?.();
+    }
+  });
+  let cli: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    cli = await runEvaluateCli(['serve', '--host', sc.hostFile]);
+    assert.equal(cli.exitCode, 0);
+    const { host, port } = JSON.parse(cli.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, token);
+    const experiment = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('slow-start'), source: { kind: 'catalog', caseIds: ['C01'] } }),
+      'slow-start',
+    ).experiment;
+    assert.equal(delayedMeasurements, 1);
+    assert.equal(experiment.status, 'incomplete', JSON.stringify(experiment.workflowReport));
+    const observed: { readonly workflowOutcome: string; readonly diagnostic?: string } | undefined = experiment.workflowReport?.cases[0];
+    assert.equal(observed?.workflowOutcome, 'INCOMPLETE');
+    assert.match(observed?.diagnostic ?? '', /AwaitPlan \[workflow\/unknown\/route-incomplete\]/u);
+    assert.doesNotMatch(observed?.diagnostic ?? '', /unconfirmed-owner-transition/u);
+  } finally {
+    if (delayedMeasurements > 0) await measurementFinished;
+    await cli?.close?.();
+    sc.cleanup();
+  }
+});

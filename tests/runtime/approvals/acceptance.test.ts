@@ -186,8 +186,8 @@ const sourceRoot = fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? '../.
 const suiteNames = ['contracts', 'mock-ports', 'policy', 'service', 'control', 'plan-binding', 'plan-context', 'restart-admission', 'audit', 'cli'];
 const extension = import.meta.url.endsWith('.ts') ? 'ts' : 'js';
 const suitePaths = suiteNames.map(name => fileURLToPath(new URL(`${name}.test.${extension}`, import.meta.url)));
-// Includes the 20 namespaced-model admission and receipt validator rows.
-const expectedCheckCount = 303;
+// Includes the 20 namespaced-model admission/receipt rows and the bounded approval-deadline check.
+const expectedCheckCount = 304;
 
 function hash(value: string | Buffer): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
