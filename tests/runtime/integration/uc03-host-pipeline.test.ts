@@ -408,47 +408,50 @@ test('the controlled EvaluationService drives one bound graph run through owner 
     };
   };
   let hiddenExecutions = 0;
-  const grader = createSnapshotGrader({
-    criteria: {
-      digest: 'sha256:' + sha256Text('controlled-service-criteria'),
-      criteria: [{ criterionId: 'criterion-C01-service', caseId: 'C01', predicate: 'repair-success', hiddenCheckId: 'hidden-C01-service' }],
-    },
-    profile: {
-      profileId: 'controlled-service-grader',
-      digest: 'sha256:' + sha256Text('controlled-service-grader-profile'),
-      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
-    },
-    isolationAuthority: {
-      admit: (request: EvaluationGradingAdmissionRequest) => ({
-        kind: 'injected-mock-isolation-admission',
-        admissionId: sha256Text('mock-isolation-' + request.finalSnapshot.digest),
-        checkId: request.checkId,
-        finalSnapshot: request.finalSnapshot,
-        profile: request.profile,
-        executorId: request.executorId,
-      }),
-    },
-    executor: {
-      executorId: 'controlled-service-hidden-check',
-      execute(request: EvaluationGraderExecutionRequest) {
-        hiddenExecutions += 1;
-        assert.equal(request.checkId, 'hidden-C01-service');
-        assert.equal(request.admission.checkId, 'hidden-C01-service');
-        return {
+  const grader = createSnapshotGrader(
+    {
+      criteria: {
+        digest: 'sha256:' + sha256Text('controlled-service-criteria'),
+        criteria: [{ criterionId: 'criterion-C01-service', caseId: 'C01', predicate: 'repair-success', hiddenCheckId: 'hidden-C01-service' }],
+      },
+      profile: {
+        profileId: 'controlled-service-grader',
+        digest: 'sha256:' + sha256Text('controlled-service-grader-profile'),
+        bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+      },
+      isolationAuthority: {
+        admit: (request: EvaluationGradingAdmissionRequest) => ({
+          kind: 'injected-mock-isolation-admission',
+          admissionId: sha256Text('mock-isolation-' + request.finalSnapshot.digest),
           checkId: request.checkId,
           finalSnapshot: request.finalSnapshot,
           profile: request.profile,
           executorId: request.executorId,
-          status: 'pass' as const,
-          actualOutcome: 'COMPLETED' as const,
-          durationMs: 1,
-          cpuMs: 1,
-          outputBytes: 1,
-        };
+        }),
       },
+      executor: {
+        executorId: 'controlled-service-hidden-check',
+        execute(request: EvaluationGraderExecutionRequest) {
+          hiddenExecutions += 1;
+          assert.equal(request.checkId, 'hidden-C01-service');
+          assert.equal(request.admission.checkId, 'hidden-C01-service');
+          return {
+            checkId: request.checkId,
+            finalSnapshot: request.finalSnapshot,
+            profile: request.profile,
+            executorId: request.executorId,
+            status: 'pass' as const,
+            actualOutcome: 'COMPLETED' as const,
+            durationMs: 1,
+            cpuMs: 1,
+            outputBytes: 1,
+          };
+        },
+      },
+      graderPayload: null,
     },
-    graderPayload: null,
-  });
+    'controlled-tier',
+  );
   const taskResolutions: unknown[] = [];
   const graph = createUC03EvaluationGraph({
     catalogRoutes: new Map([

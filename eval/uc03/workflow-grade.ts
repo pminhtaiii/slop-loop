@@ -260,7 +260,7 @@ function parseGradeInput(value: unknown): SnapshotGradeInput | undefined {
 }
 
 /** The host tier labels fallback receipts; admitted hidden checks retain their observed execution tier. */
-export function createSnapshotGrader(data: unknown, tier: 'real-tier' | 'controlled-tier' = 'controlled-tier'): SnapshotGrader {
+export function createSnapshotGrader(data: unknown, tier: 'real-tier' | 'controlled-tier'): SnapshotGrader {
   const host = parseHost(data);
 
   const judge = (
