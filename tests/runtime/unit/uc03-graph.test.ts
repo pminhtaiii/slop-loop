@@ -2362,3 +2362,61 @@ test('production runner refuses a real-labeled reviewer without canonical accoun
   assert.ok(result.reasons.some(reason => reason.includes('canonical accounted model ingress')));
   assert.equal(calls, 0);
 });
+
+test('Route identifies a bounded approval deadline without exposing exception text', async () => {
+  const { ApprovalServiceError } = await import('../../../src/approvals/service.ts');
+  const { task, ports, statePort, trustedExpectedContext } = createTestSetup();
+  await seedGraphTaskState(statePort, createGraphTaskState(task, { node: 'Validate' }));
+  statePort.getUnderlying().transition = async () => {
+    const error = new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded');
+    error.message = 'MARKER_SECRET_APPROVAL_EXCEPTION';
+    throw error;
+  };
+  const result = await runUC03Graph(task, ports, { mode: 'development', trustedExpectedContext, planDetails: ROUTE_PLAN_DETAILS });
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.ok(result.diagnostic?.limitations.includes('Thrown error class: ApprovalServiceError; code: approval-operation-deadline-exceeded'));
+  assert.equal(result.diagnostic?.component, 'approval');
+  assert.equal(result.diagnostic?.reasonCode, 'approval-operation-deadline-exceeded');
+  assert.equal(result.diagnostic?.attributionConfidence, 'observed');
+  assert.equal(result.diagnostic?.effects, 'unknown');
+  assert.doesNotMatch(JSON.stringify(result), /MARKER_SECRET_APPROVAL_EXCEPTION/u);
+});
+
+test('Route keeps unknown approval codes on the generic thrown-route fallback', async () => {
+  const { ApprovalServiceError } = await import('../../../src/approvals/service.ts');
+  const { task, ports, statePort, trustedExpectedContext } = createTestSetup();
+  await seedGraphTaskState(statePort, createGraphTaskState(task, { node: 'Validate' }));
+  statePort.getUnderlying().transition = async () => {
+    throw new ApprovalServiceError('unavailable', 'MARKER_SECRET_UNKNOWN_APPROVAL_CODE');
+  };
+  const result = await runUC03Graph(task, ports, { mode: 'development', trustedExpectedContext, planDetails: ROUTE_PLAN_DETAILS });
+  assert.equal(result.diagnostic?.component, 'workflow');
+  assert.equal(result.diagnostic?.reasonCode, 'unconfirmed-owner-transition');
+  assert.equal(result.diagnostic?.attributionConfidence, 'unknown');
+  assert.doesNotMatch(JSON.stringify(result), /MARKER_SECRET_UNKNOWN_APPROVAL_CODE/u);
+});
+
+test('Route classifies bounded project errors and omits unsafe codes and plain Error messages', async () => {
+  class OwnerTransitionError extends Error {
+    readonly code: string;
+    constructor(code: string) {
+      super('DO_NOT_RETAIN_MESSAGE https://private.invalid/payload');
+      this.code = code;
+    }
+  }
+  for (const [error, expected] of [
+    [new OwnerTransitionError('owner-state-conflict'), 'Thrown error class: OwnerTransitionError; code: owner-state-conflict'],
+    [new OwnerTransitionError('https://private.invalid/DO_NOT_RETAIN_CODE'), 'Thrown error class: OwnerTransitionError'],
+    [new Error('DO_NOT_RETAIN_MESSAGE'), 'Thrown error class: unknown'],
+  ] as const) {
+    const { task, ports, statePort, trustedExpectedContext } = createTestSetup();
+    await seedGraphTaskState(statePort, createGraphTaskState(task, { node: 'Validate' }));
+    statePort.getUnderlying().transition = async () => {
+      throw error;
+    };
+    const result = await runUC03Graph(task, ports, { mode: 'development', trustedExpectedContext, planDetails: ROUTE_PLAN_DETAILS });
+    assert.equal(result.diagnostic?.reasonCode, 'unconfirmed-owner-transition');
+    assert.ok(result.diagnostic?.limitations.includes(expected));
+    assert.doesNotMatch(JSON.stringify(result), /DO_NOT_RETAIN|private\.invalid/u);
+  }
+});

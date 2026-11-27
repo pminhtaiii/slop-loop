@@ -1844,3 +1844,27 @@ test('v0.2 service: action authority is rechecked after the awaited current-cont
   assert.deepEqual(scenario.store.loadTaskControl('task-1'), endState.control);
   assert.deepEqual(scenario.store.readHistory('task-1'), endState.history);
 });
+
+test('approval operation deadline has a bounded code and fences a late request', async () => {
+  const scenario = setup();
+  let release: ((value: ApprovalContext) => void) | undefined;
+  const delayed = new Promise<ApprovalContext>(resolve => {
+    release = resolve;
+  });
+  const service = createApprovalService({
+    taskId: 'task-1',
+    profile: { ...profile, operationDeadlineMs: 20, commandRules: [{ ...profile.commandRules[0], timeoutMs: 20 }] },
+    store: scenario.store,
+    context: { loadForAction: async () => scenario.current(), loadForDecision: () => delayed },
+  });
+  await assert.rejects(
+    service.requestDecision(binding),
+    error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-deadline-exceeded',
+  );
+  assert.ok(release);
+  release(scenario.current());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scenario.store.loadTaskControl('task-1').value?.mode, 'runnable');
+  assert.equal(scenario.store.readRequest('decision-1').value, null);
+  await assert.rejects(service.requestDecision(binding), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+});

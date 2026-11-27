@@ -2205,3 +2205,40 @@ test('a mock-run verdict cannot answer the same observation in a real-tier evalu
   assert.equal(report.cases[0]?.grade, 'not-run');
   assert.equal(report.cases[0]?.gradeReason, 'private-grading', 'the real tier keeps its own not-run fallback');
 });
+
+test('thrown route classifier reaches retained case observation and real server log', async () => {
+  const { observeAndGradeWorkflowResult } = await import('../../../eval/uc03/workflow-driver.ts');
+  const { createEvaluationDiagnostic } = await import('../../../src/runtime/evaluation-diagnostics.ts');
+  const route = createPendingApprovalRoute();
+  const host: WorkflowCaseHost = { entry: catalogEntryFor('C01', route.task), task: route.task, expectedWait: null };
+  const limitation = 'Thrown error class: OwnerTransitionError; code: owner-state-conflict';
+  const chunks: string[] = [];
+  const original = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    chunks.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const observation = await observeAndGradeWorkflowResult(
+      host,
+      {
+        outcome: 'INCOMPLETE',
+        state: createGraphTaskState(route.task, { node: 'AwaitPlan' }),
+        reasons: [],
+        milestones: [],
+        diagnostic: createEvaluationDiagnostic({ stage: 'approve', component: 'workflow', reasonCode: 'unconfirmed-owner-transition', limitations: [limitation] }),
+      },
+      undefined,
+      'controlled-model',
+      'real',
+    );
+    assert.ok(observation.limitations.includes(limitation));
+    assert.ok(validateWorkflowObservation(observation).limitations.includes(limitation));
+    const event = JSON.parse(chunks.join('')) as { event: string; diagnostic: string; limitations: string[] };
+    assert.equal(event.event, 'uc03-route-thrown');
+    assert.match(event.diagnostic, /AwaitPlan.*unconfirmed-owner-transition/u);
+    assert.deepEqual(event.limitations, [limitation]);
+  } finally {
+    process.stderr.write = original;
+  }
+});
