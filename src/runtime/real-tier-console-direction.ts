@@ -31,9 +31,9 @@ export function validRealConsoleDirection(
   decRef: string | undefined,
 ): boolean {
   if (approvalMode === 'waiting') return false;
-  const initNeeds = node === 'NeedsInfo' && issued === 0;
+  const initNeeds = kind === 'resume' && node === 'NeedsInfo' && issued === 0;
   const ctrlOk = initNeeds ? expCtrlVer === expectedCtrl || expCtrlVer === 0 : expCtrlVer === expectedCtrl;
-  const taskOk = expTaskVer === stateVer || expTaskVer === expectedCtrl || (initNeeds && expTaskVer === 0);
+  const taskOk = expTaskVer === stateVer || ((node !== 'NeedsInfo' || kind !== 'end') && expTaskVer === expectedCtrl) || (initNeeds && expTaskVer === 0);
   if (!ctrlOk || !taskOk) return false;
   if (node === 'NeedsInfo') return kind === 'resume' || kind === 'end';
   if (node === 'AwaitPlan' || node === 'Verify') return kind === 'resume';
@@ -96,7 +96,7 @@ export function resolveRealConsoleClarificationResume(sessions: ReadonlyMap<stri
   };
 }
 
-/** Validates an operator `end` receipt at `NeedsInfo` and retires the session copy before returning. */
+/** Validates an operator `end` receipt at `NeedsInfo` without retiring the session copy before graph acceptance. */
 export function resolveRealConsoleClarificationEnd(sessions: ReadonlyMap<string, RealConsoleDirectionSession>, input: EvaluationDirectionResolutionInput): ClarificationEndReceipt | undefined {
   const { experimentId, currentState, direction } = input;
   if (!direction || direction.kind !== 'end' || currentState.node !== 'NeedsInfo') return undefined;
@@ -106,8 +106,6 @@ export function resolveRealConsoleClarificationEnd(sessions: ReadonlyMap<string,
   if (!recorded || recorded.receipt.kind !== 'end' || recorded.receipt.controlVersion !== direction.controlVersion || recorded.taskVersion !== currentState.stateVersion) {
     return undefined;
   }
-  session.terminal = true;
-  session.cleanupCopy();
   return {
     receiptRef: direction.receiptRef,
     controlVersion: direction.controlVersion,

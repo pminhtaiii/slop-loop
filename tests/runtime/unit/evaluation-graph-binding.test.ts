@@ -1,7 +1,7 @@
 /** Per-case evaluation graph binding and startup route validation tests. */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ import { createUC03EvaluationGraph, type UC03EvaluationGraphRoute } from '../../
 import { reportUC03GraphResult, validateEvaluationGraphReportBinding, type EvaluationGraphReportBinding } from '../../../src/runtime/evaluation-graph-report.ts';
 import { admitEvaluationProfile, type CatalogEntry } from '../../../src/runtime/evaluation-profile.ts';
 import { createEvaluationService, type ServiceControlReceipt } from '../../../src/runtime/evaluation-service.ts';
+import { resolveRealConsoleClarificationEnd, validRealConsoleDirection, type RealConsoleDirectionSession } from '../../../src/runtime/real-tier-console-direction.ts';
 import { prepareControlledUC03Host, type UC03ControlledHostReadiness, type UC03HostReadiness } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { checkProductionPortsV02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
@@ -1162,19 +1163,37 @@ test('clarification end closes NeedsInfo as bounded INCOMPLETE with zero model c
               bindCase: () => ({ ok: true, ...badBundle }),
               resolveDirection: () => undefined,
               ...(resolveClarificationEnd === undefined ? {} : { resolveClarificationEnd }),
+              onClarificationEndAccepted: () => {
+                if (refusedSession) {
+                  refusedSession.terminal = true;
+                  refusedSession.cleanupCopy();
+                }
+              },
             },
           ],
         ]),
       });
     };
 
+    let refusedSession: RealConsoleDirectionSession | undefined;
+    const refusedCopy = join(env.files, 'refused-copy');
+    writeFileSync(refusedCopy, 'retained');
     for (const [label, createResolver] of [
       ['omitted-resolver', () => undefined],
       [
         'mismatched-receipt-stateVersion',
-        (badFixture: Awaited<ReturnType<typeof mkClarifyFixture>>) => async () => {
-          const cur = await badFixture.statePort.loadTask(badFixture.task.taskId);
-          return cur ? { receiptRef: 'bad-ref', controlVersion: 1, taskId: cur.taskId, runId: cur.runId, workspaceId: cur.workspaceId, stateVersion: cur.stateVersion + 9 } : undefined;
+        (badFixture: Awaited<ReturnType<typeof mkClarifyFixture>>) => async (input: Parameters<NonNullable<UC03EvaluationGraphRoute['resolveClarificationEnd']>>[0]) => {
+          const direction = input.direction;
+          assert.ok(direction);
+          refusedSession = {
+            task: badFixture.task,
+            terminal: false,
+            cleanupCopy: () => rmSync(refusedCopy),
+            directionsByRef: new Map([[direction.receiptRef, { receipt: direction, taskVersion: input.currentState.stateVersion }]]),
+          };
+          const receipt = resolveRealConsoleClarificationEnd(new Map([[input.experimentId, refusedSession]]), input);
+          assert.ok(receipt);
+          return { ...receipt, stateVersion: receipt.stateVersion + 9 };
         },
       ],
       [
@@ -1210,8 +1229,19 @@ test('clarification end closes NeedsInfo as bounded INCOMPLETE with zero model c
       assert.equal(badFixture.modelCalls.length, callsBefore, label);
       assert.equal((await badFixture.statePort.loadTask(badFixture.task.taskId))?.node, 'NeedsInfo', label);
     }
+    assert.equal(refusedSession?.terminal, false);
+    assert.equal(existsSync(refusedCopy), true);
     assert.deepEqual(startupTouches, []);
   } finally {
     await rm(env.files, { recursive: true, force: true });
   }
+});
+
+test('NeedsInfo end requires exact owner versions while resume retains initial and control-version compatibility', () => {
+  const valid = (kind: 'resume' | 'end', task: number, control: number) => validRealConsoleDirection(kind, 'NeedsInfo', 'idle', 2, control, task, 7, 0, undefined, undefined);
+  assert.equal(valid('end', 0, 0), false);
+  assert.equal(valid('end', 2, 2), false);
+  assert.equal(valid('end', 7, 2), true);
+  assert.equal(valid('resume', 0, 0), true);
+  assert.equal(valid('resume', 2, 2), true);
 });

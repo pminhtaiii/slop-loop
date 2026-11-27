@@ -13,6 +13,8 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runEvaluateCli } from '../../../src/cli/evaluate.ts';
+import { DurableStore } from '../../../src/persistence/store.ts';
+import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import type { BugTask } from '../../../src/contracts/foundation/uc03.ts';
 import type { StructuredSpawn } from '../../../src/foundation/docker-controller.ts';
 import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
@@ -708,7 +710,7 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
       { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'c01-to-verify' },
       c01Run1.version,
     );
-    assert.equal(afterD0.experiment.status, 'waiting-approval');
+    assert.equal(afterD0.experiment.status, 'waiting-approval', JSON.stringify(afterD0.experiment));
 
     const p1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${c01Run1.id}/approval`), 'c01-p1');
     const d1 = client.unwrap<DecisionReplyShape>(
@@ -1613,14 +1615,22 @@ test('serve --host real assembly: ending NeedsInfo wait closes bounded incomplet
     const snapBeforeEnd = client.unwrap<ExperimentViewShape>(await client.get(`/api/experiments/${c02Start.id}`), 'c02-before-end');
     assert.equal(snapBeforeEnd.version, c02Start.version);
 
+    assert.ok(c02Start.taskId);
+    const sessionRoot = sc.deps.stateRoot;
+    assert.ok(sessionRoot);
+    const sessionDir = readdirSync(sessionRoot).find(name => name.startsWith('console-'));
+    assert.ok(sessionDir);
+    const owner = await new DurableStatePortV02({ store: new DurableStore(join(sessionRoot, sessionDir, 'store')) }).loadTask(c02Start.taskId);
+    assert.ok(owner);
+
     // Issue valid end direction at current versions with zero answers.
     const endKey = client.nextKey('c02-end-dir');
     const endDir = client.unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; kind: string; controlVersion: number } }>(
       await client.post(`/api/experiments/${c02Start.id}/directions`, {
         idempotencyKey: endKey,
         kind: 'end',
-        expectedTaskVersion: 0,
-        expectedControlVersion: 0,
+        expectedTaskVersion: owner.stateVersion,
+        expectedControlVersion: 1,
       }),
       'c02-end-dir',
     );
@@ -1632,8 +1642,8 @@ test('serve --host real assembly: ending NeedsInfo wait closes bounded incomplet
       await client.post(`/api/experiments/${c02Start.id}/directions`, {
         idempotencyKey: endKey,
         kind: 'end',
-        expectedTaskVersion: 0,
-        expectedControlVersion: 0,
+        expectedTaskVersion: owner.stateVersion,
+        expectedControlVersion: 1,
       }),
       'c02-end-replay',
     );
