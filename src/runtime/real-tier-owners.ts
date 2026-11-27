@@ -28,6 +28,7 @@ import type { OwnerDelivery } from './evaluation-composition.ts';
 import { createBaselineEvidenceAdapter } from './baseline-evidence-adapter.ts';
 import { createConsoleApprovalPort } from './console-approval-port.ts';
 import type { ConsoleApprovalPort } from './console-server.ts';
+import { HostActionContextError, type HostActionContext } from './host-action-context.ts';
 import { createRecoveryGate, type RecoveryGate } from './real-tier-recovery.ts';
 import type { UC03GraphPortsV02, MaterialReplanPortV02 } from '../uc03/graph-types-v02.ts';
 import type { TrustedReplanDirection } from '../uc03/repair-types.ts';
@@ -123,6 +124,8 @@ function realContext(
   taskId: string,
   statePort: DurableStatePortV02,
   ownerPolicyIdentity?: Readonly<{ policyId: string; policyVersion: string; configId?: string; configVersion?: string }>,
+  approvalStore?: Pick<DurableApprovalStore, 'readRequest'>,
+  source?: RealContextSource & Partial<Pick<HostActionContext, 'renew'>>,
 ): ReturnType<typeof createRealContextProvider> {
   const observedPlan = async (input: unknown): Promise<unknown> => {
     // The provider has admitted this context; persisted plan facts complete its approval freshness.
@@ -155,11 +158,28 @@ function realContext(
       return raw === undefined ? observedSyntheticPlan(taskId, actionId, statePort, ownerPolicyIdentity) : observedPlan(raw);
     },
     loadForDecision: async decisionId => {
-      const stored = await provider.loadForDecision(decisionId).catch(() => undefined);
       // A verification D1 (`dec-verify-…`) has no stored request and was never a registered action.
       if (decisionId.startsWith('dec-verify-')) return observedSyntheticPlan(taskId, decisionId, statePort, ownerPolicyIdentity);
-      const fallback = stored === undefined ? await provider.loadForAction(taskId, decisionId) : stored;
-      return observedPlan(fallback);
+      let loaded: unknown;
+      try {
+        loaded = await provider.loadForDecision(decisionId);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'real-context-unknown-decision') {
+          loaded = await provider.loadForAction(taskId, decisionId);
+        } else if (error instanceof HostActionContextError && error.code === 'EXPIRED_AUTHORITY' && approvalStore && typeof source?.renew === 'function') {
+          const response = approvalStore.readRequest(decisionId);
+          const storedRequest = response.safe.outcome === 'ok' ? response.value : null;
+          const state = await statePort.loadTask(taskId);
+          if (!storedRequest || state?.node !== 'AwaitPlan' || state.activeDecisionId !== decisionId || state.plan?.decisionRef !== storedRequest.actionRef) {
+            throw error;
+          }
+          await source.renew(taskId, storedRequest.actionRef);
+          loaded = await provider.loadForDecision(decisionId);
+        } else {
+          throw error;
+        }
+      }
+      return observedPlan(loaded);
     },
   };
 }
@@ -312,6 +332,8 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
             binding.taskId,
             taskStatePort,
             ownerPolicyIdentity,
+            approvalStore,
+            created,
           );
     const approvalService = createApprovalService({
       taskId: binding.taskId,

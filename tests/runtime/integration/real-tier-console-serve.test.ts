@@ -113,7 +113,7 @@ interface ApprovalPresentationShape {
   readonly taskId: string;
   readonly control: { readonly version: number; readonly mode: string };
   readonly binding: { readonly decisionId: string; readonly actionKind: string; readonly status: string };
-  readonly presentation: { readonly requestVersion: number; readonly presentationDigest: string };
+  readonly presentation: { readonly requestVersion: number; readonly presentationDigest: string; readonly bindingFingerprint: string };
 }
 
 interface DecisionReplyShape {
@@ -1393,5 +1393,162 @@ test('real console factory: removes workingCopyRoot and rethrows when bindRealTi
     }
   } finally {
     sc.cleanup();
+  }
+});
+
+test('serve --host real assembly: wrong presentationDigest (bindingFingerprint) leaves approval readable and decidable', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+  const envToken = ['real', 'serve', 'bad', 'dig', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'bad-digest', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envToken } });
+  let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    const started = await sc.captureStderr(() => runEvaluateCli(['serve', '--host', sc.hostFile]));
+    cliResult = started.value;
+    assert.equal(cliResult.exitCode, 0);
+    const { host, port } = JSON.parse(cliResult.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, envToken);
+
+    const startedC01 = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('bad-dig-start'), source: { kind: 'catalog', caseIds: ['C01'] } }),
+      'bad-dig-start',
+    ).experiment;
+    assert.equal(startedC01.status, 'waiting-approval');
+
+    const get1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'bad-dig-get1');
+    const get2 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'bad-dig-get2');
+    assert.equal(get2.presentation.bindingFingerprint, get1.presentation.bindingFingerprint);
+    assert.notEqual(get1.presentation.bindingFingerprint, get1.presentation.presentationDigest);
+
+    const badVer = await client.post(`/api/experiments/${startedC01.id}/decision`, {
+      idempotencyKey: client.nextKey('bad-dig-v0'),
+      decision: 'approve',
+      expectedVersion: 0,
+      presentationDigest: get1.presentation.bindingFingerprint,
+    });
+    assert.equal(badVer.status, 400);
+    assert.deepEqual(badVer.body, { ok: false, error: 'INVALID_DECISION_REQUEST' });
+
+    const badDig = await client.post(`/api/experiments/${startedC01.id}/decision`, {
+      idempotencyKey: client.nextKey('bad-dig-v1'),
+      decision: 'approve',
+      expectedVersion: 1,
+      presentationDigest: get1.presentation.bindingFingerprint,
+    });
+    assert.equal(badDig.status, 409);
+    assert.deepEqual(badDig.body, { ok: false, error: 'approval-operation-denied' });
+
+    const get3 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'bad-dig-get3');
+    assert.equal(get3.presentation.presentationDigest, get1.presentation.presentationDigest);
+
+    const d0 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${startedC01.id}/decision`, {
+        idempotencyKey: client.nextKey('bad-dig-ok'),
+        decision: 'approve',
+        expectedVersion: get3.presentation.requestVersion,
+        presentationDigest: get3.presentation.presentationDigest,
+      }),
+      'bad-dig-ok',
+    );
+    assert.equal(d0.outcome, 'ok');
+    const afterD0 = await client.issueAndContinue(
+      startedC01.id,
+      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'bad-dig-verify' },
+      startedC01.version,
+    );
+    assert.equal(afterD0.experiment.status, 'waiting-approval');
+  } finally {
+    await cliResult?.close?.();
+    sc.cleanup();
+    t.mock.timers.reset();
+  }
+});
+
+test('serve --host real assembly: clock advance past action TTL during waiting-approval leaves approval readable and decidable', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+  const envToken = ['real', 'serve', 'clk', 'adv', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'clock-adv', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envToken } });
+  let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    const started = await sc.captureStderr(() => runEvaluateCli(['serve', '--host', sc.hostFile]));
+    cliResult = started.value;
+    assert.equal(cliResult.exitCode, 0);
+    const { host, port } = JSON.parse(cliResult.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, envToken);
+
+    const startedC01 = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('clk-start'), source: { kind: 'catalog', caseIds: ['C01'] } }),
+      'clk-start',
+    ).experiment;
+    assert.equal(startedC01.status, 'waiting-approval');
+
+    const get1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'clk-get1');
+    const get2 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'clk-get2');
+    assert.equal(get2.presentation.presentationDigest, get1.presentation.presentationDigest);
+
+    // Advance doubled Date clock past the default 60s action TTL, then replay the wrong-digest sequence
+    t.mock.timers.tick(65_000);
+
+    const badVer = await client.post(`/api/experiments/${startedC01.id}/decision`, {
+      idempotencyKey: client.nextKey('clk-bad-v0'),
+      decision: 'approve',
+      expectedVersion: 0,
+      presentationDigest: get1.presentation.bindingFingerprint,
+    });
+    assert.equal(badVer.status, 400);
+    assert.deepEqual(badVer.body, { ok: false, error: 'INVALID_DECISION_REQUEST' });
+
+    const badDig = await client.post(`/api/experiments/${startedC01.id}/decision`, {
+      idempotencyKey: client.nextKey('clk-bad-v1'),
+      decision: 'approve',
+      expectedVersion: 1,
+      presentationDigest: get1.presentation.bindingFingerprint,
+    });
+    assert.equal(badDig.status, 409);
+    assert.deepEqual(badDig.body, { ok: false, error: 'approval-operation-denied' });
+
+    const get3 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'clk-get3');
+    assert.equal(get3.presentation.presentationDigest, get1.presentation.presentationDigest);
+
+    const d0 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${startedC01.id}/decision`, {
+        idempotencyKey: client.nextKey('clk-d0-ok'),
+        decision: 'approve',
+        expectedVersion: get3.presentation.requestVersion,
+        presentationDigest: get3.presentation.presentationDigest,
+      }),
+      'clk-d0-ok',
+    );
+    assert.equal(d0.outcome, 'ok');
+
+    // A second TTL expiry before resuming AwaitPlan must also resolve cleanly
+    t.mock.timers.tick(65_000);
+    const afterD0 = await client.issueAndContinue(
+      startedC01.id,
+      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'clk-verify' },
+      startedC01.version,
+    );
+    assert.equal(afterD0.experiment.status, 'waiting-approval');
+
+    t.mock.timers.tick(65_000);
+    const get4 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'clk-get4');
+    const d1 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${startedC01.id}/decision`, {
+        idempotencyKey: client.nextKey('clk-d1-ok'),
+        decision: 'approve',
+        expectedVersion: get4.presentation.requestVersion,
+        presentationDigest: get4.presentation.presentationDigest,
+      }),
+      'clk-d1-ok',
+    );
+    const completed = await client.issueAndContinue(
+      startedC01.id,
+      { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, label: 'clk-deliver' },
+      afterD0.experiment.version,
+    );
+    assert.equal(completed.experiment.status, 'completed');
+  } finally {
+    await cliResult?.close?.();
+    sc.cleanup();
+    t.mock.timers.reset();
   }
 });
