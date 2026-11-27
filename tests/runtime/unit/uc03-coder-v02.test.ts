@@ -644,3 +644,23 @@ test('graph generation refuses to reuse an owner request within an inspect loop'
   assert.equal(model.calls.length, 1);
   assert.deepEqual(spy.calls, []);
 });
+
+test('repair inspection loop consumes the repair limit before another model dispatch', async () => {
+  const task = createFixtureBugTask();
+  const state: TaskState = { ...createReplanState(0), node: 'Repair' };
+  const model = new RecordingModelPort(async () => ({
+    outcome: 'observed',
+    result: { proposal: { proposalId: 'repair-inspect', content: JSON.stringify({ kind: 'inspect', proposalId: 'repair-inspect', operation: 'list_dir', args: { path: 'src' } }) } },
+  }));
+  const agent = createCoderAgentV02({ model, repository: new FakeRepositoryPort(), budget: { ...BUDGET, maxRepairs: 2, maxModelCalls: 24 } });
+  let requestId = 0;
+  const config: UC03GraphConfig = {
+    mode: 'controlled',
+    generationV02: { agent },
+    coderAdmission: ({ state: current, purpose, evidence }) => admit(current, purpose, 'req-repair-loop-' + ++requestId, computeContextDigest(current, evidence), true),
+  };
+  const result = await generate(config, task, state, 'propose-repair', []);
+  assert.deepEqual(result, { ok: false, reason: 'REAL_PROFILE_GENERATION_INVALID: REPAIR_BUDGET_EXHAUSTED' });
+  assert.equal(model.calls.length, 2);
+  assert.equal(agent.counters.repairs, 2);
+});
