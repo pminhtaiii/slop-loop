@@ -13,6 +13,8 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runEvaluateCli } from '../../../src/cli/evaluate.ts';
+import { DurableStore } from '../../../src/persistence/store.ts';
+import { DurableStatePortV02 } from '../../../src/persistence/adapters/state-port-v02.ts';
 import type { BugTask } from '../../../src/contracts/foundation/uc03.ts';
 import type { StructuredSpawn } from '../../../src/foundation/docker-controller.ts';
 import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
@@ -708,7 +710,7 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
       { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'c01-to-verify' },
       c01Run1.version,
     );
-    assert.equal(afterD0.experiment.status, 'waiting-approval');
+    assert.equal(afterD0.experiment.status, 'waiting-approval', JSON.stringify(afterD0.experiment));
 
     const p1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${c01Run1.id}/approval`), 'c01-p1');
     const d1 = client.unwrap<DecisionReplyShape>(
@@ -1546,6 +1548,229 @@ test('serve --host real assembly: clock advance past action TTL during waiting-a
       afterD0.experiment.version,
     );
     assert.equal(completed.experiment.status, 'completed');
+  } finally {
+    await cliResult?.close?.();
+    sc.cleanup();
+    t.mock.timers.reset();
+  }
+});
+
+test('serve --host real assembly: ending NeedsInfo wait closes bounded incomplete, refuses stale/duplicate/revise, and permits a new experiment without restart', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+  const envToken = ['real', 'serve', 'c02', 'end', 'token', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'c02-end', mode: 'clarify', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envToken } });
+  const copiesBefore = countConsoleCopies();
+  let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    const started = await sc.captureStderr(() => runEvaluateCli(['serve', '--host', sc.hostFile]));
+    cliResult = started.value;
+    assert.equal(cliResult.exitCode, 0);
+    const { host, port } = JSON.parse(cliResult.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, envToken);
+
+    const c02Start = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('c02-end-start'), source: { kind: 'catalog', caseIds: ['C02'] } }),
+      'c02-end-start',
+    ).experiment;
+    assert.equal(c02Start.status, 'waiting-info');
+    assert.ok(c02Start.workflowClarification);
+    const callsAtPause = sc.fetchSpy.requests.length;
+    assert.ok(callsAtPause > 0);
+    assert.equal(
+      [...countConsoleCopies()].some(dir => !copiesBefore.has(dir)),
+      true,
+      'working copy should exist while paused at NeedsInfo',
+    );
+
+    // Starting another experiment while C02 is still paused at NeedsInfo is busy (409 EXPERIMENT_ACTIVE).
+    const activeConflict = await client.post('/api/experiments', {
+      profileId: sc.profileId,
+      idempotencyKey: client.nextKey('c02-busy'),
+      source: { kind: 'catalog', caseIds: ['C01'] },
+    });
+    assert.equal(activeConflict.status, 409);
+    assert.deepEqual(activeConflict.body, { ok: false, error: 'EXPERIMENT_ACTIVE' });
+
+    // revise at NeedsInfo must stay refused and leave version unchanged.
+    const reviseRefused = await client.post(`/api/experiments/${c02Start.id}/directions`, {
+      idempotencyKey: client.nextKey('c02-revise'),
+      kind: 'revise',
+      expectedTaskVersion: 0,
+      expectedControlVersion: 0,
+      feedback: 'Revise plan instead of clarify.',
+    });
+    assert.equal(reviseRefused.status, 409);
+    assert.deepEqual(reviseRefused.body, { ok: false, error: 'INVALID_CONTROL_RECEIPT' });
+
+    // Stale version end direction must be refused and leave version unchanged.
+    const staleEnd = await client.post(`/api/experiments/${c02Start.id}/directions`, {
+      idempotencyKey: client.nextKey('c02-end-stale'),
+      kind: 'end',
+      expectedTaskVersion: 0,
+      expectedControlVersion: 99,
+    });
+    assert.equal(staleEnd.status, 409);
+    assert.deepEqual(staleEnd.body, { ok: false, error: 'INVALID_CONTROL_RECEIPT' });
+
+    const snapBeforeEnd = client.unwrap<ExperimentViewShape>(await client.get(`/api/experiments/${c02Start.id}`), 'c02-before-end');
+    assert.equal(snapBeforeEnd.version, c02Start.version);
+
+    assert.ok(c02Start.taskId);
+    const sessionRoot = sc.deps.stateRoot;
+    assert.ok(sessionRoot);
+    const sessionDir = readdirSync(sessionRoot).find(name => name.startsWith('console-'));
+    assert.ok(sessionDir);
+    const owner = await new DurableStatePortV02({ store: new DurableStore(join(sessionRoot, sessionDir, 'store')) }).loadTask(c02Start.taskId);
+    assert.ok(owner);
+
+    // Issue valid end direction at current versions with zero answers.
+    const endKey = client.nextKey('c02-end-dir');
+    const endDir = client.unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; kind: string; controlVersion: number } }>(
+      await client.post(`/api/experiments/${c02Start.id}/directions`, {
+        idempotencyKey: endKey,
+        kind: 'end',
+        expectedTaskVersion: owner.stateVersion,
+        expectedControlVersion: 1,
+      }),
+      'c02-end-dir',
+    );
+    assert.equal(endDir.receipt.kind, 'end');
+    assert.equal(endDir.receipt.controlVersion, 2);
+
+    // Same-key replay succeeds idempotently.
+    const endReplay = client.unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; controlVersion: number } }>(
+      await client.post(`/api/experiments/${c02Start.id}/directions`, {
+        idempotencyKey: endKey,
+        kind: 'end',
+        expectedTaskVersion: owner.stateVersion,
+        expectedControlVersion: 1,
+      }),
+      'c02-end-replay',
+    );
+    assert.equal(endReplay.receipt.receiptRef, endDir.receipt.receiptRef);
+    assert.equal(endReplay.experiment.version, endDir.experiment.version);
+
+    // Duplicate end before /continue (both old 0/0 and updated controlVersion) must be refused and change nothing.
+    const dupOldEnd = await client.post(`/api/experiments/${c02Start.id}/directions`, {
+      idempotencyKey: client.nextKey('c02-end-dup-old'),
+      kind: 'end',
+      expectedTaskVersion: 0,
+      expectedControlVersion: 0,
+    });
+    assert.equal(dupOldEnd.status, 409);
+    assert.deepEqual(dupOldEnd.body, { ok: false, error: 'INVALID_CONTROL_RECEIPT' });
+
+    const dupCurrentEnd = await client.post(`/api/experiments/${c02Start.id}/directions`, {
+      idempotencyKey: client.nextKey('c02-end-dup-cur'),
+      kind: 'end',
+      expectedTaskVersion: endDir.receipt.controlVersion,
+      expectedControlVersion: endDir.receipt.controlVersion,
+    });
+    assert.equal(dupCurrentEnd.status, 409);
+    assert.deepEqual(dupCurrentEnd.body, { ok: false, error: 'INVALID_CONTROL_RECEIPT' });
+
+    const snapBeforeCont = client.unwrap<ExperimentViewShape>(await client.get(`/api/experiments/${c02Start.id}`), 'c02-before-cont');
+    assert.equal(snapBeforeCont.version, endDir.experiment.version);
+
+    // Continue with the end direction -> bounded INCOMPLETE outcome, zero extra model calls, zero patches, copy removed.
+    const ended = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post(`/api/experiments/${c02Start.id}/continue`, {
+        idempotencyKey: client.nextKey('c02-end-cont'),
+        directionRef: endDir.receipt.receiptRef,
+        expectedVersion: endDir.experiment.version,
+      }),
+      'c02-end-cont',
+    ).experiment;
+    assert.equal(ended.status, 'incomplete');
+    assert.equal(ended.workflowClarification, null);
+    assert.equal(ended.workflowReport?.cases[0]?.workflowOutcome, 'INCOMPLETE');
+    assert.equal(ended.workflowReport?.cases[0]?.grade, 'not-run');
+    assert.equal(sc.fetchSpy.requests.length, callsAtPause);
+    assert.equal(
+      sc.fetchSpy.requests.some(req => req.purpose !== 'propose-plan'),
+      false,
+      'ending NeedsInfo must not request any patch generation',
+    );
+    assertNoLeaks(JSON.stringify(ended), sc.secrets(envToken), 'c02 ended report');
+    for (const dir of countConsoleCopies()) {
+      assert.equal(copiesBefore.has(dir), true, `ended NeedsInfo temporary copy ${dir} should have been cleaned up`);
+    }
+
+    // Post-terminal duplicate end, revise, and duplicate continue must be refused and change nothing.
+    const postTermEnd = await client.post(`/api/experiments/${c02Start.id}/directions`, {
+      idempotencyKey: client.nextKey('c02-post-end'),
+      kind: 'end',
+      expectedTaskVersion: endDir.receipt.controlVersion,
+      expectedControlVersion: endDir.receipt.controlVersion,
+    });
+    assert.equal(postTermEnd.status, 409);
+    assert.deepEqual(postTermEnd.body, { ok: false, error: 'INVALID_CONTROL_RECEIPT' });
+
+    const postTermRevise = await client.post(`/api/experiments/${c02Start.id}/directions`, {
+      idempotencyKey: client.nextKey('c02-post-revise'),
+      kind: 'revise',
+      expectedTaskVersion: endDir.receipt.controlVersion,
+      expectedControlVersion: endDir.receipt.controlVersion,
+      feedback: 'Revise after terminal.',
+    });
+    assert.equal(postTermRevise.status, 409);
+    assert.deepEqual(postTermRevise.body, { ok: false, error: 'INVALID_CONTROL_RECEIPT' });
+
+    const dupContinue = await client.post(`/api/experiments/${c02Start.id}/continue`, {
+      idempotencyKey: client.nextKey('c02-dup-cont'),
+      directionRef: endDir.receipt.receiptRef,
+      expectedVersion: ended.version,
+    });
+    assert.equal(dupContinue.status, 409);
+    assert.deepEqual(dupContinue.body, { ok: false, error: 'DIRECTION_ALREADY_CONSUMED' });
+
+    const snapAfterPost = client.unwrap<ExperimentViewShape>(await client.get(`/api/experiments/${c02Start.id}`), 'c02-after-post');
+    assert.equal(snapAfterPost.version, ended.version);
+    assert.equal(snapAfterPost.status, 'incomplete');
+
+    // A new experiment can start and complete immediately on the same server without restart.
+    const nextC01 = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('next-c01-start'), source: { kind: 'catalog', caseIds: ['C01'] } }),
+      'next-c01-start',
+    ).experiment;
+    assert.equal(nextC01.status, 'waiting-approval');
+    assert.notEqual(nextC01.id, c02Start.id);
+
+    const p0 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${nextC01.id}/approval`), 'next-p0');
+    const d0 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${nextC01.id}/decision`, {
+        idempotencyKey: client.nextKey('next-d0'),
+        decision: 'approve',
+        expectedVersion: p0.presentation.requestVersion,
+        presentationDigest: p0.presentation.presentationDigest,
+      }),
+      'next-d0',
+    );
+    const afterD0 = await client.issueAndContinue(
+      nextC01.id,
+      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'next-verify' },
+      nextC01.version,
+    );
+    assert.equal(afterD0.experiment.status, 'waiting-approval');
+    const p1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${nextC01.id}/approval`), 'next-p1');
+    const d1 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${nextC01.id}/decision`, {
+        idempotencyKey: client.nextKey('next-d1'),
+        decision: 'approve',
+        expectedVersion: p1.presentation.requestVersion,
+        presentationDigest: p1.presentation.presentationDigest,
+      }),
+      'next-d1',
+    );
+    const completed = await client.issueAndContinue(
+      nextC01.id,
+      { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, label: 'next-deliver' },
+      afterD0.experiment.version,
+    );
+    assert.equal(completed.experiment.status, 'completed');
+    for (const dir of countConsoleCopies()) {
+      assert.equal(copiesBefore.has(dir), true, `follow-up C01 temporary copy ${dir} should have been cleaned up`);
+    }
   } finally {
     await cliResult?.close?.();
     sc.cleanup();
