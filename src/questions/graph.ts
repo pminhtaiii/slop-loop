@@ -22,6 +22,7 @@ import { admitInvestigationBinding, budgetStop, definitionHint, investigateQuest
 import type { QuestionInvestigationConfiguration, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
 import { createQuestionNavigation } from './graph-navigation.ts';
 import { prepareQuestionContinuation, readQuestionContinuation, retainQuestionSourceReferences } from './graph-continuation.ts';
+import { QUESTION_MODEL_QUESTION_MAX_BYTES } from './model-compiler.ts';
 
 export type { QuestionInvestigation, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
 
@@ -130,6 +131,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
     )
       return failed(questionStop('invalid-decision'));
     if (containsProtectedContent(question)) return failed(questionStop('protected-content'));
+    const modelQuestion = continuation.context ? 'Original task goal:\n' + continuation.context.intent + '\nCurrent user turn:\n' + question : question;
     const stop = (preferred?: QuestionClosedOutcomeV1): QuestionClosedOutcomeV1 | undefined => {
       if (control.signal.aborted) config.budget.cancel();
       if (Date.now() >= control.deadlineEpochMs) return questionStop('deadline');
@@ -141,6 +143,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
       if (budget.remainingElapsedMs <= 0) return questionStop('elapsed-deadline');
       return undefined;
     };
+    if (Buffer.byteLength(modelQuestion) > QUESTION_MODEL_QUESTION_MAX_BYTES) return failed(stop() ?? questionStop('context-limit'));
     const close = (outcome: QuestionClosedOutcomeV1, state: State) => ({ result: closedResult(outcome, state.usage) });
     const conversation = createQuestionConversationNodes(config, evidenceRegistry, control, stop);
     const navigation = createQuestionNavigation(config);
@@ -207,7 +210,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
           bounded =>
             modelPort.decide(
               {
-                question: continuation.context ? 'Original task goal:\n' + continuation.context.intent + '\nCurrent user turn:\n' + question : question,
+                question: modelQuestion,
                 constraints: continuation.context?.constraints ?? [],
                 ...(continuation.context?.pendingClarification ? { pendingClarification: continuation.context.pendingClarification } : {}),
                 conversation: continuation.context?.conversation ?? [],

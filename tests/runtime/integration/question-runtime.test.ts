@@ -26,6 +26,88 @@ import { QUESTION_BEHAVIOR_CONTROLS, ScriptedQuestionTransport, controlledQuesti
 
 const control = () => ({ signal: new AbortController().signal, deadlineEpochMs: Date.now() + 20000 });
 
+for (const field of ['constraints', 'pendingClarification'] as const) {
+  test('continuation admits configured conversation bytes for ' + field + ' through model dispatch', async () => {
+    const value = 'x'.repeat(9000);
+    const f = fixture([context => answer(context, ['entry.py'])]);
+    const continuation = {
+      context: {
+        taskId: 'task',
+        binding: f.options.identity.binding,
+        intent: 'Explain start.',
+        constraints: field === 'constraints' ? [value] : [],
+        pendingClarification: field === 'pendingClarification' ? value : null,
+        conversation: [],
+      },
+      sourceReferences: [],
+    };
+    const graph = createQuestionInvestigation({ ...f.options, continuation });
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explain start.', control());
+    assert.equal(run.result.kind, 'answered');
+    const sent = JSON.parse(f.requests[0]?.serialized ?? '{}') as { constraints: string[]; pendingClarification: string | null };
+    assert.deepEqual(sent[field], field === 'constraints' ? [value] : value);
+  });
+}
+
+test('oversized aggregate mandatory continuation context is rejected before IO', () => {
+  const f = fixture([]);
+  const graph = createQuestionInvestigation({
+    ...f.options,
+    continuation: {
+      context: { taskId: 'task', binding: f.options.identity.binding, intent: 'Explain start.', constraints: ['x'.repeat(8000)], pendingClarification: 'y'.repeat(8000), conversation: [] },
+      sourceReferences: [],
+    },
+  });
+  assert.deepEqual(graph, { ok: false, reasonCode: 'invalid-config' });
+  assert.deepEqual(f.counts(), { modelCalls: 0, scans: 0 });
+  assert.equal(f.bindingChecks(), 0);
+  assert.equal(f.guarded.reads.length, 0);
+});
+
+for (const { assembledBytes, cancelled } of [
+  { assembledBytes: 65_536, cancelled: false },
+  { assembledBytes: 65_537, cancelled: false },
+  { assembledBytes: 65_537, cancelled: true },
+]) {
+  test('continuation question ' + assembledBytes + ' UTF-8 bytes uses the compiler ceiling before IO' + (cancelled ? ' with cancellation' : ''), async () => {
+    const question = 'é'.repeat(12);
+    const labels = 'Original task goal:\n\nCurrent user turn:\n';
+    const intent = 'g'.repeat(assembledBytes - Buffer.byteLength(labels) - Buffer.byteLength(question));
+    const f = fixture([context => answer(context, ['entry.py'])], undefined, undefined, { maxConversationBytes: 100000, maxInputTokensPerCall: 100000 });
+    const profile = { ...f.profile, repository: { ...f.profile.repository, maxQueryBytes: 100000 } };
+    const budget = createQuestionBudgetLedger(profile, { pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 } });
+    assert.ok(budget.ok);
+    const guarded = guardedRetrievalRepository({ ...f.options, budget: budget.value, limits: profile.retrieval, repositoryLimits: profile.repository }, f.texts);
+    const graph = createQuestionInvestigation({
+      ...f.options,
+      profile,
+      budget: budget.value,
+      repository: guarded.repository,
+      continuation: { context: { taskId: 'task', binding: f.options.identity.binding, intent, constraints: [], pendingClarification: null, conversation: [] }, sourceReferences: [] },
+    });
+    assert.ok(graph.ok);
+    const cancellation = new AbortController();
+    if (cancelled) cancellation.abort();
+    const run = await graph.value.run(question, { ...control(), signal: cancellation.signal });
+    if (assembledBytes === 65_536) {
+      assert.equal(run.result.kind, 'answered');
+      const sent = JSON.parse(f.requests[0]?.serialized ?? '{}') as { question: string };
+      assert.equal(Buffer.byteLength(sent.question), 65_536);
+      assert.equal(sent.question, 'Original task goal:\n' + intent + '\nCurrent user turn:\n' + question);
+    } else {
+      assert.equal(run.result.kind, cancelled ? 'cancelled' : 'blocked');
+      if (run.result.kind === 'blocked') assert.equal(run.result.reasonCode, 'context-limit');
+      if (cancelled) assert.equal(budget.value.snapshot().status, 'cancelled');
+      assert.ok(!('claims' in run.result) && !('citations' in run.result));
+      assert.deepEqual(f.counts(), { modelCalls: 0, scans: 0 });
+      assert.equal(f.bindingChecks(), 0);
+      assert.equal(guarded.reads.length, 0);
+      assert.equal(budget.value.snapshot().consumed.modelCalls, 0);
+    }
+  });
+}
+
 test('direct graph continuation snapshots constraint elements once before validating model-visible intent', async () => {
   let reads = 0;
   const constraints: string[] = [];

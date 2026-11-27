@@ -638,6 +638,28 @@ function questionModelFixture(
   return { model, budget: ledger.value, requests };
 }
 
+for (const field of ['constraints', 'pendingClarification'] as const) {
+  test('question compiler admits configured conversation bytes for ' + field, async () => {
+    const value = 'x'.repeat(9000);
+    const fixture = questionModelFixture();
+    assert.ok(fixture.model.ok);
+    const result = await fixture.model.value.decide({ question: 'Explain start.', [field]: field === 'constraints' ? [value] : value }, new AbortController().signal);
+    assert.equal(result.status, 'ok');
+    const sent = JSON.parse(fixture.requests[0]?.serialized ?? '{}') as { constraints: string[]; pendingClarification: string | null };
+    assert.deepEqual(sent[field], field === 'constraints' ? [value] : value);
+  });
+}
+
+for (const bytes of [65_536, 65_537]) {
+  test('question compiler retains the fixed question byte ceiling at ' + bytes, async () => {
+    const fixture = questionModelFixture();
+    assert.ok(fixture.model.ok);
+    const result = await fixture.model.value.decide({ question: 'q'.repeat(bytes) }, new AbortController().signal);
+    assert.equal(result.status, bytes === 65_536 ? 'ok' : 'stopped');
+    assert.equal(fixture.requests.length, bytes === 65_536 ? 1 : 0);
+  });
+}
+
 function modelOperationBoundary(budget: QuestionBudgetLedger, before: () => void): QuestionBudgetLedger {
   return new Proxy(budget, {
     get: (target, key) => {

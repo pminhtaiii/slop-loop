@@ -55,6 +55,107 @@ const reply = (request: QuestionSessionRunRequest) => ({
   retrieval: null,
 });
 
+test('session validates one captured binding and refuses invalid snapshots without replacing the current task', async () => {
+  let reads = 0;
+  let calls = 0;
+  let retained: QuestionSessionRunRequest | undefined;
+  const supplied = { ...binding };
+  Object.defineProperty(supplied, 'workspaceId', { enumerable: true, get: () => (++reads === 1 ? 'workspace' : 'unchecked-workspace') });
+  const made = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async request => {
+      calls++;
+      retained = request;
+      return reply(request);
+    },
+  });
+  assert.ok(made.ok);
+  assert.equal((await made.value.startTask({ ...task(), binding: supplied }, control())).status, 'completed');
+  assert.equal(reads, 1);
+  assert.equal(retained?.identity.binding.workspaceId, 'workspace');
+  const before = made.value.snapshot();
+  let invalidReads = 0;
+  const invalid = { ...binding };
+  Object.defineProperty(invalid, 'workspaceId', { enumerable: true, get: () => (++invalidReads === 1 ? '' : 'workspace') });
+  assert.deepEqual(await made.value.startTask({ ...task('next'), binding: invalid }, control()), { status: 'refused', reasonCode: 'invalid-request' });
+  assert.equal(invalidReads, 1);
+  assert.equal(calls, 1);
+  assert.deepEqual(made.value.snapshot(), before);
+});
+
+test('repository switching refuses during compaction without reading input or cancelling the task', async () => {
+  let calls = 0;
+  const made = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    now: () => 0,
+    run: async request => {
+      calls++;
+      return reply(request);
+    },
+  });
+  assert.ok(made.ok);
+  await made.value.startTask(task(), control());
+  const compacting = made.value.compactSession();
+  const before = made.value.snapshot();
+  let reads = 0;
+  const replacement = { ...task('next'), binding: { ...binding, repositoryId: 'other' } };
+  Object.defineProperty(replacement, 'question', {
+    enumerable: true,
+    get: () => {
+      reads++;
+      return 'Explain other';
+    },
+  });
+  assert.deepEqual(await made.value.switchRepository(replacement, control()), { status: 'refused', reasonCode: 'busy' });
+  assert.equal(reads, 0);
+  assert.equal(calls, 1);
+  assert.deepEqual(made.value.snapshot(), before);
+  assert.equal((await compacting).status, 'compacted');
+  assert.equal(made.value.snapshot().budget?.status, 'open');
+  assert.equal((await made.value.switchRepository(replacement, control())).status, 'completed');
+  assert.equal(calls, 2);
+});
+
+for (const operation of ['startTask', 'switchRepository'] as const) {
+  test(operation + ' fences re-entrant input preparation and releases the fence after a thrown getter', async () => {
+    let calls = 0;
+    const made = openSession({
+      sessionId: 'session',
+      pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+      run: async request => {
+        calls++;
+        return reply(request);
+      },
+    });
+    assert.ok(made.ok);
+    let nested: ReturnType<typeof made.value.startTask> | undefined;
+    const supplied = task();
+    Object.defineProperty(supplied, 'question', {
+      enumerable: true,
+      get() {
+        nested = made.value[operation](task('reentrant'), control());
+        return 'Explain recovery';
+      },
+    });
+    assert.equal((await made.value[operation](supplied, control())).status, 'completed');
+    assert.deepEqual(await nested, { status: 'refused', reasonCode: 'busy' });
+    assert.equal(calls, 1);
+    assert.equal(made.value.snapshot().taskId, 'task');
+    const throwing = task('throws');
+    Object.defineProperty(throwing, 'question', {
+      enumerable: true,
+      get() {
+        throw new Error('input-probe');
+      },
+    });
+    await assert.rejects(made.value[operation](throwing, control()), /input-probe/);
+    assert.equal((await made.value.startTask(task('after-throw'), control())).status, 'completed');
+    assert.equal(calls, 2);
+  });
+}
+
 test('session snapshots constraint elements once before validation and retained projection', async () => {
   let reads = 0;
   let retained: readonly string[] | undefined;

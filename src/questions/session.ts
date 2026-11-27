@@ -54,6 +54,8 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
   const pricing = isRecord(suppliedPricing) ? Object.freeze({ ...suppliedPricing }) : suppliedPricing;
   let closed = false;
   let busy = false;
+  let compacting = false;
+  let preparing = false;
   let switching = false;
   let inFlight: Promise<QuestionSessionTurn> | undefined;
   let sequence = 0;
@@ -71,7 +73,7 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
     active = undefined;
   }
   function gate() {
-    return isClosed() ? refused('closed') : busy || switching ? refused('busy') : undefined;
+    return isClosed() ? refused('closed') : busy || switching || preparing ? refused('busy') : undefined;
   }
   function captureControl(control: QuestionRepositoryOperationControl): QuestionRepositoryOperationControl | undefined {
     const { signal, deadlineEpochMs, work } = control ?? {};
@@ -171,7 +173,7 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
     const capturedControl = captureControl(control);
     if (!capturedControl || validateId(taskId, 'taskId') || usedTasks.has(taskId as string) || validateDigest(configDigest, 'configDigest')) return refused('invalid-request');
     const profile = validateQuestionBudgetProfile(suppliedProfile);
-    const binding = validateRepositoryBinding(suppliedBinding);
+    const binding = validateRepositoryBinding(isRecord(suppliedBinding) ? { ...suppliedBinding } : suppliedBinding);
     if (!profile.ok || !binding.ok || !safeSessionText(question, profile.value.repository.maxQueryBytes)) return refused('invalid-request');
     const constraints = copySessionConstraints(suppliedConstraints ?? [], profile.value.runtime.maxConversationBytes);
     if (!constraints) return refused('invalid-request');
@@ -213,20 +215,31 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
   async function startTask(input: unknown, control: QuestionRepositoryOperationControl): Promise<QuestionSessionTurn> {
     const denial = gate();
     if (denial) return denial;
-    const prepared = prepareTask(input, control);
-    if ('status' in prepared) return prepared;
-    if (active && accountingPending(active)) return refused('accounting-pending');
-    if (active && (active.binding.repositoryId !== prepared.task.binding.repositoryId || active.binding.workspaceId !== prepared.task.binding.workspaceId)) return refused('switch-required');
-    return launch(prepared.task, prepared.task.projection.intent, prepared.control);
+    preparing = true;
+    try {
+      const prepared = prepareTask(input, control);
+      if ('status' in prepared) return prepared;
+      if (active && accountingPending(active)) return refused('accounting-pending');
+      if (active && (active.binding.repositoryId !== prepared.task.binding.repositoryId || active.binding.workspaceId !== prepared.task.binding.workspaceId)) return refused('switch-required');
+      return launch(prepared.task, prepared.task.projection.intent, prepared.control);
+    } finally {
+      preparing = false;
+    }
   }
   async function switchRepository(input: unknown, control: QuestionRepositoryOperationControl): Promise<QuestionSessionTurn> {
     if (isClosed()) return refused('closed');
-    if (switching) return refused('busy');
-    const prepared = prepareTask(input, control);
-    if ('status' in prepared) return prepared;
+    if (switching || compacting || preparing) return refused('busy');
     switching = true;
-    const old = active;
     try {
+      let prepared: ReturnType<typeof prepareTask>;
+      preparing = true;
+      try {
+        prepared = prepareTask(input, control);
+      } finally {
+        preparing = false;
+      }
+      if ('status' in prepared) return prepared;
+      const old = active;
       if (old) {
         controller?.abort();
         old.budget.cancel();
@@ -292,15 +305,16 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
       async compactSession() {
         const denial = gate();
         if (denial) return denial;
-        if (!active) return refused('invalid-request');
-        if (active.contextBlocked) return refused('context-limit');
-        const task = active;
-        const projection = projectQuestionSession(task.projection, task.profile.runtime.maxConversationBytes);
-        if (!projection) return refused('context-limit');
-        const admission = task.budget.reserveSummary(Buffer.byteLength(JSON.stringify(projection)));
-        if (!admission.ok) return refused('budget-closed');
+        compacting = true;
         busy = true;
         try {
+          if (!active) return refused('invalid-request');
+          if (active.contextBlocked) return refused('context-limit');
+          const task = active;
+          const projection = projectQuestionSession(task.projection, task.profile.runtime.maxConversationBytes);
+          if (!projection) return refused('context-limit');
+          const admission = task.budget.reserveSummary(Buffer.byteLength(JSON.stringify(projection)));
+          if (!admission.ok) return refused('budget-closed');
           const result = await admission.value.execute(
             async () => projection,
             () => ({ kind: 'work', work: { conversationBytes: Buffer.byteLength(JSON.stringify(projection)) } }),
@@ -310,6 +324,7 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
           task.projection = projection;
           return Object.freeze({ status: 'compacted' as const, projection });
         } finally {
+          compacting = false;
           busy = false;
         }
       },
@@ -325,7 +340,7 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
         return Object.freeze({
           sessionId,
           closed,
-          busy: busy || switching,
+          busy: busy || switching || preparing,
           taskId: active?.id ?? null,
           turnId: active?.turnId ?? null,
           projection: active?.projection ?? null,

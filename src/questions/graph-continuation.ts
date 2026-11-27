@@ -63,7 +63,7 @@ export function prepareQuestionContinuation(input: unknown, identity: QuestionId
   const { context, sourceReferences = [] } = input;
   if (!isRecord(context) || Object.keys(context).sort().join(',') !== 'binding,constraints,conversation,intent,pendingClarification,taskId') return undefined;
   const { binding: rawBinding, taskId, intent, constraints, pendingClarification, conversation } = context;
-  const checkedConstraints = copySessionConstraints(constraints, 8192);
+  const checkedConstraints = copySessionConstraints(constraints, profile.runtime.maxConversationBytes);
   const binding = validateRepositoryBinding(isRecord(rawBinding) ? { ...rawBinding } : rawBinding);
   if (
     !binding.ok ||
@@ -71,7 +71,7 @@ export function prepareQuestionContinuation(input: unknown, identity: QuestionId
     taskId !== identity.taskId ||
     !safeSessionText(intent, profile.repository.maxQueryBytes) ||
     !checkedConstraints ||
-    (pendingClarification !== null && !safeSessionText(pendingClarification, 8192)) ||
+    (pendingClarification !== null && !safeSessionText(pendingClarification, profile.runtime.maxConversationBytes)) ||
     !Array.isArray(conversation) ||
     conversation.length > 1000
   )
