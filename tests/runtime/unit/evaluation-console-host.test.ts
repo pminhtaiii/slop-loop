@@ -466,3 +466,50 @@ test('a bind failure returns a fixed reason and closes partial server resources'
     }
   }
 });
+
+test('non-function assembly.control.versions fails closed and valid versions port forwards to console responses', async () => {
+  const fixture = await controlledAssembly();
+  const badVersions: EvaluationConsoleAssembly = {
+    ...fixture.assembly,
+    control: { ...fixture.assembly.control, versions: 'not-a-function' as never },
+  };
+  const refused = await createEvaluationConsoleHost(fixture.readiness, fixture.configuration, () => badVersions);
+  if (refused.ok) await refused.host.close();
+  assert.deepEqual(refused, { ok: false, reasonCode: 'HOST_CONSOLE_UNAVAILABLE' });
+  assert.equal(fixture.counters().tokenCalls, 0);
+  assert.deepEqual(fixture.fixture.modelCalls, []);
+
+  let versionsCalls = 0;
+  const started = await createEvaluationConsoleHost(fixture.readiness, fixture.configuration, () => ({
+    ...fixture.assembly,
+    control: {
+      ...fixture.assembly.control,
+      versions: () => {
+        versionsCalls += 1;
+        return { taskVersion: 5, controlVersion: 2 };
+      },
+    },
+  }));
+  assert.equal(started.ok, true);
+  if (!started.ok) return;
+  try {
+    const origin = `http://${started.host.address.host}:${started.host.address.port}`;
+    const headers = { 'content-type': 'application/json', origin, 'x-operator-token': fixture.token };
+    const startReply = await fetch(`${origin}/api/experiments`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ profileId: fixture.profile.profileId, idempotencyKey: 'host-ver-start', source: { kind: 'catalog', caseIds: ['C01'] } }),
+    });
+    assert.equal(startReply.status, 200);
+    const body = (await startReply.json()) as { readonly ok: boolean; readonly result: { readonly experiment: { readonly id: string; readonly control?: unknown } } };
+    assert.deepEqual(body.result.experiment.control, { taskVersion: 5, controlVersion: 2 });
+
+    const getReply = await fetch(`${origin}/api/experiments/${body.result.experiment.id}`);
+    assert.equal(getReply.status, 200);
+    const viewBody = (await getReply.json()) as { readonly ok: boolean; readonly result: { readonly control?: unknown } };
+    assert.deepEqual(viewBody.result.control, { taskVersion: 5, controlVersion: 2 });
+    assert.equal(versionsCalls, 2);
+  } finally {
+    await started.host.close();
+  }
+});

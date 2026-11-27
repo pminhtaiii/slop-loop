@@ -26,8 +26,8 @@ import {
   resolveRealConsoleClarificationResume,
   resolveRealConsoleDirection,
   validRealConsoleDirection,
-  type RecordedDirection,
 } from './real-tier-console-direction.ts';
+import { readRealConsoleControlVersions, type RealConsoleSession } from './real-tier-console-control.ts';
 import { createRealTierGraderCapability } from './real-tier-grader.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import { expectedBindingsOf, matchesDigests } from './real-tier-production-lifecycle.ts';
@@ -40,18 +40,6 @@ export const REAL_CONSOLE_TOKEN_ENV = 'UC03_REAL_CONSOLE_TOKEN';
 const TOKEN_PATTERN = /^[\x21-\x7e]{16,512}$/u;
 const IDENTIFIER = /^[A-Za-z0-9._:/@-]{1,256}$/u;
 const TERMINAL_NODES: ReadonlySet<TaskNode> = new Set(['Deliver', 'Incomplete']);
-
-interface BoundSession {
-  readonly task: BugTask;
-  readonly statePort: RealTierAssembly['components']['statePort'];
-  readonly approvalService: ReturnType<RealTierAssembly['owners']['taskOwners']>['approvalService'];
-  readonly approvalConsole: ConsoleApprovalPort;
-  readonly directionsByRef: Map<string, RecordedDirection>;
-  directionsIssued: number;
-  lastControlVersion: number;
-  terminal: boolean;
-  cleanupCopy: () => void;
-}
 
 function resolveOperatorToken(env: RealTierEnvironment): Readonly<{ token: string; fromEnv: boolean }> {
   const supplied = Object.hasOwn(env, REAL_CONSOLE_TOKEN_ENV) ? env[REAL_CONSOLE_TOKEN_ENV] : undefined;
@@ -144,13 +132,14 @@ export function createRealTierConsoleFactory(
     }
 
     const { profile, catalog } = admitted.value;
-    const sessions = new Map<string, BoundSession>();
+    const sessions = new Map<string, RealConsoleSession>();
     const runNonce = randomUUID().slice(0, 12);
     let caseSeq = 0;
     let directionSeq = 0;
     let printedToken = false;
 
     const control: ServiceControl = {
+      versions: experimentId => readRealConsoleControlVersions(sessions.get(experimentId)),
       async issue(input) {
         if (input.kind === 'revise' && !allowRevise) return INVALID_RECEIPT;
         const session = sessions.get(input.experimentId);
@@ -249,7 +238,7 @@ export function createRealTierConsoleFactory(
             if (bound.status !== 'task-bound') return { ok: false, reasonCode: bound.reasonCode };
 
             const owners = fresh.owners.taskOwners({ taskId: bound.ids.taskId, workspaceId: bound.ids.workspaceId, repositoryId: bound.task.repositoryId });
-            const session: BoundSession = {
+            const session: RealConsoleSession = {
               task: bound.task,
               statePort: bound.ports.statePort,
               approvalService: owners.approvalService,

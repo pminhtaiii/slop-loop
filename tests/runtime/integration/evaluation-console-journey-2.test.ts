@@ -147,12 +147,14 @@ test('controlled loopback HTTP: plan rejection requires permitted explicit revis
       const exp = await startCatalogC01(client, composed.profile.profileId, 'ac1-revise-start');
       assert.equal(exp.status, 'waiting-approval');
       assert.equal(exp.taskId, composed.fixture.task.taskId);
+      assert.equal(exp.control, null);
       const { guard, decisionId: rejectedDecisionId, ownerAtFeedback, controlVersion: afterRejectCtrl } = await rejectPlanAndReachFeedback(client, composed, exp.id, 'ac1-rev');
 
       // Pending AwaitPlan check is covered on the renewed plan too; check initial rejected state & feedback guards.
       assert.equal(ownerAtFeedback.planVersion, 1);
       assert.equal(ownerAtFeedback.replanCount, 0);
       assert.equal(ownerAtFeedback.activeDecisionId, rejectedDecisionId);
+      assert.deepEqual((await client.get(`/api/experiments/${exp.id}`)).body.result.control, { taskVersion: ownerAtFeedback.stateVersion, controlVersion: afterRejectCtrl });
       await guard.refuseDirs(ownerAtFeedback.stateVersion, afterRejectCtrl, ['resume'], 'ac1-fb-no-resume');
       await guard.refuseDirs(ownerAtFeedback.stateVersion, afterRejectCtrl, ['revise', 'end'], 'ac1-fb-wrong-ref', 'dec-wrong-ref');
 
@@ -179,12 +181,14 @@ test('controlled loopback HTTP: plan rejection requires permitted explicit revis
 
       const afterD0 = await approveCurrentAndContinue(client, composed, exp.id, reviseDir.receipt.controlVersion, 'ac1-v2-d0');
       assert.equal(afterD0.experiment.status, 'waiting-approval');
+      assert.equal(afterD0.experiment.control, null);
       const ownerVerify = await composed.fixture.statePort.loadTask(composed.fixture.task.taskId);
       assert.ok(ownerVerify && ownerVerify.node === 'Verify');
       await guard.refuseDirs(ownerVerify.stateVersion, afterD0.controlVersion, ['revise', 'end'], 'ac1-verify');
 
       const afterD1 = await approveCurrentAndContinue(client, composed, exp.id, afterD0.controlVersion, 'ac1-v2-d1');
       assert.equal(afterD1.experiment.status, 'completed');
+      assert.equal(afterD1.experiment.control, null);
       assert.equal(afterD1.experiment.workflowReport?.cases[0]?.workflowOutcome, 'COMPLETED');
       assert.equal(afterD1.experiment.workflowReport?.cases[0]?.grade, 'pass');
       assert.equal(composed.fixture.route.repositoryPort.patches.length, 1);
@@ -212,6 +216,7 @@ test('controlled loopback HTTP: plan rejection requires permitted explicit revis
     });
     const terminated = await continueDirection(client, exp.id, endDir, 'ac1-end-cont');
     assert.equal(terminated.status, 'incomplete');
+    assert.equal(terminated.control, null);
     assert.equal(terminated.workflowReport?.cases[0]?.workflowOutcome, 'INCOMPLETE');
     assert.equal(terminated.workflowReport?.cases[0]?.grade, 'not-run');
     assert.equal(composed.fixture.route.repositoryPort.patches.length, 0);
@@ -269,6 +274,7 @@ test('controlled loopback HTTP: stale, duplicate, and missing-question commands 
       const intakeExp = intakeStart.body.result.experiment;
       assert.equal(intakeExp.status, 'waiting-info');
       assert.equal(intakeExp.taskId, null);
+      assert.equal(intakeExp.control, null);
       const intakeQ = intakeExp.submission?.questions[0];
       assert.ok(intakeQ);
       const intakeGuard = createSnapshotGuard(client, composed, intakeExp.id);
@@ -284,6 +290,7 @@ test('controlled loopback HTTP: stale, duplicate, and missing-question commands 
       const intakeAnswer = ans(intakeQ.questionId, intakeQ.questionDigest, intakeExp.version, ['pytest -q'], 'ac2-i-valid');
       const intakeAfter = (await client.post(`/api/experiments/${intakeExp.id}/answers`, intakeAnswer)).body.result.experiment;
       assert.equal(intakeAfter.version, intakeExp.version + 1);
+      assert.equal(intakeAfter.control, null);
       assert.equal((await client.post(`/api/experiments/${intakeExp.id}/answers`, intakeAnswer)).body.result.experiment.version, intakeAfter.version);
 
       for (const [label, sub, body, err] of [
@@ -307,6 +314,8 @@ test('controlled loopback HTTP: stale, duplicate, and missing-question commands 
       const clar = exp.workflowClarification;
       const guard = createSnapshotGuard(client, composed, exp.id);
       const beforeNeedsInfo = await guard.capture();
+      assert.ok(beforeNeedsInfo.ownerState);
+      assert.deepEqual(exp.control, { taskVersion: beforeNeedsInfo.ownerState.stateVersion, controlVersion: 0 });
 
       for (const [label, body, err] of [
         ['unknown questionId', ans('q-missing', clar.questionDigest, beforeNeedsInfo.view.version, ['Raise CalculationError'], 'ac2-missing-q'), 'UNKNOWN_QUESTION'],
@@ -336,6 +345,7 @@ test('controlled loopback HTTP: stale, duplicate, and missing-question commands 
 
       const ownerNeedsInfo = afterAnswer.ownerState;
       assert.ok(ownerNeedsInfo);
+      assert.deepEqual(afterAnswer.view.control, { taskVersion: ownerNeedsInfo.stateVersion, controlVersion: 0 });
       for (const [label, body] of [
         ['stale taskVersion direction', { expectedTaskVersion: ownerNeedsInfo.stateVersion - 1, expectedControlVersion: 0, kind: 'resume', idempotencyKey: 'ac2-stale-task-dir' }],
         ['stale controlVersion direction', { expectedTaskVersion: ownerNeedsInfo.stateVersion, expectedControlVersion: 99, kind: 'resume', idempotencyKey: 'ac2-stale-ctrl-dir' }],
@@ -345,7 +355,8 @@ test('controlled loopback HTTP: stale, duplicate, and missing-question commands 
         await guard.refuse('directions', body, 'INVALID_CONTROL_RECEIPT', label, afterAnswer);
       }
 
-      const dirBody = { expectedTaskVersion: ownerNeedsInfo.stateVersion, expectedControlVersion: 0, kind: 'resume', idempotencyKey: 'ac2-resume-dir' };
+      assert.ok(afterAnswer.view.control);
+      const dirBody = { expectedTaskVersion: afterAnswer.view.control.taskVersion, expectedControlVersion: afterAnswer.view.control.controlVersion, kind: 'resume', idempotencyKey: 'ac2-resume-dir' };
       const issuedDir = await issueControlDirection(client, exp.id, dirBody);
       const afterDir = await guard.capture();
       assert.equal((await issueControlDirection(client, exp.id, dirBody)).receipt.controlVersion, issuedDir.receipt.controlVersion);
@@ -371,8 +382,10 @@ test('controlled loopback HTTP: stale, duplicate, and missing-question commands 
       const resumed = await client.post(`/api/experiments/${exp.id}/continue`, continueBody);
       assert.equal(resumed.status, 200);
       assert.equal(resumed.body.result.experiment.status, 'waiting-approval');
+      assert.equal(resumed.body.result.experiment.control, null);
 
       const afterAwaitPlan = await guard.capture();
+      assert.equal(afterAwaitPlan.view.control, null);
       assert.equal((await client.post(`/api/experiments/${exp.id}/continue`, continueBody)).body.result.experiment.version, afterAwaitPlan.view.version);
       await guard.assertUnchanged(afterAwaitPlan, 'duplicate continue replay');
       await guard.refuse('continue', { ...continueBody, expectedVersion: afterDir.view.version, idempotencyKey: 'ac2-resume-cont-2' }, 'STALE_VERSION', 'duplicate continue new key', afterAwaitPlan);
@@ -647,6 +660,9 @@ test('controlled loopback HTTP: page refresh re-reads persisted state across wai
       const guard = createSnapshotGuard(client, composed, exp.id);
       assert.equal(exp.status, 'waiting-info');
       assert.ok(exp.workflowClarification);
+      const refreshNeedsOwner = await composed.fixture.statePort.loadTask(taskId);
+      assert.ok(refreshNeedsOwner);
+      assert.deepEqual(exp.control, { taskVersion: refreshNeedsOwner.stateVersion, controlVersion: 0 });
 
       const simulatePageRefresh = async (expectedView: ExperimentView, checkApprovalPending?: boolean) => {
         const before = await guard.capture();
@@ -689,15 +705,18 @@ test('controlled loopback HTTP: page refresh re-reads persisted state across wai
       const atD0 = await continueDirection(client, exp.id, clarDir, 'ac5-clarification-cont');
       assert.equal(atD0.status, 'waiting-approval');
       assert.equal(atD0.runId, runId);
+      assert.equal(atD0.control, null);
       await simulatePageRefresh(atD0, true);
 
       const atD1 = await approveCurrentAndContinue(client, composed, exp.id, clarDir.receipt.controlVersion, 'ac5-d0');
       assert.equal(atD1.experiment.status, 'waiting-approval');
       assert.equal(atD1.experiment.runId, runId);
+      assert.equal(atD1.experiment.control, null);
       await simulatePageRefresh(atD1.experiment, true);
 
       const completed = await approveCurrentAndContinue(client, composed, exp.id, atD1.controlVersion, 'ac5-d1');
       assert.equal(completed.experiment.status, 'completed');
+      assert.equal(completed.experiment.control, null);
       assert.equal(completed.experiment.taskId, taskId);
       assert.equal(completed.experiment.runId, runId);
       assert.equal(completed.experiment.workflowReport?.cases[0]?.grade, 'pass');

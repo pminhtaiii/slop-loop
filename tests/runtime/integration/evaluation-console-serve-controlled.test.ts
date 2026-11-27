@@ -192,6 +192,7 @@ test('serve --host with controlled console assembly serves loopback page, catalo
     let c01 = c01Start.experiment;
     assert.equal(c01.status, 'waiting-approval');
     assert.equal(c01.workflowReport, null);
+    assert.equal(c01.control, null);
 
     const p0 = await loadPresentation(c01.id);
     assert.equal(p0.status, 'pending');
@@ -207,11 +208,20 @@ test('serve --host with controlled console assembly serves loopback page, catalo
       'c01-reject-d0',
     );
     assert.equal(rejected.status, 'rejected');
+    const c01AfterReject = unwrap<ExperimentView>(await get(`/api/experiments/${c01.id}`), 'c01-after-reject');
+    assert.deepEqual(c01AfterReject.control, { taskVersion: rejected.version, controlVersion: rejected.controlVersion });
 
     // Move AwaitPlan -> AwaitFeedback
+    assert.ok(c01AfterReject.control);
     c01 = await issueAndContinue(
       c01.id,
-      { kind: 'resume', expectedTaskVersion: rejected.version, expectedControlVersion: rejected.controlVersion, decisionRef: p0.decisionId, keyPrefix: 'c01-to-feedback' },
+      {
+        kind: 'resume',
+        expectedTaskVersion: c01AfterReject.control.taskVersion,
+        expectedControlVersion: c01AfterReject.control.controlVersion,
+        decisionRef: p0.decisionId,
+        keyPrefix: 'c01-to-feedback',
+      },
       c01.version,
     );
     assert.equal(c01.status, 'waiting-info');
@@ -219,6 +229,7 @@ test('serve --host with controlled console assembly serves loopback page, catalo
     // Resume in AwaitFeedback stays paused at AwaitFeedback
     const pFeedback = await loadPresentation(c01.id);
     assert.equal(pFeedback.node, 'AwaitFeedback');
+    assert.deepEqual(c01.control, { taskVersion: pFeedback.taskStateVersion, controlVersion: pFeedback.controlVersion });
     c01 = await issueAndContinue(
       c01.id,
       { kind: 'resume', expectedTaskVersion: pFeedback.taskStateVersion, expectedControlVersion: pFeedback.controlVersion, decisionRef: p0.decisionId, keyPrefix: 'c01-feedback-resume' },
@@ -228,12 +239,14 @@ test('serve --host with controlled console assembly serves loopback page, catalo
 
     // Revise in AwaitFeedback produces renewed AwaitPlan v2
     const pFeedback2 = await loadPresentation(c01.id);
+    assert.deepEqual(c01.control, { taskVersion: pFeedback2.taskStateVersion, controlVersion: pFeedback2.controlVersion });
+    assert.ok(c01.control);
     c01 = await issueAndContinue(
       c01.id,
       {
         kind: 'revise',
-        expectedTaskVersion: pFeedback2.taskStateVersion,
-        expectedControlVersion: pFeedback2.controlVersion,
+        expectedTaskVersion: c01.control.taskVersion,
+        expectedControlVersion: c01.control.controlVersion,
         decisionRef: p0.decisionId,
         feedback: 'Check denominator before float division.',
         keyPrefix: 'c01-feedback-revise',
@@ -241,6 +254,7 @@ test('serve --host with controlled console assembly serves loopback page, catalo
       c01.version,
     );
     assert.equal(c01.status, 'waiting-approval', `expected waiting-approval after revise, got ${c01.status}: ${JSON.stringify(c01)}`);
+    assert.equal(c01.control, null);
 
     const pRenewed = await loadPresentation(c01.id);
     assert.equal(pRenewed.status, 'pending');
@@ -264,6 +278,7 @@ test('serve --host with controlled console assembly serves loopback page, catalo
       c01.version,
     );
     assert.equal(c01.status, 'waiting-approval');
+    assert.equal(c01.control, null);
 
     const pD1 = await loadPresentation(c01.id);
     assert.equal(pD1.status, 'pending');
@@ -284,6 +299,7 @@ test('serve --host with controlled console assembly serves loopback page, catalo
       c01.version,
     );
     assert.equal(c01.status, 'completed');
+    assert.equal(c01.control, null);
 
     // --- 2. C01: reject D0 -> resume (AwaitFeedback) -> end -> incomplete
     const c01EndStart = unwrap<ExperimentReply>(
@@ -314,6 +330,7 @@ test('serve --host with controlled console assembly serves loopback page, catalo
       c01End.version,
     );
     assert.equal(c01End.status, 'incomplete');
+    assert.equal(c01End.control, null);
 
     // --- 3. C02: clarification pause -> answer -> resume -> D0 -> D1 -> completed
     const c02Start = unwrap<ExperimentReply>(await post('/api/experiments', { profileId, idempotencyKey: nextKey('c02-start'), source: { kind: 'catalog', caseIds: ['C02'] } }), 'c02-start');
@@ -335,9 +352,18 @@ test('serve --host with controlled console assembly serves loopback page, catalo
     );
     c02 = answered.experiment;
     assert.equal(c02.status, 'waiting-info');
+    assert.ok(c02.control && c02.control.taskVersion > 0 && c02.control.controlVersion === 0);
 
-    // Browser #direction-task-version defaults to 0 before any approval pause.
-    c02 = await issueAndContinue(c02.id, { kind: 'resume', expectedTaskVersion: 0, expectedControlVersion: 0, keyPrefix: 'c02-resume' }, c02.version);
+    const staleC02 = await post(`/api/experiments/${c02.id}/directions`, {
+      idempotencyKey: nextKey('c02-stale-ver'),
+      kind: 'resume',
+      expectedTaskVersion: c02.control.taskVersion + 1,
+      expectedControlVersion: c02.control.controlVersion,
+    });
+    assert.equal(staleC02.status, 500);
+    assert.deepEqual(staleC02.body, { ok: false, error: 'SERVICE_ERROR' });
+
+    c02 = await issueAndContinue(c02.id, { kind: 'resume', expectedTaskVersion: c02.control.taskVersion, expectedControlVersion: c02.control.controlVersion, keyPrefix: 'c02-resume' }, c02.version);
     assert.equal(c02.status, 'waiting-approval');
 
     const c02P0 = await loadPresentation(c02.id);

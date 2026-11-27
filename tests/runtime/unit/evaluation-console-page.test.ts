@@ -840,3 +840,75 @@ test('page executes: a key retained past an answered group is retired, so a late
   assert.equal(next.body['expectedVersion'], 9);
   assert.deepEqual(next.body['answers'], ['answer-1']);
 });
+
+test('page executes: direction versions pre-fill from view.control and reset to 0 when absent or malformed', async () => {
+  const initial = viewOf({ status: 'waiting-info', control: { taskVersion: 7, controlVersion: 3 } });
+  const afterDir = viewOf({ version: 4, status: 'waiting-info', control: { taskVersion: 7, controlVersion: 4 } });
+  const afterCont = viewOf({ version: 5, status: 'completed', control: null });
+  let startResult: unknown = initial;
+  const b = bootPage(path => {
+    if (path === '/api/experiments') return { ok: true, result: { experiment: startResult, receipt: { receiptId: 'r1', kind: 'start', idempotencyKey: 'k1', experimentId: 'exp-1', version: 3 } } };
+    if (path.endsWith('/directions')) return { ok: true, result: { experiment: afterDir, receipt: { receiptRef: 'dir-1', kind: 'resume', taskId: 't1', controlVersion: 4 } } };
+    if (path.endsWith('/continue')) return { ok: true, result: { experiment: afterCont, receipt: { receiptId: 'r2', kind: 'continue', idempotencyKey: 'k2', experimentId: 'exp-1', version: 5 } } };
+    return { ok: true, result: initial };
+  });
+
+  // Loading an experiment pre-fills both direction inputs and formats the control line.
+  const loadedText = await b.loadExperiment();
+  assert.match(loadedText, /^control: task=7 control=3$/mu);
+  assert.equal(b.el('direction-task-version').value, '7');
+  assert.equal(b.el('direction-control-version').value, '3');
+
+  // Submitting a direction sends the pre-filled versions and updates inputs from the returned view.
+  b.el('direction-kind').value = 'resume';
+  b.el('submit-direction').handlers.click?.(EVENT);
+  await b.settle();
+  const dirCall = b.calls.find(call => call.path === '/api/experiments/exp-1/directions');
+  assert.ok(dirCall);
+  const dirBody = JSON.parse(dirCall.init.body ?? '{}') as Record<string, unknown>;
+  assert.equal(dirBody['expectedTaskVersion'], 7);
+  assert.equal(dirBody['expectedControlVersion'], 3);
+  assert.equal(b.el('direction-task-version').value, '7');
+  assert.equal(b.el('direction-control-version').value, '4');
+  assert.match(b.el('experiment').textContent, /^control: task=7 control=4$/mu);
+
+  // Continuing updates the form to 0 / control: none when control becomes null.
+  b.el('submit-continue').handlers.click?.(EVENT);
+  await b.settle();
+  assert.equal(b.el('direction-task-version').value, '0');
+  assert.equal(b.el('direction-control-version').value, '0');
+  assert.match(b.el('experiment').textContent, /^control: none$/mu);
+
+  // Submitting a new experiment also pre-fills from result.experiment.control.
+  startResult = viewOf({ id: 'exp-2', status: 'waiting-info', control: { taskVersion: 11, controlVersion: 2 } });
+  b.el('submit-experiment').handlers.click?.(EVENT);
+  await b.settle();
+  assert.equal(b.el('experiment-id').value, 'exp-2');
+  assert.equal(b.el('direction-task-version').value, '11');
+  assert.equal(b.el('direction-control-version').value, '2');
+
+  // Absent or malformed control values reset inputs to 0 without leaking unexpected keys.
+  for (const control of [
+    null,
+    undefined,
+    'bad',
+    [],
+    { taskVersion: -1, controlVersion: 0 },
+    { taskVersion: 1.5, controlVersion: 0 },
+    { taskVersion: '2', controlVersion: 1 },
+    { taskVersion: 2, controlVersion: 1, extra: '/etc/passwd' },
+  ]) {
+    const cleanBoot = bootPage(viewResponder(viewOf({ workflowReport: null, control })));
+    const text = await cleanBoot.loadExperiment();
+    for (const leak of ['extra', '/etc/passwd', '[object', '{"']) assert.equal(text.includes(leak), false, `leaked ${leak}`);
+    if (typeof control === 'object' && control !== null && !Array.isArray(control) && (control as { extra?: unknown }).extra === '/etc/passwd') {
+      assert.match(text, /^control: task=2 control=1$/mu);
+      assert.equal(cleanBoot.el('direction-task-version').value, '2');
+      assert.equal(cleanBoot.el('direction-control-version').value, '1');
+    } else {
+      assert.match(text, /^control: none$/mu);
+      assert.equal(cleanBoot.el('direction-task-version').value, '0');
+      assert.equal(cleanBoot.el('direction-control-version').value, '0');
+    }
+  }
+});

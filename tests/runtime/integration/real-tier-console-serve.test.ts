@@ -98,6 +98,7 @@ interface ExperimentViewShape {
     readonly questions: readonly { readonly questionId: string; readonly text: string }[];
   } | null;
   readonly answers: readonly unknown[];
+  readonly control?: { readonly taskVersion: number; readonly controlVersion: number } | null | undefined;
   readonly workflowReport: {
     readonly mode: string;
     readonly tier: string;
@@ -664,6 +665,7 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
       'c01-1-start',
     ).experiment;
     assert.equal(c01Run1.status, 'waiting-approval');
+    assert.equal(c01Run1.control, null);
     assert.equal(c01Run1.workflowReport?.cases[0]?.workflowOutcome, 'waiting-approval');
     assert.equal(c01Run1.workflowReport?.cases[0]?.grade, 'not-run');
     assert.equal(c01Run1.workflowReport?.cases[0]?.gradeReason, 'unresolved-wait');
@@ -690,29 +692,33 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
       'c01-d0-approve',
     );
     assert.equal(d0.outcome, 'ok');
+    const c01AfterD0Approve = client.unwrap<ExperimentViewShape>(await client.get(`/api/experiments/${c01Run1.id}`), 'c01-after-d0-approve');
+    assert.ok(c01AfterD0Approve.control && c01AfterD0Approve.control.taskVersion > 0);
+    assert.equal(c01AfterD0Approve.control.controlVersion, d0.controlVersion);
 
     // Forbidden/stale directions at AwaitPlan return 409
     const badRevise = await client.post(`/api/experiments/${c01Run1.id}/directions`, {
       idempotencyKey: client.nextKey('c01-bad-revise'),
       kind: 'revise',
-      expectedTaskVersion: d0.controlVersion,
-      expectedControlVersion: d0.controlVersion,
+      expectedTaskVersion: c01AfterD0Approve.control.taskVersion,
+      expectedControlVersion: c01AfterD0Approve.control.controlVersion,
     });
     assert.equal(badRevise.status, 409);
     const staleCtrl = await client.post(`/api/experiments/${c01Run1.id}/directions`, {
       idempotencyKey: client.nextKey('c01-stale-ctrl'),
       kind: 'resume',
-      expectedTaskVersion: d0.controlVersion,
-      expectedControlVersion: d0.controlVersion - 1,
+      expectedTaskVersion: c01AfterD0Approve.control.taskVersion,
+      expectedControlVersion: c01AfterD0Approve.control.controlVersion - 1,
     });
     assert.equal(staleCtrl.status, 409);
 
     const afterD0 = await client.issueAndContinue(
       c01Run1.id,
-      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'c01-to-verify' },
+      { kind: 'resume', expectedTaskVersion: c01AfterD0Approve.control.taskVersion, expectedControlVersion: c01AfterD0Approve.control.controlVersion, label: 'c01-to-verify' },
       c01Run1.version,
     );
     assert.equal(afterD0.experiment.status, 'waiting-approval', JSON.stringify(afterD0.experiment));
+    assert.equal(afterD0.experiment.control, null);
 
     const p1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${c01Run1.id}/approval`), 'c01-p1');
     const d1 = client.unwrap<DecisionReplyShape>(
@@ -730,6 +736,7 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
       afterD0.experiment.version,
     );
     assert.equal(completed.experiment.status, 'completed');
+    assert.equal(completed.experiment.control, null);
     assert.ok(completed.experiment.workflowReport);
     assert.equal(completed.experiment.workflowReport.mode, 'real');
     assert.equal(completed.experiment.workflowReport.tier, 'real-integration');
@@ -760,12 +767,16 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
       }),
       'c01-2-reject',
     );
+    const c01Run2AfterReject = client.unwrap<ExperimentViewShape>(await client.get(`/api/experiments/${c01Run2.id}`), 'c01-2-after-reject');
+    assert.ok(c01Run2AfterReject.control && c01Run2AfterReject.control.controlVersion === rejected.controlVersion);
     const feedback = await client.issueAndContinue(
       c01Run2.id,
       { kind: 'resume', expectedTaskVersion: rejected.controlVersion, expectedControlVersion: rejected.controlVersion, label: 'c01-2-fb' },
       c01Run2.version,
     );
     assert.equal(feedback.experiment.status, 'waiting-info');
+    assert.ok(feedback.experiment.control && feedback.experiment.control.taskVersion > 0);
+    assert.equal(feedback.experiment.control.controlVersion, feedback.controlVersion);
 
     // Resume at AwaitFeedback must be refused, and revise must be refused without verifyDirection (only end permitted)
     const resumeAtFb = await client.post(`/api/experiments/${c01Run2.id}/directions`, {
@@ -790,10 +801,17 @@ test('serve --host real assembly: C01 fresh per-case approval journey, rejection
 
     const ended = await client.issueAndContinue(
       c01Run2.id,
-      { kind: 'end', expectedTaskVersion: feedback.controlVersion, expectedControlVersion: feedback.controlVersion, decisionRef: p2.binding.decisionId, label: 'c01-2-end' },
+      {
+        kind: 'end',
+        expectedTaskVersion: feedback.experiment.control.taskVersion,
+        expectedControlVersion: feedback.experiment.control.controlVersion,
+        decisionRef: p2.binding.decisionId,
+        label: 'c01-2-end',
+      },
       feedback.experiment.version,
     );
     assert.equal(ended.experiment.status, 'incomplete');
+    assert.equal(ended.experiment.control, null);
     assert.equal(ended.experiment.workflowReport?.cases[0]?.workflowOutcome, 'INCOMPLETE');
     assert.equal(ended.experiment.workflowReport?.cases[0]?.grade, 'not-run');
 
@@ -826,6 +844,7 @@ test('serve --host real assembly: C02 clarification journey (pause -> answers ->
       'c02-start',
     ).experiment;
     assert.equal(c02Start.status, 'waiting-info');
+    assert.ok(c02Start.control && c02Start.control.taskVersion > 0 && c02Start.control.controlVersion === 1);
     assert.ok(c02Start.workflowClarification);
     assert.equal(c02Start.workflowClarification.questions[0]?.questionId, 'q-denominator');
     assert.equal(c02Start.workflowReport?.cases[0]?.workflowOutcome, 'waiting-info');
@@ -852,8 +871,13 @@ test('serve --host real assembly: C02 clarification journey (pause -> answers ->
     assert.equal(answered.status, 'waiting-info');
     assert.equal(answered.answers.length, 1);
 
-    const afterClarify = await client.issueAndContinue(c02Start.id, { kind: 'resume', expectedTaskVersion: 0, expectedControlVersion: 0, label: 'c02-resume' }, answered.version);
+    const afterClarify = await client.issueAndContinue(
+      c02Start.id,
+      { kind: 'resume', expectedTaskVersion: c02Start.control.taskVersion, expectedControlVersion: c02Start.control.controlVersion, label: 'c02-resume' },
+      answered.version,
+    );
     assert.equal(afterClarify.experiment.status, 'waiting-approval');
+    assert.equal(afterClarify.experiment.control, null);
 
     const p0 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${c02Start.id}/approval`), 'c02-p0');
     const d0 = client.unwrap<DecisionReplyShape>(
@@ -939,6 +963,7 @@ test('serve --host real assembly: custom submissions stay exploratory/ungraded a
     assert.equal(incCustom.status, 'waiting-info');
     assert.equal(incCustom.graded, false);
     assert.equal(incCustom.workflowReport, null);
+    assert.equal(incCustom.control, null);
 
     // End taskless incomplete intake locally so another experiment can start; remains ungraded.
     const endedInc = client.unwrap<{ experiment: ExperimentViewShape }>(
@@ -953,6 +978,7 @@ test('serve --host real assembly: custom submissions stay exploratory/ungraded a
     assert.equal(endedInc.status, 'incomplete');
     assert.equal(endedInc.graded, false);
     assert.equal(endedInc.workflowReport, null);
+    assert.equal(endedInc.control, null);
 
     // 2. Complete custom bug is refused (CUSTOM_ROUTE_UNAVAILABLE -> incomplete), never graded
     const fullCustom = client.unwrap<{ experiment: ExperimentViewShape }>(
@@ -1197,6 +1223,7 @@ test('serve --host real assembly: monotonic control versions across NeedsInfo an
       'mono-start',
     ).experiment;
     assert.equal(c02Start.status, 'waiting-info');
+    assert.ok(c02Start.control && c02Start.control.taskVersion > 0 && c02Start.control.controlVersion === 1);
     assert.ok(c02Start.workflowClarification);
 
     const answered = client.unwrap<{ experiment: ExperimentViewShape }>(
@@ -1210,17 +1237,18 @@ test('serve --host real assembly: monotonic control versions across NeedsInfo an
       'mono-ans',
     ).experiment;
 
-    // Issue three resume directions at NeedsInfo to advance session controlVersion to 3 before continuing
+    // Issue three resume directions at NeedsInfo to advance session controlVersion to 4 before continuing
     const d1 = client.unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; controlVersion: number } }>(
       await client.post(`/api/experiments/${c02Start.id}/directions`, {
         idempotencyKey: client.nextKey('mono-r1'),
         kind: 'resume',
-        expectedTaskVersion: 0,
-        expectedControlVersion: 0,
+        expectedTaskVersion: c02Start.control.taskVersion,
+        expectedControlVersion: c02Start.control.controlVersion,
       }),
       'mono-r1',
     );
     assert.equal(d1.receipt.controlVersion, 2);
+    assert.equal(d1.experiment.control?.controlVersion, 2);
 
     const d2 = client.unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; controlVersion: number } }>(
       await client.post(`/api/experiments/${c02Start.id}/directions`, {
@@ -1232,6 +1260,7 @@ test('serve --host real assembly: monotonic control versions across NeedsInfo an
       'mono-r2',
     );
     assert.equal(d2.receipt.controlVersion, 3);
+    assert.equal(d2.experiment.control?.controlVersion, 3);
 
     const d3 = client.unwrap<{ experiment: ExperimentViewShape; receipt: { receiptRef: string; controlVersion: number } }>(
       await client.post(`/api/experiments/${c02Start.id}/directions`, {
@@ -1243,6 +1272,7 @@ test('serve --host real assembly: monotonic control versions across NeedsInfo an
       'mono-r3',
     );
     assert.equal(d3.receipt.controlVersion, 4);
+    assert.equal(d3.experiment.control?.controlVersion, 4);
     assert.equal(d3.experiment.version, answered.version + 3);
 
     const afterClarify = client.unwrap<{ experiment: ExperimentViewShape }>(
@@ -1254,6 +1284,7 @@ test('serve --host real assembly: monotonic control versions across NeedsInfo an
       'mono-cont',
     ).experiment;
     assert.equal(afterClarify.status, 'waiting-approval');
+    assert.equal(afterClarify.control, null);
 
     const p0 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${c02Start.id}/approval`), 'mono-p0');
     const approved = client.unwrap<DecisionReplyShape>(
@@ -1266,6 +1297,9 @@ test('serve --host real assembly: monotonic control versions across NeedsInfo an
       'mono-d0',
     );
     assert.ok(approved.controlVersion < d3.receipt.controlVersion, 'approval controlVersion is lower than session lastControlVersion');
+    const afterMonoApprove = client.unwrap<ExperimentViewShape>(await client.get(`/api/experiments/${c02Start.id}`), 'mono-after-approve');
+    assert.ok(afterMonoApprove.control && afterMonoApprove.control.taskVersion > 0);
+    assert.equal(afterMonoApprove.control.controlVersion, 4);
 
     // Dropping back to approval.controlVersion must be refused; monotonic controlVersion 4 -> 5 succeeds
     const regressed = await client.post(`/api/experiments/${c02Start.id}/directions`, {
@@ -1280,8 +1314,8 @@ test('serve --host real assembly: monotonic control versions across NeedsInfo an
       await client.post(`/api/experiments/${c02Start.id}/directions`, {
         idempotencyKey: client.nextKey('mono-next'),
         kind: 'resume',
-        expectedTaskVersion: d3.receipt.controlVersion,
-        expectedControlVersion: d3.receipt.controlVersion,
+        expectedTaskVersion: afterMonoApprove.control.taskVersion,
+        expectedControlVersion: afterMonoApprove.control.controlVersion,
       }),
       'mono-next',
     );
@@ -1794,6 +1828,7 @@ test('serve --host real assembly: ending NeedsInfo wait closes bounded incomplet
       'c02-end-cont',
     ).experiment;
     assert.equal(ended.status, 'incomplete');
+    assert.equal(ended.control, null);
     assert.equal(ended.workflowClarification, null);
     assert.equal(ended.workflowReport?.cases[0]?.workflowOutcome, 'INCOMPLETE');
     assert.equal(ended.workflowReport?.cases[0]?.grade, 'not-run');
