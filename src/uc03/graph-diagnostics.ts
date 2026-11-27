@@ -28,11 +28,13 @@ const CODER_REFUSAL_PREFIX = 'REAL_PROFILE_GENERATION_INVALID: ';
 const UNCERTAIN_OWNER_MARKER = 'replan-owner-outcome-uncertain';
 
 /** Exact coder-boundary codes (the agent's own bounded vocabulary, never exception text) and the category each one observes. */
-const CODER_REFUSALS: readonly { readonly match: RegExp; readonly component: DiagnosticComponent; readonly attribution: 'model' | 'tool' | 'environment'; readonly reasonCode: string }[] = [
-  { match: /^PROPOSAL_INVALID:[A-Z_]{1,64}$/u, component: 'model-output', attribution: 'model', reasonCode: 'coder-proposal-invalid' },
-  { match: /^(?:TOOL_ERROR|CHECK_NOT_CONFIGURED|CHECK_ADMISSION_REQUIRED|CHECK_RESULT_INVALID:[A-Z_]{1,64})$/u, component: 'repository-tool', attribution: 'tool', reasonCode: 'coder-tool-refused' },
-  { match: /^(?:MODEL_ERROR|MODEL_UNCERTAIN:[A-Za-z0-9_.-]{1,64})$/u, component: 'provider', attribution: 'environment', reasonCode: 'coder-dispatch-failed' },
-];
+const CODER_REFUSALS: readonly { readonly match: RegExp; readonly component: DiagnosticComponent; readonly attribution: 'model' | 'tool' | 'environment' | 'unknown'; readonly reasonCode: string }[] =
+  [
+    { match: /^REPAIR_BUDGET_EXHAUSTED$/u, component: 'workflow', attribution: 'unknown', reasonCode: 'repair-budget-exhausted' },
+    { match: /^PROPOSAL_INVALID:[A-Z_]{1,64}$/u, component: 'model-output', attribution: 'model', reasonCode: 'coder-proposal-invalid' },
+    { match: /^(?:TOOL_ERROR|CHECK_NOT_CONFIGURED|CHECK_ADMISSION_REQUIRED|CHECK_RESULT_INVALID:[A-Z_]{1,64})$/u, component: 'repository-tool', attribution: 'tool', reasonCode: 'coder-tool-refused' },
+    { match: /^(?:MODEL_ERROR|MODEL_UNCERTAIN:[A-Za-z0-9_.-]{1,64})$/u, component: 'provider', attribution: 'environment', reasonCode: 'coder-dispatch-failed' },
+  ];
 
 function coderRefusal(reasons: readonly string[]): (typeof CODER_REFUSALS)[number] | undefined {
   // An uncertain owner outcome carries an opaque operationRef; scanning it would attribute an unobserved failure.

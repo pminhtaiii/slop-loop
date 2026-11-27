@@ -85,16 +85,12 @@ function bindProposal(task: BugTask, state: TaskState, evidence: readonly Source
   return proposal.targetPaths.every(path => plan.scopedChanges.includes(path)) ? null : 'PATCH_OUTSIDE_PLAN_SCOPE';
 }
 
-/** Replan/repair accounting shared by both turns; a safe refusal code or null. */
+/** Replan proposal accounting shared by both turns; a safe refusal code or null. */
 function accountProposal(counters: { replans: number; repairs: number }, budget: CoderBudget, state: TaskState, proposal: CoderProposal): string | null {
   if (proposal.kind === 'propose-plan' && state.plan !== undefined) {
     const used = Math.max(counters.replans, state.replanCount);
     if (used >= budget.maxReplans) return 'REPLAN_BUDGET_EXHAUSTED';
     counters.replans = used + 1;
-  }
-  if (proposal.kind === 'propose-patch' && state.node === 'Repair') {
-    if (counters.repairs >= budget.maxRepairs) return 'REPAIR_BUDGET_EXHAUSTED';
-    counters.repairs += 1;
   }
   return null;
 }
@@ -127,11 +123,14 @@ export function createCoderAgent(options: CoderAgentOptions): CoderAgent {
       const replanTurn = state.node === 'AwaitFeedback' && request.purpose === 'propose-replan';
       if (WAITING_NODES.has(state.node) && !replanTurn) return { outcome: 'waiting', reason: `HUMAN_WAIT:${state.node}`, counters: snapshot() };
       if (TERMINAL_NODES.has(state.node)) return invalid(`TERMINAL_NODE:${state.node}`);
+      if (state.node === 'Repair' && counters.repairs >= budget.maxRepairs) return invalid('REPAIR_BUDGET_EXHAUSTED');
       if (counters.modelCalls >= budget.maxModelCalls) return invalid('MODEL_CALL_BUDGET_EXHAUSTED');
       if (counters.activeMs >= budget.maxActiveMs) return invalid('ACTIVE_TIME_BUDGET_EXHAUSTED');
 
       const started = now();
       let result: ModelPortResult;
+      // Inspection and failed proposals are repair attempts too; charge before dispatch.
+      if (state.node === 'Repair') counters.repairs += 1;
       counters.modelCalls += 1;
       try {
         result = await options.propose(state, evidence, request);
@@ -259,12 +258,15 @@ export function createCoderAgentV02(options: CoderAgentV02Options): CoderAgentV0
       if (TERMINAL_NODES.has(state.node)) return invalid(`TERMINAL_NODE:${state.node}`);
       const admissionRefusal = coderAdmissionRefusal(input.admission, input);
       if (admissionRefusal !== null) return invalid(admissionRefusal);
+      if (state.node === 'Repair' && counters.repairs >= budget.maxRepairs) return invalid('REPAIR_BUDGET_EXHAUSTED');
       if (counters.modelCalls >= budget.maxModelCalls) return invalid('MODEL_CALL_BUDGET_EXHAUSTED');
       if (counters.activeMs >= budget.maxActiveMs) return invalid('ACTIVE_TIME_BUDGET_EXHAUSTED');
 
       const { admission } = input;
       const started = now();
       let result: Awaited<ReturnType<ModelPortV02['propose']>>;
+      // Inspection and failed proposals are repair attempts too; charge before dispatch.
+      if (state.node === 'Repair') counters.repairs += 1;
       counters.modelCalls += 1;
       try {
         // The model boundary alone claims, begins the attempt and records the outcome.

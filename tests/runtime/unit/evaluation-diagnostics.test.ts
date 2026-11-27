@@ -296,3 +296,8 @@ test('an uncertain replan driven through the real producer yields a workflow/unk
   assert.equal(diagnostic?.effects, 'unknown');
   assert.ok(diagnostic?.limitations.some(limitation => limitation.includes('was not observed')));
 });
+
+test('repair exhaustion has a specific workflow diagnostic', () => {
+  const diagnostic = refused('REAL_PROFILE_GENERATION_INVALID: REPAIR_BUDGET_EXHAUSTED');
+  assert.deepEqual([diagnostic?.component, diagnostic?.attribution, diagnostic?.reasonCode], ['workflow', 'unknown', 'repair-budget-exhausted']);
+});
