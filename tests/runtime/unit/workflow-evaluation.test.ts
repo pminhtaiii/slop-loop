@@ -2226,13 +2226,18 @@ test('thrown route classifier reaches retained case observation and real server 
         state: createGraphTaskState(route.task, { node: 'AwaitPlan' }),
         reasons: [],
         milestones: [],
-        diagnostic: createEvaluationDiagnostic({ stage: 'approve', component: 'workflow', reasonCode: 'unconfirmed-owner-transition', limitations: [limitation] }),
+        diagnostic: createEvaluationDiagnostic({
+          stage: 'approve',
+          component: 'workflow',
+          reasonCode: 'unconfirmed-owner-transition',
+          limitations: [limitation, 'Unrelated route diagnostic limitation'],
+        }),
       },
       undefined,
       'controlled-model',
       'real',
     );
-    assert.ok(observation.limitations.includes(limitation));
+    assert.deepEqual(observation.limitations, [limitation, 'No authoritative final report was produced.']);
     assert.ok(validateWorkflowObservation(observation).limitations.includes(limitation));
     const event = JSON.parse(chunks.join('')) as { event: string; diagnostic: string; limitations: string[] };
     assert.equal(event.event, 'uc03-route-thrown');

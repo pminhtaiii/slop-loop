@@ -132,7 +132,10 @@ function observationFor(host: WorkflowCaseHost, result: UC03WorkflowResult, port
     usage: usageOf(report?.usage !== undefined, state !== null),
     diagnostic: safeText(`UC-03 outcome ${outcome}${state ? ` at ${state.node}` : ''}${codes}`, MAX_DIAGNOSTIC),
     artifacts: safeList([...(report?.evidence.verificationRefs ?? []), ...(report?.evidence.reviewRef ? [report.evidence.reviewRef] : [])]),
-    limitations: safeList([...(result.diagnostic?.limitations ?? []), ...(report === undefined ? ['No authoritative final report was produced.'] : [])]),
+    limitations: safeList([
+      ...(result.diagnostic?.limitations.filter(item => item.startsWith('Thrown error class: ')) ?? []),
+      ...(report === undefined ? ['No authoritative final report was produced.'] : []),
+    ]),
   };
 }
 

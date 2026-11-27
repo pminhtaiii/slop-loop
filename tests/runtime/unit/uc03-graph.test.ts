@@ -2404,7 +2404,9 @@ test('Route classifies bounded project errors and omits unsafe codes and plain E
       this.code = code;
     }
   }
+  const constructorless = [null, undefined].map(constructor => Object.defineProperty(new Error('DO_NOT_RETAIN_MESSAGE'), 'constructor', { value: constructor }));
   for (const [error, expected] of [
+    ...constructorless.map(error => [error, 'Thrown error class: unknown'] as const),
     [new OwnerTransitionError('owner-state-conflict'), 'Thrown error class: OwnerTransitionError; code: owner-state-conflict'],
     [new OwnerTransitionError('https://private.invalid/DO_NOT_RETAIN_CODE'), 'Thrown error class: OwnerTransitionError'],
     [new Error('DO_NOT_RETAIN_MESSAGE'), 'Thrown error class: unknown'],

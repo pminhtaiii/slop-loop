@@ -200,7 +200,7 @@ export function createAwaitPlanNode(ports: UC03GraphPorts): UC03GraphNode {
 }
 
 function classifyThrownError(error: unknown) {
-  const className = error instanceof Error ? error.constructor.name : '';
+  const className = error instanceof Error ? (error.constructor?.name ?? '') : '';
   const errorClass = /^[A-Z][A-Za-z0-9]{0,63}Error$/u.test(className) ? className : 'unknown';
   const fields = typeof error === 'object' && error !== null ? Object.getOwnPropertyDescriptors(error) : {};
   const code = ['reasonCode', 'code', 'outcome'].map(key => fields[key]?.value as unknown).find(value => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/u.test(value));
