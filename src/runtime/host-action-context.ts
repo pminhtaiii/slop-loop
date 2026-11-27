@@ -72,6 +72,7 @@ export interface HostActionContext extends RealContextSource {
   readonly provenance: 'real';
   register(registration: HostActionRegistration): Promise<{ readonly actionId: string; readonly expiresAtEpochMs: number }>;
   observe(taskId: string, actionId: string): Promise<HostActionObservation>;
+  renew(taskId: string, actionId: string): Promise<{ readonly actionId: string; readonly expiresAtEpochMs: number }>;
 }
 
 interface RegisteredAction {
@@ -79,7 +80,7 @@ interface RegisteredAction {
   readonly actionDigest: string;
   readonly observed: HostActionObservation;
   readonly revision: string;
-  readonly expiresAtEpochMs: number;
+  expiresAtEpochMs: number;
   /** Set when the same identifier is registered again with different content or identity. */
   replaced: boolean;
 }
@@ -191,5 +192,19 @@ export function createHostActionContext(options: HostActionContextOptions): Host
     return entry.observed;
   };
 
-  return Object.freeze({ provenance: 'real' as const, register, observe });
+  const renew = async (taskId: string, actionId: string): Promise<{ readonly actionId: string; readonly expiresAtEpochMs: number }> => {
+    const entry = identifier(actionId) && identifier(taskId) ? registry.get(actionId) : undefined;
+    if (!entry) fail('UNKNOWN_ACTION', 'the action was never registered by the host');
+    if (entry.taskId !== taskId) fail('CROSS_TASK', `action '${actionId}' is registered for a different task`);
+    if (entry.replaced) fail('REPLACED_ACTION', `action '${actionId}' was replaced after registration`);
+    // Longer human waits re-measure the tree before extending the registration lease; any drift still refuses.
+    const revision = await measureRevision();
+    if (entry.replaced) fail('REPLACED_ACTION', `action '${actionId}' was replaced after registration`);
+    if (revision !== entry.revision) fail('REVISION_DRIFT', `the repository changed since action '${actionId}' was registered`);
+    const expiresAtEpochMs = now() + ttlMs;
+    entry.expiresAtEpochMs = expiresAtEpochMs;
+    return { actionId, expiresAtEpochMs };
+  };
+
+  return Object.freeze({ provenance: 'real' as const, register, observe, renew });
 }
