@@ -5,6 +5,7 @@
 
 import { validateProviderRequest, type ClarificationRecord, type ProviderRequest, type ValidationError } from '../contracts/foundation/uc03.ts';
 import { validateClarification } from '../contracts/foundation/uc03/v01/validation/state/clarification.ts';
+import { reviewFindingsAreSafe } from './review-findings.ts';
 import type { HostModelTransportPayload } from './model.ts';
 import { REVIEW_SYSTEM_TEXT, type DeepSeekReviewPrompt } from './deepseek-review-profile.ts';
 
@@ -117,6 +118,9 @@ function promptFor(payload: HostModelTransportPayload, request: ProviderRequest)
     request: { providerRequestId: request.providerRequestId, role: request.role, purpose: request.purpose, contextDigest: request.contextDigest },
     untrustedEvidence: payload.untrustedContext.evidenceItems,
     ...(reporterClarification !== undefined ? { reporterClarification } : {}),
+    ...(request.role === 'coder' && request.purpose === 'propose-repair' && payload.state.reviewFindings?.reviewId === payload.state.latestReviewRef && payload.state.reviewFindings !== undefined
+      ? { reviewFindings: payload.state.reviewFindings }
+      : {}),
   });
 }
 
@@ -141,6 +145,9 @@ export function admit(payload: HostModelTransportPayload, pricing: DeepSeekPrici
   }
   if (request.role === 'coder' && payload.state.clarification?.answer !== undefined && !clarificationWithinLimits(payload)) {
     return { ok: false, reason: 'CLARIFICATION_BOUNDS_EXCEEDED: answered clarification exceeds permitted item or byte bounds' };
+  }
+  if (request.role === 'coder' && request.purpose === 'propose-repair' && payload.state.reviewFindings !== undefined && !reviewFindingsAreSafe(payload.state.reviewFindings)) {
+    return { ok: false, reason: 'REVIEW_FINDINGS_INVALID: review findings exceed bounds or contain unsafe content' };
   }
   const system = request.role === 'reviewer' ? REVIEW_SYSTEM_TEXT : SYSTEM_PROMPT;
   const { caps } = payload;

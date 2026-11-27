@@ -6,6 +6,7 @@ export const TASK_OUTCOMES = ['COMPLETED', 'IMPLEMENTED_UNVERIFIED', 'INCOMPLETE
 
 export type TaskOutcome = (typeof TASK_OUTCOMES)[number];
 
+import type { ReviewFindingsRecord } from './review-findings.ts';
 import type { ClarificationRecord } from './clarification-types.ts';
 
 export const ENVELOPE_OUTCOMES = ['success', 'needs-info', 'pending-approval', 'denied', 'conflict', 'exhausted', 'timeout', 'error', 'uncertain-effect'] as const;
@@ -368,6 +369,7 @@ export interface TaskState {
   readonly activeDecisionId?: string | undefined;
   readonly reviewRefs?: readonly string[] | undefined;
   readonly latestReviewRef?: string | undefined;
+  readonly reviewFindings?: ReviewFindingsRecord | undefined;
   readonly budgetLedgers?: readonly BudgetLedger[] | undefined;
   readonly checkpointConfigId?: string | undefined;
   readonly checkpointVersion?: number | undefined;

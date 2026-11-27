@@ -12,6 +12,7 @@ import {
   type ProviderRequest,
   type StateTransitionOptions,
 } from '../contracts/foundation/uc03.ts';
+import { retainReviewFindings } from '../foundation/review-findings.ts';
 import { reviewerContextDigest } from '../foundation/reviewer.ts';
 import { evaluateDeterministicCompletion } from './verification.ts';
 import { loadCompletionPredicateInput, reportForPredicate } from './graph-completion.ts';
@@ -163,6 +164,8 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
     if (!reviewValidation.ok || !reviewAdmissionValidation.ok || result.iterationReservationRef !== reviewRequest.reservationRef) {
       return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Reviewer result does not match the admitted current diff and persisted reservation'] };
     }
+    const reviewFindings = retainReviewFindings(result);
+    if (!reviewFindings) return { state: ownerState, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Review findings metadata cannot be safely retained'] };
     const reviewRefs = [...new Set([...(current.state.reviewRefs ?? []), result.reviewId])];
     const milestones = addMilestone(
       state.milestones ?? [],
@@ -183,6 +186,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
         stateVersion: ownerState.stateVersion + 1,
         node: 'Repair',
         latestReviewRef: result.reviewId,
+        reviewFindings,
         reviewRefs,
         evidenceRefs: [...new Set([...ownerState.evidenceRefs, ...failureRefs])],
         nextAction: 'repair-review-findings',
@@ -197,6 +201,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
       node: 'Deliver',
       activeDecisionId: undefined,
       latestReviewRef: result.reviewId,
+      reviewFindings,
       reviewRefs,
       outcome: 'COMPLETED',
       nextAction: 'deliver-final-report',
@@ -225,6 +230,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
         stateVersion: ownerState.stateVersion + 1,
         node: 'Repair',
         latestReviewRef: result.reviewId,
+        reviewFindings,
         reviewRefs,
         // Repair is non-terminal, so the outcome lives on the report only.
         nextAction: 'halt-missing-completion-evidence',
@@ -255,6 +261,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
         stateVersion: ownerState.stateVersion + 1,
         node: 'Repair',
         latestReviewRef: result.reviewId,
+        reviewFindings,
         reviewRefs,
         nextAction: 'halt-incomplete-completion-predicate',
       };

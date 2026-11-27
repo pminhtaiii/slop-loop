@@ -4,6 +4,9 @@ import { runControlledUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
 import { controlledReviewFixture, controlledReviewCompletion } from '../support/uc06/review-evidence.ts';
 import { prepareControlledUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { controlledCompletionContext, controlledGeneratedPlanFixture, type ControlledReviewVerdict } from '../support/uc03/controlled-host-journey.ts';
+import { buildTransportPayload } from '../../../src/foundation/model.ts';
+import { admit } from '../../../src/foundation/deepseek-transport-request.ts';
+import { createFixtureProviderRequest } from '../support/uc03/port-fixtures.ts';
 import type { TaskState } from '../../../src/contracts/foundation/uc03.ts';
 
 const REPAIR_VERDICTS: readonly ControlledReviewVerdict[] = [
@@ -119,6 +122,22 @@ test('R16: actionable review finding transitions graph to Repair and stores obse
   const finalState = await fixture.owner.loadTask(fixture.task.taskId);
   assert.equal(finalState?.node, 'Repair');
   assert.equal(finalState?.latestReviewRef, [...fixture.evidence.records.values()][0]?.observation.result?.reviewId);
+  assert.deepEqual(finalState?.reviewFindings, {
+    source: 'reviewer-output',
+    isUntrustedModelOutput: true,
+    reviewId: finalState?.latestReviewRef,
+    findings: [{ file: 'src/calculator.py', line: 1, side: 'old', severity: 'warning', message: 'Removing this behavior without preserving the public contract violates the admitted convention.' }],
+    truncated: false,
+  });
+  assert.ok(finalState);
+  const request = createFixtureProviderRequest({ role: 'coder', purpose: 'propose-repair', maxInputTokens: 100000, maxBillableTokens: 120000, maxCostUsd: 1 });
+  const admission = admit(buildTransportPayload(finalState, [], request), { inputRate: 1, outputRate: 1, cacheRate: 1, overheadRate: 0, denominator: 1 }, 'https://host.invalid/messages');
+  assert.equal(admission.ok, true);
+  if (admission.ok) {
+    const body = JSON.parse(admission.body) as { messages: { content: string }[] };
+    const prompt = JSON.parse(body.messages[0]?.content ?? '') as { reviewFindings: unknown };
+    assert.deepEqual(prompt.reviewFindings, finalState.reviewFindings);
+  }
   assert.equal(finalState?.outcome, undefined, 'finding must not set terminal outcome COMPLETED');
   assert.equal([...fixture.evidence.records.values()][0]?.observation.status, 'findings');
   assert.equal(fixture.requests.length, 1);
@@ -249,6 +268,8 @@ test('R16/R17: full review-repair-verification-review journey drives repair patc
   const repaired = await driveRepairRound(fixture);
   assert.equal(repaired.outcome, 'COMPLETED', JSON.stringify({ reasons: repaired.reasons, node: repaired.state?.node }));
   assert.equal(repaired.state?.node, 'Deliver');
+  assert.equal(repaired.state?.reviewFindings?.reviewId, repaired.state?.latestReviewRef);
+  assert.deepEqual(repaired.state?.reviewFindings?.findings, []);
   assert.equal(repaired.finalReport?.isComplete, true);
   assert.equal(repaired.finalReport?.delivery?.outcome, 'COMPLETED');
   // Two patches produced and settled across the two review rounds
