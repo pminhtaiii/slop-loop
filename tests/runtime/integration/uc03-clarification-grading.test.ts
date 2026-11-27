@@ -154,20 +154,23 @@ function createFinalTreeDouble(repositoryRoot: string, overrides: { modifyProtec
 
 function createC02Grader() {
   const criteriaDigest = `sha256:${'c'.repeat(64)}`;
-  return createSnapshotGrader({
-    criteria: {
-      digest: criteriaDigest,
-      criteria: [{ criterionId: 'crit-c02-clarification', caseId: 'C02', predicate: 'clarification', hiddenCheckId: null }],
+  return createSnapshotGrader(
+    {
+      criteria: {
+        digest: criteriaDigest,
+        criteria: [{ criterionId: 'crit-c02-clarification', caseId: 'C02', predicate: 'clarification', hiddenCheckId: null }],
+      },
+      profile: {
+        profileId: 'clarify-profile',
+        digest: `sha256:${'a'.repeat(64)}`,
+        bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+      },
+      graderPayload: 'CLARIFICATION_PAYLOAD',
+      isolationAuthority: { admit: async (req: EvaluationGradingAdmissionRequest) => ({ kind: 'mock-admission', admissionId: 'adm-c02', ...req }) },
+      executor: { executorId: 'mock-exec-c02', execute: async () => ({ outcome: 'pass', output: '' }) },
     },
-    profile: {
-      profileId: 'clarify-profile',
-      digest: `sha256:${'a'.repeat(64)}`,
-      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
-    },
-    graderPayload: 'CLARIFICATION_PAYLOAD',
-    isolationAuthority: { admit: async (req: EvaluationGradingAdmissionRequest) => ({ kind: 'mock-admission', admissionId: 'adm-c02', ...req }) },
-    executor: { executorId: 'mock-exec-c02', execute: async () => ({ outcome: 'pass', output: '' }) },
-  });
+    'controlled-tier',
+  );
 }
 
 test('bound C02 production graph genuine clarification pause supplies gradeable baseline evidence and passes C02 grade', async () => {

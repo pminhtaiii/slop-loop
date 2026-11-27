@@ -359,17 +359,20 @@ async function runGeneratedAskGrade(predicate: 'clarification' | 'regression', d
   });
   assert.equal(readiness.status, 'controlled-ready');
   if (readiness.status !== 'controlled-ready') throw new Error('Controlled workflow evidence fixture was refused');
-  const grader = createSnapshotGrader({
-    criteria: { digest: `sha256:${digest(`criteria-${predicate}`)}`, criteria: [{ criterionId: `criterion-C02-${predicate}`, caseId: 'C02', predicate, hiddenCheckId: null }] },
-    profile: {
-      profileId: 'controlled-profile',
-      digest: `sha256:${digest('controlled-profile-digest')}`,
-      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+  const grader = createSnapshotGrader(
+    {
+      criteria: { digest: `sha256:${digest(`criteria-${predicate}`)}`, criteria: [{ criterionId: `criterion-C02-${predicate}`, caseId: 'C02', predicate, hiddenCheckId: null }] },
+      profile: {
+        profileId: 'controlled-profile',
+        digest: `sha256:${digest('controlled-profile-digest')}`,
+        bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+      },
+      isolationAuthority: { admit: () => undefined },
+      executor: { executorId: 'controlled-grader', execute: () => undefined },
+      graderPayload: null,
     },
-    isolationAuthority: { admit: () => undefined },
-    executor: { executorId: 'controlled-grader', execute: () => undefined },
-    graderPayload: null,
-  });
+    'controlled-tier',
+  );
   const snapshotFor = (
     binding: {
       readonly taskId: string;
@@ -673,17 +676,20 @@ test('a blocked regression check keeps its bound focused pass and reaches the sn
   assert.deepEqual(facts, { required: false, focused: true });
 
   const snapshot = { snapshotId: 'snapshot-regression-001', digest: `sha256:${digest('regression-snapshot')}` };
-  const grader = createSnapshotGrader({
-    criteria: { digest: `sha256:${digest('criteria-regression')}`, criteria: [{ criterionId: 'criterion-C02-regression', caseId: 'C02', predicate: 'regression', hiddenCheckId: null }] },
-    profile: {
-      profileId: 'controlled-profile',
-      digest: `sha256:${digest('controlled-profile-digest')}`,
-      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+  const grader = createSnapshotGrader(
+    {
+      criteria: { digest: `sha256:${digest('criteria-regression')}`, criteria: [{ criterionId: 'criterion-C02-regression', caseId: 'C02', predicate: 'regression', hiddenCheckId: null }] },
+      profile: {
+        profileId: 'controlled-profile',
+        digest: `sha256:${digest('controlled-profile-digest')}`,
+        bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+      },
+      isolationAuthority: { admit: () => undefined },
+      executor: { executorId: 'controlled-grader', execute: () => undefined },
+      graderPayload: null,
     },
-    isolationAuthority: { admit: () => undefined },
-    executor: { executorId: 'controlled-grader', execute: () => undefined },
-    graderPayload: null,
-  });
+    'controlled-tier',
+  );
   const grade = await grader.grade('C02', {
     observation: validateWorkflowObservation({
       repositoryId: task.repositoryId,
@@ -1216,20 +1222,23 @@ async function runServiceClarificationReportGrade(predicate: 'clarification' | '
   assert.equal(readiness.status, 'controlled-ready');
   if (readiness.status !== 'controlled-ready') throw new Error('Controlled C02 report route was refused');
 
-  const grader = createSnapshotGrader({
-    criteria: {
-      digest: `sha256:${digest(`service-C02-${predicate}`)}`,
-      criteria: [{ criterionId: `criterion-service-C02-${predicate}`, caseId: 'C02', predicate, hiddenCheckId: null }],
+  const grader = createSnapshotGrader(
+    {
+      criteria: {
+        digest: `sha256:${digest(`service-C02-${predicate}`)}`,
+        criteria: [{ criterionId: `criterion-service-C02-${predicate}`, caseId: 'C02', predicate, hiddenCheckId: null }],
+      },
+      profile: {
+        profileId: 'controlled-service-C02-grader',
+        digest: `sha256:${digest('controlled-service-C02-grader-profile')}`,
+        bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+      },
+      isolationAuthority: { admit: () => undefined },
+      executor: { executorId: 'controlled-service-C02-grader', execute: () => undefined },
+      graderPayload: null,
     },
-    profile: {
-      profileId: 'controlled-service-C02-grader',
-      digest: `sha256:${digest('controlled-service-C02-grader-profile')}`,
-      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
-    },
-    isolationAuthority: { admit: () => undefined },
-    executor: { executorId: 'controlled-service-C02-grader', execute: () => undefined },
-    graderPayload: null,
-  });
+    'controlled-tier',
+  );
   let freezeCalls = 0;
   let recheckCalls = 0;
   const finalTreeFor = async (

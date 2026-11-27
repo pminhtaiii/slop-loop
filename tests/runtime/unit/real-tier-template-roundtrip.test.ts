@@ -312,13 +312,16 @@ test('copied, stale, and foreign admission and observation receipts are refused 
   const checkedObs = validateWorkflowObservation(
     obs({ repositoryId: fixture.task.repositoryId, taskId: fixture.task.taskId, runId: 'run-tpl-obs-1', workflowOutcome: 'waiting-info', expectedWait: 'waiting-info' }),
   );
-  const grader = createSnapshotGrader({
-    criteria: { digest: `sha256:${sha256Text('crit')}`, criteria: [{ criterionId: 'c2', caseId: 'C02', predicate: 'clarification', hiddenCheckId: null }] },
-    profile: { profileId: 'p', digest: `sha256:${sha256Text('p')}`, bounds: { timeoutMs: 1000, maxCpuMs: 1000, maxOutputBytes: 4096, maxMemoryBytes: 65536, maxProcesses: 4 } },
-    isolationAuthority: { admit: () => undefined },
-    executor: { executorId: 'e', execute: () => undefined },
-    graderPayload: null,
-  });
+  const grader = createSnapshotGrader(
+    {
+      criteria: { digest: `sha256:${sha256Text('crit')}`, criteria: [{ criterionId: 'c2', caseId: 'C02', predicate: 'clarification', hiddenCheckId: null }] },
+      profile: { profileId: 'p', digest: `sha256:${sha256Text('p')}`, bounds: { timeoutMs: 1000, maxCpuMs: 1000, maxOutputBytes: 4096, maxMemoryBytes: 65536, maxProcesses: 4 } },
+      isolationAuthority: { admit: () => undefined },
+      executor: { executorId: 'e', execute: () => undefined },
+      graderPayload: null,
+    },
+    'controlled-tier',
+  );
   const snap = () => ({
     taskId: fixture.task.taskId,
     runId: 'run-tpl-obs-1',

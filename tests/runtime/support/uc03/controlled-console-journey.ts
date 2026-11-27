@@ -171,45 +171,48 @@ function isDirectionPermitted(ownerState: TaskState, kind: 'resume' | 'revise' |
 export function createControlledSnapshotGrader(options: { readonly seed?: string | undefined; readonly status?: 'pass' | 'fail' | undefined; readonly onExecute?: () => void } = {}): SnapshotGrader {
   const suffix = options.seed ? `-${options.seed}` : '';
   const status = options.status ?? 'pass';
-  return createSnapshotGrader({
-    criteria: {
-      digest: `sha256:${sha256Text(`journey-criteria${suffix}`)}`,
-      criteria: [{ criterionId: `criterion-C01-journey${suffix}`, caseId: 'C01', predicate: 'repair-success', hiddenCheckId: `hidden-C01-journey${suffix}` }],
-    },
-    profile: {
-      profileId: 'controlled-journey-grader',
-      digest: `sha256:${sha256Text(`journey-grader-profile${suffix}`)}`,
-      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
-    },
-    isolationAuthority: {
-      admit: (request: EvaluationGradingAdmissionRequest) => ({
-        kind: 'injected-mock-isolation-admission',
-        admissionId: sha256Text(`mock-isolation-${request.finalSnapshot.digest}`),
-        checkId: request.checkId,
-        finalSnapshot: request.finalSnapshot,
-        profile: request.profile,
-        executorId: request.executorId,
-      }),
-    },
-    executor: {
-      executorId: 'controlled-journey-hidden-check',
-      execute: (request: EvaluationGraderExecutionRequest) => {
-        options.onExecute?.();
-        return {
+  return createSnapshotGrader(
+    {
+      criteria: {
+        digest: `sha256:${sha256Text(`journey-criteria${suffix}`)}`,
+        criteria: [{ criterionId: `criterion-C01-journey${suffix}`, caseId: 'C01', predicate: 'repair-success', hiddenCheckId: `hidden-C01-journey${suffix}` }],
+      },
+      profile: {
+        profileId: 'controlled-journey-grader',
+        digest: `sha256:${sha256Text(`journey-grader-profile${suffix}`)}`,
+        bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+      },
+      isolationAuthority: {
+        admit: (request: EvaluationGradingAdmissionRequest) => ({
+          kind: 'injected-mock-isolation-admission',
+          admissionId: sha256Text(`mock-isolation-${request.finalSnapshot.digest}`),
           checkId: request.checkId,
           finalSnapshot: request.finalSnapshot,
           profile: request.profile,
           executorId: request.executorId,
-          status,
-          actualOutcome: status === 'pass' ? ('COMPLETED' as const) : ('FAILED' as const),
-          durationMs: 1,
-          cpuMs: 1,
-          outputBytes: 1,
-        };
+        }),
       },
+      executor: {
+        executorId: 'controlled-journey-hidden-check',
+        execute: (request: EvaluationGraderExecutionRequest) => {
+          options.onExecute?.();
+          return {
+            checkId: request.checkId,
+            finalSnapshot: request.finalSnapshot,
+            profile: request.profile,
+            executorId: request.executorId,
+            status,
+            actualOutcome: status === 'pass' ? ('COMPLETED' as const) : ('FAILED' as const),
+            durationMs: 1,
+            cpuMs: 1,
+            outputBytes: 1,
+          };
+        },
+      },
+      graderPayload: null,
     },
-    graderPayload: null,
-  });
+    'controlled-tier',
+  );
 }
 
 export async function composeControlledConsole(options: ControlledConsoleOptions = {}): Promise<ComposedControlledConsole> {

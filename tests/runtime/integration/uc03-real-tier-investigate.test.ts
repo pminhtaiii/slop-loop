@@ -10,6 +10,7 @@ import { resolveRealTierAssembly } from '../../../src/runtime/real-tier-assembly
 import { bindRealTierTask } from '../../../src/runtime/real-tier-task-binding.ts';
 import { createHostCoderGeneration } from '../../../src/runtime/host-coder.ts';
 import { runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
+import { recordClarificationAnswer } from '../../../src/uc03/clarification.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
@@ -17,7 +18,7 @@ import { createScanFixture } from '../unit/real-tier-scan-fixtures.ts';
 
 const fixture = createScanFixture('investigate-', 'investigate-profile-fixture');
 
-async function setup(nodeId = false) {
+async function setup(nodeId = false, customResponses?: readonly Record<string, unknown>[]) {
   const target = nodeId ? 'tests/test_calculator.py::test_divide_zero' : 'tests/test_calculator.py';
   const root = mkdtempSync(join(tmpdir(), 'investigate-case-'));
   const repositoryRoot = join(root, 'repository');
@@ -52,7 +53,8 @@ async function setup(nodeId = false) {
   let baselineCalls = 0;
   let fetches = 0;
   let admissions = 0;
-  const responses = [
+  const fetchBodies: string[] = [];
+  const responses = customResponses ?? [
     { kind: 'inspect', proposalId: 'inspect-source', operation: 'read_file', args: { path: 'src/calculator.py' } },
     {
       kind: 'propose-plan',
@@ -80,8 +82,9 @@ async function setup(nodeId = false) {
       }
       return docker.spawn(command, args, options);
     },
-    fetch: async () => {
+    fetch: async (_input, init) => {
       assert.equal(admissions, fetches + 1);
+      fetchBodies.push(String(init?.body ?? ''));
       const response = responses[fetches++];
       assert.ok(response, 'unexpected provider call');
       return new Response(
@@ -116,9 +119,9 @@ async function setup(nodeId = false) {
       const validated = validateProviderAdmissionV02(admission.context, admission.trustedContext);
       assert.equal(validated.ok, true, JSON.stringify(validated));
       const request = admission.request;
-      assert.equal(request.maxInputTokens, admissions === 0 ? 32768 : 32668);
-      assert.equal(request.maxOutputTokens, admissions === 0 ? 8192 : 8142);
-      assert.equal(request.maxBillableTokens, admissions === 0 ? 40960 : 40810);
+      assert.equal(request.maxInputTokens, 32768 - admissions * 100);
+      assert.equal(request.maxOutputTokens, 8192 - admissions * 50);
+      assert.equal(request.maxBillableTokens, 40960 - admissions * 150);
       assert.equal(request.maxCostUsd, microUsd(assembly.profile.pricing, request.maxInputTokens, request.maxOutputTokens, request.maxInputTokens) / 1_000_000);
       admissions++;
     }
@@ -137,7 +140,7 @@ async function setup(nodeId = false) {
     generation,
   };
   const owner = assembly.owners.taskOwners({ ...bound.ids, repositoryId: task.repositoryId }).statePort;
-  return { bound, config, owner, counts: () => ({ baselineCalls, fetches, admissions }) };
+  return { bound, config, owner, fetchBodies, counts: () => ({ baselineCalls, fetches, admissions }) };
 }
 
 test('bound C01 investigates the mirrored repository and pauses for its calculator plan', async () => {
@@ -192,3 +195,73 @@ for (const removed of ['check', 'coder'] as const)
     assert.equal(result.state?.node, 'Investigate');
     assert.equal(h.counts().fetches, 0);
   });
+
+test('recorded and resumed clarification answer reaches the real coder transport request on resume', async () => {
+  const questionText = 'How should Calculator.divide(10, 0) behave?';
+  const answerText = 'Raise CalculationError with message cannot divide by zero';
+  const h = await setup(false, [
+    { kind: 'inspect', proposalId: 'inspect-source', operation: 'read_file', args: { path: 'src/calculator.py' } },
+    {
+      kind: 'request-info',
+      proposalId: 'clarify-divide',
+      questions: [{ questionId: 'q-divide-zero', text: questionText }],
+      evidenceRefs: ['src/calculator.py'],
+    },
+    {
+      kind: 'propose-plan',
+      proposalId: 'plan-zero',
+      diagnosis: 'The denominator is unchecked',
+      strategy: 'Raise CalculationError for zero',
+      suspectedLocations: ['src/calculator.py'],
+      scopedPaths: ['src/calculator.py'],
+      evidenceRefs: ['src/calculator.py'],
+    },
+  ]);
+
+  const paused = await runUC03GraphV02(h.bound.task, h.bound.ports, h.config);
+  assert.equal(paused.outcome, 'needs-info', JSON.stringify(paused.reasons));
+  assert.ok(paused.state);
+  assert.equal(paused.state.node, 'NeedsInfo');
+  assert.equal(h.fetchBodies.length, 2);
+
+  for (const bodyText of h.fetchBodies) {
+    const parsed = JSON.parse(bodyText) as { messages: readonly [{ content: string }] };
+    const prompt = JSON.parse(parsed.messages[0].content) as Record<string, unknown>;
+    assert.equal('reporterClarification' in prompt, false);
+  }
+
+  const answered = await recordClarificationAnswer({
+    statePort: h.owner,
+    prior: paused.state,
+    answer: { recorderRef: 'operator-console-1', items: [{ questionId: 'q-divide-zero', text: answerText }] },
+  });
+  assert.equal(answered.state.node, 'Investigate');
+
+  const resumed = await runUC03GraphV02(h.bound.task, h.bound.ports, h.config, answered.state);
+  assert.equal(resumed.outcome, 'pending-approval', JSON.stringify(resumed.reasons));
+  assert.equal(h.fetchBodies.length, 3);
+
+  const resumedBody = JSON.parse(h.fetchBodies[2] ?? '') as { messages: readonly [{ content: string }] };
+  const resumedPrompt = JSON.parse(resumedBody.messages[0].content) as {
+    task: { goal: string; acceptanceCriteria: readonly string[] };
+    request: { role: string; purpose: string };
+    reporterClarification?: {
+      source: string;
+      isUntrustedReporterInput: boolean;
+      answerDigest: string;
+      questions: readonly { questionId: string; text: string }[];
+      answers: readonly { questionId: string; text: string }[];
+    };
+  };
+  assert.equal(resumedPrompt.request.role, 'coder');
+  assert.equal(resumedPrompt.request.purpose, 'propose-plan');
+  assert.equal(resumedPrompt.task.goal, h.bound.task.goal);
+  assert.deepEqual(resumedPrompt.task.acceptanceCriteria, h.bound.task.acceptanceCriteria);
+  assert.deepEqual(resumedPrompt.reporterClarification, {
+    source: 'reporter-supplied',
+    isUntrustedReporterInput: true,
+    answerDigest: answered.state.clarification?.answer?.answerDigest,
+    questions: [{ questionId: 'q-divide-zero', text: questionText }],
+    answers: [{ questionId: 'q-divide-zero', text: answerText }],
+  });
+});
