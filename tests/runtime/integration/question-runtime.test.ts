@@ -15,13 +15,316 @@ import { computeSourceManifestDigest } from '../../../src/foundation/question-re
 import { createQuestionBudgetLedger } from '../../../src/questions/budget.ts';
 import { createControlledQuestionEmbedding } from '../../../src/questions/embedding.ts';
 import { createQuestionInvestigation } from '../../../src/questions/graph.ts';
+import { projectQuestionSession } from '../../../src/questions/session-projection.ts';
+import { openSession } from '../../../src/questions/session.ts';
+import type { QuestionSessionRunRequest } from '../../../src/questions/session-types.ts';
 import type { QuestionCompiledRequestV1 } from '../../../src/questions/model.ts';
 import type { QuestionIndexRow } from '../../../src/questions/index.ts';
 import type { QuestionRepositoryPort } from '../../../src/questions/repository.ts';
+import type { QuestionRepositoryOperationControl } from '../../../src/foundation/repository-types.ts';
 import { guardedRetrievalRepository } from '../support/questions/retrieval-guarded-fixture.ts';
 import { QUESTION_BEHAVIOR_CONTROLS, ScriptedQuestionTransport, controlledQuestionRequestCounter } from '../support/questions/scripted-model.ts';
 
 const control = () => ({ signal: new AbortController().signal, deadlineEpochMs: Date.now() + 20000 });
+
+for (const field of ['constraints', 'pendingClarification'] as const) {
+  test('continuation admits configured conversation bytes for ' + field + ' through model dispatch', async () => {
+    const value = 'x'.repeat(9000);
+    const f = fixture([context => answer(context, ['entry.py'])]);
+    const continuation = {
+      context: {
+        taskId: 'task',
+        binding: f.options.identity.binding,
+        intent: 'Explain start.',
+        constraints: field === 'constraints' ? [value] : [],
+        pendingClarification: field === 'pendingClarification' ? value : null,
+        conversation: [],
+      },
+      sourceReferences: [],
+    };
+    const graph = createQuestionInvestigation({ ...f.options, continuation });
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explain start.', control());
+    assert.equal(run.result.kind, 'answered');
+    const sent = JSON.parse(f.requests[0]?.serialized ?? '{}') as { constraints: string[]; pendingClarification: string | null };
+    assert.deepEqual(sent[field], field === 'constraints' ? [value] : value);
+  });
+}
+
+test('oversized aggregate mandatory continuation context is rejected before IO', () => {
+  const f = fixture([]);
+  const graph = createQuestionInvestigation({
+    ...f.options,
+    continuation: {
+      context: { taskId: 'task', binding: f.options.identity.binding, intent: 'Explain start.', constraints: ['x'.repeat(8000)], pendingClarification: 'y'.repeat(8000), conversation: [] },
+      sourceReferences: [],
+    },
+  });
+  assert.deepEqual(graph, { ok: false, reasonCode: 'invalid-config' });
+  assert.deepEqual(f.counts(), { modelCalls: 0, scans: 0 });
+  assert.equal(f.bindingChecks(), 0);
+  assert.equal(f.guarded.reads.length, 0);
+});
+
+for (const { assembledBytes, cancelled } of [
+  { assembledBytes: 65_536, cancelled: false },
+  { assembledBytes: 65_537, cancelled: false },
+  { assembledBytes: 65_537, cancelled: true },
+]) {
+  test('continuation question ' + assembledBytes + ' UTF-8 bytes uses the compiler ceiling before IO' + (cancelled ? ' with cancellation' : ''), async () => {
+    const question = 'é'.repeat(12);
+    const labels = 'Original task goal:\n\nCurrent user turn:\n';
+    const intent = 'g'.repeat(assembledBytes - Buffer.byteLength(labels) - Buffer.byteLength(question));
+    const f = fixture([context => answer(context, ['entry.py'])], undefined, undefined, { maxConversationBytes: 100000, maxInputTokensPerCall: 100000 });
+    const profile = { ...f.profile, repository: { ...f.profile.repository, maxQueryBytes: 100000 } };
+    const budget = createQuestionBudgetLedger(profile, { pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 } });
+    assert.ok(budget.ok);
+    const guarded = guardedRetrievalRepository({ ...f.options, budget: budget.value, limits: profile.retrieval, repositoryLimits: profile.repository }, f.texts);
+    const graph = createQuestionInvestigation({
+      ...f.options,
+      profile,
+      budget: budget.value,
+      repository: guarded.repository,
+      continuation: { context: { taskId: 'task', binding: f.options.identity.binding, intent, constraints: [], pendingClarification: null, conversation: [] }, sourceReferences: [] },
+    });
+    assert.ok(graph.ok);
+    const cancellation = new AbortController();
+    if (cancelled) cancellation.abort();
+    const run = await graph.value.run(question, { ...control(), signal: cancellation.signal });
+    if (assembledBytes === 65_536) {
+      assert.equal(run.result.kind, 'answered');
+      const sent = JSON.parse(f.requests[0]?.serialized ?? '{}') as { question: string };
+      assert.equal(Buffer.byteLength(sent.question), 65_536);
+      assert.equal(sent.question, 'Original task goal:\n' + intent + '\nCurrent user turn:\n' + question);
+    } else {
+      assert.equal(run.result.kind, cancelled ? 'cancelled' : 'blocked');
+      if (run.result.kind === 'blocked') assert.equal(run.result.reasonCode, 'context-limit');
+      if (cancelled) assert.equal(budget.value.snapshot().status, 'cancelled');
+      assert.ok(!('claims' in run.result) && !('citations' in run.result));
+      assert.deepEqual(f.counts(), { modelCalls: 0, scans: 0 });
+      assert.equal(f.bindingChecks(), 0);
+      assert.equal(guarded.reads.length, 0);
+      assert.equal(budget.value.snapshot().consumed.modelCalls, 0);
+    }
+  });
+}
+
+test('direct graph continuation snapshots constraint elements once before validating model-visible intent', async () => {
+  let reads = 0;
+  const constraints: string[] = [];
+  Object.defineProperty(constraints, 0, { enumerable: true, get: () => (++reads === 1 ? 'Inspect source only' : 'MARKER_SECRET_CONSTRAINT') });
+  const f = fixture([
+    context => {
+      const serialized = JSON.parse(f.requests.at(-1)?.serialized ?? '{}') as { constraints: string[] };
+      assert.deepEqual(serialized.constraints, ['Inspect source only']);
+      return answer(context, ['entry.py']);
+    },
+  ]);
+  const graph = createQuestionInvestigation({
+    ...f.options,
+    continuation: { context: { taskId: 'task', binding: f.options.identity.binding, intent: 'Explain start.', constraints, pendingClarification: null, conversation: [] }, sourceReferences: [] },
+  });
+  assert.ok(graph.ok);
+  const result = await graph.value.run('Explain start.', control());
+  assert.equal(result.result.kind, 'answered');
+  assert.equal(reads, 1);
+  assert.equal(f.requests.length, 1);
+  assert.ok(!f.requests[0]?.serialized.includes('MARKER_SECRET_CONSTRAINT'));
+});
+
+test('session follow-up reissues earlier supplemental spans and sends mandatory goal and constraints to the model', async () => {
+  let firstEvidenceId = '';
+  const f = fixture([
+    () => ({ kind: 'read', path: 'process.py', startLine: 1, endLine: 2 }),
+    context => {
+      firstEvidenceId = context.evidence.spans.find(span => span.path === 'process.py')?.evidenceId ?? '';
+      return answer(context, ['process.py']);
+    },
+    context => {
+      const span = context.evidence.spans.find(item => item.path === 'process.py');
+      assert.ok(span, 'same-task prior evidence must be re-read even when absent from the new ranking');
+      assert.notEqual(span.evidenceId, firstEvidenceId);
+      const request = JSON.parse(f.requests.at(-1)?.serialized ?? '{}') as { question: string; constraints: string[] };
+      assert.match(request.question, /Explain the processing flow/);
+      assert.match(request.question, /What does its callee do/);
+      assert.deepEqual(request.constraints, ['Use source inspection only']);
+      return answer(context, ['process.py']);
+    },
+  ]);
+  const requests: QuestionSessionRunRequest[] = [];
+  const created = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async (request, bounded) => {
+      requests.push(request);
+      const guarded = guardedRetrievalRepository(
+        { ...f.options, identity: request.identity, budget: request.budget, limits: request.profile.retrieval, repositoryLimits: request.profile.repository },
+        f.texts,
+      );
+      const graph = createQuestionInvestigation({
+        ...f.options,
+        identity: request.identity,
+        profile: request.profile,
+        budget: request.budget,
+        repository: guarded.repository,
+        continuation: { context: request.context, sourceReferences: request.sourceReferences },
+      });
+      assert.ok(graph.ok);
+      return graph.value.run(request.question, bounded);
+    },
+  });
+  assert.ok(created.ok);
+  const first = await created.value.startTask(
+    {
+      taskId: 'task',
+      question: 'Explain the processing flow',
+      constraints: ['Use source inspection only'],
+      profile: f.profile,
+      binding: f.options.identity.binding,
+      configDigest: f.options.identity.configDigest,
+    },
+    control(),
+  );
+  assert.equal(first.status, 'completed');
+  if (first.status !== 'completed') return;
+  assert.equal(first.result.kind, 'answered', JSON.stringify(first));
+  assert.equal((await created.value.compactSession()).status, 'compacted');
+  const next = await created.value.continueTask({ taskId: 'task', turnId: first.turnId, question: 'What does its callee do?' }, control());
+  assert.equal(next.status, 'completed');
+  if (next.status !== 'completed') return;
+  assert.equal(next.result.kind, 'answered', JSON.stringify(next));
+  assert.equal(requests[0]?.budget, requests[1]?.budget);
+  assert.ok(next.result.kind === 'answered' && next.result.citations.some(citation => citation.path === 'process.py'));
+});
+
+test('session drift requires explicit rebind and retains spent ledger when admitting the new snapshot', async () => {
+  const old = fixture([context => answer(context, ['entry.py'])]);
+  const fresh = fixture(
+    [
+      context => {
+        assert.match(context.evidence.spans[0]?.excerpt ?? '', /updated_value/);
+        return {
+          kind: 'answer',
+          claims: [
+            {
+              claimId: 'updated',
+              text: 'The source returns the updated value.',
+              kind: 'observation',
+              evidence: [{ evidenceId: context.evidence.spans[0]?.evidenceId, range: { startLine: 1, endLine: 2 } }],
+            },
+          ],
+          limitations: [],
+        };
+      },
+    ],
+    new Map([['entry.py', 'def start():\n    return "updated_value"']]),
+  );
+  fresh.options.identity.binding.revisionDigest = digest('new-revision');
+  const seen: QuestionSessionRunRequest[] = [];
+  const created = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async (request, bounded) => {
+      seen.push(request);
+      if (request.identity.binding.revisionDigest === fresh.options.identity.binding.revisionDigest) assert.deepEqual(request.sourceReferences, []);
+      return runSessionFixture(request.identity.binding.revisionDigest === fresh.options.identity.binding.revisionDigest ? fresh : old, request, bounded);
+    },
+  });
+  assert.ok(created.ok);
+  const input = { taskId: 'task', question: 'Explain start.', binding: old.options.identity.binding, configDigest: old.options.identity.configDigest, profile: old.profile };
+  const first = await created.value.startTask(input, control());
+  assert.ok(first.status === 'completed' && first.result.kind === 'answered');
+  old.stale();
+  const stale = await created.value.continueTask({ taskId: 'task', turnId: first.turnId, question: 'And now?' }, control());
+  assert.ok(stale.status === 'completed' && stale.result.kind === 'stale-repository');
+  assert.equal(old.counts().modelCalls, 1);
+  const consumed = created.value.snapshot().budget?.consumed.modelCalls;
+  assert.deepEqual(await created.value.continueTask({ taskId: 'task', turnId: stale.turnId, question: 'Retry automatically?' }, control()), { status: 'refused', reasonCode: 'rebind-required' });
+  const next = await created.value.continueTask(
+    { taskId: 'task', turnId: stale.turnId, question: 'Inspect the admitted new revision.', rebind: { binding: fresh.options.identity.binding } },
+    control(),
+  );
+  assert.ok(next.status === 'completed' && next.result.kind === 'answered', JSON.stringify(next));
+  assert.equal(seen[0]?.budget, seen[2]?.budget);
+  assert.equal(created.value.snapshot().budget?.consumed.modelCalls, (consumed ?? 0) + 1);
+  assert.equal(next.result.identity.binding.revisionDigest, digest('new-revision'));
+  assert.equal(seen.length, 3);
+});
+
+test('follow-up cannot relabel changed snapshot bytes as the unchanged current-workspace revision', async () => {
+  const f = fixture([() => ({ kind: 'read', path: 'process.py', startLine: 1, endLine: 2 }), context => answer(context, ['process.py'])]);
+  const created = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: (request, bounded) => runSessionFixture(f, request, bounded),
+  });
+  assert.ok(created.ok);
+  const first = await created.value.startTask(
+    { taskId: 'task', question: 'Explain process.', binding: f.options.identity.binding, configDigest: f.options.identity.configDigest, profile: f.profile },
+    control(),
+  );
+  assert.ok(first.status === 'completed' && first.result.kind === 'answered');
+  f.texts.set('process.py', 'def process():\n    return "wrong_snapshot_bytes"');
+  const next = await created.value.continueTask({ taskId: 'task', turnId: first.turnId, question: 'Explain it again.' }, control());
+  assert.ok(next.status === 'completed' && next.result.kind === 'stale-repository', JSON.stringify(next));
+  assert.ok(!('claims' in next.result));
+  assert.equal(f.counts().modelCalls, 2, 'corrupt re-admission must stop before another model call');
+  assert.deepEqual(await created.value.continueTask({ taskId: 'task', turnId: next.turnId, question: 'Try again' }, control()), { status: 'refused', reasonCode: 'rebind-required' });
+});
+
+test('explicit repository switch admits a fresh task with no old source text or claims in model context', async () => {
+  const old = fixture([context => answer(context, ['entry.py'])], new Map([['entry.py', 'def start():\n    return "OLD_REPOSITORY_SOURCE"']]));
+  const fresh = fixture([context => answer(context, ['entry.py'])], new Map([['entry.py', 'def start():\n    return "NEW_REPOSITORY_SOURCE"']]));
+  fresh.options.identity.binding.repositoryId = 'other-repo';
+  const seen: QuestionSessionRunRequest[] = [];
+  const created = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async (request, bounded) => {
+      seen.push(request);
+      return runSessionFixture(request.identity.binding.repositoryId === 'other-repo' ? fresh : old, request, bounded);
+    },
+  });
+  assert.ok(created.ok);
+  const first = await created.value.startTask(
+    { taskId: 'task', question: 'Explain the old repository.', binding: old.options.identity.binding, configDigest: old.options.identity.configDigest, profile: old.profile },
+    control(),
+  );
+  assert.ok(first.status === 'completed' && first.result.kind === 'answered');
+  const input = {
+    taskId: 'new-task',
+    question: 'Explain the selected repository.',
+    binding: fresh.options.identity.binding,
+    configDigest: fresh.options.identity.configDigest,
+    profile: fresh.profile,
+  };
+  assert.deepEqual(await created.value.startTask(input, control()), { status: 'refused', reasonCode: 'switch-required' });
+  const next = await created.value.switchRepository(input, control());
+  assert.ok(next.status === 'completed' && next.result.kind === 'answered', JSON.stringify(next));
+  assert.deepEqual(seen[1]?.sourceReferences, []);
+  assert.deepEqual(seen[1]?.context.conversation, []);
+  assert.ok(!fresh.requests[0]?.serialized.includes('OLD_REPOSITORY_SOURCE'));
+  assert.ok(!fresh.requests[0]?.serialized.includes('Explain the old repository.'));
+  assert.ok(fresh.requests[0]?.serialized.includes('NEW_REPOSITORY_SOURCE'));
+  assert.notEqual(seen[0]?.budget, seen[1]?.budget);
+});
+
+function runSessionFixture(f: ReturnType<typeof fixture>, request: QuestionSessionRunRequest, bounded: QuestionRepositoryOperationControl) {
+  const guarded = guardedRetrievalRepository(
+    { ...f.options, identity: request.identity, budget: request.budget, limits: request.profile.retrieval, repositoryLimits: request.profile.repository },
+    f.texts,
+  );
+  const graph = createQuestionInvestigation({
+    ...f.options,
+    identity: request.identity,
+    profile: request.profile,
+    budget: request.budget,
+    repository: guarded.repository,
+    continuation: { context: request.context, sourceReferences: request.sourceReferences },
+  });
+  assert.ok(graph.ok);
+  return graph.value.run(request.question, bounded);
+}
 
 test('simultaneous caller cancellation and epoch expiry cancels the retained ledger before IO', async () => {
   const f = fixture([]);
@@ -1622,4 +1925,99 @@ test('a malicious final claim canary is suppressed without leaking or final sour
   assert.ok(!JSON.stringify(transport).includes(canary));
   assert.equal(loggedCanary, false);
   assert.ok(!('claims' in run.result) && !('citations' in run.result));
+});
+
+test('direct continuation validates bounded indexed arrays without asking for their iterators', async () => {
+  const f = fixture([context => answer(context, ['entry.py'])]);
+  const conversation = [{ role: 'user' as const, text: 'Indexed turn' }];
+  const sourceReferences: [] = [];
+  for (const array of [conversation, sourceReferences]) {
+    Object.defineProperty(array, Symbol.iterator, { get: () => assert.fail('borrowed iterator must not run') });
+  }
+  const graph = createQuestionInvestigation({
+    ...f.options,
+    continuation: { context: { taskId: 'task', binding: f.options.identity.binding, intent: 'Explain start.', constraints: [], pendingClarification: null, conversation }, sourceReferences },
+  });
+  assert.ok(graph.ok);
+  assert.equal((await graph.value.run('Explain start.', control())).result.kind, 'answered');
+  assert.match(f.requests[0]?.serialized ?? '', /Indexed turn/);
+});
+
+test('continuation control characters are rejected before repository work', async () => {
+  const f = fixture([]);
+  const context = { taskId: 'task', binding: f.options.identity.binding, intent: 'Explain start.', constraints: [], pendingClarification: null, conversation: [] };
+  for (const invalid of [
+    { constraints: ['before\u0080after'] },
+    { intent: 'before\u202eafter' },
+    { pendingClarification: 'before\u009fafter' },
+    { conversation: [{ role: 'user' as const, text: 'before\u0085after' }] },
+  ]) {
+    assert.deepEqual(createQuestionInvestigation({ ...f.options, continuation: { context: { ...context, ...invalid } } }), { ok: false, reasonCode: 'invalid-config' });
+  }
+  const graph = createQuestionInvestigation({ ...f.options, continuation: { context } });
+  assert.ok(graph.ok);
+  assert.equal((await graph.value.run('before\u009fafter', control())).result.kind, 'failed');
+  assert.equal(f.bindingChecks(), 0);
+  assert.equal(f.guarded.reads.length, 0);
+  assert.deepEqual(f.counts(), { modelCalls: 0, scans: 0 });
+});
+
+for (const reuse of [false, true]) {
+  test('definition hint reflects saved span re-admission: ' + reuse, async () => {
+    const lines = ['def calculate():', ...Array.from({ length: 79 }, (_, i) => '    value_' + i + ' = ' + i)];
+    const body = lines.join('\n');
+    const f = fixture([context => answer(context, ['long.py'])], new Map([['long.py', body]]), [{ path: 'long.py', startLine: 61, endLine: 80, symbol: 'calculate', definitionEnd: 80 }]);
+    const { identity, snapshot } = f.options;
+    const graph = createQuestionInvestigation({
+      ...f.options,
+      continuation: {
+        context: { taskId: identity.taskId, binding: identity.binding, intent: 'Explain calculate.', constraints: [], pendingClarification: null, conversation: [] },
+        sourceReferences: reuse
+          ? [
+              {
+                sessionId: identity.sessionId,
+                taskId: identity.taskId,
+                binding: identity.binding,
+                snapshotId: snapshot.snapshotId,
+                manifestDigest: snapshot.manifestDigest,
+                path: 'long.py',
+                range: { startLine: 1, endLine: 60 },
+                originalByteDigest: digest(body),
+                excerptDigest: digest(lines.slice(0, 60).join('\n')),
+              },
+            ]
+          : [],
+      },
+    });
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explain calculate.', control());
+    assert.equal(run.result.kind, 'answered', JSON.stringify(run));
+    const sent = JSON.parse(f.requests[0]?.serialized ?? '{}') as VisibleContext;
+    assert.equal(
+      sent.evidence.spans.some(span => span.range.startLine === 1 && span.range.endLine === 60),
+      reuse,
+    );
+    const hints = sent.observations.items.map(item => JSON.parse(item) as { kind: string; nextRead: unknown }).filter(item => item.kind === 'definition-continuation');
+    assert.deepEqual(
+      hints.map(hint => hint.nextRead),
+      reuse ? [] : [{ kind: 'read', path: 'long.py', startLine: 1, endLine: 60 }],
+    );
+  });
+}
+
+test('session projection trims oldest optional turns to the direct graph limit', () => {
+  const f = fixture([], undefined, undefined, { maxConversationBytes: 100000 });
+  const context = {
+    taskId: 'task',
+    binding: f.options.identity.binding,
+    intent: 'Explain start.',
+    constraints: ['Read source'],
+    pendingClarification: 'Which entry?',
+    conversation: Array.from({ length: 1001 }, (_, i) => ({ role: 'user' as const, text: 'Turn ' + i })),
+  };
+  assert.deepEqual(createQuestionInvestigation({ ...f.options, continuation: { context } }), { ok: false, reasonCode: 'invalid-config' });
+  const projected = projectQuestionSession(context, f.profile.runtime.maxConversationBytes);
+  assert.ok(projected);
+  assert.deepEqual(projected, { ...context, conversation: context.conversation.slice(1) });
+  assert.ok(createQuestionInvestigation({ ...f.options, continuation: { context: projected } }).ok);
 });
