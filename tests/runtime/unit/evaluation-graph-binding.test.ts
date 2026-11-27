@@ -1,7 +1,7 @@
 /** Per-case evaluation graph binding and startup route validation tests. */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ import { createUC03EvaluationGraph, type UC03EvaluationGraphRoute } from '../../
 import { reportUC03GraphResult, validateEvaluationGraphReportBinding, type EvaluationGraphReportBinding } from '../../../src/runtime/evaluation-graph-report.ts';
 import { admitEvaluationProfile, type CatalogEntry } from '../../../src/runtime/evaluation-profile.ts';
 import { createEvaluationService, type ServiceControlReceipt } from '../../../src/runtime/evaluation-service.ts';
+import { resolveRealConsoleClarificationEnd, validRealConsoleDirection, type RealConsoleDirectionSession } from '../../../src/runtime/real-tier-console-direction.ts';
 import { prepareControlledUC03Host, type UC03ControlledHostReadiness, type UC03HostReadiness } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { checkProductionPortsV02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
@@ -984,4 +985,263 @@ test('real-ready route refuses missing or malformed workflowEvidence at startup 
   } finally {
     await rm(env.files, { recursive: true, force: true });
   }
+});
+
+test('clarification end closes NeedsInfo as bounded INCOMPLETE with zero model calls and refuses missing, mismatched, or revise directions', async () => {
+  const mkClarifyFixture = () =>
+    controlledGeneratedPlanFixture({
+      taskState: { evidenceRefs: ['src/calculator.py'] },
+      firstResponse: {
+        proposalId: 'bind-clarification-end-ask',
+        content: JSON.stringify({
+          kind: 'request-info',
+          proposalId: 'bind-clarification-end-ask',
+          questions: [{ questionId: 'q-denominator', text: 'What should zero division return?' }],
+          evidenceRefs: [],
+        }),
+      },
+    });
+  const fixture = await mkClarifyFixture();
+  const followUp = await controlledGeneratedPlanFixture();
+  const env = createCatalogProfile([
+    { caseId: 'C02', initialRevisionDigest: fixture.task.initialRevisionDigest },
+    { caseId: 'C01', initialRevisionDigest: followUp.task.initialRevisionDigest },
+  ]);
+  const startupTouches: string[] = [];
+  const startupReadiness = throwingStartupReadiness(env.identity, startupTouches);
+  const bundleC02 = prepareCaseBundle(fixture, env.identity);
+  const bundleC01 = prepareCaseBundle(followUp, env.identity);
+  const ownerDirections = new Map<string, Readonly<{ receipt: ServiceControlReceipt; taskVersion: number }>>();
+  let endCalls = 0;
+
+  try {
+    const graph = createUC03EvaluationGraph({
+      catalogRoutes: new Map<string, UC03EvaluationGraphRoute>([
+        [
+          'C02',
+          {
+            entry: env.catalog[0],
+            readiness: startupReadiness,
+            coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+            expectedWait: 'waiting-info',
+            resolveTask: () => fixture.task,
+            bindCase: () => ({ ok: true, ...bundleC02 }),
+            resolveDirection: () => undefined,
+            async resolveClarificationEnd(input) {
+              endCalls += 1;
+              const current = await fixture.statePort.loadTask(fixture.task.taskId);
+              const stored = input.direction ? ownerDirections.get(input.direction.receiptRef) : undefined;
+              if (!current || !stored || !input.direction || stored.taskVersion !== current.stateVersion || current.node !== 'NeedsInfo') return undefined;
+              return {
+                receiptRef: input.direction.receiptRef,
+                controlVersion: input.direction.controlVersion,
+                taskId: current.taskId,
+                runId: current.runId,
+                workspaceId: current.workspaceId,
+                stateVersion: current.stateVersion,
+              };
+            },
+          },
+        ],
+        [
+          'C01',
+          {
+            entry: env.catalog[1],
+            readiness: startupReadiness,
+            coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+            expectedWait: 'waiting-approval',
+            resolveTask: () => followUp.task,
+            bindCase: () => ({ ok: true, ...bundleC01 }),
+            resolveDirection: () => undefined,
+          },
+        ],
+      ]),
+    });
+
+    let seq = 0;
+    const service = createEvaluationService({
+      profile: env.profile,
+      catalog: env.catalog,
+      repositoryIds: [fixture.task.repositoryId, followUp.task.repositoryId],
+      checkSetIds: ['checks-configured'],
+      control: {
+        async issue(input) {
+          const receipt = Object.freeze({ receiptRef: `ctrl-clar-end-${++seq}`, kind: input.kind, taskId: fixture.task.taskId, controlVersion: input.expectedControlVersion + 1 });
+          ownerDirections.set(receipt.receiptRef, { receipt, taskVersion: input.expectedTaskVersion });
+          return receipt;
+        },
+      },
+      graph,
+      ids: () => `exp-clar-end-${seq + 1}`,
+    });
+
+    const started = await service.startExperiment({
+      source: { kind: 'catalog', caseIds: ['C02'] },
+      profileId: env.profile.profileId,
+      idempotencyKey: 'clar-end-start',
+    });
+    assert.ok(started.ok);
+    assert.equal(started.value.experiment.status, 'waiting-info');
+    assert.ok(started.value.experiment.workflowClarification);
+    const paused = await fixture.statePort.loadTask(fixture.task.taskId);
+    assert.ok(paused);
+    const modelCallsAtPause = fixture.modelCalls.length;
+
+    // Issue revise and continue -> refused without model call; owner state remains at NeedsInfo.
+    const badReviseDir = await service.issueDirection({
+      id: started.value.experiment.id,
+      expectedTaskVersion: paused.stateVersion,
+      expectedControlVersion: 0,
+      kind: 'revise',
+      idempotencyKey: 'clar-end-revise-dir',
+    });
+    assert.ok(badReviseDir.ok);
+    assert.ok('receiptRef' in badReviseDir.value.receipt);
+    const c02Entry = env.catalog[0];
+    assert.ok(c02Entry);
+    const ports = graph.portsFor({ experimentId: started.value.experiment.id, source: { kind: 'catalog', status: 'bound', bindings: [c02Entry] } });
+    const refusedRevise = await graph.run({
+      experimentId: started.value.experiment.id,
+      source: { kind: 'catalog', status: 'bound', bindings: [c02Entry] },
+      ports,
+      priorState: { taskId: paused.taskId, runId: paused.runId, workspaceId: paused.workspaceId },
+      direction: badReviseDir.value.receipt,
+      answers: [],
+    });
+    assert.equal(refusedRevise.outcome, 'INCOMPLETE');
+    assert.equal(fixture.modelCalls.length, modelCallsAtPause);
+    assert.equal((await fixture.statePort.loadTask(fixture.task.taskId))?.node, 'NeedsInfo');
+
+    // Valid end without answers closes experiment as incomplete, clears workflowClarification, and frees the server for the next experiment.
+    const endDir = await service.issueDirection({
+      id: started.value.experiment.id,
+      expectedTaskVersion: paused.stateVersion,
+      expectedControlVersion: 1,
+      kind: 'end',
+      idempotencyKey: 'clar-end-dir',
+    });
+    assert.ok(endDir.ok);
+    assert.ok('receiptRef' in endDir.value.receipt);
+
+    const ended = await service.continueExperiment({
+      id: started.value.experiment.id,
+      expectedVersion: endDir.value.experiment.version,
+      directionRef: endDir.value.receipt.receiptRef,
+      idempotencyKey: 'clar-end-cont',
+    });
+    assert.ok(ended.ok);
+    assert.equal(ended.value.experiment.status, 'incomplete');
+    assert.equal(ended.value.experiment.workflowClarification, null);
+    assert.equal(endCalls, 1);
+    assert.equal(fixture.modelCalls.length, modelCallsAtPause);
+    const ownerAfterEnd = await fixture.statePort.loadTask(fixture.task.taskId);
+    assert.equal(ownerAfterEnd?.node, 'NeedsInfo');
+    assert.equal(ownerAfterEnd?.stateVersion, paused.stateVersion);
+
+    // Follow-up experiment starts cleanly with no active conflict.
+    const nextExp = await service.startExperiment({
+      source: { kind: 'catalog', caseIds: ['C01'] },
+      profileId: env.profile.profileId,
+      idempotencyKey: 'clar-end-next-start',
+    });
+    assert.ok(nextExp.ok);
+    assert.equal(nextExp.value.experiment.status, 'waiting-approval');
+
+    // Missing or mismatched resolveClarificationEnd refuses cleanly with zero model calls.
+    const makeIsolatedGraph = (badFixture: Awaited<ReturnType<typeof mkClarifyFixture>>, resolveClarificationEnd?: UC03EvaluationGraphRoute['resolveClarificationEnd']) => {
+      const badBundle = prepareCaseBundle(badFixture, env.identity);
+      return createUC03EvaluationGraph({
+        catalogRoutes: new Map([
+          [
+            'C02',
+            {
+              entry: env.catalog[0],
+              readiness: startupReadiness,
+              coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+              expectedWait: 'waiting-info',
+              resolveTask: () => badFixture.task,
+              bindCase: () => ({ ok: true, ...badBundle }),
+              resolveDirection: () => undefined,
+              ...(resolveClarificationEnd === undefined ? {} : { resolveClarificationEnd }),
+              onClarificationEndAccepted: () => {
+                if (refusedSession) {
+                  refusedSession.terminal = true;
+                  refusedSession.cleanupCopy();
+                }
+              },
+            },
+          ],
+        ]),
+      });
+    };
+
+    let refusedSession: RealConsoleDirectionSession | undefined;
+    const refusedCopy = join(env.files, 'refused-copy');
+    writeFileSync(refusedCopy, 'retained');
+    for (const [label, createResolver] of [
+      ['omitted-resolver', () => undefined],
+      [
+        'mismatched-receipt-stateVersion',
+        (badFixture: Awaited<ReturnType<typeof mkClarifyFixture>>) => async (input: Parameters<NonNullable<UC03EvaluationGraphRoute['resolveClarificationEnd']>>[0]) => {
+          const direction = input.direction;
+          assert.ok(direction);
+          refusedSession = {
+            task: badFixture.task,
+            terminal: false,
+            cleanupCopy: () => rmSync(refusedCopy),
+            directionsByRef: new Map([[direction.receiptRef, { receipt: direction, taskVersion: input.currentState.stateVersion }]]),
+          };
+          const receipt = resolveRealConsoleClarificationEnd(new Map([[input.experimentId, refusedSession]]), input);
+          assert.ok(receipt);
+          return { ...receipt, stateVersion: receipt.stateVersion + 9 };
+        },
+      ],
+      [
+        'throwing-resolver',
+        () => () => {
+          throw new Error('simulated-end-resolver-failure');
+        },
+      ],
+    ] as const) {
+      const badFixture = await mkClarifyFixture();
+      const g = makeIsolatedGraph(badFixture, createResolver(badFixture));
+      const s = createEvaluationService({
+        profile: env.profile,
+        catalog: env.catalog,
+        repositoryIds: [badFixture.task.repositoryId],
+        checkSetIds: ['checks-configured'],
+        control: {
+          issue: input => ({ receiptRef: `ctrl-bad-${input.expectedControlVersion + 1}`, kind: input.kind, taskId: badFixture.task.taskId, controlVersion: input.expectedControlVersion + 1 }),
+        },
+        graph: g,
+        ids: () => `exp-bad-end-${label}`,
+      });
+      const st = await s.startExperiment({ source: { kind: 'catalog', caseIds: ['C02'] }, profileId: env.profile.profileId, idempotencyKey: `s-${label}` });
+      assert.ok(st.ok, label);
+      const owner = await badFixture.statePort.loadTask(badFixture.task.taskId);
+      assert.ok(owner, label);
+      const callsBefore = badFixture.modelCalls.length;
+      const dr = await s.issueDirection({ id: st.value.experiment.id, expectedTaskVersion: owner.stateVersion, expectedControlVersion: 0, kind: 'end', idempotencyKey: `d-${label}` });
+      assert.ok(dr.ok && 'receiptRef' in dr.value.receipt, label);
+      const ct = await s.continueExperiment({ id: st.value.experiment.id, expectedVersion: dr.value.experiment.version, directionRef: dr.value.receipt.receiptRef, idempotencyKey: `c-${label}` });
+      assert.ok(ct.ok, label);
+      assert.equal(ct.value.experiment.status, 'incomplete', label);
+      assert.equal(badFixture.modelCalls.length, callsBefore, label);
+      assert.equal((await badFixture.statePort.loadTask(badFixture.task.taskId))?.node, 'NeedsInfo', label);
+    }
+    assert.equal(refusedSession?.terminal, false);
+    assert.equal(existsSync(refusedCopy), true);
+    assert.deepEqual(startupTouches, []);
+  } finally {
+    await rm(env.files, { recursive: true, force: true });
+  }
+});
+
+test('NeedsInfo end requires exact owner versions while resume retains initial and control-version compatibility', () => {
+  const valid = (kind: 'resume' | 'end', task: number, control: number) => validRealConsoleDirection(kind, 'NeedsInfo', 'idle', 2, control, task, 7, 0, undefined, undefined);
+  assert.equal(valid('end', 0, 0), false);
+  assert.equal(valid('end', 2, 2), false);
+  assert.equal(valid('end', 7, 2), true);
+  assert.equal(valid('resume', 0, 0), true);
+  assert.equal(valid('resume', 2, 2), true);
 });

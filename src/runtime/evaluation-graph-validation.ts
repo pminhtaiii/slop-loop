@@ -1,10 +1,14 @@
 /** Validation and clarification-projection helpers for the UC-03 evaluation graph adapter. */
 
-import { computeCanonicalSha256, validateBugTask, type BugTask, type ClarificationQuestion, type TaskState } from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeClarificationAnswerDigest, validateBugTask, type BugTask, type ClarificationQuestion, type TaskState } from '../contracts/foundation/uc03.ts';
+import { recordClarificationAnswer } from '../uc03/clarification.ts';
+import { reuseClarificationBaseline } from '../uc03/graph-investigation-baseline.ts';
+import type { UC03WorkflowResult } from '../uc03/graph-types.ts';
 import { checkControlledPortsV02, checkProductionPortsV02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
 import type { TrustedReplanDirection } from '../uc03/repair-types.ts';
 import type { WorkflowCaseHost } from '../../eval/uc03/workflow-driver.ts';
 import { isWorkflowEvidenceHost } from './evaluation-graph-report.ts';
+import type { UC03EvaluationGraphRoute } from './evaluation-graph.ts';
 import type { BoundSource, CaseBinding, CatalogEntry } from './evaluation-profile.ts';
 import type { AnswerRecord, EvaluationGraphResult, ServiceControlReceipt } from './evaluation-service-types.ts';
 
@@ -19,6 +23,16 @@ export interface ClarificationResumeReceipt {
   readonly questionId: string;
   readonly questionDigest: string;
   readonly answerDigest: string;
+}
+
+/** Owner-read receipt for ending an unresolved NeedsInfo pause; it carries no task authority itself. */
+export interface ClarificationEndReceipt {
+  readonly receiptRef: string;
+  readonly controlVersion: number;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly workspaceId: string;
+  readonly stateVersion: number;
 }
 
 export interface ValidatedCaseBinding {
@@ -162,6 +176,18 @@ export function validClarificationReceipt(
   );
 }
 
+export function validClarificationEndReceipt(receipt: ClarificationEndReceipt | undefined, direction: ServiceControlReceipt, state: TaskState): receipt is ClarificationEndReceipt {
+  return (
+    receipt !== undefined &&
+    receipt.receiptRef === direction.receiptRef &&
+    receipt.controlVersion === direction.controlVersion &&
+    receipt.taskId === state.taskId &&
+    receipt.runId === state.runId &&
+    receipt.workspaceId === state.workspaceId &&
+    receipt.stateVersion === state.stateVersion
+  );
+}
+
 export function clarificationView(state: TaskState | null): EvaluationGraphResult['workflowClarification'] {
   const record = state?.node === 'NeedsInfo' ? state.clarification : undefined;
   if (!record || record.answer) return null;
@@ -170,4 +196,89 @@ export function clarificationView(state: TaskState | null): EvaluationGraphResul
     questionDigest: record.questionDigest,
     questions: Object.freeze(record.questions.map(question => Object.freeze({ questionId: question.questionId, text: question.text }))),
   });
+}
+
+export type NeedsInfoDirectionOutcome = Readonly<{ kind: 'refused' }> | Readonly<{ kind: 'resume'; initialState: TaskState }> | Readonly<{ kind: 'end'; result: UC03WorkflowResult }>;
+
+export async function resolveNeedsInfoDirection(input: {
+  readonly experimentId: string;
+  readonly task: BugTask;
+  readonly current: TaskState;
+  readonly direction: ServiceControlReceipt;
+  readonly answers: readonly AnswerRecord[];
+  readonly ports: UC03GraphPortsV02;
+  readonly expectedContext: UC03GraphConfigV02['trustedExpectedContext'];
+  readonly generation: NonNullable<UC03GraphConfigV02['generation']>;
+  readonly trustedDirection: TrustedReplanDirection | undefined;
+  readonly resolveClarificationResume?: UC03EvaluationGraphRoute['resolveClarificationResume'];
+  readonly resolveClarificationEnd?: UC03EvaluationGraphRoute['resolveClarificationEnd'];
+}): Promise<NeedsInfoDirectionOutcome> {
+  const { current, direction } = input;
+  if (direction.kind === 'end') {
+    if (!input.resolveClarificationEnd || input.trustedDirection !== undefined) return { kind: 'refused' };
+    let endReceipt: ClarificationEndReceipt | undefined;
+    try {
+      endReceipt = await input.resolveClarificationEnd({
+        experimentId: input.experimentId,
+        task: input.task,
+        currentState: current,
+        direction,
+        answers: input.answers,
+      });
+    } catch {
+      return { kind: 'refused' };
+    }
+    if (!validClarificationEndReceipt(endReceipt, direction, current)) return { kind: 'refused' };
+    return { kind: 'end', result: { outcome: 'INCOMPLETE', state: current, reasons: ['human-directed-termination'], milestones: [] } };
+  }
+  const clarification = current.clarification;
+  const answer = answerItems(clarification, input.answers);
+  if (!clarification || !answer || direction.kind !== 'resume' || !input.resolveClarificationResume || input.trustedDirection !== undefined) {
+    return { kind: 'refused' };
+  }
+  const expectedAnswerDigest = computeClarificationAnswerDigest({
+    questionDigest: clarification.questionDigest,
+    recorderRef: direction.receiptRef,
+    items: answer.items,
+  });
+  let receipt: ClarificationResumeReceipt | undefined;
+  try {
+    receipt = await input.resolveClarificationResume({
+      experimentId: input.experimentId,
+      task: input.task,
+      currentState: current,
+      direction,
+      answers: input.answers,
+      answer: answer.answer,
+      answerItems: answer.items,
+      expectedAnswerDigest,
+    });
+  } catch {
+    return { kind: 'refused' };
+  }
+  if (!validClarificationReceipt(receipt, direction, current, clarification.questionId, clarification.questionDigest, expectedAnswerDigest)) {
+    return { kind: 'refused' };
+  }
+  const retainedBaseline = await reuseClarificationBaseline({
+    generation: input.generation,
+    task: input.task,
+    state: current,
+    statePort: input.ports.statePort,
+    hostAuthority: input.ports.hostAuthority,
+    expectedContext: input.expectedContext,
+  });
+  if (!retainedBaseline.ok) return { kind: 'refused' };
+  try {
+    const answered = await recordClarificationAnswer({
+      statePort: input.ports.statePort,
+      prior: current,
+      answer: { recorderRef: receipt.receiptRef, items: answer.items },
+    });
+    if (answered.replayed || answered.state.node !== 'Investigate' || answered.state.clarification?.answer?.answerDigest !== receipt.answerDigest) {
+      return { kind: 'refused' };
+    }
+    return { kind: 'resume', initialState: answered.state };
+  } catch {
+    return { kind: 'refused' };
+  }
 }

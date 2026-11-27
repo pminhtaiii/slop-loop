@@ -1,17 +1,7 @@
 /** Source adapter from the existing evaluation service to the shared UC-03 v0.2 graph. */
 
-import {
-  computeCanonicalSha256,
-  computeClarificationAnswerDigest,
-  validateBugTask,
-  validateTaskState,
-  type BugTask,
-  type ClarificationQuestion,
-  type TaskState,
-} from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, validateBugTask, validateTaskState, type BugTask, type ClarificationQuestion, type TaskState } from '../contracts/foundation/uc03.ts';
 import type { CoderBudget } from '../uc03/agent-types.ts';
-import { recordClarificationAnswer } from '../uc03/clarification.ts';
-import { reuseClarificationBaseline } from '../uc03/graph-investigation-baseline.ts';
 import type { TrustedReplanDirection } from '../uc03/repair-types.ts';
 import { runControlledUC03GraphV02, runUC03GraphV02 } from '../uc03/graph-v02.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
@@ -21,18 +11,19 @@ import type { BoundSource, CatalogEntry } from './evaluation-profile.ts';
 import type { AnswerRecord, EvaluationGraph, EvaluationGraphResult, EvaluationTaskIdentity, ServiceControlReceipt } from './evaluation-service-types.ts';
 import { reportUC03GraphResult, validateEvaluationGraphReportBinding, type EvaluationGraphReportBinding } from './evaluation-graph-report.ts';
 import {
-  answerItems,
   clarificationView,
+  resolveNeedsInfoDirection,
   sameBinding,
   taskMatchesSource,
   validateCaseBinding,
-  validClarificationReceipt,
   validDirection,
+  type ClarificationEndReceipt,
   type ClarificationResumeReceipt,
 } from './evaluation-graph-validation.ts';
 import type { WorkflowCaseHost } from '../../eval/uc03/workflow-driver.ts';
+import type { UC03WorkflowResult } from '../uc03/graph-types.ts';
 
-export type { ClarificationResumeReceipt };
+export type { ClarificationEndReceipt, ClarificationResumeReceipt };
 
 type ReadyHost = Extract<UC03HostReadiness, { readonly status: 'ready' }> | Extract<UC03ControlledHostReadiness, { readonly status: 'controlled-ready' }>;
 
@@ -83,6 +74,10 @@ export interface UC03EvaluationGraphRoute {
   readonly resolveDirection: (input: EvaluationDirectionResolutionInput) => TrustedReplanDirection | undefined | Promise<TrustedReplanDirection | undefined>;
   /** Resolves current owner control/state and binds the complete reporter answer set before its CAS write. */
   readonly resolveClarificationResume?: ((input: ClarificationResumeResolutionInput) => ClarificationResumeReceipt | undefined | Promise<ClarificationResumeReceipt | undefined>) | undefined;
+  /** Resolves current owner control/state for ending an unresolved NeedsInfo wait without resuming the graph. */
+  readonly resolveClarificationEnd?: ((input: EvaluationDirectionResolutionInput) => ClarificationEndReceipt | undefined | Promise<ClarificationEndReceipt | undefined>) | undefined;
+  /** Runs terminal host effects only after the NeedsInfo end receipt is accepted. */
+  readonly onClarificationEndAccepted?: ((experimentId: string) => void) | undefined;
   /** Host-only report identity and optional controlled grader wiring; never accepted from service input. */
   readonly workflowReport?: EvaluationGraphReportBinding | undefined;
 }
@@ -271,57 +266,28 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
       }
       let graphInitialState: TaskState | undefined;
+      let endedNeedsInfo: UC03WorkflowResult | undefined;
       if (input.direction !== null && current.node === 'NeedsInfo') {
-        const clarification = current.clarification;
-        const answer = answerItems(clarification, input.answers);
-        if (!clarification || !answer || input.direction.kind !== 'resume' || !route.resolveClarificationResume || trustedDirection !== undefined) {
-          return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
-        }
-        const expectedAnswerDigest = computeClarificationAnswerDigest({
-          questionDigest: clarification.questionDigest,
-          recorderRef: input.direction.receiptRef,
-          items: answer.items,
-        });
-        let receipt: ClarificationResumeReceipt | undefined;
-        try {
-          receipt = await route.resolveClarificationResume({
-            experimentId: input.experimentId,
-            task,
-            currentState: current,
-            direction: input.direction,
-            answers: input.answers,
-            answer: answer.answer,
-            answerItems: answer.items,
-            expectedAnswerDigest,
-          });
-        } catch {
-          return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
-        }
-        if (!validClarificationReceipt(receipt, input.direction, current, clarification.questionId, clarification.questionDigest, expectedAnswerDigest)) {
-          return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
-        }
-        const retainedBaseline = await reuseClarificationBaseline({
-          generation: session.generation,
+        const resolvedNeeds = await resolveNeedsInfoDirection({
+          experimentId: input.experimentId,
           task,
-          state: current,
-          statePort: activePorts.statePort,
-          hostAuthority: activePorts.hostAuthority,
+          current,
+          direction: input.direction,
+          answers: input.answers,
+          ports: activePorts,
           expectedContext: activeConfig.trustedExpectedContext,
+          generation: session.generation,
+          trustedDirection,
+          resolveClarificationResume: route.resolveClarificationResume,
+          resolveClarificationEnd: route.resolveClarificationEnd,
         });
-        if (!retainedBaseline.ok) return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
-        try {
-          const answered = await recordClarificationAnswer({
-            statePort: activePorts.statePort,
-            prior: current,
-            answer: { recorderRef: receipt.receiptRef, items: answer.items },
-          });
-          if (answered.replayed || answered.state.node !== 'Investigate' || answered.state.clarification?.answer?.answerDigest !== receipt.answerDigest) {
-            return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
-          }
-          graphInitialState = answered.state;
-        } catch {
+        if (resolvedNeeds.kind === 'refused') {
           return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
         }
+        if (resolvedNeeds.kind === 'end') {
+          route.onClarificationEndAccepted?.(input.experimentId);
+          endedNeedsInfo = resolvedNeeds.result;
+        } else graphInitialState = resolvedNeeds.initialState;
       }
       if (input.direction === null && trustedDirection !== undefined) return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
       if (trustedDirection && (!input.direction || !validDirection(trustedDirection, current, input.direction))) {
@@ -333,7 +299,8 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         trustedDirection,
       };
       const graphResult =
-        readiness.status === 'ready' ? await runUC03GraphV02(task, activePorts, config, graphInitialState) : await runControlledUC03GraphV02(task, activePorts, config, graphInitialState);
+        endedNeedsInfo ??
+        (readiness.status === 'ready' ? await runUC03GraphV02(task, activePorts, config, graphInitialState) : await runControlledUC03GraphV02(task, activePorts, config, graphInitialState));
       const state = graphResult.executionEvidence?.finalState ?? graphResult.state;
       const reportBinding = reportBindings.get(route);
       const workflowEvidence = session.workflowEvidence ?? reportBinding?.workflowEvidence;
@@ -357,7 +324,7 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
       return {
         outcome: graphResult.outcome,
         state: state ? { taskId: state.taskId, runId: state.runId, workspaceId: state.workspaceId } : null,
-        workflowClarification: clarificationView(state),
+        workflowClarification: endedNeedsInfo ? null : clarificationView(state),
         ...(graphResult.finalReport ? { usage: { tokensConsumed: graphResult.finalReport.usage.tokensConsumed, costUsd: graphResult.finalReport.usage.costUsd } } : {}),
         ...(workflowReport === undefined ? {} : { workflowReport }),
       };
