@@ -229,6 +229,7 @@ async function setupRealConsoleScenario(opts: {
   readonly hiddenOutcome?: 'from-snapshot' | 'fail';
   readonly corruptC01GraderAfterStart?: boolean;
   readonly refuseIsolation?: boolean;
+  readonly failPlanResolve?: boolean;
 }) {
   const outside = mkdtempSync(join(tmpdir(), `t017-outside-${opts.tag}-`));
   const stateRootBase = join(outside, 'state');
@@ -501,7 +502,17 @@ async function setupRealConsoleScenario(opts: {
             return {
               ok: true,
               task: bound.task,
-              ports: bound.ports,
+              ports: opts.failPlanResolve
+                ? {
+                    ...bound.ports,
+                    approvalPort: {
+                      ...bound.ports.approvalPort,
+                      resolve: async () => {
+                        throw new Error('CONTROLLED_PLAN_RESOLVE_FAILURE');
+                      },
+                    },
+                  }
+                : bound.ports,
               config: bound.config,
               workflowEvidence: createRealTierReportEvidenceHost({
                 assembly: resolved,
@@ -787,5 +798,32 @@ test('real console route records not-run for an unpinned case and for grader or 
     assertNoPrivateMaterial(JSON.stringify(completed.workflowReport), refusedIsolation.c01GraderPath, refusedIsolation.c03GraderPath);
   } finally {
     await refusedIsolation.cleanup();
+  }
+});
+
+test('real console incomplete report omits controlled-tier limitation when owner transition throws', async () => {
+  const scenario = await setupRealConsoleScenario({ tag: 'incomplete-label', failPlanResolve: true });
+  try {
+    const started = await scenario.jsonFetch<ExperimentHttpPayload>('/api/experiments', 'POST', {
+      profileId: scenario.profileId,
+      idempotencyKey: 'start-incomplete-label',
+      source: { kind: 'catalog', caseIds: ['C01'] },
+    });
+    assert.equal(started.status, 200, started.raw);
+    const experiment = started.json.result.experiment;
+    assert.equal(experiment.status, 'incomplete');
+    assert.equal(experiment.workflowReport?.mode, 'real');
+    const row = experiment.workflowReport?.cases[0];
+    assert.equal(row?.workflowOutcome, 'INCOMPLETE');
+    assert.equal(row?.grade, 'not-run');
+    assert.equal(row?.gradeReason, 'invalid-observation');
+    assert.equal(JSON.stringify(experiment.workflowReport).includes('Controlled-tier grade only;'), false);
+    assert.equal(JSON.stringify(experiment.workflowReport).includes('unconfirmed-owner-transition'), true);
+    const approval = await scenario.jsonFetch<ApprovalViewPayload>(`/api/experiments/${experiment.id}/approval`, 'GET');
+    assert.equal(approval.status, 200, approval.raw);
+    assert.equal(scenario.spawnSpy.hiddenChecks.length, 0);
+    assertNoPrivateMaterial(started.raw, scenario.c01GraderPath, scenario.c03GraderPath);
+  } finally {
+    await scenario.cleanup();
   }
 });

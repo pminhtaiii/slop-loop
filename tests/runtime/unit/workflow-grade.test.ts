@@ -117,21 +117,24 @@ const PASSING_EXECUTOR: EvaluationGraderExecutor = {
 };
 
 function grader(overrides: { criteria?: SnapshotCriteria; isolationAuthority?: EvaluationIsolationAuthority; executor?: EvaluationGraderExecutor } = {}) {
-  return createSnapshotGrader({
-    criteria:
-      overrides.criteria ??
-      criteria([
-        criterion('C01', 'repair-success', 'hidden-c01'),
-        criterion('C02', 'clarification'),
-        criterion('C04', 'exhaustion'),
-        criterion('C07', 'expected-refusal'),
-        criterion('C05', 'regression'),
-      ]),
-    profile: PROFILE,
-    isolationAuthority: overrides.isolationAuthority ?? authority(),
-    executor: overrides.executor ?? PASSING_EXECUTOR,
-    graderPayload: GRADER_PAYLOAD,
-  });
+  return createSnapshotGrader(
+    {
+      criteria:
+        overrides.criteria ??
+        criteria([
+          criterion('C01', 'repair-success', 'hidden-c01'),
+          criterion('C02', 'clarification'),
+          criterion('C04', 'exhaustion'),
+          criterion('C07', 'expected-refusal'),
+          criterion('C05', 'regression'),
+        ]),
+      profile: PROFILE,
+      isolationAuthority: overrides.isolationAuthority ?? authority(),
+      executor: overrides.executor ?? PASSING_EXECUTOR,
+      graderPayload: GRADER_PAYLOAD,
+    },
+    'controlled-tier',
+  );
 }
 
 function noPrivatePayload(result: unknown): void {
@@ -365,11 +368,15 @@ test('custom or exploratory input pins no criteria and stays ungraded', async ()
 
 test('an invalid host or invalid input is refused without grading', async () => {
   assert.throws(
-    () => createSnapshotGrader({ criteria: criteria([criterion('C01', 'repair-success', null)]), profile: PROFILE, isolationAuthority: authority(), executor: PASSING_EXECUTOR, graderPayload: null }),
+    () =>
+      createSnapshotGrader(
+        { criteria: criteria([criterion('C01', 'repair-success', null)]), profile: PROFILE, isolationAuthority: authority(), executor: PASSING_EXECUTOR, graderPayload: null },
+        'controlled-tier',
+      ),
     /Invalid snapshot grader host/,
   );
   assert.throws(
-    () => createSnapshotGrader({ criteria: criteria([criterion('C01', 'clarification')]), profile: PROFILE, isolationAuthority: authority(), executor: PASSING_EXECUTOR }),
+    () => createSnapshotGrader({ criteria: criteria([criterion('C01', 'clarification')]), profile: PROFILE, isolationAuthority: authority(), executor: PASSING_EXECUTOR }, 'controlled-tier'),
     /Invalid snapshot grader host/,
   );
   const result = await grader().grade('C01', { observation: { ...observation(), effects: 'inferred' }, snapshot: SNAPSHOT, evidence: evidence() });

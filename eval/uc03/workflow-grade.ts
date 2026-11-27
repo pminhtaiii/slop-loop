@@ -259,7 +259,8 @@ function parseGradeInput(value: unknown): SnapshotGradeInput | undefined {
   }
 }
 
-export function createSnapshotGrader(data: unknown): SnapshotGrader {
+/** The host tier labels fallback receipts; admitted hidden checks retain their observed execution tier. */
+export function createSnapshotGrader(data: unknown, tier: 'real-tier' | 'controlled-tier'): SnapshotGrader {
   const host = parseHost(data);
 
   const judge = (
@@ -281,7 +282,10 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
       snapshot,
       evidenceDigest,
       criteriaDigest: host.criteria.digest,
-      limitations: Object.freeze([SNAPSHOT_GRADE_LIMITATION, ...limitations]),
+      limitations: Object.freeze([
+        tier === 'real-tier' ? 'Real-tier grading route; this receipt establishes no hidden-check execution or real isolation acceptance.' : SNAPSHOT_GRADE_LIMITATION,
+        ...limitations,
+      ]),
     });
 
   const judgeReal = (
