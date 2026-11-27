@@ -37,6 +37,8 @@ An active-task handoff may be generated from runtime state for a human or anothe
 
 When a task summary is needed for model reasoning, retain at least the goal, constraints, completed work, current state, open risks, and next action. The summary is a convenience for reasoning, not a checkpoint. If it conflicts with persisted task state, inspect the state and repository before proceeding.
 
+UC-02 product sessions are process-local capabilities in `src/questions/session.ts`; host close/expiry invalidates them and there is no restore from summary. Task identity, cumulative budget and metadata-only source references stay outside deterministic bounded projections. Projections preserve user goal, constraints and pending clarification while omitting source-bearing assistant prose. Follow-ups re-admit source into the current run; explicit drift rebind retains the ledger and clears old source authority. Repository switches wait for cancellation and trusted accounting reconciliation before creating a new task. This scoped in-memory session lifetime is distinct from the durable repair checkpoint requirements above.
+
 ## Long-term memory
 
 Memory is advisory and may be stale. Confirm it against current repository evidence when it affects implementation; current code and configuration take priority. Users and maintainers must be able to inspect, create, update, and delete stored memory so incorrect information does not become hidden permanent context. Store stable conventions and repeated workflows, not temporary task progress, one-time output, speculation, or stale file contents.
