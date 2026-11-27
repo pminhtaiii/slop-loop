@@ -14,7 +14,7 @@ import type { ReviewAuthorityV1 } from '../contracts/review.ts';
 import { UC06_QUALITY_CASES } from '../../eval/uc06/catalog.ts';
 import { createDurableReviewEvidenceStore } from '../persistence/adapters/review-evidence-store.ts';
 import { DurableStatePortV02 } from '../persistence/adapters/state-port-v02.ts';
-import { DurableStore } from '../persistence/store.ts';
+import { DurableStore, isSafeStorageId } from '../persistence/store.ts';
 
 export const MCP_PROTOCOL_VERSION = '2024-11-05';
 export const MCP_SERVER_INFO = {
@@ -50,9 +50,7 @@ const TOOLS: readonly McpToolDefinition[] = [
     description: 'List persisted review observation digests and candidate discovery files in the durable store (read-only).',
     inputSchema: {
       type: 'object',
-      properties: {
-        storageDir: { type: 'string', description: 'Optional override path to the durable store directory.' },
-      },
+      properties: {},
       additionalProperties: false,
     },
   },
@@ -63,7 +61,6 @@ const TOOLS: readonly McpToolDefinition[] = [
       type: 'object',
       required: ['taskId', 'workspaceId', 'repositoryId', 'headRevisionDigest', 'diffDigest', 'expectedAuthority'],
       properties: {
-        storageDir: { type: 'string' },
         taskId: { type: 'string' },
         workspaceId: { type: 'string' },
         repositoryId: { type: 'string' },
@@ -93,7 +90,6 @@ const TOOLS: readonly McpToolDefinition[] = [
       type: 'object',
       required: ['taskId'],
       properties: {
-        storageDir: { type: 'string' },
         taskId: { type: 'string' },
       },
       additionalProperties: false,
@@ -145,10 +141,9 @@ function parseAuthority(value: unknown): ReviewAuthorityV1 | null {
   };
 }
 
-function resolveStorageDir(args: Record<string, unknown>, options?: McpServerOptions): string {
-  const requested = typeof args['storageDir'] === 'string' && args['storageDir'].trim().length > 0 ? args['storageDir'].trim() : undefined;
-  const fallback = options?.storageDir ?? process.env['SLOP_LOOP_STORAGE_DIR'] ?? join(process.cwd(), '.slop-loop', 'store');
-  return resolve(requested ?? fallback);
+function resolveStorageDir(options?: McpServerOptions): string {
+  const configured = options?.storageDir ?? process.env['SLOP_LOOP_STORAGE_DIR'] ?? join(process.cwd(), '.slop-loop', 'store');
+  return resolve(configured);
 }
 
 function toolResult(payload: unknown, isError = false): { content: readonly { type: 'text'; text: string }[]; isError?: boolean } {
@@ -174,8 +169,12 @@ function listReviewRecords(storageDir: string): { storageDir: string; records: r
     for (const file of readdirSync(discoveryDir)
       .filter(f => f.endsWith('.json'))
       .sort()) {
-      const parsed: unknown = JSON.parse(readFileSync(join(discoveryDir, file), 'utf8'));
-      if (isRecord(parsed)) discoveryEntries.push(parsed);
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(join(discoveryDir, file), 'utf8'));
+        if (isRecord(parsed)) discoveryEntries.push(parsed);
+      } catch {
+        discoveryEntries.push({ file, error: 'INVALID_JSON' });
+      }
     }
   }
 
@@ -184,7 +183,7 @@ function listReviewRecords(storageDir: string): { storageDir: string; records: r
 
 async function handleToolCall(name: string, args: Record<string, unknown>, options?: McpServerOptions) {
   if (name === 'slop_list_review_records') {
-    const storageDir = resolveStorageDir(args, options);
+    const storageDir = resolveStorageDir(options);
     return toolResult(listReviewRecords(storageDir));
   }
 
@@ -198,7 +197,11 @@ async function handleToolCall(name: string, args: Record<string, unknown>, optio
     if (!taskId || !workspaceId || !repositoryId || !headRevisionDigest || !diffDigest || !expectedAuthority) {
       return toolResult({ error: 'INVALID_ARGUMENTS', message: 'Missing or invalid candidate binding or expectedAuthority fields.' }, true);
     }
-    const store = createDurableReviewEvidenceStore(resolveStorageDir(args, options));
+    const storageDir = resolveStorageDir(options);
+    if (!existsSync(join(storageDir, 'review-evidence'))) {
+      return toolResult({ outcome: 'missing' });
+    }
+    const store = createDurableReviewEvidenceStore(storageDir);
     const recovered = await store.recoverObservation({
       taskId,
       workspaceId,
@@ -212,10 +215,10 @@ async function handleToolCall(name: string, args: Record<string, unknown>, optio
 
   if (name === 'slop_get_task_state') {
     const taskId = readString(args, 'taskId');
-    if (!taskId) {
-      return toolResult({ error: 'INVALID_ARGUMENTS', message: 'taskId is required.' }, true);
+    if (!taskId || !isSafeStorageId(taskId)) {
+      return toolResult({ error: 'INVALID_TASK_ID', message: 'A valid safe taskId is required.' }, true);
     }
-    const storageDir = resolveStorageDir(args, options);
+    const storageDir = resolveStorageDir(options);
     const durableStore = new DurableStore(storageDir);
     const statePort = new DurableStatePortV02({ store: durableStore, taskId });
     const [taskState, authoritySnapshot] = await Promise.all([statePort.loadTask(taskId), statePort.readVerificationAuthoritySnapshot(taskId)]);
@@ -261,12 +264,13 @@ export async function handleMcpRequest(request: unknown, options?: McpServerOpti
     return rpcError(null, -32600, 'Invalid JSON-RPC 2.0 request.');
   }
 
+  const hasId = 'id' in request && request['id'] !== undefined;
   const rawId = request['id'];
   const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : null;
   const method = request['method'];
   const params = isRecord(request['params']) ? request['params'] : {};
 
-  if (method === 'notifications/initialized' || method.startsWith('notifications/')) {
+  if (!hasId) {
     return null;
   }
 
@@ -349,11 +353,20 @@ export function startMcpServer(options?: McpServerOptions): void {
       process.stdout.write(`${JSON.stringify(rpcError(null, -32700, 'Parse error'))}\n`);
       return;
     }
-    void handleMcpRequest(parsed, options).then(response => {
-      if (response !== null) {
-        process.stdout.write(`${JSON.stringify(response)}\n`);
-      }
-    });
+    void handleMcpRequest(parsed, options)
+      .then(response => {
+        if (response !== null) {
+          process.stdout.write(`${JSON.stringify(response)}\n`);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isRecord(parsed) && 'id' in parsed && parsed['id'] !== undefined) {
+          const rawId = parsed['id'];
+          const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : null;
+          const message = error instanceof Error ? error.message : 'Internal server error';
+          process.stdout.write(`${JSON.stringify(rpcError(id, -32603, message))}\n`);
+        }
+      });
   });
 }
 

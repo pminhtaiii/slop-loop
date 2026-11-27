@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -75,6 +75,12 @@ test('MCP protocol lifecycle: initialize, ping, notifications, tools/list, and r
 
   const notifRes = await handleMcpRequest({ jsonrpc: '2.0', method: 'notifications/initialized' });
   assert.equal(notifRes, null);
+
+  const customNotifRes = await handleMcpRequest({ jsonrpc: '2.0', method: 'custom/event' });
+  assert.equal(customNotifRes, null);
+
+  const idBearingNotifRes = await handleMcpRequest({ jsonrpc: '2.0', id: 99, method: 'notifications/custom' });
+  assert.equal(idBearingNotifRes?.error?.code, -32601);
 
   const pingRes = await handleMcpRequest({ jsonrpc: '2.0', id: 2, method: 'ping' });
   assert.deepEqual(pingRes?.result, {});
@@ -186,6 +192,41 @@ test('MCP tools: list/recover review, get task state, and list public eval cases
     };
     assert.equal(taskPayload.found, true);
     assert.equal(taskPayload.taskState.taskId, 'task-mcp-1');
+
+    // Unsafe taskId is rejected cleanly
+    const unsafeTaskRes = await handleMcpRequest({ jsonrpc: '2.0', id: 15, method: 'tools/call', params: { name: 'slop_get_task_state', arguments: { taskId: '../secret' } } }, { storageDir: dir });
+    assert.equal((unsafeTaskRes?.result as { isError?: boolean }).isError, true);
+
+    // Recover against an empty storageDir stays read-only (no directory created)
+    const emptyDir = mkdtempSync(join(tmpdir(), 'uc-mcp-empty-'));
+    try {
+      const emptyRecover = await handleMcpRequest(
+        {
+          jsonrpc: '2.0',
+          id: 16,
+          method: 'tools/call',
+          params: {
+            name: 'slop_recover_review',
+            arguments: {
+              taskId: 't1',
+              workspaceId: 'w1',
+              repositoryId: 'r1',
+              headRevisionDigest: SHA,
+              diffDigest: SHA,
+              expectedAuthority: AUTHORITY,
+            },
+          },
+        },
+        { storageDir: emptyDir },
+      );
+      const emptyPayload = JSON.parse(((emptyRecover?.result as { content: { text: string }[] }).content[0] ?? { text: '{}' }).text) as {
+        outcome: string;
+      };
+      assert.equal(emptyPayload.outcome, 'missing');
+      assert.equal(existsSync(join(emptyDir, 'review-evidence')), false);
+    } finally {
+      rmSync(emptyDir, { recursive: true, force: true });
+    }
 
     // 4. slop_list_eval_cases (public only, no private labels leaked)
     const evalRes = await handleMcpRequest({
