@@ -259,11 +259,12 @@ function denied(reasonCode: QuestionBudgetRefusalCodeV1, terminal = true): Budge
   return { ok: false, reasonCode, terminal };
 }
 
-export function planSnapshotAdmission(profile: QuestionBudgetProfileV1): BudgetReservationPlanResultV1 {
+export function planSnapshotAdmission(profile: QuestionBudgetProfileV1, available: BudgetCounters): BudgetReservationPlanResultV1 {
   const counters = emptyCounters();
-  const scannedFiles = Math.min(profile.runtime.maxScannedFiles, profile.retrieval.maxFiles);
+  const scannedFiles = Math.min(available['scannedFiles'], profile.retrieval.maxFiles);
+  if (scannedFiles <= 0 || available['scannedBytes'] <= 0) return denied('scan-limit');
   counters['scannedFiles'] = scannedFiles;
-  counters['scannedBytes'] = profile.runtime.maxScannedBytes;
+  counters['scannedBytes'] = available['scannedBytes'];
   counters['snapshotAdmissions'] = 1;
   return plan('snapshot-admission', counters, { scannedFiles, scannedBytes: counters['scannedBytes'] }, profile.retrieval.maxIndexDeadlineMs);
 }
@@ -304,9 +305,10 @@ export function planRepositoryOperation(profile: QuestionBudgetProfileV1, availa
 
 export function planFinalValidation(profile: QuestionBudgetProfileV1, available: BudgetCounters): BudgetReservationPlanResultV1 {
   if (available['scannedFiles'] <= 0 || available['scannedBytes'] <= 0) return denied('scan-limit');
+  if (available['finalBytes'] <= 0) return denied('output-limit');
   const counters = emptyCounters();
   counters['toolCalls'] = 1;
-  counters['finalBytes'] = profile.runtime.maxFinalBytes;
+  counters['finalBytes'] = Math.min(profile.runtime.maxFinalBytes, available['finalBytes']);
   counters['scannedFiles'] = available['scannedFiles'];
   counters['scannedBytes'] = available['scannedBytes'];
   return plan('final-validation', counters, maxWork(counters), available['elapsedMs']);

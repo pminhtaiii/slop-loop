@@ -1,5 +1,13 @@
 /** Host composition and observable result of one bounded, process-local question investigation. */
-import type { QuestionBudgetProfileV1, QuestionIdentityV1, QuestionResultV1, QuestionRetrievalResultV1, SourceSnapshotV1 } from '../contracts/questions/contracts.ts';
+import type {
+  QuestionBudgetProfileV1,
+  QuestionIdentityV1,
+  QuestionResultV1,
+  QuestionRetrievalResultV1,
+  RepositoryBindingV1,
+  QuestionLineRangeV1,
+  SourceSnapshotV1,
+} from '../contracts/questions/contracts.ts';
 import type { QuestionRepositoryOperationControl } from '../foundation/repository-types.ts';
 import type { QuestionBudgetLedger } from './budget.ts';
 import type { QuestionEmbeddingPort } from './embedding.ts';
@@ -19,6 +27,8 @@ export interface QuestionInvestigationOptions {
   readonly generationId: string;
   readonly embeddingDigest: string;
   readonly model: Omit<CreateQuestionModelPortOptionsV1, 'identity' | 'profile' | 'budget'>;
+  /** Host-held advisory context and source coordinates; every reused span is re-read and reissued. */
+  readonly continuation?: unknown;
 }
 
 export interface QuestionInvestigationConfiguration extends Omit<QuestionInvestigationOptions, 'identity' | 'snapshot' | 'profile'> {
@@ -31,10 +41,24 @@ export interface QuestionInvestigationRun {
   readonly result: QuestionResultV1;
   /** The original scored observation. Supplemental reads never replace or enlarge its ranked spans. */
   readonly retrieval: QuestionRetrievalResultV1 | null;
+  /** Metadata only. These references confer no evidence authority without a guarded current-run read. */
+  readonly sourceReferences?: readonly QuestionSourceReference[];
+}
+
+export interface QuestionSourceReference {
+  readonly sessionId: string;
+  readonly taskId: string;
+  readonly binding: RepositoryBindingV1;
+  readonly snapshotId: string;
+  readonly manifestDigest: string;
+  readonly path: string;
+  readonly range: QuestionLineRangeV1;
+  readonly originalByteDigest: string;
+  readonly excerptDigest: string;
 }
 
 export interface QuestionInvestigation {
-  /** Runs once under the admitted identity. A second invocation fails without IO; sessions are a later scope. */
+  /** Runs once under the admitted identity; session continuation creates a fresh run with the retained task ledger. */
   run(question: string, control: QuestionRepositoryOperationControl): Promise<QuestionInvestigationRun>;
 }
 

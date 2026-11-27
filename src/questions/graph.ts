@@ -21,6 +21,9 @@ import { createQuestionConversationNodes } from './graph-outcomes.ts';
 import { admitInvestigationBinding, budgetStop, definitionHint, investigateQuestionTool, investigationRepository, questionStop, repositoryStop } from './graph-investigation.ts';
 import type { QuestionInvestigationConfiguration, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
 import { createQuestionNavigation } from './graph-navigation.ts';
+import { prepareQuestionContinuation, readQuestionContinuation, retainQuestionSourceReferences } from './graph-continuation.ts';
+import { hasQuestionControlCharacters } from './question-text.ts';
+import { QUESTION_MODEL_QUESTION_MAX_BYTES } from './model-compiler.ts';
 
 export type { QuestionInvestigation, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
 
@@ -54,6 +57,9 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
     typeof options?.budget?.snapshot !== 'function'
   )
     return { ok: false, reasonCode: 'invalid-config' };
+  const preparedContinuation = prepareQuestionContinuation(options.continuation, identity.value, profile.value);
+  if (!preparedContinuation) return { ok: false, reasonCode: 'invalid-config' };
+  const continuation = preparedContinuation;
   const config: QuestionInvestigationConfiguration = Object.freeze({
     ...options,
     identity: identity.value,
@@ -122,10 +128,12 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
       typeof question !== 'string' ||
       !question.trim() ||
       Buffer.byteLength(question) > config.profile.repository.maxQueryBytes ||
-      !question.isWellFormed()
+      !question.isWellFormed() ||
+      hasQuestionControlCharacters(question)
     )
       return failed(questionStop('invalid-decision'));
     if (containsProtectedContent(question)) return failed(questionStop('protected-content'));
+    const modelQuestion = continuation.context ? 'Original task goal:\n' + continuation.context.intent + '\nCurrent user turn:\n' + question : question;
     const stop = (preferred?: QuestionClosedOutcomeV1): QuestionClosedOutcomeV1 | undefined => {
       if (control.signal.aborted) config.budget.cancel();
       if (Date.now() >= control.deadlineEpochMs) return questionStop('deadline');
@@ -137,6 +145,7 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
       if (budget.remainingElapsedMs <= 0) return questionStop('elapsed-deadline');
       return undefined;
     };
+    if (Buffer.byteLength(modelQuestion) > QUESTION_MODEL_QUESTION_MAX_BYTES) return failed(stop() ?? questionStop('context-limit'));
     const close = (outcome: QuestionClosedOutcomeV1, state: State) => ({ result: closedResult(outcome, state.usage) });
     const conversation = createQuestionConversationNodes(config, evidenceRegistry, control, stop);
     const navigation = createQuestionNavigation(config);
@@ -187,6 +196,8 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
             linkedDefinitions.set(chunk.chunkId, chunk);
           }
         }
+        const reuseFailure = await readQuestionContinuation(continuation.references, config.snapshot, evidenceRegistry, evidence, control, stop);
+        if (reuseFailure) return { ...close(reuseFailure, state), retrieval: observation };
         for (const chunk of linkedDefinitions.values()) {
           const hint = definitionHint(chunk, evidence, config.profile.repository.maxSpanLines);
           if (hint) observations.push(hint);
@@ -198,7 +209,19 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
         if (before) return close(before, state);
         const response = await withRetrievalControl<QuestionModelOutcomeV1>(
           control,
-          bounded => modelPort.decide({ question, evidence: state.evidence, observations: state.observations }, bounded.signal, bounded.deadlineEpochMs),
+          bounded =>
+            modelPort.decide(
+              {
+                question: modelQuestion,
+                constraints: continuation.context?.constraints ?? [],
+                ...(continuation.context?.pendingClarification ? { pendingClarification: continuation.context.pendingClarification } : {}),
+                conversation: continuation.context?.conversation ?? [],
+                evidence: state.evidence,
+                observations: state.observations,
+              },
+              bounded.signal,
+              bounded.deadlineEpochMs,
+            ),
           failure => ({
             status: 'stopped',
             reasonCode: failure.reasonCode === 'deadline' ? 'elapsed-deadline' : 'cancelled',
@@ -278,7 +301,9 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
         { evidence: [], observations: [], decision: null, visibleEvidenceIds: [], usage: initialUsage, result: null, retrieval: null },
         { recursionLimit: Math.min(100000, config.profile.runtime.maxModelCalls * 4 + 8) },
       );
-      return Object.freeze({ result: final.result ?? closedResult(questionStop('invalid-decision'), final.usage), retrieval: final.retrieval });
+      const result = final.result ?? closedResult(questionStop('invalid-decision'), final.usage);
+      const reusable = result.kind === 'answered' || result.kind === 'awaiting-clarification' || result.kind === 'insufficient-evidence';
+      return Object.freeze({ result, retrieval: final.retrieval, sourceReferences: reusable ? retainQuestionSourceReferences(final.evidence, config.profile) : [] });
     } catch {
       return failed(stop() ?? questionStop('unavailable'));
     } finally {
