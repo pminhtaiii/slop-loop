@@ -2,6 +2,8 @@
 
 /** The round bound, held here so the validator and the producer cannot drift apart. */
 export const CLARIFICATION_ROUND_CAP = 3;
+export const CLARIFICATION_MAX_ITEMS = 16;
+export const CLARIFICATION_MAX_TEXT_BYTES = 1024;
 
 /** A bounded coder question persisted so the record can be verified from `TaskState` alone. */
 export interface ClarificationQuestion {
