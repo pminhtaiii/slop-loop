@@ -10,17 +10,24 @@ import { structuredSpawn } from '../foundation/docker-spawn.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
 import { MAX_TASK_REPLANS } from '../uc03/replan-accounting.ts';
-import type { TrustedReplanDirection } from '../uc03/repair-types.ts';
 import type { ConsoleApprovalPort } from './console-server.ts';
 import type { EvaluationConsoleAssembly, EvaluationConsoleFactory } from './evaluation-console-host.ts';
 import { createRealTierReportEvidenceHost } from './evaluation-graph-report.ts';
-import type { ClarificationResumeReceipt, EvaluationCaseBinding, UC03EvaluationGraphRoute } from './evaluation-graph.ts';
+import type { EvaluationCaseBinding, UC03EvaluationGraphRoute } from './evaluation-graph.ts';
 import type { CatalogEntry } from './evaluation-profile.ts';
 import type { ServiceControl, ServiceControlReceipt } from './evaluation-service-types.ts';
 import type { RealTierAssembly, RealTierDependencies, RealTierResolution } from './real-tier-assembly.ts';
 import { PINS, resolvePinnedGrader, type GraderCapability } from './real-tier-case-grade.ts';
 import { admitRealTierConsole } from './real-tier-console-admission.ts';
-import { INVALID_CONTROL_RECEIPT, readRealConsoleControlVersions, validRealConsoleDirection, type RealConsoleSession } from './real-tier-console-control.ts';
+import {
+  hasPendingEndDirection,
+  INVALID_RECEIPT,
+  resolveRealConsoleClarificationEnd,
+  resolveRealConsoleClarificationResume,
+  resolveRealConsoleDirection,
+  validRealConsoleDirection,
+} from './real-tier-console-direction.ts';
+import { readRealConsoleControlVersions, type RealConsoleSession } from './real-tier-console-control.ts';
 import { createRealTierGraderCapability } from './real-tier-grader.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import { expectedBindingsOf, matchesDigests } from './real-tier-production-lifecycle.ts';
@@ -134,11 +141,12 @@ export function createRealTierConsoleFactory(
     const control: ServiceControl = {
       versions: experimentId => readRealConsoleControlVersions(sessions.get(experimentId)),
       async issue(input) {
-        if (input.kind === 'revise' && !allowRevise) return INVALID_CONTROL_RECEIPT;
+        if (input.kind === 'revise' && !allowRevise) return INVALID_RECEIPT;
         const session = sessions.get(input.experimentId);
-        if (!session) return INVALID_CONTROL_RECEIPT;
+        if (!session || session.terminal) return INVALID_RECEIPT;
         const [ownerState, listed] = await Promise.all([session.statePort.loadTask(session.task.taskId), session.approvalService.list(session.task.taskId)]);
-        if (!ownerState) return INVALID_CONTROL_RECEIPT;
+        if (!ownerState) return INVALID_RECEIPT;
+        if (input.kind === 'end' && hasPendingEndDirection(session, ownerState.stateVersion)) return INVALID_RECEIPT;
 
         const expectedCtrl = Math.max(listed.control.version, session.lastControlVersion);
         if (
@@ -155,7 +163,7 @@ export function createRealTierConsoleFactory(
             input.decisionRef,
           )
         ) {
-          return INVALID_CONTROL_RECEIPT;
+          return INVALID_RECEIPT;
         }
 
         const nextVer = expectedCtrl + 1;
@@ -247,7 +255,7 @@ export function createRealTierConsoleFactory(
             const baseEv = createRealTierReportEvidenceHost({ assembly: fresh, caseId: entry.caseId, task: bound.task, repositoryRoot: bound.repositoryRoot, spawn, ...capOpt });
             const finishIfTerminal = async () => {
               const st = await session.statePort.loadTask(session.task.taskId);
-              if (st && TERMINAL_NODES.has(st.node)) {
+              if (session.terminal || (st && TERMINAL_NODES.has(st.node))) {
                 session.terminal = true;
                 session.cleanupCopy();
               }
@@ -279,38 +287,9 @@ export function createRealTierConsoleFactory(
             if (!keepCopy) removeCopyDir(workingCopyRoot);
           }
         },
-        resolveDirection: ({ experimentId, currentState, direction }): TrustedReplanDirection | undefined => {
-          if (direction === null) return undefined;
-          const recorded = sessions.get(experimentId)?.directionsByRef.get(direction.receiptRef);
-          if (!recorded || recorded.receipt.controlVersion !== direction.controlVersion || recorded.taskVersion !== currentState.stateVersion) return undefined;
-          if (currentState.node !== 'AwaitFeedback' || !currentState.plan?.decisionRef || (recorded.receipt.kind !== 'end' && (!allowRevise || recorded.receipt.kind !== 'revise'))) return undefined;
-          return {
-            directive: recorded.receipt.kind === 'end' ? 'terminate' : 'revise',
-            taskId: currentState.taskId,
-            workspaceId: currentState.workspaceId,
-            repositoryRevisionDigest: currentState.repositoryRevisionDigest,
-            stateVersion: currentState.stateVersion,
-            planVersion: currentState.planVersion,
-            rejectedDecisionId: currentState.plan.decisionRef,
-            strategyDigest: currentState.plan.strategyDigest,
-          };
-        },
-        resolveClarificationResume: ({ experimentId, currentState, direction, answer, expectedAnswerDigest }): ClarificationResumeReceipt | undefined => {
-          if (!direction || currentState.node !== 'NeedsInfo') return undefined;
-          const recorded = sessions.get(experimentId)?.directionsByRef.get(direction.receiptRef);
-          if (!recorded || recorded.receipt.kind !== 'resume' || recorded.receipt.controlVersion !== direction.controlVersion || recorded.taskVersion !== currentState.stateVersion) return undefined;
-          return {
-            receiptRef: direction.receiptRef,
-            controlVersion: direction.controlVersion,
-            taskId: currentState.taskId,
-            runId: currentState.runId,
-            workspaceId: currentState.workspaceId,
-            stateVersion: currentState.stateVersion,
-            questionId: answer.questionId,
-            questionDigest: answer.questionDigest,
-            answerDigest: expectedAnswerDigest,
-          };
-        },
+        resolveDirection: input => resolveRealConsoleDirection(sessions, allowRevise, input),
+        resolveClarificationResume: input => resolveRealConsoleClarificationResume(sessions, input),
+        resolveClarificationEnd: input => resolveRealConsoleClarificationEnd(sessions, input),
       };
     };
 
