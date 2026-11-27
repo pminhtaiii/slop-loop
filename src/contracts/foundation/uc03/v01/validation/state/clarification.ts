@@ -1,14 +1,12 @@
 /** Host-composition §8 clarification record validation, split out of `state/task.ts` to keep that module bounded. */
 
 import { computeClarificationAnswerDigest, computeClarificationQuestionDigest, computeClarificationQuestionId } from '../../../identity.ts';
-import { CLARIFICATION_ROUND_CAP } from '../../clarification-types.ts';
+import { CLARIFICATION_MAX_ITEMS, CLARIFICATION_MAX_TEXT_BYTES, CLARIFICATION_ROUND_CAP } from '../../clarification-types.ts';
 import type { ClarificationAnswer, ClarificationQuestion, ClarificationRecord, ValidationError } from '../../types.ts';
 import { isPlainObject, rejectUnknownKeys, validatePositiveInteger } from '../common.ts';
 
 const CLARIFICATION_ALLOWED_KEYS = ['questionId', 'questionDigest', 'askedAtStateVersion', 'round', 'questions', 'evidenceRefs', 'answer'] as const;
 const CLARIFICATION_ANSWER_ALLOWED_KEYS = ['answerDigest', 'answeredAtStateVersion', 'recorderRef', 'items'] as const;
-const CLARIFICATION_MAX_ITEMS = 16;
-const CLARIFICATION_MAX_TEXT_BYTES = 1024;
 const CLARIFICATION_MAX_REFS = 16;
 const CLARIFICATION_MAX_REF_BYTES = 128;
 
