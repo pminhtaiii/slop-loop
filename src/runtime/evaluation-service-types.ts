@@ -18,10 +18,16 @@ export interface ServiceControlReceipt {
   readonly controlVersion: number;
 }
 
+export interface ExperimentControlVersions {
+  readonly taskVersion: number;
+  readonly controlVersion: number;
+}
+
 export interface ServiceControl {
   issue(
     input: Readonly<{ experimentId: string; kind: DirectionKind; expectedTaskVersion: number; expectedControlVersion: number; decisionRef?: string; feedback?: string }>,
   ): ServiceControlReceipt | Promise<ServiceControlReceipt>;
+  versions?(experimentId: string): ExperimentControlVersions | null | Promise<ExperimentControlVersions | null>;
 }
 
 export interface EvaluationGraphResult {
@@ -105,6 +111,7 @@ export interface ExperimentView {
   readonly workflowReport: WorkflowEvaluationReport | null;
   readonly answers: readonly AnswerRecord[];
   readonly directions: readonly string[];
+  readonly control?: ExperimentControlVersions | null | undefined;
 }
 
 export interface ExperimentReceipt {

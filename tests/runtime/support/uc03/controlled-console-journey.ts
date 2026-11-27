@@ -525,14 +525,16 @@ export async function composeControlledConsole(options: ControlledConsoleOptions
       },
     };
 
+    const taskExperimentIds = new Set<string>();
     const customRoute = options.includeCustomRoute
       ? {
           readiness,
           coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
           expectedWait: null,
           ...(options.customRouteWorkflowReport === undefined ? {} : { workflowReport: options.customRouteWorkflowReport }),
-          resolveTask: (input: { readonly source: { readonly kind: string; readonly bugInput?: CustomBugInputConfig } }) =>
-            input.source.kind === 'bug' && input.source.bugInput
+          resolveTask: (input: { readonly experimentId: string; readonly source: { readonly kind: string; readonly bugInput?: CustomBugInputConfig } }) => {
+            taskExperimentIds.add(input.experimentId);
+            return input.source.kind === 'bug' && input.source.bugInput
               ? {
                   ...fixture.task,
                   goal: input.source.bugInput.goal,
@@ -542,7 +544,8 @@ export async function composeControlledConsole(options: ControlledConsoleOptions
                   acceptanceCriteria: [...input.source.bugInput.acceptanceCriteria],
                   constraints: [...(input.source.bugInput.constraints ?? [])],
                 }
-              : fixture.task,
+              : fixture.task;
+          },
           resolveDirection,
           resolveClarificationResume,
         }
@@ -554,6 +557,18 @@ export async function composeControlledConsole(options: ControlledConsoleOptions
       repositoryIds: [fixture.task.repositoryId],
       checkSetIds: [DEFAULT_CHECK_SET],
       control: {
+        async versions(experimentId) {
+          if (!taskExperimentIds.has(experimentId)) return null;
+          const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
+          if (!ownerState || (ownerState.node !== 'NeedsInfo' && ownerState.node !== 'AwaitPlan' && ownerState.node !== 'Verify' && ownerState.node !== 'AwaitFeedback')) {
+            return null;
+          }
+          if (ownerState.node === 'AwaitPlan' || ownerState.node === 'Verify') {
+            const pending = approvals.getRecordedBindings().at(-1);
+            if (!pending || !decided.has(pending.decisionId)) return null;
+          }
+          return Object.freeze({ taskVersion: ownerState.stateVersion, controlVersion: currentControlVersion });
+        },
         async issue(input) {
           const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
           // Refusal returns a malformed receipt so EvaluationService returns 409 INVALID_CONTROL_RECEIPT
@@ -621,7 +636,10 @@ export async function composeControlledConsole(options: ControlledConsoleOptions
               coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
               expectedWait: null,
               workflowReport: workflowReportBinding,
-              resolveTask: () => fixture.task,
+              resolveTask: ({ experimentId }: { readonly experimentId: string }) => {
+                taskExperimentIds.add(experimentId);
+                return fixture.task;
+              },
               resolveDirection,
               resolveClarificationResume,
             },

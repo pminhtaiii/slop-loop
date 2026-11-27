@@ -11,7 +11,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { sha256Text } from '../uc01/contracts.ts';
 import type { CatalogEntry } from './evaluation-profile.ts';
 import { renderConsolePage } from './console-page.ts';
-import { DIGEST, ID, type EvaluationService, type ServiceFailure, type ServiceResult } from './evaluation-service.ts';
+import { DIGEST, ID, versionValue, type EvaluationService, type ExperimentControlVersions, type ServiceFailure, type ServiceResult } from './evaluation-service.ts';
 import { compareWorkflowEvaluations } from '../../eval/uc03/compare.ts';
 
 const LOOPBACK = '127.0.0.1';
@@ -53,6 +53,9 @@ export interface ConsoleWorkflowReportLookup {
   getWorkflowReport(experimentId: string): unknown | null | undefined | Promise<unknown | null | undefined>;
 }
 
+/** Read-only lookup of current owner task and control versions for an experiment. */
+export type ConsoleControlVersionsPort = (experimentId: string) => ExperimentControlVersions | null | Promise<ExperimentControlVersions | null>;
+
 type ConsoleOutcome = ServiceResult<unknown> | Promise<ServiceResult<unknown>>;
 
 export interface ConsoleServerOptions {
@@ -62,6 +65,7 @@ export interface ConsoleServerOptions {
   readonly artifacts?: ReadonlyMap<string, ConsoleArtifact> | undefined;
   readonly approval?: ConsoleApprovalPort | undefined;
   readonly comparison?: ConsoleComparisonPort | undefined;
+  readonly controlVersions?: ConsoleControlVersionsPort | undefined;
   readonly workflowReportLookup?: ConsoleWorkflowReportLookup | undefined;
 }
 
@@ -132,9 +136,20 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(text);
 }
 
+function safeControlVersions(value: unknown): ExperimentControlVersions | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== 2 || !Object.hasOwn(value, 'taskVersion') || !Object.hasOwn(value, 'controlVersion')) return null;
+  const raw = value as Readonly<Record<string, unknown>>;
+  const taskVersion = versionValue(raw['taskVersion']);
+  const controlVersion = versionValue(raw['controlVersion']);
+  if (taskVersion === undefined || controlVersion === undefined) return null;
+  return Object.freeze({ taskVersion, controlVersion });
+}
+
 /** @param port the actual bound port; the token is the only credential and never enters a URL. */
 export function createConsoleServer(options: ConsoleServerOptions): ConsoleServer {
-  const { service, catalog, operatorToken, artifacts, approval } = options;
+  const { service, catalog, operatorToken, artifacts, approval, controlVersions } = options;
   const comparison = options.comparison ?? (options.workflowReportLookup ? storedWorkflowComparison(options.workflowReportLookup) : undefined);
   if (typeof operatorToken !== 'string' || operatorToken.length < 16 || operatorToken.length > 512) throw new Error('Invalid operator token');
   // shortcut: no TLS, the socket is loopback-only and never bound to a routable interface; upgrade if serving off-host.
@@ -203,6 +218,18 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
     }
     send(res, 200, { ok: true, result: result.value });
   };
+
+  const attachControl = async (run: () => ConsoleOutcome): Promise<ServiceResult<unknown>> => {
+    const result = await run();
+    if (!result.ok || !controlVersions) return result;
+    const val = result.value as { readonly id?: string; readonly experiment?: { readonly id?: string } };
+    const exp = val.experiment ?? val;
+    if (typeof exp.id !== 'string') return result;
+    const view = Object.freeze({ ...exp, control: safeControlVersions(await controlVersions(exp.id)) });
+    return { ok: true, value: val.experiment ? Object.freeze({ ...val, experiment: view }) : view };
+  };
+
+  const serialView = (res: ServerResponse, run: () => ConsoleOutcome): Promise<void> => respond(res, () => serial(() => attachControl(run)));
 
   /** Denies a non-mutation, a missing/incorrect token, a cross/missing origin or a non-JSON body before any owner call. */
   const mutationAllowed = (req: IncomingMessage, res: ServerResponse): boolean => {
@@ -334,7 +361,7 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
       if (!mutationAllowed(req, res)) return;
       const body = await readBody(req, res);
       if (body === null) return;
-      await respond(res, () => serial(() => service.startExperiment(body.value)));
+      await serialView(res, () => service.startExperiment(body.value));
       return;
     }
 
@@ -348,7 +375,7 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
         send(res, 400, { ok: false, error: 'INVALID_ID' });
         return;
       }
-      await respond(res, () => service.getExperiment(id));
+      await respond(res, () => attachControl(() => service.getExperiment(id)));
       return;
     }
 
@@ -387,14 +414,14 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
         return;
       }
       if (action === 'answers') {
-        await respond(res, () => serial(() => service.answerClarification({ ...body.value, id })));
+        await serialView(res, () => service.answerClarification({ ...body.value, id }));
         return;
       }
       if (action === 'directions') {
-        await respond(res, () => serial(() => service.issueDirection({ ...body.value, id })));
+        await serialView(res, () => service.issueDirection({ ...body.value, id }));
         return;
       }
-      await respond(res, () => serial(() => service.continueExperiment({ ...body.value, id })));
+      await serialView(res, () => service.continueExperiment({ ...body.value, id }));
       return;
     }
 

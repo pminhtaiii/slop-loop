@@ -131,6 +131,11 @@ export const SCRIPT = `
     return joined.length > 8192 ? [joined.slice(0, 8192), 'additional items omitted'] : out;
   }
 
+  function ctrlOf(v) {
+    var c = isObj(v.control) ? v.control : null;
+    return c && cnt(c.taskVersion) !== null && cnt(c.controlVersion) !== null ? c : null;
+  }
+
   function formatExperiment(view) {
     var out = [];
     out.push('id: ' + view.id);
@@ -145,6 +150,8 @@ export const SCRIPT = `
     if (view.submission) out.push('submission: ' + view.submission.submissionId + ' repository=' + view.submission.repositoryId + ' checks=' + view.submission.checkSetId);
     out.push('answers recorded: ' + view.answers.length);
     out.push('directions: ' + (view.directions.length ? view.directions.join(', ') : 'none'));
+    var ctrl = ctrlOf(view);
+    out.push('control: ' + (ctrl ? 'task=' + ctrl.taskVersion + ' control=' + ctrl.controlVersion : 'none'));
     (view.submission ? view.submission.questions : []).forEach(function (q) {
       out.push('question ' + q.questionId + ': ' + q.text + ' [digest ' + q.questionDigest + ']');
     });
@@ -154,6 +161,9 @@ export const SCRIPT = `
   function renderExperiment(view) {
     currentId = view.id;
     byId('experiment-id').value = view.id;
+    var ctrl = ctrlOf(view);
+    byId('direction-task-version').value = String(ctrl ? ctrl.taskVersion : 0);
+    byId('direction-control-version').value = String(ctrl ? ctrl.controlVersion : 0);
     show('experiment', formatExperiment(view));
     renderClarification(view);
   }
@@ -220,7 +230,7 @@ export const SCRIPT = `
         };
         return groupSent;
       }).then(function (out) {
-        // A late response for a superseded group must not remove the current group's controls or key.
+        // Ignore late responses for superseded groups.
         if (out && out.status === 200 && groupKey === key) clearGroup();
       });
     });
@@ -236,7 +246,7 @@ export const SCRIPT = `
     byId('poll-state').textContent = 'paused';
   }
 
-  // The console polls at most once per second; the server refuses nothing here, the page just waits.
+  // Poll at most once per second while waiting.
   function startPolling() {
     stopPolling();
     byId('poll-state').textContent = 'polling';
@@ -244,7 +254,7 @@ export const SCRIPT = `
       if (!currentId || !token) return;
       api('GET', '/api/experiments/' + encodeURIComponent(currentId), null).then(function (out) {
         if (out.status === 200) renderExperiment(out.data.result);
-      }, function () { /* a dropped poll is not an error the operator must act on */ });
+      }, function () {});
     }, 1000);
   }
 
@@ -265,6 +275,10 @@ export const SCRIPT = `
       show('catalog', text.join('\\n'));
     }, function () { show('catalog', 'catalog unavailable'); });
   });
+
+  function onExp(out) {
+    if (out && out.status === 200 && out.data && out.data.result && out.data.result.experiment) renderExperiment(out.data.result.experiment);
+  }
 
   byId('submit-experiment').addEventListener('click', function () {
     send(byId('submit-experiment'), 'experiment', '/api/experiments', function (key) {
@@ -288,10 +302,7 @@ export const SCRIPT = `
         };
       }
       return { profileId: profile, idempotencyKey: key, source: { kind: 'catalog', caseIds: lines(byId('case-ids').value) } };
-    }).then(function (out) {
-      if (!out || out.status !== 200) return;
-      if (out.data.result && out.data.result.experiment) renderExperiment(out.data.result.experiment);
-    });
+    }).then(onExp);
   });
 
   byId('load-experiment').addEventListener('click', function () {
@@ -347,7 +358,7 @@ export const SCRIPT = `
         decisionRef: byId('direction-decision-ref').value.trim() || undefined,
         feedback: byId('direction-feedback').value.trim() || undefined
       };
-    });
+    }).then(onExp);
   });
 
   byId('submit-continue').addEventListener('click', function () {
@@ -357,7 +368,7 @@ export const SCRIPT = `
         directionRef: byId('continue-direction-ref').value.trim(),
         expectedVersion: num('continue-version')
       };
-    });
+    }).then(onExp);
   });
 
   byId('load-artifact').addEventListener('click', function () {

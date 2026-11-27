@@ -115,6 +115,7 @@ function validAssembly(readiness: ReadyHost, configuration: EvaluationConsoleCon
   if (!Array.isArray(checkSetIds) || !checkSetIds.length || checkSetIds.some(id => typeof id !== 'string' || !IDENTIFIER.test(id))) return false;
   if (
     typeof assembly.control?.issue !== 'function' ||
+    (assembly.control.versions !== undefined && typeof assembly.control.versions !== 'function') ||
     typeof assembly.approval?.presentation !== 'function' ||
     typeof assembly.approval?.decide !== 'function' ||
     typeof assembly.routesFor !== 'function' ||
@@ -164,11 +165,13 @@ export async function createEvaluationConsoleHost(
     });
     const token = assembly.operatorToken();
     if (typeof token !== 'string' || token.length < 16 || token.length > 512) return unavailable();
+    const controlVersions = assembly.control.versions?.bind(assembly.control);
     server = createConsoleServer({
       service,
       catalog: assembly.catalog,
       operatorToken: token,
       approval: assembly.approval,
+      ...(controlVersions === undefined ? {} : { controlVersions }),
       ...(assembly.artifacts === undefined ? {} : { artifacts: assembly.artifacts }),
       workflowReportLookup: {
         getWorkflowReport(experimentId) {

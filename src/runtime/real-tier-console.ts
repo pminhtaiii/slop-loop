@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { validateBugTask, type BugTask, type TaskNode, type TaskState } from '../contracts/foundation/uc03.ts';
+import { validateBugTask, type BugTask, type TaskNode } from '../contracts/foundation/uc03.ts';
 import { observeDockerReadiness } from '../foundation/docker-readiness.ts';
 import { structuredSpawn } from '../foundation/docker-spawn.ts';
 import { sha256Text } from '../uc01/contracts.ts';
@@ -20,6 +20,7 @@ import type { ServiceControl, ServiceControlReceipt } from './evaluation-service
 import type { RealTierAssembly, RealTierDependencies, RealTierResolution } from './real-tier-assembly.ts';
 import { PINS, resolvePinnedGrader, type GraderCapability } from './real-tier-case-grade.ts';
 import { admitRealTierConsole } from './real-tier-console-admission.ts';
+import { INVALID_CONTROL_RECEIPT, readRealConsoleControlVersions, validRealConsoleDirection, type RealConsoleSession } from './real-tier-console-control.ts';
 import { createRealTierGraderCapability } from './real-tier-grader.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import { expectedBindingsOf, matchesDigests } from './real-tier-production-lifecycle.ts';
@@ -32,24 +33,6 @@ export const REAL_CONSOLE_TOKEN_ENV = 'UC03_REAL_CONSOLE_TOKEN';
 const TOKEN_PATTERN = /^[\x21-\x7e]{16,512}$/u;
 const IDENTIFIER = /^[A-Za-z0-9._:/@-]{1,256}$/u;
 const TERMINAL_NODES: ReadonlySet<TaskNode> = new Set(['Deliver', 'Incomplete']);
-const INVALID_RECEIPT: ServiceControlReceipt = Object.freeze({ receiptRef: '', kind: 'resume', taskId: '', controlVersion: -1 });
-
-interface RecordedDirection {
-  readonly receipt: ServiceControlReceipt;
-  readonly taskVersion: number;
-}
-
-interface BoundSession {
-  readonly task: BugTask;
-  readonly statePort: RealTierAssembly['components']['statePort'];
-  readonly approvalService: ReturnType<RealTierAssembly['owners']['taskOwners']>['approvalService'];
-  readonly approvalConsole: ConsoleApprovalPort;
-  readonly directionsByRef: Map<string, RecordedDirection>;
-  directionsIssued: number;
-  lastControlVersion: number;
-  terminal: boolean;
-  cleanupCopy: () => void;
-}
 
 function resolveOperatorToken(env: RealTierEnvironment): Readonly<{ token: string; fromEnv: boolean }> {
   const supplied = Object.hasOwn(env, REAL_CONSOLE_TOKEN_ENV) ? env[REAL_CONSOLE_TOKEN_ENV] : undefined;
@@ -105,28 +88,6 @@ function freshMatchesInitial(fresh: RealTierAssembly, initial: RealTierAssembly,
   return fresh.metadata.imageId === initial.metadata.imageId && fresh.metadata.endpointDigest === initial.metadata.endpointDigest && fresh.profile.catalog.path === initial.profile.catalog.path;
 }
 
-function validDir(
-  kind: 'resume' | 'revise' | 'end',
-  node: TaskState['node'],
-  approvalMode: string,
-  expectedCtrl: number,
-  expCtrlVer: number,
-  expTaskVer: number,
-  stateVer: number,
-  issued: number,
-  planDecRef: string | undefined,
-  decRef: string | undefined,
-): boolean {
-  if (approvalMode === 'waiting') return false;
-  const initNeeds = node === 'NeedsInfo' && issued === 0;
-  const ctrlOk = initNeeds ? expCtrlVer === expectedCtrl || expCtrlVer === 0 : expCtrlVer === expectedCtrl;
-  const taskOk = expTaskVer === stateVer || expTaskVer === expectedCtrl || (initNeeds && expTaskVer === 0);
-  if (!ctrlOk || !taskOk) return false;
-  if (node === 'NeedsInfo' || node === 'AwaitPlan' || node === 'Verify') return kind === 'resume';
-  if (node === 'AwaitFeedback') return (kind === 'revise' || kind === 'end') && (decRef === undefined || decRef === planDecRef);
-  return false;
-}
-
 /** Builds the `EvaluationConsoleFactory` attached to `createHostAssembly()` (`real-tier-assembly.ts`). */
 export function createRealTierConsoleFactory(
   initialAssembly: RealTierAssembly,
@@ -164,23 +125,24 @@ export function createRealTierConsoleFactory(
     }
 
     const { profile, catalog } = admitted.value;
-    const sessions = new Map<string, BoundSession>();
+    const sessions = new Map<string, RealConsoleSession>();
     const runNonce = randomUUID().slice(0, 12);
     let caseSeq = 0;
     let directionSeq = 0;
     let printedToken = false;
 
     const control: ServiceControl = {
+      versions: experimentId => readRealConsoleControlVersions(sessions.get(experimentId)),
       async issue(input) {
-        if (input.kind === 'revise' && !allowRevise) return INVALID_RECEIPT;
+        if (input.kind === 'revise' && !allowRevise) return INVALID_CONTROL_RECEIPT;
         const session = sessions.get(input.experimentId);
-        if (!session) return INVALID_RECEIPT;
+        if (!session) return INVALID_CONTROL_RECEIPT;
         const [ownerState, listed] = await Promise.all([session.statePort.loadTask(session.task.taskId), session.approvalService.list(session.task.taskId)]);
-        if (!ownerState) return INVALID_RECEIPT;
+        if (!ownerState) return INVALID_CONTROL_RECEIPT;
 
         const expectedCtrl = Math.max(listed.control.version, session.lastControlVersion);
         if (
-          !validDir(
+          !validRealConsoleDirection(
             input.kind,
             ownerState.node,
             listed.control.mode,
@@ -193,7 +155,7 @@ export function createRealTierConsoleFactory(
             input.decisionRef,
           )
         ) {
-          return INVALID_RECEIPT;
+          return INVALID_CONTROL_RECEIPT;
         }
 
         const nextVer = expectedCtrl + 1;
@@ -268,7 +230,7 @@ export function createRealTierConsoleFactory(
             if (bound.status !== 'task-bound') return { ok: false, reasonCode: bound.reasonCode };
 
             const owners = fresh.owners.taskOwners({ taskId: bound.ids.taskId, workspaceId: bound.ids.workspaceId, repositoryId: bound.task.repositoryId });
-            const session: BoundSession = {
+            const session: RealConsoleSession = {
               task: bound.task,
               statePort: bound.ports.statePort,
               approvalService: owners.approvalService,

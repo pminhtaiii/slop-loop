@@ -1393,6 +1393,18 @@ export function createHostAssembly(): ControlledHostAssemblyExport {
       repositoryIds: [CONTROLLED_CONSOLE_REPOSITORY_ID],
       checkSetIds: [CONTROLLED_CONSOLE_CHECK_SET],
       control: {
+        async versions(experimentId) {
+          const target = sessionsByExperimentId.get(experimentId);
+          if (!target) return null;
+          const ownerState = await target.statePort.loadTask(target.task.taskId);
+          if (!ownerState || (ownerState.node !== 'NeedsInfo' && ownerState.node !== 'AwaitPlan' && ownerState.node !== 'Verify' && ownerState.node !== 'AwaitFeedback')) {
+            return null;
+          }
+          if ((ownerState.node === 'AwaitPlan' || ownerState.node === 'Verify') && (!target.currentPresentation || !target.decided.has(target.currentPresentation.binding.decisionId))) {
+            return null;
+          }
+          return Object.freeze({ taskVersion: ownerState.stateVersion, controlVersion: target.controlVersion });
+        },
         async issue(input) {
           const target = sessionsByExperimentId.get(input.experimentId);
           if (!target) throw new Error('UNKNOWN_EXPERIMENT');

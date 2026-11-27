@@ -647,3 +647,65 @@ test('a rejected mutation does not break the serialisation chain', async () => {
     assert.equal(stub.calls.at(-1)?.method, 'answerClarification');
   });
 });
+
+test('controlVersions attaches validated owner versions across view endpoints and fails closed on invalid or throwing ports', async () => {
+  const seenIds: string[] = [];
+  let nextControl: unknown = { taskVersion: 4, controlVersion: 2 };
+  const controlVersions = (id: string) => {
+    seenIds.push(id);
+    if (nextControl === 'THROW') throw new Error('C:\\private\\owner-secret');
+    return nextControl as never;
+  };
+  const stub = createStub();
+  const server = createConsoleServer({
+    service: stub.service,
+    catalog: [catalogEntry],
+    operatorToken: TOKEN,
+    approval: stub.approval,
+    comparison: stub.comparison,
+    controlVersions,
+  });
+  const address = await server.listen(0);
+  try {
+    const startReply = await mutation(address.port, '/api/experiments', { profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'k-start', source: { kind: 'catalog', caseIds: ['case-001'] } });
+    assert.equal(startReply.status, 200);
+    assert.deepEqual(JSON.parse(startReply.body).result.experiment.control, { taskVersion: 4, controlVersion: 2 });
+
+    const getReply = await call(address.port, 'GET', '/api/experiments/exp-001', { headers: { host: `127.0.0.1:${address.port}` } });
+    assert.equal(getReply.status, 200);
+    assert.deepEqual(JSON.parse(getReply.body).result.control, { taskVersion: 4, controlVersion: 2 });
+
+    for (const [path, payload] of [
+      ['/api/experiments/exp-001/answers', { idempotencyKey: 'k-ans', questionId: 'q-1', questionDigest: digest('q'), expectedVersion: 1, answers: ['yes'] }],
+      ['/api/experiments/exp-001/directions', { idempotencyKey: 'k-dir', kind: 'resume', expectedTaskVersion: 4, expectedControlVersion: 2 }],
+      ['/api/experiments/exp-001/continue', { idempotencyKey: 'k-cont', directionRef: 'ctrl-1', expectedVersion: 4 }],
+    ] as const) {
+      const reply = await mutation(address.port, path, payload);
+      assert.equal(reply.status, 200, path);
+      assert.deepEqual(JSON.parse(reply.body).result.experiment.control, { taskVersion: 4, controlVersion: 2 }, path);
+    }
+
+    // Malformed port results fail closed to null rather than passing raw shapes.
+    for (const bad of [null, [], '4,2', { taskVersion: -1, controlVersion: 0 }, { taskVersion: 1, controlVersion: 2, extra: true }, { taskVersion: 1 }]) {
+      nextControl = bad;
+      const reply = await call(address.port, 'GET', '/api/experiments/exp-001', { headers: { host: `127.0.0.1:${address.port}` } });
+      assert.equal(reply.status, 200);
+      assert.equal(JSON.parse(reply.body).result.control, null);
+    }
+
+    // Throwing port returns a fixed 500 error without leaking details or stalling later requests.
+    nextControl = 'THROW';
+    const throwing = await call(address.port, 'GET', '/api/experiments/exp-001', { headers: { host: `127.0.0.1:${address.port}` } });
+    assert.equal(throwing.status, 500);
+    assert.deepEqual(JSON.parse(throwing.body), { ok: false, error: 'SERVICE_ERROR' });
+    assert.equal(throwing.body.includes('owner-secret'), false);
+
+    nextControl = null;
+    const recovered = await mutation(address.port, '/api/experiments/exp-001/directions', { idempotencyKey: 'k-after', kind: 'end', expectedTaskVersion: 0, expectedControlVersion: 0 });
+    assert.equal(recovered.status, 200);
+    assert.equal(JSON.parse(recovered.body).result.experiment.control, null);
+    assert.equal(seenIds.length >= 13, true);
+  } finally {
+    await server.close();
+  }
+});
