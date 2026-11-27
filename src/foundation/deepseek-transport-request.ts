@@ -3,7 +3,8 @@
  * Owned path: src/foundation/deepseek-transport-request.ts
  */
 
-import { CLARIFICATION_MAX_ITEMS, CLARIFICATION_MAX_TEXT_BYTES, validateProviderRequest, type ClarificationRecord, type ProviderRequest, type ValidationError } from '../contracts/foundation/uc03.ts';
+import { validateProviderRequest, type ClarificationRecord, type ProviderRequest, type ValidationError } from '../contracts/foundation/uc03.ts';
+import { validateClarification } from '../contracts/foundation/uc03/v01/validation/state/clarification.ts';
 import type { HostModelTransportPayload } from './model.ts';
 import { REVIEW_SYSTEM_TEXT, type DeepSeekReviewPrompt } from './deepseek-review-profile.ts';
 
@@ -68,16 +69,11 @@ export function microUsd(pricing: DeepSeekPricing, inputTokens: number, outputTo
 
 export type Admission = { readonly ok: true; readonly request: ProviderRequest; readonly body: string; readonly target: string } | { readonly ok: false; readonly reason: string };
 
-function clarificationWithinLimits(clarification: ClarificationRecord): boolean {
-  const answer = clarification.answer;
-  if (!answer) return true;
-  if (typeof answer.answerDigest !== 'string' || !answer.answerDigest.trim()) return false;
-  if (clarification.questions.length === 0 || clarification.questions.length > CLARIFICATION_MAX_ITEMS) return false;
-  if (answer.items.length === 0 || answer.items.length > CLARIFICATION_MAX_ITEMS) return false;
-  for (const item of [...clarification.questions, ...answer.items]) {
-    if (!item.questionId.trim() || !item.text.trim() || Buffer.byteLength(item.text, 'utf8') > CLARIFICATION_MAX_TEXT_BYTES) return false;
-  }
-  return true;
+/** Reporter text enters the coder prompt, so re-run the canonical state validator (same bounds, one owner). */
+function clarificationWithinLimits(payload: HostModelTransportPayload): boolean {
+  const errors: ValidationError[] = [];
+  validateClarification(payload.state.clarification, 'state.clarification', { taskId: payload.state.taskId, runId: payload.state.runId }, errors);
+  return errors.length === 0;
 }
 
 function reporterClarificationFor(clarification: ClarificationRecord | undefined) {
@@ -143,7 +139,7 @@ export function admit(payload: HostModelTransportPayload, pricing: DeepSeekPrici
   if ((request.role === 'reviewer' || request.purpose === 'final-review') && (request.role !== 'reviewer' || request.purpose !== 'final-review' || !reviewPrompt)) {
     return { ok: false, reason: 'REVIEW_PROFILE_REQUIRED: reviewer role, final-review purpose and pinned profile must agree' };
   }
-  if (request.role === 'coder' && payload.state.clarification?.answer !== undefined && !clarificationWithinLimits(payload.state.clarification)) {
+  if (request.role === 'coder' && payload.state.clarification?.answer !== undefined && !clarificationWithinLimits(payload)) {
     return { ok: false, reason: 'CLARIFICATION_BOUNDS_EXCEEDED: answered clarification exceeds permitted item or byte bounds' };
   }
   const system = request.role === 'reviewer' ? REVIEW_SYSTEM_TEXT : SYSTEM_PROMPT;
