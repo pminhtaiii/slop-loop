@@ -278,6 +278,49 @@ test('an action id that is not a bounded identifier is refused at registration',
   assert.equal(await refusalCode(() => source.observe(TASK_ID, malformed.actionId)), 'UNKNOWN_ACTION');
 });
 
+test('renew extends an expired registration when the workspace revision matches', async t => {
+  const filesystem = new WorkspaceFilesystemPort({ root: workspace(t) });
+  let clock = 1_000;
+  const source = hostContext(filesystem, { ttlMs: 100, now: () => clock });
+  const revision = await filesystem.getCurrentRevisionDigest();
+  assert.equal((await source.register({ action: ACTION, facts: facts(revision), elements: ELEMENTS })).expiresAtEpochMs, 1_100);
+
+  clock = 1_150;
+  await assert.rejects(source.observe(TASK_ID, ACTION.actionId), /EXPIRED_AUTHORITY/);
+
+  const renewed = await source.renew(TASK_ID, ACTION.actionId);
+  assert.deepEqual(renewed, { actionId: ACTION.actionId, expiresAtEpochMs: 1_250 });
+  assert.deepEqual((await source.observe(TASK_ID, ACTION.actionId)).action, ACTION);
+
+  clock = 1_250;
+  await assert.rejects(source.observe(TASK_ID, ACTION.actionId), /EXPIRED_AUTHORITY/);
+});
+
+test('renew refuses unknown, cross-task, replaced and drifted registrations', async t => {
+  const root = workspace(t);
+  const filesystem = new WorkspaceFilesystemPort({ root });
+  let clock = 1_000;
+  const source = hostContext(filesystem, { ttlMs: 100, now: () => clock });
+  const revision = await filesystem.getCurrentRevisionDigest();
+  await source.register({ action: ACTION, facts: facts(revision), elements: ELEMENTS });
+
+  assert.equal(await refusalCode(() => source.renew(TASK_ID, 'never-registered')), 'UNKNOWN_ACTION');
+  assert.equal(await refusalCode(() => source.renew('other-task', ACTION.actionId)), 'CROSS_TASK');
+
+  const driftedRoot = workspace(t);
+  const driftedFs = new WorkspaceFilesystemPort({ root: driftedRoot });
+  const driftedSource = hostContext(driftedFs, { ttlMs: 100, now: () => clock });
+  await driftedSource.register({ action: ACTION, facts: facts(await driftedFs.getCurrentRevisionDigest()), elements: ELEMENTS });
+  clock = 1_150;
+  writeFileSync(join(driftedRoot, 'app.py'), 'print("drifted")\n');
+  assert.equal(await refusalCode(() => driftedSource.renew(TASK_ID, ACTION.actionId)), 'REVISION_DRIFT');
+  assert.equal(await refusalCode(() => driftedSource.observe(TASK_ID, ACTION.actionId)), 'EXPIRED_AUTHORITY');
+
+  const changed: NormalizedAction = { ...ACTION, argv: ['-q', 'tests/y.py'] };
+  await source.register({ action: changed, facts: facts(revision, { registeredActionDigest: computeActionDigest(changed) }), elements: ELEMENTS }).catch(() => undefined);
+  assert.equal(await refusalCode(() => source.renew(TASK_ID, ACTION.actionId)), 'REPLACED_ACTION');
+});
+
 /** Same id as ACTION, different content, but facts still carry ACTION's digest. */
 function changingArgv(): NormalizedAction {
   return { actionId: ACTION.actionId, kind: 'run_command', executable: 'pytest', argv: ['-q', 'tests/z.py'], workingDirectory: '/workspace/repo' };
