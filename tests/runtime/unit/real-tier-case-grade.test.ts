@@ -361,3 +361,37 @@ test('Finding 3 (4683701547): two overlapping grade calls on one resolution each
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('real-route missing snapshot evidence never reports the controlled-tier limitation', async () => {
+  const dir = createTempDir('real-not-run');
+  try {
+    const graderRaw = JSON.stringify({ criteria: CRITERIA, profile: PROFILE, graderPayload: PAYLOAD });
+    const graderPath = join(dir, 'grader.json');
+    const catalogPath = join(dir, 'catalog.json');
+    writeFileSync(graderPath, graderRaw, 'utf8');
+    writeFileSync(catalogPath, JSON.stringify({ catalog: [{ caseId: 'C01', grader: { path: graderPath, digest: `sha256:${sha256Text(graderRaw)}` } }] }), 'utf8');
+    const capability: GraderCapability = {
+      tier: 'real-tier',
+      isolationAuthority: { admit: () => assert.fail('missing evidence must not admit a hidden check') },
+      executor: { executorId: 'unused-real-executor', execute: () => assert.fail('missing evidence must not execute a hidden check') },
+      finalTree: { freezeFinalTree: () => undefined, recheckCurrentFinalTree: () => undefined },
+    };
+    const resolution = resolvePinnedGrader(makeAssembly(catalogPath), 'C01', capability);
+    assert.equal(resolution.status, 'ready');
+    if (resolution.status !== 'ready') return;
+    const host = resolution.evidenceHost({ taskId: 'task-missing-evidence' } as BugTask, dir);
+    const result = await host.grader.grade('C01', {});
+    assert.equal(result.grade, 'not-run');
+    assert.equal(result.reason, 'invalid-observation');
+    assert.equal(
+      result.limitations.some(value => value.startsWith('Controlled-tier grade only;')),
+      false,
+    );
+    assert.equal(
+      result.limitations.some(value => value.includes('admitted by')),
+      false,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

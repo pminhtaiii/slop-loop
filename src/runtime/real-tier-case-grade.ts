@@ -312,13 +312,16 @@ export function resolvePinnedGrader(assembly: RealTierAssembly, caseId: string, 
   const observed = observeAdmissions(capability.isolationAuthority);
   let grader: SnapshotGrader;
   try {
-    grader = createSnapshotGrader({
-      criteria: pinned.criteria,
-      profile: pinned.profile,
-      graderPayload: pinned.graderPayload,
-      isolationAuthority: observed.authority,
-      executor: capability.executor,
-    });
+    grader = createSnapshotGrader(
+      {
+        criteria: pinned.criteria,
+        profile: pinned.profile,
+        graderPayload: pinned.graderPayload,
+        isolationAuthority: observed.authority,
+        executor: capability.executor,
+      },
+      capability.tier,
+    );
   } catch {
     return { status: 'unavailable', reasonCode: 'grader-material-incomplete', missing: ['grader.criteria', 'grader.profile'] };
   }

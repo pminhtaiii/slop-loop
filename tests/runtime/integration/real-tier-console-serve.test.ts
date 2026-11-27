@@ -6,11 +6,13 @@
  */
 
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 import { runEvaluateCli } from '../../../src/cli/evaluate.ts';
 import type { BugTask } from '../../../src/contracts/foundation/uc03.ts';
@@ -281,7 +283,7 @@ function createSpawnDouble(options: { versionFail?: boolean; imageFail?: boolean
     return volumeSub.spawn(command, args, spawnOpts);
   };
 
-  return { spawn, hiddenChecks, state };
+  return { spawn, hiddenChecks, state, volumes: volumeSub.volumes };
 }
 
 function countConsoleCopies(): Set<string> {
@@ -1550,5 +1552,115 @@ test('serve --host real assembly: clock advance past action TTL during waiting-a
     await cliResult?.close?.();
     sc.cleanup();
     t.mock.timers.reset();
+  }
+});
+
+interface RestartScenario {
+  readonly hostFile: string;
+  readonly profileId: string;
+  readonly env: RealTierEnvironment;
+  readonly stateRoot: string;
+  readonly token: string;
+  readonly volumesPath: string;
+  readonly resultPath: string;
+  readonly incarnation: number;
+}
+
+// Each child has a fresh module allocator; the controlled Docker daemon retains its named volumes.
+async function runRestartProcess(input: RestartScenario): Promise<void> {
+  const spawnSpy = createSpawnDouble();
+  if (existsSync(input.volumesPath)) {
+    const volumes = JSON.parse(readFileSync(input.volumesPath, 'utf8')) as [string, [string, string][]][];
+    for (const [name, files] of volumes) spawnSpy.volumes.set(name, new Map(files.map(([path, bytes]) => [path, Buffer.from(bytes, 'base64')])));
+  }
+  const spawn: StructuredSpawn = (command, args, options) => {
+    // Docker volume create is idempotent and does not empty an existing volume.
+    if (args[0] === 'volume' && args[1] === 'create' && spawnSpy.volumes.has(args[2] ?? '')) return Promise.resolve({ exitCode: 0, stdout: '', stderr: '', timedOut: false });
+    return spawnSpy.spawn(command, args, options);
+  };
+  const deps: RealTierDependencies = { env: input.env, stateRoot: input.stateRoot, revision: REV, fetch: createFetchDouble().fetch, spawn };
+  (globalThis as Record<string, unknown>)[HOOK_KEY] = () => deps;
+  const cli = await runEvaluateCli(['serve', '--host', input.hostFile]);
+  try {
+    assert.equal(cli.exitCode, 0);
+    const { host, port } = JSON.parse(cli.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, input.token);
+    const startCase = async (caseId: string) =>
+      client.unwrap<{ experiment: ExperimentViewShape }>(
+        await client.post('/api/experiments', { profileId: input.profileId, idempotencyKey: client.nextKey('restart-start'), source: { kind: 'catalog', caseIds: [caseId] } }),
+        'restart-start',
+      ).experiment;
+    const first = await startCase('C01');
+    assert.equal(first.status, 'waiting-approval', JSON.stringify(first.workflowReport));
+    assert.equal(first.workflowReport?.cases[0]?.workflowOutcome, 'waiting-approval');
+    const pending = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${first.id}/approval`), 'restart-pending');
+    assert.equal(pending.binding.status, 'pending');
+    assert.equal(pending.control.mode, 'waiting');
+    assert.equal(pending.control.version, 2);
+    if (input.incarnation === 0) {
+      let current = first;
+      for (const label of ['plan', 'verify']) {
+        const presentation = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${current.id}/approval`), label);
+        const decision = client.unwrap<DecisionReplyShape>(
+          await client.post(`/api/experiments/${current.id}/decision`, {
+            idempotencyKey: client.nextKey(label),
+            decision: 'approve',
+            expectedVersion: presentation.presentation.requestVersion,
+            presentationDigest: presentation.presentation.presentationDigest,
+          }),
+          label,
+        );
+        current = (await client.issueAndContinue(current.id, { kind: 'resume', expectedTaskVersion: decision.controlVersion, expectedControlVersion: decision.controlVersion, label }, current.version))
+          .experiment;
+      }
+      assert.equal(current.status, 'completed');
+      assert.equal(current.workflowReport?.cases[0]?.grade, 'pass');
+      assert.equal((await startCase('C02')).status, 'waiting-approval');
+    }
+    writeFileSync(input.resultPath, JSON.stringify({ runId: first.runId, workspaceId: first.workspaceId, decisionId: pending.binding.decisionId }), 'utf8');
+  } finally {
+    await cli.close?.();
+    writeFileSync(input.volumesPath, JSON.stringify([...spawnSpy.volumes].map(([name, files]) => [name, [...files].map(([path, bytes]) => [path, bytes.toString('base64')])])), 'utf8');
+    Reflect.deleteProperty(globalThis as Record<string, unknown>, HOOK_KEY);
+  }
+}
+
+test('serve --host real assembly: restarted factory with advancing clock reaches the plan pause', async () => {
+  const childScenario = process.env['UC03_TEST_RESTART_SCENARIO'];
+  if (childScenario !== undefined) {
+    await runRestartProcess(JSON.parse(readFileSync(childScenario, 'utf8')) as RestartScenario);
+    return;
+  }
+  const token = ['real', 'serve', 'restart', 'token', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'restart-clock', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: token } });
+  try {
+    const inputPath = join(sc.outside, 'restart-input.json');
+    const resultPath = join(sc.outside, 'restart-result.json');
+    let first: unknown;
+    for (let incarnation = 0; incarnation < 2; incarnation += 1) {
+      const input: RestartScenario = {
+        hostFile: sc.hostFile,
+        profileId: sc.profileId,
+        env: sc.env,
+        stateRoot: sc.deps.stateRoot ?? '',
+        token,
+        volumesPath: join(sc.outside, 'volumes.json'),
+        resultPath,
+        incarnation,
+      };
+      writeFileSync(inputPath, JSON.stringify(input), 'utf8');
+      const childEnv: NodeJS.ProcessEnv = { ...process.env, UC03_TEST_RESTART_SCENARIO: inputPath };
+      delete childEnv.NODE_TEST_CONTEXT;
+      await promisify(execFile)(process.execPath, ['--test', '--test-timeout=600000', '--test-name-pattern=restarted factory', fileURLToPath(import.meta.url)], {
+        cwd: resolveRepoRoot(),
+        env: childEnv,
+        timeout: 600_000,
+      });
+      const result: unknown = JSON.parse(readFileSync(resultPath, 'utf8'));
+      if (incarnation === 0) first = result;
+      else assert.deepEqual(result, first, 'new process repeats run, workspace and decision ids while reaching a fresh pending plan');
+    }
+  } finally {
+    sc.cleanup();
   }
 });
