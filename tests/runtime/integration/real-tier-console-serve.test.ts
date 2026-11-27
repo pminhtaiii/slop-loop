@@ -1706,6 +1706,7 @@ test('serve --host real assembly: ending NeedsInfo wait closes bounded incomplet
       'c02-end-cont',
     ).experiment;
     assert.equal(ended.status, 'incomplete');
+    assert.equal(ended.control, null);
     assert.equal(ended.workflowClarification, null);
     assert.equal(ended.workflowReport?.cases[0]?.workflowOutcome, 'INCOMPLETE');
     assert.equal(ended.workflowReport?.cases[0]?.grade, 'not-run');

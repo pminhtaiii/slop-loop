@@ -709,3 +709,28 @@ test('controlVersions attaches validated owner versions across view endpoints an
     await server.close();
   }
 });
+
+test('control versions skips malformed experiment result shapes before calling the owner', async () => {
+  const stub = createStub();
+  let calls = 0;
+  let value: unknown;
+  const server = createConsoleServer({
+    service: { ...stub.service, getExperiment: () => ({ ok: true, value: value as never }) },
+    catalog: [catalogEntry],
+    operatorToken: TOKEN,
+    controlVersions: () => {
+      calls += 1;
+      return null;
+    },
+  });
+  const address = await server.listen(0);
+  try {
+    for (value of [null, 'bad', [], { id: 4 }, { experiment: 'bad' }, { experiment: [] }, { experiment: { id: 4 } }]) {
+      const reply = await call(address.port, 'GET', '/api/experiments/exp-001', { headers: { host: `127.0.0.1:${address.port}` } });
+      assert.equal(reply.status, 200);
+    }
+    assert.equal(calls, 0);
+  } finally {
+    await server.close();
+  }
+});

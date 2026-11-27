@@ -147,6 +147,10 @@ function safeControlVersions(value: unknown): ExperimentControlVersions | null {
   return Object.freeze({ taskVersion, controlVersion });
 }
 
+function plainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+
 /** @param port the actual bound port; the token is the only credential and never enters a URL. */
 export function createConsoleServer(options: ConsoleServerOptions): ConsoleServer {
   const { service, catalog, operatorToken, artifacts, approval, controlVersions } = options;
@@ -222,11 +226,12 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
   const attachControl = async (run: () => ConsoleOutcome): Promise<ServiceResult<unknown>> => {
     const result = await run();
     if (!result.ok || !controlVersions) return result;
-    const val = result.value as { readonly id?: string; readonly experiment?: { readonly id?: string } };
-    const exp = val.experiment ?? val;
-    if (typeof exp.id !== 'string') return result;
-    const view = Object.freeze({ ...exp, control: safeControlVersions(await controlVersions(exp.id)) });
-    return { ok: true, value: val.experiment ? Object.freeze({ ...val, experiment: view }) : view };
+    const val = result.value;
+    if (!plainRecord(val)) return result;
+    const exp = val['experiment'] ?? val;
+    if (!plainRecord(exp) || typeof exp['id'] !== 'string') return result;
+    const view = Object.freeze({ ...exp, control: safeControlVersions(await controlVersions(exp['id'])) });
+    return { ok: true, value: val['experiment'] ? Object.freeze({ ...val, experiment: view }) : view };
   };
 
   const serialView = (res: ServerResponse, run: () => ConsoleOutcome): Promise<void> => respond(res, () => serial(() => attachControl(run)));

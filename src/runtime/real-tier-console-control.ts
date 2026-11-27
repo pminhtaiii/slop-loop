@@ -22,7 +22,7 @@ export interface RealConsoleSession {
 
 /** Reads required task and control versions directly from owner state when a direction can be issued. */
 export async function readRealConsoleControlVersions(session: RealConsoleSession | undefined): Promise<ExperimentControlVersions | null> {
-  if (!session) return null;
+  if (!session || session.terminal) return null;
   const [ownerState, listed] = await Promise.all([session.statePort.loadTask(session.task.taskId), session.approvalService.list(session.task.taskId)]);
   if (!ownerState || listed.control.mode === 'waiting' || !DIRECTION_NODES.has(ownerState.node)) return null;
   return Object.freeze({
