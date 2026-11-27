@@ -58,6 +58,57 @@ const pricing = {
   outputMicrosPerMillionTokens: 200_000,
 } as const;
 
+test('same-task follow-up snapshot and final validation reserve only remaining finite capacity', async () => {
+  const created = createQuestionBudgetLedger(validProfile(), { pricing, now: () => 0 });
+  assert.ok(created.ok);
+  const first = created.value.reserveSnapshotAdmission();
+  assert.ok(first.ok);
+  assert.ok(
+    (
+      await first.value.execute(
+        async () => undefined,
+        () => ({ kind: 'work', work: { scannedFiles: 1, scannedBytes: 100 } }),
+      )
+    ).ok,
+  );
+  const second = created.value.reserveSnapshotAdmission();
+  assert.ok(second.ok, 'prior scans cannot prevent admission when remaining capacity suffices');
+  assert.equal(second.value.maximumWork.scannedBytes, 99900);
+  assert.ok(
+    (
+      await second.value.execute(
+        async () => undefined,
+        () => ({ kind: 'work', work: { scannedFiles: 1, scannedBytes: 100 } }),
+      )
+    ).ok,
+  );
+  const firstFinal = created.value.reserveFinalValidation();
+  assert.ok(firstFinal.ok);
+  assert.ok(
+    (
+      await firstFinal.value.execute(
+        async () => undefined,
+        () => ({ kind: 'work', work: { finalBytes: 100 } }),
+      )
+    ).ok,
+  );
+  const secondFinal = created.value.reserveFinalValidation();
+  assert.ok(secondFinal.ok, 'later delivery uses remaining task output capacity');
+  assert.equal(secondFinal.value.maximumWork.finalBytes, 3900);
+  assert.ok(
+    (
+      await secondFinal.value.execute(
+        async () => undefined,
+        () => ({ kind: 'work', work: { finalBytes: 3900 } }),
+      )
+    ).ok,
+  );
+  assert.equal(created.value.snapshot().consumed.scannedBytes, 200);
+  assert.equal(created.value.snapshot().consumed.finalBytes, 4000);
+  const exhausted = created.value.reserveFinalValidation();
+  assert.deepEqual(exhausted, { ok: false, reasonCode: 'output-limit' });
+});
+
 test('no-dispatch accounting requires the exact private host result and a model reservation', async () => {
   for (const scenario of ['missing-identity', 'copied-identity', 'repository', 'extra-receipt-key', 'valid'] as const) {
     let clock = 0;
