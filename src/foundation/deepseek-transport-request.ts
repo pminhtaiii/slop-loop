@@ -3,8 +3,7 @@
  * Owned path: src/foundation/deepseek-transport-request.ts
  */
 
-import type { ProviderRequest, ValidationError } from '../contracts/foundation/uc03.ts';
-import { validateProviderRequest } from '../contracts/foundation/uc03.ts';
+import { CLARIFICATION_MAX_ITEMS, CLARIFICATION_MAX_TEXT_BYTES, validateProviderRequest, type ClarificationRecord, type ProviderRequest, type ValidationError } from '../contracts/foundation/uc03.ts';
 import type { HostModelTransportPayload } from './model.ts';
 import { REVIEW_SYSTEM_TEXT, type DeepSeekReviewPrompt } from './deepseek-review-profile.ts';
 
@@ -69,8 +68,33 @@ export function microUsd(pricing: DeepSeekPricing, inputTokens: number, outputTo
 
 export type Admission = { readonly ok: true; readonly request: ProviderRequest; readonly body: string; readonly target: string } | { readonly ok: false; readonly reason: string };
 
+function clarificationWithinLimits(clarification: ClarificationRecord): boolean {
+  const answer = clarification.answer;
+  if (!answer) return true;
+  if (typeof answer.answerDigest !== 'string' || !answer.answerDigest.trim()) return false;
+  if (clarification.questions.length === 0 || clarification.questions.length > CLARIFICATION_MAX_ITEMS) return false;
+  if (answer.items.length === 0 || answer.items.length > CLARIFICATION_MAX_ITEMS) return false;
+  for (const item of [...clarification.questions, ...answer.items]) {
+    if (!item.questionId.trim() || !item.text.trim() || Buffer.byteLength(item.text, 'utf8') > CLARIFICATION_MAX_TEXT_BYTES) return false;
+  }
+  return true;
+}
+
+function reporterClarificationFor(clarification: ClarificationRecord | undefined) {
+  const answer = clarification?.answer;
+  if (!clarification || !answer) return undefined;
+  return {
+    source: 'reporter-supplied' as const,
+    isUntrustedReporterInput: true as const,
+    answerDigest: answer.answerDigest,
+    questions: clarification.questions.map(question => ({ questionId: question.questionId, text: question.text })),
+    answers: answer.items.map(item => ({ questionId: item.questionId, text: item.text })),
+  };
+}
+
 function promptFor(payload: HostModelTransportPayload, request: ProviderRequest): string {
   const plan = payload.state.plan;
+  const reporterClarification = request.role === 'coder' ? reporterClarificationFor(payload.state.clarification) : undefined;
   return JSON.stringify({
     task: {
       taskId: payload.state.taskId,
@@ -96,6 +120,7 @@ function promptFor(payload: HostModelTransportPayload, request: ProviderRequest)
     },
     request: { providerRequestId: request.providerRequestId, role: request.role, purpose: request.purpose, contextDigest: request.contextDigest },
     untrustedEvidence: payload.untrustedContext.evidenceItems,
+    ...(reporterClarification !== undefined ? { reporterClarification } : {}),
   });
 }
 
@@ -117,6 +142,9 @@ export function admit(payload: HostModelTransportPayload, pricing: DeepSeekPrici
   const request = requestRes.value;
   if ((request.role === 'reviewer' || request.purpose === 'final-review') && (request.role !== 'reviewer' || request.purpose !== 'final-review' || !reviewPrompt)) {
     return { ok: false, reason: 'REVIEW_PROFILE_REQUIRED: reviewer role, final-review purpose and pinned profile must agree' };
+  }
+  if (request.role === 'coder' && payload.state.clarification?.answer !== undefined && !clarificationWithinLimits(payload.state.clarification)) {
+    return { ok: false, reason: 'CLARIFICATION_BOUNDS_EXCEEDED: answered clarification exceeds permitted item or byte bounds' };
   }
   const system = request.role === 'reviewer' ? REVIEW_SYSTEM_TEXT : SYSTEM_PROMPT;
   const { caps } = payload;

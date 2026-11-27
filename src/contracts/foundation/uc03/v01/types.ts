@@ -338,7 +338,7 @@ export interface BudgetLedger {
   readonly version: number;
 }
 
-export { CLARIFICATION_ROUND_CAP } from './clarification-types.ts';
+export { CLARIFICATION_MAX_ITEMS, CLARIFICATION_MAX_TEXT_BYTES, CLARIFICATION_ROUND_CAP } from './clarification-types.ts';
 export type { ClarificationAnswer, ClarificationQuestion, ClarificationRecord } from './clarification-types.ts';
 
 export interface TaskState {
