@@ -6,7 +6,7 @@ import type { QuestionRepositoryOperationControl } from '../foundation/repositor
 import type { QuestionEvidenceRegistryV1 } from './evidence.ts';
 import { questionStop, repositoryStop } from './graph-investigation.ts';
 import type { QuestionSourceReference } from './graph-types.ts';
-import { copySessionConstraints, projectQuestionSession, safeSessionText } from './session-projection.ts';
+import { copySessionConstraints, projectQuestionSession, QUESTION_CONVERSATION_MAX_TURNS, safeSessionText } from './session-projection.ts';
 import type { QuestionSessionProjection } from './session-types.ts';
 import { sameBinding } from './retrieval-admission.ts';
 
@@ -17,9 +17,12 @@ export interface QuestionContinuation {
 
 /** Copies bounded metadata only; source text and issuance IDs never enter retained references. */
 export function copyQuestionSourceReferences(input: unknown, identity: QuestionIdentityV1, profile: QuestionBudgetProfileV1): readonly QuestionSourceReference[] | undefined {
-  if (!Array.isArray(input) || input.length > Math.min(profile.runtime.maxToolCalls, profile.retrieval.maxChunks)) return undefined;
+  if (!Array.isArray(input)) return undefined;
+  const length = input.length;
+  if (!Number.isSafeInteger(length) || length < 0 || length > Math.min(profile.runtime.maxToolCalls, profile.retrieval.maxChunks)) return undefined;
   const result: QuestionSourceReference[] = [];
-  for (const item of input as unknown[]) {
+  for (let index = 0; index < length; index++) {
+    const item: unknown = input[index];
     if (!isRecord(item) || Object.keys(item).sort().join(',') !== 'binding,excerptDigest,manifestDigest,originalByteDigest,path,range,sessionId,snapshotId,taskId') return undefined;
     const { binding: rawBinding, range: rawRange, sessionId, taskId, snapshotId, manifestDigest, path, originalByteDigest, excerptDigest } = item;
     const binding = validateRepositoryBinding(isRecord(rawBinding) ? { ...rawBinding } : rawBinding);
@@ -72,12 +75,14 @@ export function prepareQuestionContinuation(input: unknown, identity: QuestionId
     !safeSessionText(intent, profile.repository.maxQueryBytes) ||
     !checkedConstraints ||
     (pendingClarification !== null && !safeSessionText(pendingClarification, profile.runtime.maxConversationBytes)) ||
-    !Array.isArray(conversation) ||
-    conversation.length > 1000
+    !Array.isArray(conversation)
   )
     return undefined;
+  const length = conversation.length;
+  if (!Number.isSafeInteger(length) || length < 0 || length > QUESTION_CONVERSATION_MAX_TURNS) return undefined;
   const turns: { readonly role: 'user'; readonly text: string }[] = [];
-  for (const turn of conversation as unknown[]) {
+  for (let index = 0; index < length; index++) {
+    const turn: unknown = conversation[index];
     if (!isRecord(turn) || Object.keys(turn).sort().join(',') !== 'role,text') return undefined;
     const { role, text } = turn;
     if (role !== 'user' || !safeSessionText(text, profile.runtime.maxConversationBytes)) return undefined;

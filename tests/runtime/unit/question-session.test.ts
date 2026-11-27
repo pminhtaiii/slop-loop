@@ -623,3 +623,96 @@ test('repository switch cancels work but cannot replace an unknown held ledger u
   assert.deepEqual(seen[1]?.context.conversation, []);
   provider.resolve(undefined);
 });
+
+test('closing during start preparation does not install a task', async () => {
+  const made = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async () => assert.fail('closed session must not run'),
+  });
+  assert.ok(made.ok);
+  const input = {
+    ...task(),
+    get question() {
+      made.value.closeSession();
+      return 'Explain recovery';
+    },
+  };
+  assert.deepEqual(await made.value.startTask(input, control()), { status: 'refused', reasonCode: 'closed' });
+  assert.equal(made.value.snapshot().taskId, null);
+});
+
+for (const stop of ['abort', 'deadline'] as const) {
+  test('a switch stopped during preparation leaves the current ledger open: ' + stop, async t => {
+    const made = openSession({ sessionId: 'session', pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 }, run: async request => reply(request) });
+    assert.ok(made.ok);
+    assert.equal((await made.value.startTask(task(), control())).status, 'completed');
+    const cancellation = new AbortController();
+    const deadlineEpochMs = Date.now() + 10000;
+    let time = deadlineEpochMs - 1;
+    t.mock.method(Date, 'now', () => time);
+    const constraints: string[] = [];
+    Object.defineProperty(constraints, 0, {
+      get() {
+        if (stop === 'abort') cancellation.abort();
+        else time = deadlineEpochMs;
+        return 'Inspect source only';
+      },
+    });
+    const replacement = { ...task('next'), constraints };
+    assert.deepEqual(await made.value.switchRepository(replacement, { deadlineEpochMs, signal: cancellation.signal }), { status: 'refused', reasonCode: 'invalid-request' });
+    assert.equal(made.value.snapshot().budget?.status, 'open');
+    assert.equal(made.value.snapshot().taskId, 'task');
+  });
+}
+
+test('continuation holds the preparation guard across caller access and releases it after a throw', async () => {
+  let calls = 0;
+  const made = openSession({
+    sessionId: 'session',
+    pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+    run: async request => {
+      calls++;
+      return reply(request);
+    },
+  });
+  assert.ok(made.ok);
+  const first = await made.value.startTask(task(), control());
+  assert.equal(first.status, 'completed');
+  const input = { taskId: 'task', turnId: first.turnId, question: 'What next?' };
+  let nested: ReturnType<typeof made.value.continueTask> | undefined;
+  await assert.rejects(
+    made.value.continueTask(input, {
+      ...control(),
+      get work(): never {
+        nested = made.value.continueTask(input, control());
+        throw new Error('control accessor');
+      },
+    }),
+    /control accessor/,
+  );
+  assert.deepEqual(await nested, { status: 'refused', reasonCode: 'busy' });
+  assert.equal((await made.value.continueTask(input, control())).status, 'completed');
+  assert.equal(calls, 2);
+});
+
+for (const change of ['close', 'replace'] as const) {
+  test('cancel refuses when reading taskId causes ' + change, async () => {
+    const made = openSession({ sessionId: 'session', pricing: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 }, run: async request => reply(request) });
+    assert.ok(made.ok);
+    assert.equal((await made.value.startTask(task(), control())).status, 'completed');
+    let replacement: ReturnType<typeof made.value.startTask> | undefined;
+    const result = made.value.cancelTask({
+      get taskId() {
+        if (change === 'close') made.value.closeSession();
+        else replacement = made.value.startTask(task('next'), control());
+        return change === 'close' ? 'task' : 'next';
+      },
+    });
+    assert.deepEqual(result, { status: 'refused', reasonCode: change === 'close' ? 'closed' : 'task-mismatch' });
+    if (replacement) {
+      assert.equal((await replacement).status, 'completed');
+      assert.equal(made.value.snapshot().budget?.status, 'open');
+    }
+  });
+}

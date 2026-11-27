@@ -22,6 +22,7 @@ import { admitInvestigationBinding, budgetStop, definitionHint, investigateQuest
 import type { QuestionInvestigationConfiguration, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
 import { createQuestionNavigation } from './graph-navigation.ts';
 import { prepareQuestionContinuation, readQuestionContinuation, retainQuestionSourceReferences } from './graph-continuation.ts';
+import { hasQuestionControlCharacters } from './question-text.ts';
 import { QUESTION_MODEL_QUESTION_MAX_BYTES } from './model-compiler.ts';
 
 export type { QuestionInvestigation, QuestionInvestigationCreation, QuestionInvestigationOptions, QuestionInvestigationRun } from './graph-types.ts';
@@ -127,7 +128,8 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
       typeof question !== 'string' ||
       !question.trim() ||
       Buffer.byteLength(question) > config.profile.repository.maxQueryBytes ||
-      !question.isWellFormed()
+      !question.isWellFormed() ||
+      hasQuestionControlCharacters(question)
     )
       return failed(questionStop('invalid-decision'));
     if (containsProtectedContent(question)) return failed(questionStop('protected-content'));
@@ -194,12 +196,12 @@ export function createQuestionInvestigation(options: QuestionInvestigationOption
             linkedDefinitions.set(chunk.chunkId, chunk);
           }
         }
+        const reuseFailure = await readQuestionContinuation(continuation.references, config.snapshot, evidenceRegistry, evidence, control, stop);
+        if (reuseFailure) return { ...close(reuseFailure, state), retrieval: observation };
         for (const chunk of linkedDefinitions.values()) {
           const hint = definitionHint(chunk, evidence, config.profile.repository.maxSpanLines);
           if (hint) observations.push(hint);
         }
-        const reuseFailure = await readQuestionContinuation(continuation.references, config.snapshot, evidenceRegistry, evidence, control, stop);
-        if (reuseFailure) return { ...close(reuseFailure, state), retrieval: observation };
         return { retrieval: observation, evidence: Object.freeze(evidence), observations: Object.freeze(observations) };
       })
       .addNode('Decide', async (state: State) => {

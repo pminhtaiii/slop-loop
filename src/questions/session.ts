@@ -204,6 +204,7 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
     return task.ownerBlocked || state.status === 'blocked' || Object.values(state.reserved).some(value => value > 0);
   }
   function launch(task: Task, question: string, control: QuestionRepositoryOperationControl): Promise<QuestionSessionTurn> {
+    if (isClosed()) return Promise.resolve(refused('closed'));
     active = task;
     usedTasks.add(task.id);
     const operation = execute(task, question, control);
@@ -239,6 +240,8 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
         preparing = false;
       }
       if ('status' in prepared) return prepared;
+      if (isClosed()) return refused('closed');
+      if (!captureControl(prepared.control)) return refused('invalid-request');
       const old = active;
       if (old) {
         controller?.abort();
@@ -267,32 +270,39 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
   async function continueTask(input: unknown, control: QuestionRepositoryOperationControl): Promise<QuestionSessionTurn> {
     const denial = gate();
     if (denial) return denial;
-    if (!active || !isRecord(input) || !onlyKeys(input, ['taskId', 'turnId', 'question', 'clarificationId', 'rebind'])) return refused('invalid-request');
-    const { taskId, turnId, question, clarificationId, rebind } = input;
-    const capturedControl = captureControl(control);
-    if (!capturedControl) return refused('invalid-request');
-    if (taskId !== active.id) return refused(usedTasks.size > 1 && taskId === undefined ? 'clarification-required' : 'task-mismatch');
-    if (turnId !== active.turnId) return refused('turn-mismatch');
-    if (active.contextBlocked) return refused('context-limit');
-    if (active.result?.kind === 'awaiting-clarification' && clarificationId !== active.result.clarification.clarificationId) return refused('clarification-required');
-    if (!safeSessionText(question, active.profile.repository.maxQueryBytes)) return refused('invalid-request');
-    if (active.result?.kind === 'stale-repository' && rebind === undefined) return refused('rebind-required');
-    if (active.budget.snapshot().status !== 'open') return refused('budget-closed');
-    let task = active;
-    if (rebind !== undefined) {
-      if (!isRecord(rebind) || !onlyKeys(rebind, ['binding'])) return refused('invalid-request');
-      const rawBinding = rebind['binding'];
-      const binding = validateRepositoryBinding(isRecord(rawBinding) ? { ...rawBinding } : rawBinding);
-      if (!binding.ok) return refused('invalid-request');
-      if (binding.value.repositoryId !== task.binding.repositoryId || binding.value.workspaceId !== task.binding.workspaceId || binding.value.policyDigest !== task.binding.policyDigest)
-        return refused('switch-required');
-      task = { ...task, binding: binding.value, sourceReferences: [], projection: { ...task.projection, binding: binding.value, conversation: [] } };
+    preparing = true;
+    try {
+      if (!active || !isRecord(input) || !onlyKeys(input, ['taskId', 'turnId', 'question', 'clarificationId', 'rebind'])) return refused('invalid-request');
+      const { taskId, turnId, question, clarificationId, rebind } = input;
+      const capturedControl = captureControl(control);
+      if (isClosed()) return refused('closed');
+      if (!capturedControl) return refused('invalid-request');
+      if (taskId !== active.id) return refused(usedTasks.size > 1 && taskId === undefined ? 'clarification-required' : 'task-mismatch');
+      if (turnId !== active.turnId) return refused('turn-mismatch');
+      if (active.contextBlocked) return refused('context-limit');
+      if (active.result?.kind === 'awaiting-clarification' && clarificationId !== active.result.clarification.clarificationId) return refused('clarification-required');
+      if (!safeSessionText(question, active.profile.repository.maxQueryBytes)) return refused('invalid-request');
+      if (active.result?.kind === 'stale-repository' && rebind === undefined) return refused('rebind-required');
+      if (active.budget.snapshot().status !== 'open') return refused('budget-closed');
+      let task = active;
+      if (rebind !== undefined) {
+        if (!isRecord(rebind) || !onlyKeys(rebind, ['binding'])) return refused('invalid-request');
+        const rawBinding = rebind['binding'];
+        const binding = validateRepositoryBinding(isRecord(rawBinding) ? { ...rawBinding } : rawBinding);
+        if (!binding.ok) return refused('invalid-request');
+        if (binding.value.repositoryId !== task.binding.repositoryId || binding.value.workspaceId !== task.binding.workspaceId || binding.value.policyDigest !== task.binding.policyDigest)
+          return refused('switch-required');
+        task = { ...task, binding: binding.value, sourceReferences: [], projection: { ...task.projection, binding: binding.value, conversation: [] } };
+      }
+      if (isClosed()) return refused('closed');
+      if (!sameBinding(task.binding, task.projection.binding)) return refused('rebind-required');
+      const projection = projectQuestionSession({ ...task.projection, conversation: [...task.projection.conversation, { role: 'user', text: question }] }, task.profile.runtime.maxConversationBytes);
+      if (!projection) return refused('context-limit');
+      task.projection = projection;
+      return launch(task, question, capturedControl);
+    } finally {
+      preparing = false;
     }
-    if (!sameBinding(task.binding, task.projection.binding)) return refused('rebind-required');
-    const projection = projectQuestionSession({ ...task.projection, conversation: [...task.projection.conversation, { role: 'user', text: question }] }, task.profile.runtime.maxConversationBytes);
-    if (!projection) return refused('context-limit');
-    task.projection = projection;
-    return launch(task, question, capturedControl);
   }
   return Object.freeze({
     ok: true,
@@ -330,9 +340,13 @@ export function openSession(options: OpenQuestionSessionOptions): QuestionSessio
       },
       cancelTask(input: unknown) {
         if (isClosed()) return refused('closed');
-        if (!active || !isRecord(input) || !onlyKeys(input, ['taskId']) || input['taskId'] !== active.id) return refused('task-mismatch');
+        const task = active;
+        if (!task || !isRecord(input) || !onlyKeys(input, ['taskId'])) return refused('task-mismatch');
+        const taskId = input['taskId'];
+        if (isClosed()) return refused('closed');
+        if (active !== task || taskId !== task.id) return refused('task-mismatch');
         controller?.abort();
-        active.budget.cancel();
+        task.budget.cancel();
         return Object.freeze({ status: 'cancelled' as const });
       },
       snapshot() {

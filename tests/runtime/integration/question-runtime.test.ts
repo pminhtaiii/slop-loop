@@ -15,6 +15,7 @@ import { computeSourceManifestDigest } from '../../../src/foundation/question-re
 import { createQuestionBudgetLedger } from '../../../src/questions/budget.ts';
 import { createControlledQuestionEmbedding } from '../../../src/questions/embedding.ts';
 import { createQuestionInvestigation } from '../../../src/questions/graph.ts';
+import { projectQuestionSession } from '../../../src/questions/session-projection.ts';
 import { openSession } from '../../../src/questions/session.ts';
 import type { QuestionSessionRunRequest } from '../../../src/questions/session-types.ts';
 import type { QuestionCompiledRequestV1 } from '../../../src/questions/model.ts';
@@ -1924,4 +1925,99 @@ test('a malicious final claim canary is suppressed without leaking or final sour
   assert.ok(!JSON.stringify(transport).includes(canary));
   assert.equal(loggedCanary, false);
   assert.ok(!('claims' in run.result) && !('citations' in run.result));
+});
+
+test('direct continuation validates bounded indexed arrays without asking for their iterators', async () => {
+  const f = fixture([context => answer(context, ['entry.py'])]);
+  const conversation = [{ role: 'user' as const, text: 'Indexed turn' }];
+  const sourceReferences: [] = [];
+  for (const array of [conversation, sourceReferences]) {
+    Object.defineProperty(array, Symbol.iterator, { get: () => assert.fail('borrowed iterator must not run') });
+  }
+  const graph = createQuestionInvestigation({
+    ...f.options,
+    continuation: { context: { taskId: 'task', binding: f.options.identity.binding, intent: 'Explain start.', constraints: [], pendingClarification: null, conversation }, sourceReferences },
+  });
+  assert.ok(graph.ok);
+  assert.equal((await graph.value.run('Explain start.', control())).result.kind, 'answered');
+  assert.match(f.requests[0]?.serialized ?? '', /Indexed turn/);
+});
+
+test('continuation control characters are rejected before repository work', async () => {
+  const f = fixture([]);
+  const context = { taskId: 'task', binding: f.options.identity.binding, intent: 'Explain start.', constraints: [], pendingClarification: null, conversation: [] };
+  for (const invalid of [
+    { constraints: ['before\u0080after'] },
+    { intent: 'before\u202eafter' },
+    { pendingClarification: 'before\u009fafter' },
+    { conversation: [{ role: 'user' as const, text: 'before\u0085after' }] },
+  ]) {
+    assert.deepEqual(createQuestionInvestigation({ ...f.options, continuation: { context: { ...context, ...invalid } } }), { ok: false, reasonCode: 'invalid-config' });
+  }
+  const graph = createQuestionInvestigation({ ...f.options, continuation: { context } });
+  assert.ok(graph.ok);
+  assert.equal((await graph.value.run('before\u009fafter', control())).result.kind, 'failed');
+  assert.equal(f.bindingChecks(), 0);
+  assert.equal(f.guarded.reads.length, 0);
+  assert.deepEqual(f.counts(), { modelCalls: 0, scans: 0 });
+});
+
+for (const reuse of [false, true]) {
+  test('definition hint reflects saved span re-admission: ' + reuse, async () => {
+    const lines = ['def calculate():', ...Array.from({ length: 79 }, (_, i) => '    value_' + i + ' = ' + i)];
+    const body = lines.join('\n');
+    const f = fixture([context => answer(context, ['long.py'])], new Map([['long.py', body]]), [{ path: 'long.py', startLine: 61, endLine: 80, symbol: 'calculate', definitionEnd: 80 }]);
+    const { identity, snapshot } = f.options;
+    const graph = createQuestionInvestigation({
+      ...f.options,
+      continuation: {
+        context: { taskId: identity.taskId, binding: identity.binding, intent: 'Explain calculate.', constraints: [], pendingClarification: null, conversation: [] },
+        sourceReferences: reuse
+          ? [
+              {
+                sessionId: identity.sessionId,
+                taskId: identity.taskId,
+                binding: identity.binding,
+                snapshotId: snapshot.snapshotId,
+                manifestDigest: snapshot.manifestDigest,
+                path: 'long.py',
+                range: { startLine: 1, endLine: 60 },
+                originalByteDigest: digest(body),
+                excerptDigest: digest(lines.slice(0, 60).join('\n')),
+              },
+            ]
+          : [],
+      },
+    });
+    assert.ok(graph.ok);
+    const run = await graph.value.run('Explain calculate.', control());
+    assert.equal(run.result.kind, 'answered', JSON.stringify(run));
+    const sent = JSON.parse(f.requests[0]?.serialized ?? '{}') as VisibleContext;
+    assert.equal(
+      sent.evidence.spans.some(span => span.range.startLine === 1 && span.range.endLine === 60),
+      reuse,
+    );
+    const hints = sent.observations.items.map(item => JSON.parse(item) as { kind: string; nextRead: unknown }).filter(item => item.kind === 'definition-continuation');
+    assert.deepEqual(
+      hints.map(hint => hint.nextRead),
+      reuse ? [] : [{ kind: 'read', path: 'long.py', startLine: 1, endLine: 60 }],
+    );
+  });
+}
+
+test('session projection trims oldest optional turns to the direct graph limit', () => {
+  const f = fixture([], undefined, undefined, { maxConversationBytes: 100000 });
+  const context = {
+    taskId: 'task',
+    binding: f.options.identity.binding,
+    intent: 'Explain start.',
+    constraints: ['Read source'],
+    pendingClarification: 'Which entry?',
+    conversation: Array.from({ length: 1001 }, (_, i) => ({ role: 'user' as const, text: 'Turn ' + i })),
+  };
+  assert.deepEqual(createQuestionInvestigation({ ...f.options, continuation: { context } }), { ok: false, reasonCode: 'invalid-config' });
+  const projected = projectQuestionSession(context, f.profile.runtime.maxConversationBytes);
+  assert.ok(projected);
+  assert.deepEqual(projected, { ...context, conversation: context.conversation.slice(1) });
+  assert.ok(createQuestionInvestigation({ ...f.options, continuation: { context: projected } }).ok);
 });
