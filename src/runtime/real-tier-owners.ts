@@ -17,8 +17,7 @@ import { ApprovalServiceError } from '../approvals/service.ts';
 import type { ApprovalServiceV02 } from '../approvals/service-v02.ts';
 import { createApprovalService } from '../approvals/service.ts';
 import { createRealContextProvider, type RealContextSource } from '../approvals/real-context-provider.ts';
-import { computeCanonicalSha256, type ApprovalPort, type TaskState } from '../contracts/foundation/uc03.ts';
-import type { ApprovalContext } from '../approvals/service-data.ts';
+import { type ApprovalPort, type TaskState } from '../contracts/foundation/uc03.ts';
 import type { PolicyAuthorityRefV02 } from '../contracts/foundation/uc03.ts';
 import type { TrustedOperatorIdentity } from '../contracts/approvals/contracts.ts';
 import type { GuardedReadOwnerPort } from '../foundation/guarded-read-capability.ts';
@@ -28,7 +27,7 @@ import type { OwnerDelivery } from './evaluation-composition.ts';
 import { createBaselineEvidenceAdapter } from './baseline-evidence-adapter.ts';
 import { createConsoleApprovalPort } from './console-approval-port.ts';
 import type { ConsoleApprovalPort } from './console-server.ts';
-import { HostActionContextError, type HostActionContext } from './host-action-context.ts';
+import { createRealTierPlanContext, observedSyntheticPlan } from './real-tier-plan-context.ts';
 import { createRecoveryGate, type RecoveryGate } from './real-tier-recovery.ts';
 import type { UC03GraphPortsV02, MaterialReplanPortV02 } from '../uc03/graph-types-v02.ts';
 import type { TrustedReplanDirection } from '../uc03/repair-types.ts';
@@ -114,148 +113,7 @@ const unbound = (): never => {
 /** The host console's operator identity; a decision is only ever recorded when an operator submits one. */
 const HOST_OPERATOR: TrustedOperatorIdentity = Object.freeze({ actorId: 'host-operator', channelRef: 'host-console', provenance: 'real' });
 
-/**
- * The durable provider, with the graph's first-request convention: a decision's action id is its
- * decision id, and no request record exists yet when it is first made. The stored record stays
- * primary; only its absence falls back to that same observed action.
- */
-function realContext(
-  provider: ReturnType<typeof createRealContextProvider>,
-  taskId: string,
-  statePort: DurableStatePortV02,
-  ownerPolicyIdentity?: Readonly<{ policyId: string; policyVersion: string; configId?: string; configVersion?: string }>,
-  approvalStore?: Pick<DurableApprovalStore, 'readRequest'>,
-  source?: RealContextSource & Partial<Pick<HostActionContext, 'renew'>>,
-): ReturnType<typeof createRealContextProvider> {
-  const observedPlan = async (input: unknown): Promise<unknown> => {
-    // The provider has admitted this context; persisted plan facts complete its approval freshness.
-    const context = input as ApprovalContext;
-    if (context.action.kind !== 'approve_fix_plan') return input;
-    const state = await statePort.loadTask(taskId);
-    const plan = state?.plan;
-    if (!state || !plan) return unbound();
-    // The first plan is requested from AwaitPlan; the post-patch verification approval is requested
-    // from Verify (no active decision yet) against the same recorded plan. Both are the plan decision.
-    const firstPlan = state.node === 'AwaitPlan' && plan.decisionRef === context.action.actionId;
-    const verification = state.node === 'Verify' && state.activeDecisionId === undefined && plan.strategyDigest === context.action.strategyDigest;
-    if (!firstPlan && !verification) return unbound();
-    return {
-      ...context,
-      freshness: {
-        ...context.freshness,
-        currentPlanVersion: plan.planVersion,
-        currentStrategyDigest: plan.strategyDigest,
-        currentBaselineRef: plan.baselineRef,
-        currentEvidenceRefs: plan.evidenceRefs,
-        currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
-        currentCheckSetDigest: plan.checkSetDigest,
-      },
-    };
-  };
-  return {
-    loadForAction: async (task, actionId) => {
-      const raw = await provider.loadForAction(task, actionId).catch(() => undefined);
-      return raw === undefined ? observedSyntheticPlan(taskId, actionId, statePort, ownerPolicyIdentity) : observedPlan(raw);
-    },
-    loadForDecision: async decisionId => {
-      // A verification D1 (`dec-verify-…`) has no stored request and was never a registered action.
-      if (decisionId.startsWith('dec-verify-')) return observedSyntheticPlan(taskId, decisionId, statePort, ownerPolicyIdentity);
-      let loaded: unknown;
-      try {
-        loaded = await provider.loadForDecision(decisionId);
-      } catch (error) {
-        if (error instanceof Error && error.message === 'real-context-unknown-decision') {
-          loaded = await provider.loadForAction(taskId, decisionId);
-        } else if (error instanceof HostActionContextError && error.code === 'EXPIRED_AUTHORITY' && approvalStore && typeof source?.renew === 'function') {
-          const response = approvalStore.readRequest(decisionId);
-          const storedRequest = response.safe.outcome === 'ok' ? response.value : null;
-          const state = await statePort.loadTask(taskId);
-          if (!storedRequest || state?.node !== 'AwaitPlan' || state.activeDecisionId !== decisionId || state.plan?.decisionRef !== storedRequest.actionRef) {
-            throw error;
-          }
-          await source.renew(taskId, storedRequest.actionRef);
-          loaded = await provider.loadForDecision(decisionId);
-        } else {
-          throw error;
-        }
-      }
-      return observedPlan(loaded);
-    },
-  };
-}
-
-/**
- * A plan decision the host never registered as an action (the post-patch verification D1): the
- * durable task already records the exact plan, so the observed action and facts are reconstructed
- * from it — the provider's own freshness fields still come from `observedPlan`.
- */
-export async function observedSyntheticPlan(
-  taskId: string,
-  actionId: string,
-  statePort: DurableStatePortV02,
-  ownerPolicyIdentity?: Readonly<{ policyId: string; policyVersion: string; configId?: string; configVersion?: string }>,
-): Promise<unknown> {
-  const state = await statePort.loadTask(taskId);
-  const plan = state?.plan;
-  if (!state || !plan || state.node !== 'Verify' || state.activeDecisionId !== undefined) return unbound();
-  const action = {
-    actionId,
-    kind: 'approve_fix_plan' as const,
-    planVersion: plan.planVersion,
-    strategyDigest: plan.strategyDigest,
-    diagnosisEvidenceRefs: plan.evidenceRefs,
-    checkSetDigest: plan.checkSetDigest,
-  };
-  const policyId = ownerPolicyIdentity?.policyId ?? state.taskContext?.configId ?? '';
-  const policyVersion = ownerPolicyIdentity?.policyVersion ?? state.taskContext?.configVersion ?? '';
-  const configId = ownerPolicyIdentity?.configId ?? state.taskContext?.configId ?? '';
-  const configVersion = ownerPolicyIdentity?.configVersion ?? state.taskContext?.configVersion ?? '';
-  const built = {
-    action,
-    facts: {
-      taskId: state.taskId,
-      workspaceId: state.workspaceId,
-      repositoryId: state.repositoryId,
-      repositoryRevisionDigest: state.repositoryRevisionDigest,
-      policyIdentity: {
-        policyId,
-        policyVersion,
-        configId,
-        configVersion,
-      },
-      registeredActionDigest: computeCanonicalSha256(action),
-      continuationRef: actionId,
-      role: 'coder',
-      safety: { workspaceContained: true, protectedContentAbsent: true, hiddenGradingAbsent: true, policyBypassAbsent: true, testsPreserved: true, commandSourceWritesAbsent: true, isolated: true },
-      patch: null,
-      command: null,
-      plan: null,
-    },
-    elements: {
-      action: plan.strategy,
-      necessity: plan.diagnosis,
-      targets: plan.scopedChanges,
-      consequences: 'Approval permits verification of the scoped repair',
-      verificationStatus: 'Patch applied; verification pending',
-    },
-    runId: state.runId,
-    freshness: {
-      currentTaskId: state.taskId,
-      currentWorkspaceId: state.workspaceId,
-      currentRepositoryRevisionDigest: state.repositoryRevisionDigest,
-      currentPolicyId: policyId,
-      currentPolicyVersion: policyVersion,
-      currentNormalizedActionDigest: computeCanonicalSha256(action),
-      currentPlanVersion: plan.planVersion,
-      currentStrategyDigest: plan.strategyDigest,
-      currentBaselineRef: plan.baselineRef,
-      currentEvidenceRefs: plan.evidenceRefs,
-      currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
-      currentCheckSetDigest: plan.checkSetDigest,
-    },
-  };
-  return built;
-}
+export { observedSyntheticPlan };
 
 export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOwners {
   const { stateRoot, revision } = options;
@@ -327,7 +185,7 @@ export function createRealTierOwners(options: RealTierOwnersOptions): RealTierOw
     const context =
       created === undefined
         ? { loadForAction: async () => unbound(), loadForDecision: async () => unbound() }
-        : realContext(
+        : createRealTierPlanContext(
             createRealContextProvider({ durable: { loadTask: id => taskStatePort.loadTask(id) as never }, approvals: approvalStore, source: created }),
             binding.taskId,
             taskStatePort,
