@@ -143,7 +143,7 @@ class BudgetLedgerEngine implements QuestionBudgetLedgerPortV1, ReservationLedge
   }
 
   public reserveSnapshotAdmission(): QuestionBudgetReservationResultV1 {
-    return this.admit(() => planSnapshotAdmission(this.profile));
+    return this.admit(() => planSnapshotAdmission(this.profile, this.available()));
   }
 
   public reserveRepositoryOperation(kind: 'list' | 'search' | 'read'): QuestionBudgetReservationResultV1 {
