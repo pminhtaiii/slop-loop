@@ -1,3 +1,4 @@
+import { ApprovalServiceError } from '../approvals/service-data.ts';
 import { END, START, StateGraph } from '@langchain/langgraph';
 import { isAdmittedForProduction, type BugTask, type TaskState } from '../contracts/foundation/uc03.ts';
 import { createInvestigateNode, createPatchNode, createRepairNode } from './graph-nodes.ts';
@@ -198,6 +199,17 @@ export function createAwaitPlanNode(ports: UC03GraphPorts): UC03GraphNode {
   };
 }
 
+function classifyThrownError(error: unknown) {
+  const className = error instanceof Error ? (error.constructor?.name ?? '') : '';
+  const errorClass = /^[A-Z][A-Za-z0-9]{0,63}Error$/u.test(className) ? className : 'unknown';
+  const fields = typeof error === 'object' && error !== null ? Object.getOwnPropertyDescriptors(error) : {};
+  const code = ['reasonCode', 'code', 'outcome'].map(key => fields[key]?.value as unknown).find(value => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/u.test(value));
+  return {
+    approvalDeadline: error instanceof ApprovalServiceError && error.outcome === 'unavailable' && code === 'approval-operation-deadline-exceeded',
+    limitation: `Thrown error class: ${errorClass}${typeof code === 'string' ? `; code: ${code}` : ''}`,
+  };
+}
+
 export async function runUC03Graph(task: BugTask, ports: UC03GraphPorts, config?: UC03GraphConfig, initialState?: TaskState): Promise<UC03WorkflowResult> {
   if (
     config?.mode === 'production' &&
@@ -245,20 +257,32 @@ export async function runUC03Graph(task: BugTask, ports: UC03GraphPorts, config?
     }
     const outcome = current?.changedPaths.length ? 'IMPLEMENTED_UNVERIFIED' : 'INCOMPLETE';
     const exhausted = isGraphRecursionError(error);
+    const { approvalDeadline, limitation } = classifyThrownError(error);
     return {
       outcome,
       state: current?.outcome === 'COMPLETED' ? null : current,
-      reasons: [exhausted ? 'UC-03 route stopped at the project graph recursion limit' : 'UC-03 route stopped after an unconfirmed owner transition'],
+      reasons: [
+        exhausted
+          ? 'UC-03 route stopped at the project graph recursion limit'
+          : approvalDeadline
+            ? 'UC-03 route stopped at the approval operation deadline'
+            : 'UC-03 route stopped after an unconfirmed owner transition',
+      ],
       milestones: [],
       diagnostic: createEvaluationDiagnostic({
         stage: stageForNode(current?.node),
-        component: 'workflow',
+        component: approvalDeadline ? 'approval' : 'workflow',
         attribution: 'unknown',
-        attributionConfidence: 'unknown',
-        reasonCode: exhausted ? 'graph-recursion-exhausted' : 'unconfirmed-owner-transition',
+        attributionConfidence: approvalDeadline ? 'observed' : 'unknown',
+        reasonCode: exhausted ? 'graph-recursion-exhausted' : approvalDeadline ? 'approval-operation-deadline-exceeded' : 'unconfirmed-owner-transition',
         evidenceRefs: current ? current.evidenceRefs : [],
         limitations: [
-          exhausted ? 'The finite project graph recursion allowance was exhausted; completion is withheld' : 'Route stopped on a thrown failure; the failing component and its effects are unproven',
+          limitation,
+          exhausted
+            ? 'The finite project graph recursion allowance was exhausted; completion is withheld'
+            : approvalDeadline
+              ? 'The approval operation deadline elapsed; its effects and the cause of the delay are unproven'
+              : 'Route stopped on a thrown failure; the failing component and its effects are unproven',
           ...(current ? [] : ['No authoritative owner state could be reloaded after the failure']),
         ],
       }),

@@ -81,10 +81,10 @@ export function createApprovalServiceCore(
   const bounded = async <T>(operation: (assertActive: () => void) => Promise<T> | T): Promise<T> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let expired = false;
-    const assertActive = (): void => { if (expired) throw new ApprovalServiceError('unavailable'); };
+    const assertActive = (): void => { if (expired) throw new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded'); };
     try {
       return await Promise.race([Promise.resolve().then(() => operation(assertActive)), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { expired = true; reject(new ApprovalServiceError('unavailable')); }, profile.operationDeadlineMs);
+        timer = setTimeout(() => { expired = true; reject(new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded')); }, profile.operationDeadlineMs);
       })]);
     } catch (error) {
       if (error instanceof ApprovalServiceError) {
