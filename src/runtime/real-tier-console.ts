@@ -267,7 +267,8 @@ export function createRealTierConsoleFactory(
                 outcome = await baseEv.grader.grade(caseId, gradeInput);
                 return outcome;
               } finally {
-                if (noSnap || outcome === undefined || outcome.grade === 'not-run' || outcome.snapshot === null) await finishIfTerminal();
+                // Snapshot receipts stay live through recheck; rejected receipts are followed by a no-snapshot grade.
+                if (noSnap || outcome === undefined || outcome.snapshot === null) await finishIfTerminal();
               }
             };
             const recheck: typeof baseEv.finalTree.recheckCurrentFinalTree = async (binding, snap) => {

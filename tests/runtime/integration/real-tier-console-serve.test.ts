@@ -21,6 +21,8 @@ import type { BugTask } from '../../../src/contracts/foundation/uc03.ts';
 import type { StructuredSpawn } from '../../../src/foundation/docker-controller.ts';
 import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
 import { createHostAssembly, resolveRealTierAssembly, type RealTierDependencies } from '../../../src/runtime/real-tier-assembly.ts';
+import type { GraderCapability } from '../../../src/runtime/real-tier-case-grade.ts';
+import { createRealTierGraderCapability } from '../../../src/runtime/real-tier-grader.ts';
 import { createRealTierConsoleFactory, REAL_CONSOLE_TOKEN_ENV } from '../../../src/runtime/real-tier-console.ts';
 import { admitRealTierConsole, realTierHostDigestsOf } from '../../../src/runtime/real-tier-console-admission.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from '../../../src/runtime/real-tier-owners.ts';
@@ -108,6 +110,7 @@ interface ExperimentViewShape {
       readonly workflowOutcome: string;
       readonly grade: string;
       readonly gradeReason: string;
+      readonly limitations: readonly string[];
       readonly returnedModel: string | null;
       readonly graderDigest: string | null;
     }[];
@@ -2025,3 +2028,97 @@ test('serve --host real assembly: slow plan request deadline does not reproduce 
     sc.cleanup();
   }
 });
+
+for (const drift of [false, true]) {
+  test(`real console retains snapshot not-run reason and cleans up (drift=${drift})`, async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+    const envTokenMid = ['real', 'serve', 'mid', 'token', '0123'].join('-');
+    const scMid = await setupServeScenario({ tag: 'nr', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envTokenMid } });
+    const base = createRealTierGraderCapability({ spawn: scMid.spawnSpy.spawn });
+    let repositoryRoot = '';
+    Object.assign(scMid.deps, {
+      graderCapability: {
+        ...base,
+        bindCase: pins => {
+          repositoryRoot = pins.repositoryRoot;
+          base.bindCase(pins);
+        },
+        isolationAuthority: { admit: () => undefined },
+        finalTree: {
+          ...base.finalTree,
+          recheckCurrentFinalTree: (binding, snapshot) => {
+            if (drift) writeFileSync(join(repositoryRoot, 'src', 'calculator.py'), '# changed after grading\n', 'utf8');
+            return base.finalTree.recheckCurrentFinalTree(binding, snapshot);
+          },
+        },
+      } satisfies GraderCapability,
+    });
+    const copiesBeforeMid = countConsoleCopies();
+    let cliMid: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+    try {
+      const started = await scMid.captureStderr(() => runEvaluateCli(['serve', '--host', scMid.hostFile]));
+      cliMid = started.value;
+      assert.equal(cliMid.exitCode, 0);
+      const { host, port } = JSON.parse(cliMid.output) as { host: string; port: number };
+      const client = makeClient(`http://${host}:${port}`, envTokenMid);
+
+      const startedC01 = client.unwrap<{ experiment: ExperimentViewShape }>(
+        await client.post('/api/experiments', { profileId: scMid.profileId, idempotencyKey: client.nextKey('mid-start'), source: { kind: 'catalog', caseIds: ['C01'] } }),
+        'mid-start',
+      ).experiment;
+      assert.equal(startedC01.status, 'waiting-approval');
+      assert.equal(
+        [...countConsoleCopies()].some(d => !copiesBeforeMid.has(d)),
+        true,
+        'working copy should exist while waiting-approval',
+      );
+
+      const p0 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'mid-p0');
+      const d0 = client.unwrap<DecisionReplyShape>(
+        await client.post(`/api/experiments/${startedC01.id}/decision`, {
+          idempotencyKey: client.nextKey('mid-d0'),
+          decision: 'approve',
+          expectedVersion: p0.presentation.requestVersion,
+          presentationDigest: p0.presentation.presentationDigest,
+        }),
+        'mid-d0',
+      );
+      const afterD0 = await client.issueAndContinue(
+        startedC01.id,
+        { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'mid-verify' },
+        startedC01.version,
+      );
+      const p1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${startedC01.id}/approval`), 'mid-p1');
+      const d1 = client.unwrap<DecisionReplyShape>(
+        await client.post(`/api/experiments/${startedC01.id}/decision`, {
+          idempotencyKey: client.nextKey('mid-d1'),
+          decision: 'approve',
+          expectedVersion: p1.presentation.requestVersion,
+          presentationDigest: p1.presentation.presentationDigest,
+        }),
+        'mid-d1',
+      );
+      const done = await client.issueAndContinue(
+        startedC01.id,
+        { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, label: 'mid-deliver' },
+        afterD0.experiment.version,
+      );
+      assert.equal(done.experiment.status, 'completed');
+      assert.equal(done.experiment.workflowReport?.cases[0]?.grade, 'not-run');
+      assert.equal(done.experiment.workflowReport?.cases[0]?.gradeReason, drift ? 'invalid-observation' : 'private-grading');
+      assert.ok(
+        done.experiment.workflowReport?.cases[0]?.limitations.includes(
+          drift ? 'The final tree changed while the independent grade was being produced.' : 'The independent hidden check lacks admitted isolation or a result bound to its pinned identity.',
+        ),
+      );
+      assert.equal(JSON.stringify(done.experiment).includes('The final tree changed while the independent grade was being produced.'), drift);
+      assertNoLeaks(JSON.stringify(done.experiment), scMid.secrets(envTokenMid), 'mid-run grader refusal');
+      for (const dir of countConsoleCopies()) {
+        assert.equal(copiesBeforeMid.has(dir), true, `mid-run not-run working copy ${dir} should have been cleaned up`);
+      }
+    } finally {
+      await cliMid?.close?.();
+      scMid.cleanup();
+    }
+  });
+}
