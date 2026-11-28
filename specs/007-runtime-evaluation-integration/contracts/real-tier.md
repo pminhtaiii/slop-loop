@@ -227,3 +227,36 @@ Not released and not planned here: running T011, any G-REAL/SC-001 claim, T017 b
 ```
 
 `node dist/src/cli/real-tier-scan.js --print-host-template` (T057) prints this template, with the digests computed from the loaded profile and the revisions taken from `git rev-parse HEAD`. It never prints the endpoint.
+
+## (j) Real custom-bug route — 2026-11-28
+
+This section implements [integration contract](integration.md) §1's typed bug source on the real console without changing it. The real console stays catalog-pinned for graded runs and adds one optional `customRoute`.
+
+**Trusted inputs only.**
+- `repositoryIds` are the repository IDs of the admitted catalog's pinned fixtures; `checkSetIds` stays `['checks-configured']`.
+- A submission's `repositoryId` selects the **template**: the first admitted catalog entry, in catalog order, whose pinned fixture task has that repository ID. The template supplies the repository working copy, the canonical repository and config fields, the limits and the configured checks.
+- The reporter's `bugInput` supplies only six public fields: `goal`, `observedBehavior`, `expectedBehavior`, `reproduction`, `acceptanceCriteria` and `constraints` (default `[]`).
+- Nothing else comes from the submission: no path, command, check definition, limit, ID or permission. Reporter text is data, never policy.
+
+**Intake.**
+- A `needs-info` submission never reaches the route; the existing service persists it with its bound questions.
+- A complete submission yields one `BugTask`, built by replacing exactly those six public fields on the template's validated fixture task. It is then validated by the existing UC-03 BugTask validation, and must satisfy `taskMatchesSource`.
+- Each experiment gets a fresh task, run and workspace identity and a fresh working copy. It never reuses a catalog case's identity or owner state.
+
+**Execution.**
+- The same per-case real assembly path runs as for catalog cases: fresh assembly with drift checks, Docker readiness, the seed, owners and sessions.
+- The same approval, direction, clarification and cleanup handling applies.
+- The custom route's coder budget is the admitted profile limits, the same as catalog routes.
+
+**Reporting.**
+- The custom route carries **no** `workflowReport` and no grader. Its reports are exploratory: scope exploratory, grade `not-run/unpinned-criteria`, `suiteAcceptance` `not-applicable`.
+- They never borrow a catalog case's pins, grade or acceptance, and verified workflow checks are not independent evaluation acceptance.
+- The submission's ID and digest are recorded as integration §1 requires.
+
+**Refusals.**
+- These refuse before any seed or model call: an unconfigured repository or check set, a missing template, an invalid resulting task, Docker not ready, or drift.
+- The only active-experiment limit is the existing one.
+
+**Verification.**
+- Controlled tests cover: template selection, the six-field replacement, refusal of submission-supplied extra fields, fresh identity per experiment, exploratory ungraded reporting, and that no catalog grade or pin is touched.
+- The real evidence is an operator-driven browser run labelled real-route custom-bug, exploratory, ungraded.
