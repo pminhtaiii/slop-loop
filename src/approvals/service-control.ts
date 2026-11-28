@@ -14,7 +14,7 @@ export function createServiceControl(
 ): ApprovalService['control'] {
   const { options, profile, store, control, task, callPort, loadPort, coordinator, now, admission, bounded } = runtime;
   return input =>
-    bounded(async assertActive => {
+    bounded('control', async assertActive => {
       if (!options.operator) throw new ApprovalServiceError('denied');
       if (!directionInput(input)) throw new ApprovalServiceError('invalid');
       task(input.taskId);
