@@ -110,7 +110,7 @@
   - **Owned Paths**: src/runtime/console-page.ts; tests/runtime/unit/evaluation-console-page.test.ts.
   - **Acceptance Checks**: US3 journeys; prepared-case/bug submission, readiness, milestones, explicit decisions/directions, safe diff/tests/diagnostics/usage, selection-vs-suite and comparison. Escaped text rendering, no browser authority/config editor, no double-submit effects, accessible labeled controls and keyboard operation.
 
-- [ ] T017 [US3] Verify end-to-end operator journey in tests/runtime/integration/evaluation-console-journey.test.ts.
+- [x] T017 [US3] Verify end-to-end operator journey in tests/runtime/integration/evaluation-console-journey.test.ts.
   - **Dependencies**: T011, T014, T016.
   - **Owned Paths**: tests/runtime/integration/evaluation-console-journey.test.ts.
   - **Acceptance Checks**: Actual browser catalog and custom-bug submission, clarification -> bound answer -> explicit control -> continuation, approval pause/current decision/result, rejection -> explicit revise/resume/end as permitted by current owner state. Stale/duplicate/missing-question commands cannot act. Custom input stays exploratory; material catalog change cannot reuse grade. Controlled browser evidence separately labeled; real route requires G-REAL. Use installed tooling or human-driven evidence; refresh is not restart.
@@ -120,14 +120,16 @@
     - **C02** (`d87a89cc`): `NeedsInfo` (stop path grades `pass`) → answer bound to the question id/digest → explicit resume → continuation to the plan approval. That run then ended `INCOMPLETE` at `AwaitPlan` (#286, open). The answered path completing and grading `pass` (`path:clarification-answered`, `check:hidden-c02-divide`) was observed the same day through the console API on `3c6a5e81`, after #298/#300 and the operator pinning C02's hidden check.
     - **Custom bug** (`1e61f81a`): a typed public bug submitted from the page is refused `503 UNCONFIGURED_CHECK_SET`, with no experiment and no model call. The real console is catalog-only, so custom-bug submission has controlled evidence only.
     - **Scans**: `real-tier-scan` printed `SCAN_CLEAN` for `--all`, `--range origin/main`, the retained evidence directory and the evidence notes; the endpoint host is in no tracked file, commit, PR text or server log.
-    - **Remains open, so T017 stays unchecked**: real-route custom-bug submission (no real custom route exists) and the intermittent `AwaitPlan` INCOMPLETE (#286; #303 now names the timed-out approval operation).
+    - **Open before user approval (T017 was then unchecked)**: real-route custom-bug submission (no real custom route exists) and the intermittent `AwaitPlan` INCOMPLETE (#286; #303 now names the timed-out approval operation).
+    - **Accepted by user approval (2026-11-28)**: After T039 merged (#306, `1754d5ba`), the user directed "continue with the next task, I approve for T017". T017 is checked on that approval, with two open items carried forward rather than claimed. First, real-route custom-bug submission stays deferred (2026-11-28 decision): custom-bug evidence is controlled only, and the real console is catalog-only. Second, #286 (the intermittent `AwaitPlan` INCOMPLETE) stays open. The acceptance checks above are unchanged, and no restart, full-suite, isolation or real custom-bug acceptance is claimed.
 
 ## Phase 6: Cross-Cutting Verification and Handoff
 
-- [ ] T018 Complete acceptance/context refresh in specs/007-runtime-evaluation-integration/quickstart.md, context/testing.md, context/architecture.md, context/tech_stack.md and context/progress_checker.md.
+- [x] T018 Complete acceptance/context refresh in specs/007-runtime-evaluation-integration/quickstart.md, context/testing.md, context/architecture.md, context/tech_stack.md and context/progress_checker.md.
   - **Dependencies**: T014, T017.
   - **Owned Paths**: specs/007-runtime-evaluation-integration/quickstart.md; context/testing.md; context/architecture.md; context/tech_stack.md; context/progress_checker.md.
   - **Acceptance Checks**: Run required source/emitted/full gates on exact candidate; independent review, context updater, scoped PR publication per workflow. Record actual real/not-run results, revisions/limits and old-ledger mappings without claiming full C01–C17/restart. No source fixture/artifact publication. Contributor completion remains published linked PR gate, distinct from feature acceptance.
+  - **Verification Evidence (2026-11-28)**: Released by the T017 acceptance entry in the decision record. The quickstart and the context docs (`testing.md`, `architecture.md`, `architecture-evaluation.md`, `tech_stack.md`, `progress_checker.md`) now record the actual state: T011 and T014 real observations, T039 (#306) and T017 user acceptance are recorded; T019, T031, #286, real custom-bug submission, G-RESTART, the full C01–C17 suite and independent owner signatures stay open. An independent review on `be826e7e` found 6 blocking and 4 minor citation and wording issues, all docs-only, with no overclaims and nothing private. They were repaired in `c9ded5d7`, and the re-review passed with all 10 resolved. The merger passed `c9ded5d7`: clean merge onto `1754d5ba`, docs-only paths, format, lint, context, tracked-file and env-example checks, and no endpoint or credential text. The checks were docs-only; no full runtime suite was rerun (CI runs it), and no real, restart or full-suite acceptance is claimed.
 
 ## Dependencies
 
