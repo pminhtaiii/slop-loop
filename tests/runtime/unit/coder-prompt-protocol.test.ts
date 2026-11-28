@@ -3,9 +3,11 @@ import test from 'node:test';
 import { CLARIFICATION_MAX_ITEMS, CLARIFICATION_MAX_TEXT_BYTES, type FixPlan, type TaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { admit, type DeepSeekPricing } from '../../../src/foundation/deepseek-transport-request.ts';
 import { DEEPSEEK_REVIEW_PROMPT, REVIEW_SYSTEM_TEXT, type DeepSeekReviewPrompt } from '../../../src/foundation/deepseek-review-profile.ts';
+import { buildReviewerSnapshot, createRuntimeReviewer } from '../../../src/foundation/reviewer.ts';
+import { createFixtureBugTask, createFixtureProviderAdmissionContextV02 } from '../support/uc03/port-fixtures.ts';
 import { VARIANT_FIELDS } from '../../../src/uc03/agent-proposal.ts';
 import { askClarification, recordClarificationAnswer, type ClarificationPort } from '../../../src/uc03/clarification.ts';
-import { buildTransportPayload } from '../../../src/foundation/model.ts';
+import { buildTransportPayload, computeContextDigest } from '../../../src/foundation/model.ts';
 import { createFixtureProviderRequest, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 
 const TARGET_ENDPOINT = 'https://host.invalid/messages';
@@ -290,7 +292,7 @@ function memoryClarificationPort(initial: TaskState): ClarificationPort {
   };
 }
 
-test('coder prompt includes recorded clarification answer as reporter-supplied untrusted input while keeping unanswered and reviewer requests byte-identical', async () => {
+test('coder prompt includes recorded clarification answer as reporter-supplied untrusted input while keeping unanswered requests byte-identical', async () => {
   const baseState = createFixtureTaskState({ node: 'Investigate' });
   const coderReq = createFixtureProviderRequest({ role: 'coder', purpose: 'propose-plan', maxInputTokens: 50000, maxBillableTokens: 60000, maxCostUsd: 1.0 });
   const baseline = admit(buildTransportPayload(baseState, [], coderReq), PRICING, TARGET_ENDPOINT);
@@ -347,14 +349,56 @@ test('coder prompt includes recorded clarification answer as reporter-supplied u
     answers: [{ questionId: 'q-divide', text: hostileAnswerText }],
   });
 
-  // Reviewer requests remain byte-identical even when state carries an answered clarification.
   const reviewPromptConfig: DeepSeekReviewPrompt = { ...DEEPSEEK_REVIEW_PROMPT, maxOutputBytes: 16384, maxResponseBytes: 131072 };
   const reviewerReq = createFixtureProviderRequest({ role: 'reviewer', purpose: 'final-review', maxInputTokens: 50000, maxBillableTokens: 60000, maxCostUsd: 1.0 });
-  const reviewerBaseline = admit(buildTransportPayload(baseState, [], reviewerReq), PRICING, TARGET_ENDPOINT, reviewPromptConfig);
-  const reviewerAnswered = admit(buildTransportPayload(answered.state, [], reviewerReq), PRICING, TARGET_ENDPOINT, reviewPromptConfig);
+  const diff = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1 @@\n-old\n+new\n';
+  const review = (state: TaskState) => {
+    const snapshot = buildReviewerSnapshot(createFixtureBugTask(), diff, [], state.repositoryRevisionDigest, {
+      runId: state.runId,
+      expectedTaskStateVersion: state.stateVersion,
+      clarification: state.clarification,
+    });
+    return admit(buildTransportPayload(snapshot.state, snapshot.evidence, reviewerReq), PRICING, TARGET_ENDPOINT, reviewPromptConfig);
+  };
+  const reviewerBaseline = review(baseState);
+  const reviewerUnanswered = review(asked.state);
+  const reviewerAnswered = review(answered.state);
   assert.equal(reviewerBaseline.ok, true);
+  assert.equal(reviewerUnanswered.ok, true);
   assert.equal(reviewerAnswered.ok, true);
-  if (reviewerBaseline.ok && reviewerAnswered.ok) assert.equal(reviewerAnswered.body, reviewerBaseline.body);
+  if (!reviewerBaseline.ok || !reviewerUnanswered.ok || !reviewerAnswered.ok) return;
+  assert.equal(reviewerUnanswered.body, reviewerBaseline.body);
+  const baselinePrompt = JSON.parse(JSON.parse(reviewerBaseline.body).messages[0].content);
+  assert.equal('reporterClarification' in baselinePrompt, false);
+  const answeredPrompt = JSON.parse(JSON.parse(reviewerAnswered.body).messages[0].content);
+  assert.deepEqual(answeredPrompt.reporterClarification, prompt.reporterClarification);
+  const snapshot = buildReviewerSnapshot(createFixtureBugTask(), diff, [], baseState.repositoryRevisionDigest, {
+    runId: baseState.runId,
+    expectedTaskStateVersion: answered.state.stateVersion,
+    clarification: answered.state.clarification,
+  });
+  const request = { ...reviewerReq, contextDigest: computeContextDigest(snapshot.state, snapshot.evidence) };
+  const admission = createFixtureProviderAdmissionContextV02({ providerRequest: request, role: 'reviewer', expectedTaskStateVersion: answered.state.stateVersion });
+  let dispatched = false;
+  const reviewer = createRuntimeReviewer({
+    resolveRepoDigest: () => baseState.repositoryRevisionDigest,
+    model: {
+      provenance: 'mock',
+      async propose(state, evidence, forwardedRequest) {
+        dispatched = true;
+        assert.deepEqual(state.clarification, answered.state.clarification);
+        const result = admit(buildTransportPayload(state, evidence, forwardedRequest), PRICING, TARGET_ENDPOINT, reviewPromptConfig);
+        assert.equal(result.ok, true);
+        if (result.ok) assert.deepEqual(JSON.parse(JSON.parse(result.body).messages[0].content).reporterClarification, prompt.reporterClarification);
+        return { outcome: 'observed', result: { proposal: { content: JSON.stringify({ status: 'accepted', findings: [] }) } } };
+      },
+    },
+  });
+  const verdict = await reviewer.review(createFixtureBugTask(), diff, [], request, admission, undefined, answered.state.clarification);
+  assert.equal(dispatched, true);
+  assert.equal(verdict.status, 'accepted');
+  delete answeredPrompt.reporterClarification;
+  assert.deepEqual(answeredPrompt, baselinePrompt);
 });
 
 test('admit refuses answered clarification exceeding clarification item or byte bounds before dispatch', () => {
@@ -391,6 +435,13 @@ test('admit refuses answered clarification exceeding clarification item or byte 
       answer: { answerDigest: 'sha256:ans-bytes', answeredAtStateVersion: 2, recorderRef: 'operator-1', items: [{ questionId: 'q-1', text: overBytesText }] },
     },
   };
+  const reviewerReq = { ...coderReq, role: 'reviewer' as const, purpose: 'final-review' };
+  const reviewPrompt = { ...DEEPSEEK_REVIEW_PROMPT, maxOutputBytes: 16384, maxResponseBytes: 131072 };
+  for (const state of [overItemsState, overBytesState]) {
+    const result = admit(buildTransportPayload(state, [], reviewerReq), PRICING, TARGET_ENDPOINT, reviewPrompt);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.reason, /^CLARIFICATION_BOUNDS_EXCEEDED/);
+  }
   const overBytesRes = admit(buildTransportPayload(overBytesState, [], coderReq), PRICING, TARGET_ENDPOINT);
   assert.equal(overBytesRes.ok, false);
   if (!overBytesRes.ok) assert.match(overBytesRes.reason, /^CLARIFICATION_BOUNDS_EXCEEDED/);

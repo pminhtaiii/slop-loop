@@ -74,6 +74,7 @@ async function resolveReviewerAdmission(
   const contextDigest = reviewerContextDigest(task, diff.diff, evidence, state.repositoryRevisionDigest, {
     runId: state.runId,
     expectedTaskStateVersion: state.stateVersion,
+    clarification: state.clarification,
   });
   if (contextDigest === null) return undefined;
   const { limits, pricing, runLimits } = assembly.profile;

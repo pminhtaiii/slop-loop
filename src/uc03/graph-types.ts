@@ -4,6 +4,7 @@ import type {
   Baseline,
   BugTask,
   ClaimReceiptV02,
+  ClarificationRecord,
   FixPlan,
   ModelPort,
   ModelPortV02,
@@ -80,7 +81,15 @@ export * from './graph-types-v02.ts';
 /** Route callers must pass the owner-issued provider admission with the exact review request. */
 export interface UC03ReviewerPort {
   readonly provenance: 'mock' | 'real';
-  review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, admission: ProviderAdmissionContextV02, claim?: ClaimReceiptV02): Promise<ReviewResult>;
+  review(
+    task: BugTask,
+    diff: string,
+    evidence: readonly SourceEvidence[],
+    request: ProviderRequest,
+    admission: ProviderAdmissionContextV02,
+    claim?: ClaimReceiptV02,
+    clarification?: ClarificationRecord,
+  ): Promise<ReviewResult>;
 }
 
 export interface UC03ReviewerAdmission {

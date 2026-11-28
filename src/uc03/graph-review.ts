@@ -100,6 +100,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
         {
           runId: current.state.runId,
           expectedTaskStateVersion: current.state.stateVersion,
+          clarification: current.state.clarification,
         },
         prepared?.context,
       );
@@ -135,7 +136,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
       }
       const beforeReview = await reloadAuthoritativeState(current.state, ports.statePort);
       if (!beforeReview.ok) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: [beforeReview.reason] };
-      const result = await ports.reviewerPort.review(state.task, diffInfo.diff, evidence, reviewAdmission.request, reviewAdmission.context, undefined);
+      const result = await ports.reviewerPort.review(state.task, diffInfo.diff, evidence, reviewAdmission.request, reviewAdmission.context, undefined, current.state.clarification);
       const afterReview = await reloadAuthoritativeState(current.state, ports.statePort, { allowAccountingChange: true });
       if (!afterReview.ok) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: [afterReview.reason] };
       const ownerState = afterReview.state;

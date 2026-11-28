@@ -70,7 +70,7 @@ export function microUsd(pricing: DeepSeekPricing, inputTokens: number, outputTo
 
 export type Admission = { readonly ok: true; readonly request: ProviderRequest; readonly body: string; readonly target: string } | { readonly ok: false; readonly reason: string };
 
-/** Reporter text enters the coder prompt, so re-run the canonical state validator (same bounds, one owner). */
+/** Reporter text enters coder and reviewer prompts, so re-run the canonical state validator (same bounds, one owner). */
 function clarificationWithinLimits(payload: HostModelTransportPayload): boolean {
   const errors: ValidationError[] = [];
   validateClarification(payload.state.clarification, 'state.clarification', { taskId: payload.state.taskId, runId: payload.state.runId }, errors);
@@ -91,7 +91,7 @@ function reporterClarificationFor(clarification: ClarificationRecord | undefined
 
 function promptFor(payload: HostModelTransportPayload, request: ProviderRequest): string {
   const plan = payload.state.plan;
-  const reporterClarification = request.role === 'coder' ? reporterClarificationFor(payload.state.clarification) : undefined;
+  const reporterClarification = reporterClarificationFor(payload.state.clarification);
   return JSON.stringify({
     task: {
       taskId: payload.state.taskId,
@@ -143,7 +143,7 @@ export function admit(payload: HostModelTransportPayload, pricing: DeepSeekPrici
   if ((request.role === 'reviewer' || request.purpose === 'final-review') && (request.role !== 'reviewer' || request.purpose !== 'final-review' || !reviewPrompt)) {
     return { ok: false, reason: 'REVIEW_PROFILE_REQUIRED: reviewer role, final-review purpose and pinned profile must agree' };
   }
-  if (request.role === 'coder' && payload.state.clarification?.answer !== undefined && !clarificationWithinLimits(payload)) {
+  if (payload.state.clarification?.answer !== undefined && !clarificationWithinLimits(payload)) {
     return { ok: false, reason: 'CLARIFICATION_BOUNDS_EXCEEDED: answered clarification exceeds permitted item or byte bounds' };
   }
   if (request.role === 'coder' && request.purpose === 'propose-repair' && payload.state.reviewFindings !== undefined && !reviewFindingsAreSafe(payload.state.reviewFindings)) {
