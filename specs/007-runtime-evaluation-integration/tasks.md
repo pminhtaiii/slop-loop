@@ -110,7 +110,7 @@
   - **Owned Paths**: src/runtime/console-page.ts; tests/runtime/unit/evaluation-console-page.test.ts.
   - **Acceptance Checks**: US3 journeys; prepared-case/bug submission, readiness, milestones, explicit decisions/directions, safe diff/tests/diagnostics/usage, selection-vs-suite and comparison. Escaped text rendering, no browser authority/config editor, no double-submit effects, accessible labeled controls and keyboard operation.
 
-- [ ] T017 [US3] Verify end-to-end operator journey in tests/runtime/integration/evaluation-console-journey.test.ts.
+- [x] T017 [US3] Verify end-to-end operator journey in tests/runtime/integration/evaluation-console-journey.test.ts.
   - **Dependencies**: T011, T014, T016.
   - **Owned Paths**: tests/runtime/integration/evaluation-console-journey.test.ts.
   - **Acceptance Checks**: Actual browser catalog and custom-bug submission, clarification -> bound answer -> explicit control -> continuation, approval pause/current decision/result, rejection -> explicit revise/resume/end as permitted by current owner state. Stale/duplicate/missing-question commands cannot act. Custom input stays exploratory; material catalog change cannot reuse grade. Controlled browser evidence separately labeled; real route requires G-REAL. Use installed tooling or human-driven evidence; refresh is not restart.
@@ -121,6 +121,7 @@
     - **Custom bug** (`1e61f81a`): a typed public bug submitted from the page is refused `503 UNCONFIGURED_CHECK_SET`, with no experiment and no model call. The real console is catalog-only, so custom-bug submission has controlled evidence only.
     - **Scans**: `real-tier-scan` printed `SCAN_CLEAN` for `--all`, `--range origin/main`, the retained evidence directory and the evidence notes; the endpoint host is in no tracked file, commit, PR text or server log.
     - **Remains open, so T017 stays unchecked**: real-route custom-bug submission (no real custom route exists) and the intermittent `AwaitPlan` INCOMPLETE (#286; #303 now names the timed-out approval operation).
+    - **Accepted by user approval (2026-11-28)**: After T039 merged (#306, `1754d5ba`), the user directed "continue with the next task, I approve for T017". T017 is checked on that approval, with two open items carried forward rather than claimed. First, real-route custom-bug submission stays deferred (2026-11-28 decision): custom-bug evidence is controlled only, and the real console is catalog-only. Second, #286 (the intermittent `AwaitPlan` INCOMPLETE) stays open. The acceptance checks above are unchanged, and no restart, full-suite, isolation or real custom-bug acceptance is claimed.
 
 ## Phase 6: Cross-Cutting Verification and Handoff
 
