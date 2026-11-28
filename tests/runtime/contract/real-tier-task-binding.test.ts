@@ -938,3 +938,96 @@ test('(s4) after removing that recorded copy, a rebind refuses with working-copy
     assert.equal(rebind.path, '$');
   }
 });
+
+test('(t) customTask replaces seeded task identity and six public fields while keeping fixture checks and working copy', async () => {
+  const catalog = fixtureOf();
+  const retainedRoot = join(tempRoot('retained-t'), 'artifacts');
+  const workingCopyRoot = tempRoot('working-copy-t');
+  const { assembly } = assemblyFor(catalog);
+  const customTask: BugTask = {
+    ...catalog.task,
+    taskId: 'task-custom-t01',
+    goal: 'Custom bug: handle zero divisor cleanly',
+    observedBehavior: 'Custom observed ZeroDivisionError',
+    expectedBehavior: 'Custom expected CalculationError',
+    reproduction: 'python -m pytest -q tests/test_calculator.py -k zero',
+    acceptanceCriteria: ['Custom criterion: divide(1, 0) raises CalculationError'],
+    constraints: ['Custom constraint: preserve public signature'],
+  };
+
+  const binding = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot, customTask })));
+  assert.equal(binding.task.taskId, customTask.taskId);
+  assert.equal(binding.ids.taskId, customTask.taskId);
+  assert.equal(binding.task.goal, customTask.goal);
+  assert.equal(binding.task.observedBehavior, customTask.observedBehavior);
+  assert.equal(binding.task.expectedBehavior, customTask.expectedBehavior);
+  assert.equal(binding.task.reproduction, customTask.reproduction);
+  assert.deepEqual(binding.task.acceptanceCriteria, customTask.acceptanceCriteria);
+  assert.deepEqual(binding.task.constraints, customTask.constraints);
+  assert.equal(binding.task.repositoryId, catalog.task.repositoryId);
+  assert.equal(binding.task.initialRevisionDigest, catalog.task.initialRevisionDigest);
+  assert.deepEqual(binding.task.requiredChecks, catalog.task.requiredChecks);
+  assert.deepEqual(binding.task.limits, catalog.task.limits);
+  assert.deepEqual(binding.task.budgetLimits, catalog.task.budgetLimits);
+  assert.equal(binding.task.configId, catalog.task.configId);
+  assert.equal(binding.task.configVersion, catalog.task.configVersion);
+
+  assert.equal(binding.repositoryRoot.startsWith(workingCopyRoot), true);
+  assert.notEqual(binding.repositoryRoot, catalog.repositoryDir);
+  assert.equal(storeFingerprint(binding.repositoryRoot), storeFingerprint(catalog.repositoryDir));
+
+  const persistedCustom = await assembly.owners.components.statePort.loadTask(customTask.taskId);
+  assert.ok(persistedCustom);
+  assert.deepEqual(persistedCustom.taskContext, customTask);
+  assert.equal(await assembly.owners.components.statePort.loadTask(catalog.task.taskId), null, 'catalog fixture taskId must not be seeded');
+
+  const rebind = boundOrThrow(await bindRealTierTask(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot, customTask })));
+  assert.deepEqual(rebind.ids, binding.ids);
+  assert.equal(rebind.repositoryRoot, binding.repositoryRoot);
+});
+
+test('(t2) customTask refuses before seed when invalid, reusing fixture taskId, mutating template fields, or failing fixture validation', async () => {
+  const catalog = fixtureOf();
+  const retainedRoot = join(tempRoot('retained-t2'), 'artifacts');
+  const workingCopyRoot = tempRoot('working-copy-t2');
+  const { assembly } = assemblyFor(catalog);
+  const validCustom: BugTask = {
+    ...catalog.task,
+    taskId: 'task-custom-t02',
+    goal: 'Custom goal',
+    observedBehavior: 'Custom observed',
+    expectedBehavior: 'Custom expected',
+    reproduction: 'pytest -q',
+    acceptanceCriteria: ['Passes pytest'],
+    constraints: [],
+  };
+
+  await assertRefused(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot, customTask: { ...validCustom, goal: '' } }), 'custom-task-invalid');
+  await assertRefused(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot, customTask: { ...validCustom, acceptanceCriteria: [] } }), 'custom-task-invalid');
+  await assertRefused(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot, customTask: { ...validCustom, taskId: catalog.task.taskId } }), 'custom-task-identity-conflict');
+
+  const firstCheck = validCustom.requiredChecks[0];
+  assert.ok(firstCheck);
+  const templateMutations: BugTask[] = [
+    { ...validCustom, repositoryId: 'repo-other' },
+    { ...validCustom, initialRevisionDigest: `sha256:${'f'.repeat(64)}` },
+    { ...validCustom, requiredChecks: [{ ...firstCheck, timeoutMs: (firstCheck.timeoutMs ?? 30_000) + 1 }] },
+    { ...validCustom, limits: { ...validCustom.limits, timeoutMs: validCustom.limits.timeoutMs + 1 } },
+    { ...validCustom, budgetLimits: { ...validCustom.budgetLimits, maxTokens: validCustom.budgetLimits.maxTokens + 1 } },
+    { ...validCustom, configId: 'config-other' },
+    { ...validCustom, configVersion: '9.9.9' },
+  ];
+  for (const mutated of templateMutations) {
+    await assertRefused(assembly, optionsOf(catalog, { retainedRoot, workingCopyRoot, customTask: mutated }), 'custom-task-template-mismatch');
+  }
+  assert.deepEqual(entriesUnder(workingCopyRoot), [], 'refused customTask binds must leave workingCopyRoot empty');
+
+  const tampered = fixtureOf();
+  writeFileSync(join(tampered.catalogDir, 'case.json'), JSON.stringify({ task: { ...tampered.task, goal: 'Tampered' }, repositoryRoot: 'repository' }), 'utf8');
+  const { assembly: tamperedAssembly } = assemblyFor(tampered);
+  await assertRefused(
+    tamperedAssembly,
+    optionsOf(tampered, { retainedRoot: join(tempRoot('retained-t2-tamper'), 'artifacts'), customTask: { ...validCustom, taskId: 'task-custom-t02-tamper' } }),
+    'fixture-digest-mismatch',
+  );
+});

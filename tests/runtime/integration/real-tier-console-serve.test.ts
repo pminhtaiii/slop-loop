@@ -27,6 +27,7 @@ import { createRealTierConsoleFactory, REAL_CONSOLE_TOKEN_ENV } from '../../../s
 import { admitRealTierConsole, realTierHostDigestsOf } from '../../../src/runtime/real-tier-console-admission.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from '../../../src/runtime/real-tier-owners.ts';
 import { loadRealTierProfile, type RealTierEnvironment } from '../../../src/runtime/real-tier-profile.ts';
+import { prepareUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
 import { createVolumeSpawn } from '../support/docker-volume-spawn.ts';
@@ -983,7 +984,7 @@ test('serve --host real assembly: custom submissions stay exploratory/ungraded a
     assert.equal(endedInc.workflowReport, null);
     assert.equal(endedInc.control, null);
 
-    // 2. Complete custom bug is refused (CUSTOM_ROUTE_UNAVAILABLE -> incomplete), never graded
+    // 2. Complete custom bug executes on customRoute as exploratory/ungraded and cleans up on terminal completion
     const fullCustom = client.unwrap<{ experiment: ExperimentViewShape }>(
       await client.post('/api/experiments', {
         profileId: sc.profileId,
@@ -1004,11 +1005,50 @@ test('serve --host real assembly: custom submissions stay exploratory/ungraded a
       'custom-full',
     ).experiment;
     assert.equal(fullCustom.scope, 'exploratory');
-    assert.equal(fullCustom.status, 'incomplete');
+    assert.equal(fullCustom.status, 'waiting-approval');
     assert.equal(fullCustom.graded, false);
     assert.equal(fullCustom.workflowReport, null);
+    assert.ok(fullCustom.taskId);
+
+    const pCust0 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${fullCustom.id}/approval`), 'custom-full-p0');
+    const dCust0 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${fullCustom.id}/decision`, {
+        idempotencyKey: client.nextKey('custom-full-d0'),
+        decision: 'approve',
+        expectedVersion: pCust0.presentation.requestVersion,
+        presentationDigest: pCust0.presentation.presentationDigest,
+      }),
+      'custom-full-d0',
+    );
+    const afterCustD0 = await client.issueAndContinue(
+      fullCustom.id,
+      { kind: 'resume', expectedTaskVersion: dCust0.controlVersion, expectedControlVersion: dCust0.controlVersion, label: 'custom-full-verify' },
+      fullCustom.version,
+    );
+    assert.equal(afterCustD0.experiment.status, 'waiting-approval');
+    const pCust1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${fullCustom.id}/approval`), 'custom-full-p1');
+    const dCust1 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${fullCustom.id}/decision`, {
+        idempotencyKey: client.nextKey('custom-full-d1'),
+        decision: 'approve',
+        expectedVersion: pCust1.presentation.requestVersion,
+        presentationDigest: pCust1.presentation.presentationDigest,
+      }),
+      'custom-full-d1',
+    );
+    const completedCustom = await client.issueAndContinue(
+      fullCustom.id,
+      { kind: 'resume', expectedTaskVersion: dCust1.controlVersion, expectedControlVersion: dCust1.controlVersion, label: 'custom-full-deliver' },
+      afterCustD0.experiment.version,
+    );
+    assert.equal(completedCustom.experiment.scope, 'exploratory');
+    assert.equal(completedCustom.experiment.status, 'completed');
+    assert.equal(completedCustom.experiment.graded, false);
+    assert.equal(completedCustom.experiment.workflowReport, null);
+    assert.equal(sc.spawnSpy.hiddenChecks.length, 0);
 
     // 3. Unpinned catalog case C03 refuses at bindCase with zero model calls
+    const fetchCountBeforeC03 = sc.fetchSpy.requests.length;
     const unpinned = client.unwrap<{ experiment: ExperimentViewShape }>(
       await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('c03-unpinned'), source: { kind: 'catalog', caseIds: ['C03'] } }),
       'c03-unpinned',
@@ -1016,7 +1056,7 @@ test('serve --host real assembly: custom submissions stay exploratory/ungraded a
     assert.equal(unpinned.status, 'incomplete');
     assert.equal(unpinned.taskId, null);
     assert.equal(unpinned.workflowReport, null);
-    assert.equal(sc.fetchSpy.requests.length, 0);
+    assert.equal(sc.fetchSpy.requests.length, fetchCountBeforeC03);
   } finally {
     await cliResult?.close?.();
     sc.cleanup();
@@ -2235,3 +2275,700 @@ for (const staleDecision of [false, true]) {
     }
   });
 }
+
+test('serve --host real assembly: custom-bug route selects first catalog template, replaces 6 fields, isolates identity/copies, stays ungraded, and leaves catalog grades untouched', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+  const envToken = ['real', 'serve', 'cust', 'route', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'custom-full', includeC03: true, extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envToken } });
+  const copiesBefore = countConsoleCopies();
+  let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    const repoC01Dir = join(sc.outside, 'repo-C01');
+    const repoC03Dir = join(sc.outside, 'repo-C03');
+    const c01InitialDigest = await new WorkspaceFilesystemPort({ root: repoC01Dir }).getCurrentRevisionDigest();
+    const c01Fixture = JSON.parse(readFileSync(join(sc.outside, 'fixture-C01.json'), 'utf8')) as { readonly task: BugTask };
+    const c01RepoBefore = readFileSync(join(repoC01Dir, 'src', 'calculator.py'), 'utf8');
+
+    // Add a second catalog entry C04 pointing to the same repositoryId as C01 with distinct config/limits;
+    // template selection must choose the first admitted entry (C01) in catalog order.
+    const c04Task: BugTask = {
+      ...c01Fixture.task,
+      taskId: `task-${sc.tag}-C04`,
+      configId: 'config-c04-secondary',
+      configVersion: '2.0.0',
+      limits: { ...c01Fixture.task.limits, timeoutMs: 9_999 },
+    };
+    const c04FixtureDoc = JSON.stringify({ task: c04Task, repositoryRoot: 'repo-C01' });
+    const c04FixturePath = join(sc.outside, 'fixture-C04.json');
+    writeFileSync(c04FixturePath, c04FixtureDoc, 'utf8');
+    const catalogJson = JSON.parse(readFileSync(sc.catalogPath, 'utf8')) as { readonly catalog: Record<string, unknown>[] };
+    catalogJson.catalog.push({
+      caseId: 'C04',
+      initialRepositoryDigest: c01InitialDigest.slice(7),
+      fixturePath: c04FixturePath,
+      fixtureDigest: sha256Text(c04FixtureDoc),
+      grader: { path: sc.c02GraderPath, digest: `sha256:${sc.c02GraderDigest}` },
+    });
+    writeFileSync(sc.catalogPath, JSON.stringify(catalogJson), 'utf8');
+
+    const started = await sc.captureStderr(() => runEvaluateCli(['serve', '--host', sc.hostFile]));
+    cliResult = started.value;
+    assert.equal(cliResult.exitCode, 0);
+    const { host, port } = JSON.parse(cliResult.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, envToken);
+
+    const customBug1 = {
+      goal: 'Custom bug 1: return CalculationError when divisor is zero',
+      observedBehavior: 'ZeroDivisionError raised on divide(1, 0)',
+      expectedBehavior: 'CalculationError raised on divide(1, 0)',
+      reproduction: 'pytest -q tests/test_calculator.py',
+      acceptanceCriteria: ['divide(1, 0) raises CalculationError'],
+      constraints: ['Keep existing signature', 'Do not modify tests'],
+    };
+
+    const start1 = client.unwrap<{
+      experiment: ExperimentViewShape & {
+        readonly submission?: { readonly submissionId: string; readonly submissionDigest: string; readonly repositoryId: string; readonly checkSetId: string } | null;
+      };
+    }>(
+      await client.post('/api/experiments', {
+        profileId: sc.profileId,
+        idempotencyKey: client.nextKey('cust-1-start'),
+        source: { kind: 'bug', repositoryId: `repo-${sc.tag}-C01`, checkSetId: 'checks-configured', bugInput: customBug1 },
+      }),
+      'cust-1-start',
+    ).experiment;
+
+    assert.equal(start1.scope, 'exploratory');
+    assert.equal(start1.status, 'waiting-approval');
+    assert.equal(start1.graded, false);
+    assert.equal(start1.workflowReport, null);
+    assert.ok(start1.taskId && start1.runId && start1.workspaceId);
+    assert.notEqual(start1.taskId, c01Fixture.task.taskId);
+    assert.notEqual(start1.taskId, c04Task.taskId);
+    assert.match(start1.submission?.submissionId ?? '', /^sub-[a-f0-9]{32}$/u);
+    assert.match(start1.submission?.submissionDigest ?? '', /^[a-f0-9]{64}$/u);
+    assert.equal(start1.submission?.repositoryId, `repo-${sc.tag}-C01`);
+    assert.equal(start1.submission?.checkSetId, 'checks-configured');
+
+    // Working copy exists while paused at AwaitPlan and template repository remains unmodified.
+    const liveCopies = [...countConsoleCopies()].filter(d => !copiesBefore.has(d));
+    assert.equal(liveCopies.length, 1);
+
+    // Seeded owner task matches C01 template with exact 6 fields replaced.
+    assert.ok(sc.deps.stateRoot);
+    const consoleStateRoot = sc.deps.stateRoot;
+    const consoleDirs1 = readdirSync(consoleStateRoot)
+      .filter(name => name.startsWith('console-'))
+      .sort();
+    assert.equal(consoleDirs1.length, 1);
+    const consoleDir1 = consoleDirs1[0];
+    assert.ok(consoleDir1);
+    const owner1 = await new DurableStatePortV02({ store: new DurableStore(join(consoleStateRoot, consoleDir1, 'store')) }).loadTask(start1.taskId);
+    assert.ok(owner1?.taskContext);
+    assert.deepEqual(owner1.taskContext, {
+      ...c01Fixture.task,
+      taskId: start1.taskId,
+      goal: customBug1.goal,
+      observedBehavior: customBug1.observedBehavior,
+      expectedBehavior: customBug1.expectedBehavior,
+      reproduction: customBug1.reproduction,
+      acceptanceCriteria: customBug1.acceptanceCriteria,
+      constraints: customBug1.constraints,
+    });
+
+    // Full approval journey -> completed, ungraded, comparison 404, hidden checks 0, copy cleaned up.
+    const p10 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${start1.id}/approval`), 'cust-1-p0');
+    const d10 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${start1.id}/decision`, {
+        idempotencyKey: client.nextKey('cust-1-d0'),
+        decision: 'approve',
+        expectedVersion: p10.presentation.requestVersion,
+        presentationDigest: p10.presentation.presentationDigest,
+      }),
+      'cust-1-d0',
+    );
+    const after10 = await client.issueAndContinue(
+      start1.id,
+      { kind: 'resume', expectedTaskVersion: d10.controlVersion, expectedControlVersion: d10.controlVersion, label: 'cust-1-verify' },
+      start1.version,
+    );
+    assert.equal(after10.experiment.status, 'waiting-approval');
+    const p11 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${start1.id}/approval`), 'cust-1-p1');
+    const d11 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${start1.id}/decision`, {
+        idempotencyKey: client.nextKey('cust-1-d1'),
+        decision: 'approve',
+        expectedVersion: p11.presentation.requestVersion,
+        presentationDigest: p11.presentation.presentationDigest,
+      }),
+      'cust-1-d1',
+    );
+    const done1 = await client.issueAndContinue(
+      start1.id,
+      { kind: 'resume', expectedTaskVersion: d11.controlVersion, expectedControlVersion: d11.controlVersion, label: 'cust-1-deliver' },
+      after10.experiment.version,
+    );
+    assert.equal(done1.experiment.scope, 'exploratory');
+    assert.equal(done1.experiment.status, 'completed');
+    assert.equal(done1.experiment.graded, false);
+    assert.equal(done1.experiment.workflowReport, null);
+    assert.equal(sc.spawnSpy.hiddenChecks.length, 0);
+    assert.equal(readFileSync(join(repoC01Dir, 'src', 'calculator.py'), 'utf8'), c01RepoBefore);
+    for (const dir of countConsoleCopies()) {
+      assert.equal(copiesBefore.has(dir), true, `custom1 copy ${dir} should have been cleaned up`);
+    }
+
+    const compareCustom = await client.post('/api/comparisons', {
+      idempotencyKey: client.nextKey('cust-compare'),
+      baselineId: start1.id,
+      candidateId: start1.id,
+      policy: 'guarded',
+    });
+    assert.equal(compareCustom.status, 404);
+    assert.deepEqual(compareCustom.body, { ok: false, error: 'WORKFLOW_REPORT_NOT_FOUND' });
+
+    // Second custom experiment with identical public fields (minus optional constraints -> []): fresh IDs, reject + end cleanup.
+    const start2 = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', {
+        profileId: sc.profileId,
+        idempotencyKey: client.nextKey('cust-2-start'),
+        source: {
+          kind: 'bug',
+          repositoryId: `repo-${sc.tag}-C01`,
+          checkSetId: 'checks-configured',
+          bugInput: {
+            goal: customBug1.goal,
+            observedBehavior: customBug1.observedBehavior,
+            expectedBehavior: customBug1.expectedBehavior,
+            reproduction: customBug1.reproduction,
+            acceptanceCriteria: customBug1.acceptanceCriteria,
+          },
+        },
+      }),
+      'cust-2-start',
+    ).experiment;
+    assert.equal(start2.status, 'waiting-approval');
+    assert.ok(start2.taskId && start2.runId && start2.workspaceId);
+    assert.notEqual(start2.taskId, start1.taskId);
+    assert.notEqual(start2.runId, start1.runId);
+    assert.notEqual(start2.workspaceId, start1.workspaceId);
+    const consoleDirs2 = readdirSync(consoleStateRoot).filter(name => name.startsWith('console-') && !consoleDirs1.includes(name));
+    assert.equal(consoleDirs2.length, 1);
+    const consoleDir2 = consoleDirs2[0];
+    assert.ok(consoleDir2);
+    const owner2 = await new DurableStatePortV02({ store: new DurableStore(join(consoleStateRoot, consoleDir2, 'store')) }).loadTask(start2.taskId);
+    assert.deepEqual(owner2?.taskContext?.constraints, []);
+
+    const p20 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${start2.id}/approval`), 'cust-2-p0');
+    const rej2 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${start2.id}/decision`, {
+        idempotencyKey: client.nextKey('cust-2-reject'),
+        decision: 'reject',
+        expectedVersion: p20.presentation.requestVersion,
+        presentationDigest: p20.presentation.presentationDigest,
+      }),
+      'cust-2-reject',
+    );
+    const fb2 = await client.issueAndContinue(start2.id, { kind: 'resume', expectedTaskVersion: rej2.controlVersion, expectedControlVersion: rej2.controlVersion, label: 'cust-2-fb' }, start2.version);
+    assert.equal(fb2.experiment.status, 'waiting-info');
+    assert.ok(fb2.experiment.control);
+    const ended2 = await client.issueAndContinue(
+      start2.id,
+      {
+        kind: 'end',
+        expectedTaskVersion: fb2.experiment.control.taskVersion,
+        expectedControlVersion: fb2.experiment.control.controlVersion,
+        decisionRef: p20.binding.decisionId,
+        label: 'cust-2-end',
+      },
+      fb2.experiment.version,
+    );
+    assert.equal(ended2.experiment.status, 'incomplete');
+    assert.equal(ended2.experiment.workflowReport, null);
+    for (const dir of countConsoleCopies()) {
+      assert.equal(copiesBefore.has(dir), true, `custom2 rejected copy ${dir} should have been cleaned up`);
+    }
+
+    // Third custom experiment targeting unpinned catalog repository C03 succeeds without consulting PINS or checkGraderReady.
+    const start3 = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', {
+        profileId: sc.profileId,
+        idempotencyKey: client.nextKey('cust-3-c03'),
+        source: {
+          kind: 'bug',
+          repositoryId: `repo-${sc.tag}-C03`,
+          checkSetId: 'checks-configured',
+          bugInput: { ...customBug1, goal: 'Custom bug targeting unpinned C03 repo' },
+        },
+      }),
+      'cust-3-c03',
+    ).experiment;
+    assert.equal(start3.scope, 'exploratory');
+    assert.equal(start3.status, 'waiting-approval');
+    assert.equal(start3.graded, false);
+    assert.equal(start3.workflowReport, null);
+    const p30 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${start3.id}/approval`), 'cust-3-p0');
+    const rej3 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${start3.id}/decision`, {
+        idempotencyKey: client.nextKey('cust-3-reject'),
+        decision: 'reject',
+        expectedVersion: p30.presentation.requestVersion,
+        presentationDigest: p30.presentation.presentationDigest,
+      }),
+      'cust-3-reject',
+    );
+    const fb3 = await client.issueAndContinue(start3.id, { kind: 'resume', expectedTaskVersion: rej3.controlVersion, expectedControlVersion: rej3.controlVersion, label: 'cust-3-fb' }, start3.version);
+    assert.ok(fb3.experiment.control);
+    await client.issueAndContinue(
+      start3.id,
+      {
+        kind: 'end',
+        expectedTaskVersion: fb3.experiment.control.taskVersion,
+        expectedControlVersion: fb3.experiment.control.controlVersion,
+        decisionRef: p30.binding.decisionId,
+        label: 'cust-3-end',
+      },
+      fb3.experiment.version,
+    );
+    assert.equal(existsSync(join(repoC03Dir, 'src', 'calculator.py')), true);
+
+    // Catalog C01 run on the same server retains full pinned grading and report.
+    const catRun = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', { profileId: sc.profileId, idempotencyKey: client.nextKey('cat-after-cust'), source: { kind: 'catalog', caseIds: ['C01'] } }),
+      'cat-after-cust',
+    ).experiment;
+    assert.equal(catRun.scope, 'catalog');
+    assert.equal(catRun.graded, true);
+    assert.equal(catRun.taskId, c01Fixture.task.taskId);
+    const cp0 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${catRun.id}/approval`), 'cat-p0');
+    const cd0 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${catRun.id}/decision`, {
+        idempotencyKey: client.nextKey('cat-d0'),
+        decision: 'approve',
+        expectedVersion: cp0.presentation.requestVersion,
+        presentationDigest: cp0.presentation.presentationDigest,
+      }),
+      'cat-d0',
+    );
+    const cafter0 = await client.issueAndContinue(
+      catRun.id,
+      { kind: 'resume', expectedTaskVersion: cd0.controlVersion, expectedControlVersion: cd0.controlVersion, label: 'cat-verify' },
+      catRun.version,
+    );
+    const cp1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${catRun.id}/approval`), 'cat-p1');
+    const cd1 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${catRun.id}/decision`, {
+        idempotencyKey: client.nextKey('cat-d1'),
+        decision: 'approve',
+        expectedVersion: cp1.presentation.requestVersion,
+        presentationDigest: cp1.presentation.presentationDigest,
+      }),
+      'cat-d1',
+    );
+    const catDone = await client.issueAndContinue(
+      catRun.id,
+      { kind: 'resume', expectedTaskVersion: cd1.controlVersion, expectedControlVersion: cd1.controlVersion, label: 'cat-deliver' },
+      cafter0.experiment.version,
+    );
+    assert.equal(catDone.experiment.status, 'completed');
+    assert.equal(catDone.experiment.workflowReport?.cases[0]?.grade, 'pass');
+    assert.equal(sc.spawnSpy.hiddenChecks.length, 1);
+    assertNoLeaks(JSON.stringify(done1.experiment), sc.secrets(envToken), 'custom completed view');
+  } finally {
+    await cliResult?.close?.();
+    sc.cleanup();
+    t.mock.timers.reset();
+  }
+});
+
+test('serve --host real assembly: custom-bug route supports NeedsInfo clarification resume and end with working-copy cleanup', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+  const envToken = ['real', 'serve', 'cust', 'clarify', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'custom-clarify', mode: 'clarify', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envToken } });
+  const copiesBefore = countConsoleCopies();
+  let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    const started = await sc.captureStderr(() => runEvaluateCli(['serve', '--host', sc.hostFile]));
+    cliResult = started.value;
+    assert.equal(cliResult.exitCode, 0);
+    const { host, port } = JSON.parse(cliResult.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, envToken);
+
+    const custStart = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', {
+        profileId: sc.profileId,
+        idempotencyKey: client.nextKey('cust-clar-start'),
+        source: {
+          kind: 'bug',
+          repositoryId: `repo-${sc.tag}-C01`,
+          checkSetId: 'checks-configured',
+          bugInput: {
+            goal: 'Clarify zero divisor behavior',
+            observedBehavior: 'ZeroDivisionError',
+            expectedBehavior: 'CalculationError',
+            reproduction: 'pytest -q tests/test_calculator.py',
+            acceptanceCriteria: ['Raises CalculationError'],
+          },
+        },
+      }),
+      'cust-clar-start',
+    ).experiment;
+    assert.equal(custStart.status, 'waiting-info');
+    assert.equal(custStart.graded, false);
+    assert.equal(custStart.workflowReport, null);
+    assert.ok(custStart.control && custStart.workflowClarification);
+    assert.equal(
+      [...countConsoleCopies()].some(dir => !copiesBefore.has(dir)),
+      true,
+    );
+
+    const answered = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post(`/api/experiments/${custStart.id}/answers`, {
+        idempotencyKey: client.nextKey('cust-clar-answer'),
+        questionId: custStart.workflowClarification.questionId,
+        questionDigest: custStart.workflowClarification.questionDigest,
+        expectedVersion: custStart.version,
+        answers: ['Raise CalculationError when divisor is zero.'],
+      }),
+      'cust-clar-answer',
+    ).experiment;
+
+    const resumed = await client.issueAndContinue(
+      custStart.id,
+      { kind: 'resume', expectedTaskVersion: custStart.control.taskVersion, expectedControlVersion: custStart.control.controlVersion, label: 'cust-clar-resume' },
+      answered.version,
+    );
+    assert.equal(resumed.experiment.status, 'waiting-approval');
+    const p0 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${custStart.id}/approval`), 'cust-clar-p0');
+    const d0 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${custStart.id}/decision`, {
+        idempotencyKey: client.nextKey('cust-clar-d0'),
+        decision: 'approve',
+        expectedVersion: p0.presentation.requestVersion,
+        presentationDigest: p0.presentation.presentationDigest,
+      }),
+      'cust-clar-d0',
+    );
+    const afterD0 = await client.issueAndContinue(
+      custStart.id,
+      { kind: 'resume', expectedTaskVersion: d0.controlVersion, expectedControlVersion: d0.controlVersion, label: 'cust-clar-verify' },
+      resumed.experiment.version,
+    );
+    const p1 = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${custStart.id}/approval`), 'cust-clar-p1');
+    const d1 = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${custStart.id}/decision`, {
+        idempotencyKey: client.nextKey('cust-clar-d1'),
+        decision: 'approve',
+        expectedVersion: p1.presentation.requestVersion,
+        presentationDigest: p1.presentation.presentationDigest,
+      }),
+      'cust-clar-d1',
+    );
+    const completed = await client.issueAndContinue(
+      custStart.id,
+      { kind: 'resume', expectedTaskVersion: d1.controlVersion, expectedControlVersion: d1.controlVersion, label: 'cust-clar-deliver' },
+      afterD0.experiment.version,
+    );
+    assert.equal(completed.experiment.status, 'completed');
+    assert.equal(completed.experiment.graded, false);
+    assert.equal(completed.experiment.workflowReport, null);
+    for (const dir of countConsoleCopies()) {
+      assert.equal(copiesBefore.has(dir), true, `clarification custom copy ${dir} should have been cleaned up`);
+    }
+  } finally {
+    await cliResult?.close?.();
+    sc.cleanup();
+    t.mock.timers.reset();
+  }
+});
+
+test('serve --host real assembly: custom-bug route refuses unconfigured inputs, extra fields, missing template, invalid task, and docker drop before seed or model calls', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+  const envToken = ['real', 'serve', 'cust', 'refuse', '0123'].join('-');
+  const sc = await setupServeScenario({ tag: 'custom-refuse', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: envToken } });
+  const copiesBefore = countConsoleCopies();
+  let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+  try {
+    // Direct factory checks for customRoute contract invariants & route-level refusals
+    const created = createHostAssembly(sc.deps);
+    assert.equal('host' in created, true);
+    if (!('host' in created)) return;
+    const digests = realTierHostDigestsOf(created.assembly.profile);
+    const configuration = {
+      identity: { profileId: digests.profileId, profileDigest: digests.profileDigest, configDigest: digests.configDigest, pricingDigest: digests.pricingDigest },
+      profileDigest: digests.profileDigest,
+      configDigest: digests.configDigest,
+      pricingDigest: digests.pricingDigest,
+      requestedModel: digests.requestedModel,
+      adapterVersions: digests.adapterVersions,
+    };
+    const readiness = prepareUC03Host({
+      ...created.host,
+      pins: {
+        contractVersion: REAL_TIER_DELIVERY_CONTRACT,
+        revisions: Object.fromEntries(UC03_PRODUCTION_COMPONENTS_V02.map(c => [c, created.assembly.revision])),
+      },
+      identity: configuration.identity,
+    });
+    assert.equal(readiness.status, 'ready');
+    if (readiness.status !== 'ready') return;
+    const hostAssembly = created.console({ readiness, configuration });
+    assert.ok(hostAssembly.customRoute, 'real console factory must expose customRoute');
+    assert.equal(hostAssembly.customRoute.workflowReport, undefined);
+
+    const { bindEvaluationSource } = await import('../../../src/runtime/evaluation-profile-source.ts');
+    const sourceHost = { profile: hostAssembly.profile, catalog: hostAssembly.catalog, repositoryIds: hostAssembly.repositoryIds, checkSetIds: hostAssembly.checkSetIds };
+    const boundBug = bindEvaluationSource(
+      {
+        kind: 'bug',
+        repositoryId: `repo-${sc.tag}-C01`,
+        checkSetId: 'checks-configured',
+        bugInput: {
+          goal: 'Valid goal',
+          observedBehavior: 'ZeroDivisionError',
+          expectedBehavior: 'CalculationError',
+          reproduction: 'pytest -q tests/test_calculator.py',
+          acceptanceCriteria: ['Raises CalculationError'],
+        },
+      },
+      sourceHost,
+    );
+    assert.equal(boundBug.ok, true);
+    if (!boundBug.ok || boundBug.value.kind !== 'bug') return;
+    const bugSource = boundBug.value;
+
+    const customRoute = hostAssembly.customRoute;
+    assert.ok(customRoute);
+    const bindCustomCase = customRoute.bindCase;
+    assert.ok(bindCustomCase);
+
+    // Missing template repositoryId refuses cleanly at resolveTask without seeding
+    await assert.rejects(
+      async () =>
+        customRoute.resolveTask({
+          experimentId: 'exp-missing-template',
+          source: { ...bugSource, repositoryId: 'repo-unmapped' },
+          priorState: null,
+          answers: [],
+        }),
+      /MISSING_CUSTOM_TEMPLATE/u,
+    );
+    // Leading whitespace goal causes validateBugTask trim mismatch vs taskMatchesSource -> refuses cleanly
+    await assert.rejects(
+      async () =>
+        customRoute.resolveTask({
+          experimentId: 'exp-invalid-task',
+          source: { ...bugSource, bugInput: { ...bugSource.bugInput, goal: ' padded goal ' } },
+          priorState: null,
+          answers: [],
+        }),
+      /INVALID_CUSTOM_TASK/u,
+    );
+    // Mutating non-6 template fields at bindCase refuses before seed/docker/model call
+    const resolvedOk = await customRoute.resolveTask({ experimentId: 'exp-bind-check', source: bugSource, priorState: null, answers: [] });
+    const badBind = await bindCustomCase({
+      experimentId: 'exp-bind-check',
+      source: bugSource,
+      task: { ...resolvedOk, configId: 'tampered-config' },
+      priorState: null,
+      answers: [],
+    });
+    assert.deepEqual(badBind, { ok: false, reasonCode: 'INVALID_CUSTOM_TASK' });
+    assert.equal(sc.fetchSpy.requests.length, 0);
+    assert.deepEqual(listFilesRecursive(join(sc.outside, 'state')), [], 'route-level custom refusals must not seed or write any task record');
+
+    // Install a valid GraderCapability spy verifying customRoute never touches grader evidence while catalog C01 does.
+    const baseCap = createRealTierGraderCapability({ spawn: sc.spawnSpy.spawn });
+    let bindCaseCalls = 0;
+    const spiedGraderCap: GraderCapability = {
+      tier: baseCap.tier,
+      isolationAuthority: baseCap.isolationAuthority,
+      executor: baseCap.executor,
+      finalTree: baseCap.finalTree,
+      bindCase: pins => {
+        bindCaseCalls += 1;
+        baseCap.bindCase?.(pins);
+      },
+    };
+    const origDepsFn = (globalThis as Record<string, unknown>)[HOOK_KEY] as () => RealTierDependencies;
+    (globalThis as Record<string, unknown>)[HOOK_KEY] = () => ({ ...origDepsFn(), graderCapability: spiedGraderCap });
+
+    // HTTP refusals through real console server
+    const started = await sc.captureStderr(() => runEvaluateCli(['serve', '--host', sc.hostFile]));
+    cliResult = started.value;
+    assert.equal(cliResult.exitCode, 0);
+    const { host, port } = JSON.parse(cliResult.output) as { host: string; port: number };
+    const client = makeClient(`http://${host}:${port}`, envToken);
+
+    const badRepo = await client.post('/api/experiments', {
+      profileId: sc.profileId,
+      idempotencyKey: client.nextKey('cust-bad-repo'),
+      source: {
+        kind: 'bug',
+        repositoryId: 'repo-unknown',
+        checkSetId: 'checks-configured',
+        bugInput: {
+          goal: 'Goal',
+          observedBehavior: 'Observed',
+          expectedBehavior: 'Expected',
+          reproduction: 'pytest -q',
+          acceptanceCriteria: ['Passes'],
+        },
+      },
+    });
+    assert.equal(badRepo.status, 503);
+    assert.deepEqual(badRepo.body, { ok: false, error: 'UNCONFIGURED_REPOSITORY' });
+
+    const badCheck = await client.post('/api/experiments', {
+      profileId: sc.profileId,
+      idempotencyKey: client.nextKey('cust-bad-check'),
+      source: {
+        kind: 'bug',
+        repositoryId: `repo-${sc.tag}-C01`,
+        checkSetId: 'checks-unknown',
+        bugInput: {
+          goal: 'Goal',
+          observedBehavior: 'Observed',
+          expectedBehavior: 'Expected',
+          reproduction: 'pytest -q',
+          acceptanceCriteria: ['Passes'],
+        },
+      },
+    });
+    assert.equal(badCheck.status, 503);
+    assert.deepEqual(badCheck.body, { ok: false, error: 'UNCONFIGURED_CHECK_SET' });
+
+    const extraField = await client.post('/api/experiments', {
+      profileId: sc.profileId,
+      idempotencyKey: client.nextKey('cust-extra-field'),
+      source: {
+        kind: 'bug',
+        repositoryId: `repo-${sc.tag}-C01`,
+        checkSetId: 'checks-configured',
+        bugInput: {
+          goal: 'Goal',
+          observedBehavior: 'Observed',
+          expectedBehavior: 'Expected',
+          reproduction: 'pytest -q',
+          acceptanceCriteria: ['Passes'],
+          limits: { timeoutMs: 1 },
+        },
+      },
+    });
+    assert.equal(extraField.status, 503);
+    assert.deepEqual(extraField.body, { ok: false, error: 'UNKNOWN_FIELD' });
+
+    // Custom route never consults PINS or graderCapability during bindCase/execution.
+    bindCaseCalls = 0;
+    const customWithoutGrader = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', {
+        profileId: sc.profileId,
+        idempotencyKey: client.nextKey('cust-no-grader-check'),
+        source: {
+          kind: 'bug',
+          repositoryId: `repo-${sc.tag}-C01`,
+          checkSetId: 'checks-configured',
+          bugInput: {
+            goal: 'Custom ignores grader',
+            observedBehavior: 'ZeroDivisionError',
+            expectedBehavior: 'CalculationError',
+            reproduction: 'pytest -q tests/test_calculator.py',
+            acceptanceCriteria: ['Raises CalculationError'],
+          },
+        },
+      }),
+      'cust-no-grader-check',
+    ).experiment;
+    assert.equal(customWithoutGrader.status, 'waiting-approval');
+    assert.equal(bindCaseCalls, 0, 'customRoute must not consult graderCapability');
+    const pGr = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${customWithoutGrader.id}/approval`), 'cust-nogr-p0');
+    const rGr = client.unwrap<DecisionReplyShape>(
+      await client.post(`/api/experiments/${customWithoutGrader.id}/decision`, {
+        idempotencyKey: client.nextKey('cust-nogr-rej'),
+        decision: 'reject',
+        expectedVersion: pGr.presentation.requestVersion,
+        presentationDigest: pGr.presentation.presentationDigest,
+      }),
+      'cust-nogr-rej',
+    );
+    const fGr = await client.issueAndContinue(
+      customWithoutGrader.id,
+      { kind: 'resume', expectedTaskVersion: rGr.controlVersion, expectedControlVersion: rGr.controlVersion, label: 'cust-nogr-fb' },
+      customWithoutGrader.version,
+    );
+    assert.ok(fGr.experiment.control);
+    await client.issueAndContinue(
+      customWithoutGrader.id,
+      {
+        kind: 'end',
+        expectedTaskVersion: fGr.experiment.control.taskVersion,
+        expectedControlVersion: fGr.experiment.control.controlVersion,
+        decisionRef: pGr.binding.decisionId,
+        label: 'cust-nogr-end',
+      },
+      fGr.experiment.version,
+    );
+    assert.equal(bindCaseCalls, 0);
+
+    // Host/catalog drift on disk refuses customRoute before seed or model calls and leaves no temp copy.
+    const fetchesBeforeDrift = sc.fetchSpy.requests.length;
+    const origC01Grader = readFileSync(sc.c01GraderPath, 'utf8');
+    writeFileSync(sc.c01GraderPath, JSON.stringify({ corrupted: true }), 'utf8');
+    const driftRefused = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', {
+        profileId: sc.profileId,
+        idempotencyKey: client.nextKey('cust-drift'),
+        source: {
+          kind: 'bug',
+          repositoryId: `repo-${sc.tag}-C01`,
+          checkSetId: 'checks-configured',
+          bugInput: {
+            goal: 'Drift check',
+            observedBehavior: 'Observed',
+            expectedBehavior: 'Expected',
+            reproduction: 'pytest -q',
+            acceptanceCriteria: ['Passes'],
+          },
+        },
+      }),
+      'cust-drift',
+    ).experiment;
+    assert.equal(driftRefused.status, 'incomplete');
+    assert.equal(driftRefused.taskId, null);
+    assert.equal(sc.fetchSpy.requests.length, fetchesBeforeDrift);
+    writeFileSync(sc.c01GraderPath, origC01Grader, 'utf8');
+
+    const fetchesBeforeDocker = sc.fetchSpy.requests.length;
+    sc.spawnSpy.state.versionFail = true;
+    const dockerDown = client.unwrap<{ experiment: ExperimentViewShape }>(
+      await client.post('/api/experiments', {
+        profileId: sc.profileId,
+        idempotencyKey: client.nextKey('cust-docker-down'),
+        source: {
+          kind: 'bug',
+          repositoryId: `repo-${sc.tag}-C01`,
+          checkSetId: 'checks-configured',
+          bugInput: {
+            goal: 'Goal',
+            observedBehavior: 'Observed',
+            expectedBehavior: 'Expected',
+            reproduction: 'pytest -q',
+            acceptanceCriteria: ['Passes'],
+          },
+        },
+      }),
+      'cust-docker-down',
+    ).experiment;
+    assert.equal(dockerDown.status, 'incomplete');
+    assert.equal(dockerDown.taskId, null);
+    assert.equal(sc.fetchSpy.requests.length, fetchesBeforeDocker);
+    for (const dir of countConsoleCopies()) {
+      assert.equal(copiesBefore.has(dir), true, `refused custom run should leave no temporary copy ${dir}`);
+    }
+  } finally {
+    await cliResult?.close?.();
+    sc.cleanup();
+    t.mock.timers.reset();
+  }
+});

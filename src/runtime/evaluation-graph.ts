@@ -79,6 +79,8 @@ export interface UC03EvaluationGraphRoute {
   readonly resolveClarificationEnd?: ((input: EvaluationDirectionResolutionInput) => ClarificationEndReceipt | undefined | Promise<ClarificationEndReceipt | undefined>) | undefined;
   /** Runs terminal host effects only after the NeedsInfo end receipt is accepted. */
   readonly onClarificationEndAccepted?: ((experimentId: string) => void) | undefined;
+  /** Runs terminal host cleanup after a terminal graph result (when no grader hooks run). */
+  readonly onTerminal?: ((experimentId: string) => void | Promise<void>) | undefined;
   /** Host-only report identity and optional controlled grader wiring; never accepted from service input. */
   readonly workflowReport?: EvaluationGraphReportBinding | undefined;
 }
@@ -322,6 +324,9 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
               mode: readiness.status === 'ready' ? 'real' : 'mock',
             })
           : undefined;
+      if (graphResult.outcome !== 'pending-approval' && graphResult.outcome !== 'needs-info') {
+        await route.onTerminal?.(input.experimentId);
+      }
       const milestones = projectMilestones(graphResult.milestones);
       return {
         outcome: graphResult.outcome,

@@ -14,17 +14,15 @@
  * catalog path is the loaded profile's own `catalog.path`, never a caller-supplied one.
  */
 import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
-import { computeCanonicalSha256, validateBugTask } from '../contracts/foundation/uc03.ts';
+import { join } from 'node:path';
+import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
 import type { BugTask, PolicyAuthorityRefV02, TaskState } from '../contracts/foundation/uc03.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
 import { bindRealTierWorkspace } from './real-tier-workspace.ts';
 import type { ExecutionProfileV02 } from '../persistence/adapters/state-port-v02-admission.ts';
 import { stateReadPolicyDigest } from '../persistence/adapters/state-port-v02-read-fence.ts';
-import { MAX_TASK_REPLANS } from '../uc03/replan-accounting.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../uc03/graph-types-v02.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02 } from '../uc03/graph-types-v02.ts';
-import { sha256Text } from '../uc01/contracts.ts';
 import { createHostActionContext } from './host-action-context.ts';
 import type { RealContextSource } from '../approvals/real-context-provider.ts';
 import { seedTaskState } from './real-tier-task-seed.ts';
@@ -34,22 +32,11 @@ import { hostDeliveries } from './real-tier-assembly.ts';
 import { REAL_TIER_DELIVERY_CONTRACT } from './real-tier-owners.ts';
 import { buildBoundCapabilities, type BoundCapabilities } from './real-tier-task-producers.ts';
 import { boundExecutionProfileOf, pinnedExecutionProfileOf } from './real-tier-execution-profile.ts';
+import { entryOf, loadFixture, validateCustomTaskOverride, type RealTierFixture } from './real-tier-fixture.ts';
 import { prepareUC03Host, type UC03HostInputs, type UC03HostReadiness } from './uc03-host-bootstrap.ts';
 
 export { executionProfileOf, pinnedExecutionProfileOf, type PinnedExecutionProfileV02 } from './real-tier-execution-profile.ts';
-
-/** One catalog entry, as the T047 profile's catalog file already declares it. */
-interface RealTierCatalogEntry {
-  readonly fixturePath: string;
-  readonly fixtureDigest: string;
-  readonly initialRepositoryDigest: string;
-}
-
-/** The fixture document: a pinned task plus the target repository root. */
-export interface RealTierFixture {
-  readonly task: BugTask;
-  readonly repositoryRoot: string;
-}
+export type { RealTierFixture };
 
 export interface RealTierBindingOptions {
   /** The catalog entry to bind, by `caseId`; the catalog itself is the profile's `catalog.path`. */
@@ -74,6 +61,11 @@ export interface RealTierBindingOptions {
    * Reused per task on the same assembly; rebinds refuse with working-copy-unavailable if removed.
    */
   readonly workingCopyRoot?: string | undefined;
+  /**
+   * Optional custom bug task replacing only `taskId` and the six public bug fields on the template
+   * fixture while keeping all template configuration, limits, checks, and fixture validation intact.
+   */
+  readonly customTask?: BugTask | undefined;
 }
 
 export type RealTierBindingRefusal = Readonly<{ status: 'unavailable'; reasonCode: string; path: string }>;
@@ -104,79 +96,6 @@ const defaultIds = (kind: 'run' | 'workspace', caseId: string): string => `${kin
 /** Working copies recorded per assembly and task id so rebinds reuse the copy behind cached context sources. */
 const workingCopies = new WeakMap<RealTierAssembly, Map<string, string>>();
 
-/** The catalog entry for one case id, or a bounded refusal. */
-function entryOf(source: string, caseId: string): RealTierCatalogEntry | RealTierBindingRefusal {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(source);
-  } catch {
-    return refused('catalog-invalid', '$.catalog');
-  }
-  const entries = (parsed as { readonly catalog?: unknown } | null)?.catalog;
-  if (!Array.isArray(entries)) return refused('catalog-invalid', '$.catalog');
-  const entry = entries.find((candidate: unknown) => typeof candidate === 'object' && candidate !== null && (candidate as { caseId?: unknown }).caseId === caseId);
-  if (entry === undefined) return refused('catalog-entry-missing', '$.catalog');
-  const record = entry as Readonly<Record<string, unknown>>;
-  if (typeof record['fixturePath'] !== 'string' || typeof record['fixtureDigest'] !== 'string') return refused('catalog-invalid', '$.catalog');
-  return {
-    fixturePath: record['fixturePath'],
-    fixtureDigest: record['fixtureDigest'],
-    initialRepositoryDigest: typeof record['initialRepositoryDigest'] === 'string' ? record['initialRepositoryDigest'] : '',
-  };
-}
-
-/**
- * The fixture and its containment. It must digest to the entry's `fixtureDigest`, its task must
- * validate, its revision must equal the entry's, and `repositoryRoot` must resolve, under realpath,
- * inside the catalog's own directory. This is the only place a task fact enters the binding.
- */
-function loadFixture(readText: (path: string) => string, entry: RealTierCatalogEntry, catalogPath: string): RealTierFixture | RealTierBindingRefusal {
-  if (!isAbsolute(entry.fixturePath)) return refused('fixture-path-invalid', '$.fixturePath');
-  let text: string;
-  try {
-    text = readText(entry.fixturePath);
-  } catch {
-    return refused('fixture-unreadable', '$.fixturePath');
-  }
-  if (sha256Text(text) !== entry.fixtureDigest) return refused('fixture-digest-mismatch', '$.fixtureDigest');
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return refused('fixture-invalid', '$.fixture');
-  }
-  if (typeof parsed !== 'object' || parsed === null) return refused('fixture-invalid', '$.fixture');
-  const document = parsed as Readonly<Record<string, unknown>>;
-  const task = validateBugTask(document['task']);
-  if (!task.ok) return refused('task-invalid', '$.task');
-  // The carried prerequisite: the replan ledger is three slots, so a fixture that disagrees is refused.
-  if (task.value.budgetLimits.maxReplanCount !== MAX_TASK_REPLANS) return refused('replan-count-unsupported', '$.task.budgetLimits.maxReplanCount');
-  if (task.value.initialRevisionDigest.replace(/^sha256:/u, '') !== entry.initialRepositoryDigest) return refused('revision-mismatch', '$.initialRepositoryDigest');
-  for (let i = 0; i < task.value.requiredChecks.length; i++) {
-    const rawWd = task.value.requiredChecks[i]?.workingDirectory;
-    if (typeof rawWd !== 'string') return refused('check-working-directory-invalid', `$.task.requiredChecks[${i}].workingDirectory`);
-    const wd = posix.normalize(rawWd);
-    if (!posix.isAbsolute(wd) || (wd !== '/workspace/repo' && !wd.startsWith('/workspace/repo/'))) {
-      return refused('check-working-directory-invalid', `$.task.requiredChecks[${i}].workingDirectory`);
-    }
-  }
-
-  const declared = document['repositoryRoot'];
-  if (typeof declared !== 'string' || !declared.trim()) return refused('repository-root-missing', '$.repositoryRoot');
-  const catalogDir = realpathSync(dirname(catalogPath));
-  let resolved: string;
-  try {
-    resolved = realpathSync(isAbsolute(declared) ? declared : join(dirname(entry.fixturePath), declared));
-  } catch {
-    return refused('repository-root-unresolvable', '$.repositoryRoot');
-  }
-  const within = relative(catalogDir, resolved);
-  if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) return refused('repository-root-escapes-catalog', '$.repositoryRoot');
-
-  return { task: task.value, repositoryRoot: resolved };
-}
-
 function policyOf(task: BugTask, options: RealTierBindingOptions): Readonly<{ policyId: string; policyVersion: string; configId: string; configVersion: string }> {
   return options.policyIdentity ?? { policyId: task.configId, policyVersion: task.configVersion, configId: task.configId, configVersion: task.configVersion };
 }
@@ -203,7 +122,12 @@ export async function bindRealTierTask(assembly: RealTierAssembly, options: Real
   if ('status' in found) return found;
   const fixture = loadFixture(readText, found, catalogPath);
   if ('status' in fixture) return fixture;
-  const { task } = fixture;
+  let task = fixture.task;
+  if (options.customTask !== undefined) {
+    const custom = validateCustomTaskOverride(fixture.task, options.customTask);
+    if ('status' in custom) return custom;
+    task = custom;
+  }
 
   // Every finite bound is validated here, before any effect: a zero TTL or path bound is a bad
   // binding, not a task that should stay half-built.
