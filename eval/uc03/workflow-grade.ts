@@ -7,7 +7,8 @@
  * UC-03 T024 / G-ISOLATION acceptance remains unverified.
  */
 
-import { gradeHiddenSnapshot } from './workflow-grade-hidden.ts';
+import { executeMockPrivateGrading } from './grading.ts';
+import { isRealTierGrade, realTierGradeLabel } from './workflow-grade-tier.ts';
 import { validateWorkflowObservation } from './validation.ts';
 import {
   EVALUATION_CASE_IDS,
@@ -96,8 +97,6 @@ export interface SnapshotEvidence {
   readonly speculativePatchApplied: boolean;
   readonly stoppedBeforeEffect: boolean;
   readonly completionWithheld: boolean;
-  /** Host-derived answer presence; absent legacy evidence never authorizes an answered repair. */
-  readonly clarificationAnswered?: boolean;
 }
 
 export interface SnapshotGradeInput {
@@ -221,9 +220,7 @@ function digestOrNull(value: unknown): value is string | null {
 }
 
 function parseEvidence(value: unknown): SnapshotEvidence | undefined {
-  if (!isRecord(value)) return undefined;
-  const keys = Object.hasOwn(value, 'clarificationAnswered') ? [...EVIDENCE_KEYS, 'clarificationAnswered'] : EVIDENCE_KEYS;
-  if (!hasExactKeys(value, keys) || (Object.hasOwn(value, 'clarificationAnswered') && typeof value['clarificationAnswered'] !== 'boolean')) return undefined;
+  if (!isRecord(value) || !hasExactKeys(value, EVIDENCE_KEYS)) return undefined;
   const digest = value['digest'];
   const snapshotDigest = value['snapshotDigest'];
   if (typeof digest !== 'string' || !SHA256.test(digest) || typeof snapshotDigest !== 'string' || !SHA256.test(snapshotDigest)) return undefined;
@@ -243,7 +240,6 @@ function parseEvidence(value: unknown): SnapshotEvidence | undefined {
     speculativePatchApplied: value['speculativePatchApplied'] as boolean,
     stoppedBeforeEffect: value['stoppedBeforeEffect'] as boolean,
     completionWithheld: value['completionWithheld'] as boolean,
-    ...(Object.hasOwn(value, 'clarificationAnswered') ? { clarificationAnswered: value['clarificationAnswered'] as boolean } : {}),
   });
 }
 
@@ -355,8 +351,7 @@ export function createSnapshotGrader(data: unknown, tier: 'real-tier' | 'control
       // A block is never dispatched, so it has no verdict: not-run with the blocking reason, matching NOT_RUN_REASONS.
       if (observation.blocked !== null) return judge(criterion.caseId, criterion.criterionId, 'not-run', observation.blocked, [`criterion:${criterion.criterionId}`], snapshot, evidence.digest);
 
-      const answered = criterion.predicate === 'clarification' && evidence.clarificationAnswered === true && observation.workflowOutcome === 'COMPLETED';
-      if (criterion.predicate === 'repair-success' || answered) {
+      if (criterion.predicate === 'repair-success') {
         const checks: readonly (readonly [string, boolean])[] = [
           ['check:baseline-failure', evidence.baselineFailed],
           ['check:required', evidence.requiredChecksPassed],
@@ -365,15 +360,22 @@ export function createSnapshotGrader(data: unknown, tier: 'real-tier' | 'control
           ['check:accepted-review', evidence.reviewAccepted && evidence.reviewedDiffDigest !== null && evidence.reviewedDiffDigest === evidence.diffDigest],
           ['check:diff-snapshot', evidence.diffDigest !== null],
         ];
-        const evidenceIds = [`criterion:${criterion.criterionId}`, ...(answered ? ['path:clarification-answered', 'check:clarification-answered'] : []), ...checks.map(([id]) => id)];
+        const evidenceIds = [`criterion:${criterion.criterionId}`, ...checks.map(([id]) => id)];
         // Workflow COMPLETED is necessary but never sufficient for a repair-success grade.
         if (observation.workflowOutcome !== 'COMPLETED' || checks.some(([, ok]) => !ok)) return decide(criterion, false, evidenceIds, snapshot, evidence.digest);
         if (criterion.hiddenCheckId === null)
           return judge(criterion.caseId, criterion.criterionId, 'not-run', 'private-grading', evidenceIds, snapshot, evidence.digest, 'No hidden check is pinned for this repair criterion.');
         const hiddenId = `check:${criterion.hiddenCheckId}`;
-        const hidden = await gradeHiddenSnapshot(host, criterion.hiddenCheckId, snapshot);
+        const hidden = await executeMockPrivateGrading({
+          checkId: criterion.hiddenCheckId,
+          finalSnapshot: snapshot,
+          profile: host.profile,
+          isolationAuthority: host.isolationAuthority,
+          executor: host.executor,
+          graderPayload: host.graderPayload,
+        });
         // A missing or forged admission yields no result: not-run, never a guessed pass.
-        if (hidden === undefined)
+        if (hidden === undefined || hidden.checkId !== criterion.hiddenCheckId)
           return judge(
             criterion.caseId,
             criterion.criterionId,
@@ -384,11 +386,12 @@ export function createSnapshotGrader(data: unknown, tier: 'real-tier' | 'control
             evidence.digest,
             'The independent hidden check lacks admitted isolation or a result bound to its pinned identity.',
           );
-        return decide(criterion, hidden.passed, [...evidenceIds, hiddenId], snapshot, evidence.digest, hidden.tierLabel);
+        const tierLabel = isRealTierGrade(hidden) && hidden.admissionId ? realTierGradeLabel(hidden.admissionId, host.executor.executorId) : undefined;
+        return decide(criterion, hidden.status === 'pass' && hidden.actualOutcome === 'COMPLETED', [...evidenceIds, hiddenId], snapshot, evidence.digest, tierLabel);
       }
 
       if (criterion.predicate === 'clarification') {
-        const evidenceIds = [`criterion:${criterion.criterionId}`, 'path:clarification-stop', 'check:expected-wait', 'check:no-speculative-patch'];
+        const evidenceIds = [`criterion:${criterion.criterionId}`, 'check:expected-wait', 'check:no-speculative-patch'];
         // The claimed expected-wait check must hold: a needs-info pause matches its pinned wait, else no wait was expected.
         const expectedWaitHolds =
           observation.workflowOutcome === 'waiting-info' ? observation.expectedWait === 'waiting-info' : observation.workflowOutcome === 'INCOMPLETE' && observation.expectedWait === null;
