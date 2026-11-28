@@ -304,7 +304,7 @@ async function executeOnBound(
           ports: binding.ports,
           model,
           repositoryRoot: binding.repositoryRoot,
-          requiresAdmission: caseId === 'C01',
+          requiresAdmission: caseId === 'C01' || (caseId === 'C02' && result.outcome === 'COMPLETED' && result.executionEvidence?.finalState?.clarification?.answer !== undefined),
         });
 
   const gradeOutcome = graded !== undefined && !('refusal' in graded) ? graded : undefined;
