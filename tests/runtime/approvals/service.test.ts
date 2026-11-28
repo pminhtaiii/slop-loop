@@ -1859,7 +1859,12 @@ test('approval operation deadline has a bounded code and fences a late request',
   });
   await assert.rejects(
     service.requestDecision(binding),
-    error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-deadline-exceeded' && error.operationName === 'requestDecision' && error.deadlineMs === 20,
+    error =>
+      error instanceof ApprovalServiceError &&
+      error.outcome === 'unavailable' &&
+      error.reasonCode === 'approval-operation-deadline-exceeded' &&
+      error.operationName === 'requestDecision' &&
+      error.deadlineMs === 20,
   );
   assert.ok(release);
   release(scenario.current());
@@ -1868,7 +1873,23 @@ test('approval operation deadline has a bounded code and fences a late request',
   assert.equal(scenario.store.readRequest('decision-1').value, null);
   await assert.rejects(service.requestDecision(binding), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
 
-  for (const name of ['requestDecision', 'decide', 'list', 'history', 'classify', 'validateBinding', 'resolve', 'show', 'inspect', 'control', 'evaluatePolicy', 'admitProvider', 'readProviderAdmissionReceipt', 'issueActionDecision', 'readActionDecisionReceipt']) {
+  for (const name of [
+    'requestDecision',
+    'decide',
+    'list',
+    'history',
+    'classify',
+    'validateBinding',
+    'resolve',
+    'show',
+    'inspect',
+    'control',
+    'evaluatePolicy',
+    'admitProvider',
+    'readProviderAdmissionReceipt',
+    'issueActionDecision',
+    'readActionDecisionReceipt',
+  ]) {
     assert.equal(new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded', name, 20).operationName, name);
   }
   for (const name of ['RAW_SECRET/path', 'x'.repeat(10000), {}, undefined]) {

@@ -73,7 +73,23 @@ export interface ApprovalService extends ApprovalPort {
   inspect(taskId: string, decisionId: string, page: number): Promise<{ readonly presentationDigest: string; readonly page: number; readonly pageCount: number; readonly content: string }>;
   decide(input: unknown): Promise<SafeResult>;
 }
-const APPROVAL_OPERATIONS: readonly string[] = ['history', 'classify', 'validateBinding', 'resolve', 'list', 'show', 'inspect', 'control', 'decide', 'requestDecision', 'evaluatePolicy', 'admitProvider', 'readProviderAdmissionReceipt', 'issueActionDecision', 'readActionDecisionReceipt'];
+const APPROVAL_OPERATIONS: readonly string[] = [
+  'history',
+  'classify',
+  'validateBinding',
+  'resolve',
+  'list',
+  'show',
+  'inspect',
+  'control',
+  'decide',
+  'requestDecision',
+  'evaluatePolicy',
+  'admitProvider',
+  'readProviderAdmissionReceipt',
+  'issueActionDecision',
+  'readActionDecisionReceipt',
+];
 
 export class ApprovalServiceError extends Error {
   readonly outcome: SafeResult['outcome'];
