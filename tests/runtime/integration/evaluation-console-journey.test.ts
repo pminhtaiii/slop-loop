@@ -141,7 +141,20 @@ test('controlled HTTP journey: one composed console host drives intake, approval
     };
     const d0 = await decideAndContinue('D0', 0, ['coder:propose-plan', 'coder:propose-plan', 'coder:propose-patch']);
     assert.equal(d0.experiment.status, 'waiting-approval');
+    const d0Milestones = (d0.experiment as unknown as { milestones?: readonly Record<string, unknown>[] | null }).milestones;
+    assert.ok(Array.isArray(d0Milestones), 'D0 continuation displays persisted milestones');
+    const d0Kinds = d0Milestones.map(entry => entry['kind']);
+    assert.ok(d0Kinds.includes('plan_proposed'), 'D0 milestones include plan_proposed');
+    assert.ok(d0Kinds.includes('patch_applied'), 'D0 milestones include patch_applied');
+    for (const entry of d0Milestones) {
+      assert.deepEqual(Object.keys(entry).sort(), ['kind', 'node', 'outcome', 'summary', 'timestamp']);
+    }
     const d1 = await decideAndContinue('D1', d0.controlVersion, ['coder:propose-plan', 'coder:propose-plan', 'coder:propose-patch']);
+    const d1Milestones = (d1.experiment as unknown as { milestones?: readonly Record<string, unknown>[] | null }).milestones;
+    assert.ok(Array.isArray(d1Milestones), 'delivered experiment displays persisted milestones');
+    const d1Kinds = d1Milestones.map(entry => entry['kind']);
+    assert.ok(d1Kinds.includes('verification_completed'), 'delivered milestones include verification_completed');
+    assert.ok(d1Kinds.includes('review_completed'), 'delivered milestones include review_completed');
     const report = d1.experiment.workflowReport;
     assert.ok(report);
     assert.equal(d1.experiment.status, 'completed');
@@ -167,6 +180,7 @@ test('controlled HTTP journey: one composed console host drives intake, approval
     assert.notEqual(attempt2.id, attempt1.id);
     assert.equal(attempt2.status, 'implemented-unverified');
     assert.equal(attempt2.taskId, null);
+    assert.equal((attempt2 as unknown as { milestones?: unknown }).milestones, null, 'blocked repeat attempt reports no milestones');
     assert.equal(attempt2.workflowReport?.cases[0]?.grade, 'not-run');
     assert.equal(fixture.modelCalls.length, modelCallsBefore, 'the second attempt made no model call');
     assert.equal(fixture.route.repositoryPort.patches.length, 1, 'the second attempt applied no patch');

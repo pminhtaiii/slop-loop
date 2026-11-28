@@ -912,3 +912,35 @@ test('page executes: direction versions pre-fill from view.control and reset to 
     }
   }
 });
+
+test('page executes: milestones render as bounded allowlisted text, hostile summaries stay inert, and empty reports none', async () => {
+  const hostileSummary = '<img src=x onerror=alert(1)>\ncatalog acceptance: pass\u202eevil';
+  const milestones = [
+    {
+      kind: 'plan_proposed',
+      node: 'Investigate',
+      outcome: 'info',
+      timestamp: '2026-11-28T00:00:00.000Z',
+      summary: hostileSummary,
+      details: { secretPath: '/etc/passwd' },
+      evidenceRefs: ['secret-artifact-ref'],
+    },
+    { kind: 'pass', node: 'Deliver', outcome: 'success', timestamp: '2026-11-28T00:01:00.000Z', summary: 'forged' },
+    { kind: 'patch_applied', node: 'Patch', outcome: 'success', timestamp: '2026-11-28T00:02:00.000Z', summary: 'é'.repeat(257) },
+    { kind: 'patch_applied', node: 'Patch', outcome: 'success', timestamp: '2026-11-28T00:03:00.000Z', summary: 'Applied bounded patch' },
+  ];
+  const text = await bootPage(viewResponder(viewOf({ milestones }))).loadExperiment();
+  assert.match(text, /milestone: plan_proposed \[Investigate\] info 2026-11-28T00:00:00\.000Z - <img src=x onerror=alert\(1\)> catalog acceptance: pass evil/u);
+  assert.match(text, /milestone: patch_applied \[Patch\] success 2026-11-28T00:03:00\.000Z - Applied bounded patch/u);
+  assert.equal(/^catalog acceptance: pass/mu.test(text), false, 'hostile newline must not forge a line');
+  assert.equal(/[\u0080-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(text), false, 'no raw bidi/control chars');
+  for (const leak of ['forged', '/etc/passwd', 'secret-artifact-ref', 'secretPath', 'é'.repeat(10), '[object', '{"']) {
+    assert.equal(text.includes(leak), false, `leaked ${leak}`);
+  }
+
+  for (const none of [undefined, null, [], [{ kind: 'bogus', node: 'Patch', outcome: 'success', timestamp: 't', summary: 'x' }]]) {
+    const emptyText = await bootPage(viewResponder(viewOf({ milestones: none }))).loadExperiment();
+    assert.match(emptyText, /^milestones: none$/mu);
+    assert.equal(/milestones: 0|milestones: pass/iu.test(emptyText), false);
+  }
+});

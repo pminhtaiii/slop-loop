@@ -2,6 +2,9 @@ import type { BoundSource, CaseBinding, EvaluationProfile, IntakeQuestion } from
 import type { CatalogEntry } from './evaluation-profile.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import type { WorkflowEvaluationReport } from '../../eval/uc03/types.ts';
+import type { MilestoneView, MilestoneViewOutcome } from './evaluation-milestone-view.ts';
+
+export type { MilestoneView, MilestoneViewOutcome };
 
 export type ServiceStatus = 'waiting-approval' | 'waiting-info' | 'running' | 'completed' | 'incomplete' | 'implemented-unverified' | 'failed';
 export type ServiceFailure = 'invalid-input' | 'not-found' | 'conflict' | 'busy' | 'blocked';
@@ -36,6 +39,7 @@ export interface EvaluationGraphResult {
   readonly usage?: Readonly<{ tokensConsumed: number; costUsd: number }> | undefined;
   readonly workflowClarification?: WorkflowClarificationView | null | undefined;
   readonly workflowReport?: WorkflowEvaluationReport | null | undefined;
+  readonly milestones?: readonly MilestoneView[] | null | undefined;
 }
 
 export type EvaluationTaskIdentity = NonNullable<EvaluationGraphResult['state']>;
@@ -109,6 +113,7 @@ export interface ExperimentView {
   readonly usage: Readonly<{ tokensConsumed: number; costUsd: number }> | null;
   readonly workflowClarification: WorkflowClarificationView | null;
   readonly workflowReport: WorkflowEvaluationReport | null;
+  readonly milestones?: readonly MilestoneView[] | null | undefined;
   readonly answers: readonly AnswerRecord[];
   readonly directions: readonly string[];
   readonly control?: ExperimentControlVersions | null | undefined;
@@ -143,6 +148,7 @@ export interface ExperimentRecord {
   readonly submission: SubmissionView | null;
   task: EvaluationGraphResult['state'];
   workflowReport: WorkflowEvaluationReport | null;
+  milestones: readonly MilestoneView[] | null;
   readonly startedSource: BoundSource;
   status: ServiceStatus;
   version: number;
@@ -236,6 +242,7 @@ export function viewOf(record_: ExperimentRecord): ExperimentView {
     usage: record_.usage,
     workflowClarification: record_.workflowClarification,
     workflowReport: record_.workflowReport,
+    milestones: record_.milestones,
     answers: Object.freeze([...record_.answers]),
     directions: Object.freeze(record_.directions.map(receipt => receipt.receiptRef)),
   });
