@@ -78,13 +78,13 @@ export function createApprovalServiceCore(
     };
   };
   // Every host operation is bounded, including a context provider that never settles.
-  const bounded = async <T>(operation: (assertActive: () => void) => Promise<T> | T): Promise<T> => {
+  const bounded = async <T>(operationName: string, operation: (assertActive: () => void) => Promise<T> | T): Promise<T> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let expired = false;
-    const assertActive = (): void => { if (expired) throw new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded'); };
+    const assertActive = (): void => { if (expired) throw new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded', operationName, profile.operationDeadlineMs); };
     try {
       return await Promise.race([Promise.resolve().then(() => operation(assertActive)), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { expired = true; reject(new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded')); }, profile.operationDeadlineMs);
+        timer = setTimeout(() => { expired = true; reject(new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded', operationName, profile.operationDeadlineMs)); }, profile.operationDeadlineMs);
       })]);
     } catch (error) {
       if (error instanceof ApprovalServiceError) {
@@ -179,7 +179,7 @@ export function createApprovalServiceCore(
   };
   const runtime = { options, profile, policy, store, control, task, trusted, checkedView, presentation, request, resolution, projection, staleContextDigests, callPort, loadPort, admitContext, coordinator, now, admission, bounded };
   const service: ApprovalService = {
-    history: (taskId, page) => bounded(async () => {
+    history: (taskId, page) => bounded('history', async () => {
       task(taskId);
       return readApprovalHistory({ taskId, profile, store: store(), control: control(), operator: options.operator?.identity, observations: options.observations, request,
         observe: async record => {
@@ -200,7 +200,7 @@ export function createApprovalServiceCore(
     admitAttempt: (attemptId, claim) => !admission.closed && coordinator.admitAttempt(attemptId, claim),
     control: createServiceControl(runtime),
     provenance,
-    classify: action => bounded(async () => {
+    classify: action => bounded('classify', async () => {
       if (admission.closed || coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
       const current = control();
       if (current.mode !== 'runnable' || current.outstandingClaimRefs.length > 0) throw new ApprovalServiceError('paused');
@@ -213,7 +213,7 @@ export function createApprovalServiceCore(
       return result.permission;
     }),
     requestDecision: createServiceRequest(runtime),
-    validateBinding: binding => bounded(async () => {
+    validateBinding: binding => bounded('validateBinding', async () => {
       if (admission.closed || coordinator.isClosed()) return false;
       if (!plainContextData(binding) || !parseApprovalBinding(binding).ok) return false;
       try {
@@ -223,7 +223,7 @@ export function createApprovalServiceCore(
         return !admission.closed && !coordinator.isClosed() && current.mode === 'runnable' && current.outstandingClaimRefs.length === 0 && stored.status === 'approved' && isDeepStrictEqual(binding, stored) && validateApprovalBinding(stored, view.context.freshness).ok;
       } catch { return false; }
     }),
-    resolve: decisionId => bounded(async () => {
+    resolve: decisionId => bounded('resolve', async () => {
       const record = request(decisionId);
       const stored = projection(record);
       if (stored.status === 'rejected' || stored.status === 'stale') return stored;
@@ -233,9 +233,9 @@ export function createApprovalServiceCore(
         throw error;
       }
     }),
-    list: taskId => bounded(() => { task(taskId); const current = control(); return { control: current, decisionId: current.pendingDecisionId }; }),
-    show: (taskId, decisionId) => bounded(async () => { task(taskId); const view = await checkedView(decisionId); return { control: control(), binding: projection(view.record), presentation: view.bundle.summary }; }),
-    inspect: (taskId, decisionId, page) => bounded(async () => {
+    list: taskId => bounded('list', () => { task(taskId); const current = control(); return { control: current, decisionId: current.pendingDecisionId }; }),
+    show: (taskId, decisionId) => bounded('show', async () => { task(taskId); const view = await checkedView(decisionId); return { control: control(), binding: projection(view.record), presentation: view.bundle.summary }; }),
+    inspect: (taskId, decisionId, page) => bounded('inspect', async () => {
       task(taskId); const view = await checkedView(decisionId);
       const content = view.bundle.pages[page - 1];
       if (!Number.isSafeInteger(page) || page < 1 || content === undefined) throw new ApprovalServiceError('invalid');

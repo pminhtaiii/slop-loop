@@ -32,7 +32,7 @@ export function createServiceRequest(
 ): ApprovalService['requestDecision'] {
   const { options, profile, policy, store, control, trusted, checkedView, presentation, request, projection, staleContextDigests, callPort, coordinator, now, admission, bounded } = runtime;
   return binding =>
-    bounded(async assertActive => {
+    bounded('requestDecision', async assertActive => {
       if (admission.closed || coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
       if (!plainContextData(binding)) throw new ApprovalServiceError('invalid');
       const checked = parseApprovalBinding(binding);

@@ -2445,3 +2445,56 @@ test('Route classifies bounded project errors and omits unsafe codes and plain E
     assert.doesNotMatch(JSON.stringify(result), /DO_NOT_RETAIN|private\.invalid/u);
   }
 });
+
+test('Route reports the operation and deadline of an actual stalled approval service call', async () => {
+  const { createApprovalServiceCore } = await import('../../../src/approvals/service-v01.ts');
+  const { recoveryProfile } = await import('../support/uc05/mock-recovery.ts');
+  const { task, ports, statePort, trustedExpectedContext } = createTestSetup();
+  const { service } = createApprovalServiceCore({
+    taskId: task.taskId,
+    profile: { ...recoveryProfile, operationDeadlineMs: 20, commandRules: recoveryProfile.commandRules.map(rule => ({ ...rule, timeoutMs: 20 })) },
+    context: {
+      loadForAction: () =>
+        new Promise(() => {
+          /* Host never responds. */
+        }),
+      loadForDecision: () =>
+        new Promise(() => {
+          /* Host never responds. */
+        }),
+    },
+  });
+  await seedGraphTaskState(statePort, createGraphTaskState(task, { node: 'Validate' }));
+  statePort.getUnderlying().transition = async () => {
+    await service.requestDecision(createTestApprovalBinding({ status: 'pending' }));
+    throw new Error('Expected deadline');
+  };
+  const result = await runUC03Graph(task, ports, { mode: 'development', trustedExpectedContext, planDetails: ROUTE_PLAN_DETAILS });
+  assert.equal(result.diagnostic?.component, 'approval');
+  assert.equal(result.diagnostic?.reasonCode, 'approval-operation-deadline-exceeded');
+  assert.ok(result.diagnostic?.limitations.some(line => line.includes('operation: requestDecision; deadlineMs: 20')));
+  const { observeAndGradeWorkflowResult } = await import('../../../eval/uc03/workflow-driver.ts');
+  const digest = task.initialRevisionDigest;
+  const observation = await observeAndGradeWorkflowResult(
+    {
+      task,
+      expectedWait: null,
+      entry: {
+        catalogEntryId: 'entry-C01',
+        caseId: 'C01',
+        version: '1.0.0',
+        caseDigest: digest,
+        publicTaskDigest: digest,
+        initialRepositoryDigest: digest,
+        fixturePath: 'fixture.json',
+        fixtureDigest: digest,
+        grader: { version: '1.0.0', digest, path: 'grader.json' },
+      },
+    },
+    result,
+    undefined,
+    'controlled-model',
+    'real',
+  );
+  assert.ok(observation.limitations.some(line => line.includes('operation: requestDecision; deadlineMs: 20')));
+});

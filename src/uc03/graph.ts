@@ -206,7 +206,7 @@ function classifyThrownError(error: unknown) {
   const code = ['reasonCode', 'code', 'outcome'].map(key => fields[key]?.value as unknown).find(value => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/u.test(value));
   return {
     approvalDeadline: error instanceof ApprovalServiceError && error.outcome === 'unavailable' && code === 'approval-operation-deadline-exceeded',
-    limitation: `Thrown error class: ${errorClass}${typeof code === 'string' ? `; code: ${code}` : ''}`,
+    limitation: `Thrown error class: ${errorClass}${typeof code === 'string' ? `; code: ${code}` : ''}${error instanceof ApprovalServiceError && error.operationName !== undefined && error.deadlineMs !== undefined ? `; operation: ${error.operationName}; deadlineMs: ${error.deadlineMs}` : ''}`,
   };
 }
 

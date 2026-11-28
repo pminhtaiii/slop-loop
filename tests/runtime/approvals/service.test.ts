@@ -1859,7 +1859,12 @@ test('approval operation deadline has a bounded code and fences a late request',
   });
   await assert.rejects(
     service.requestDecision(binding),
-    error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-deadline-exceeded',
+    error =>
+      error instanceof ApprovalServiceError &&
+      error.outcome === 'unavailable' &&
+      error.reasonCode === 'approval-operation-deadline-exceeded' &&
+      error.operationName === 'requestDecision' &&
+      error.deadlineMs === 20,
   );
   assert.ok(release);
   release(scenario.current());
@@ -1867,4 +1872,33 @@ test('approval operation deadline has a bounded code and fences a late request',
   assert.equal(scenario.store.loadTaskControl('task-1').value?.mode, 'runnable');
   assert.equal(scenario.store.readRequest('decision-1').value, null);
   await assert.rejects(service.requestDecision(binding), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+
+  for (const name of [
+    'requestDecision',
+    'decide',
+    'list',
+    'history',
+    'classify',
+    'validateBinding',
+    'resolve',
+    'show',
+    'inspect',
+    'control',
+    'evaluatePolicy',
+    'admitProvider',
+    'readProviderAdmissionReceipt',
+    'issueActionDecision',
+    'readActionDecisionReceipt',
+  ]) {
+    assert.equal(new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded', name, 20).operationName, name);
+  }
+  for (const name of ['RAW_SECRET/path', 'x'.repeat(10000), {}, undefined]) {
+    const error = new ApprovalServiceError('unavailable', 'approval-operation-deadline-exceeded', name, 20);
+    assert.equal(error.operationName, 'unknown');
+    assert.equal(error.deadlineMs, 20);
+    assert.doesNotMatch(JSON.stringify(error), /RAW_SECRET/u);
+  }
+  for (const deadline of [0, -1, NaN, Infinity, 1.5]) {
+    assert.equal(new ApprovalServiceError('unavailable', undefined, 'list', deadline).deadlineMs, undefined);
+  }
 });

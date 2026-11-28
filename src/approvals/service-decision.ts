@@ -14,7 +14,7 @@ export function createServiceDecision(
 ): ApprovalService['decide'] {
   const { options, profile, store, control, task, checkedView, resolution, callPort, coordinator, now, admission, bounded } = runtime;
   return input =>
-    bounded(async assertActive => {
+    bounded('decide', async assertActive => {
       if (!options.operator) throw new ApprovalServiceError('denied');
       if (!decisionInput(input)) throw new ApprovalServiceError('invalid');
       task(input.taskId);

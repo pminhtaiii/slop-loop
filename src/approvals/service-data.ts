@@ -73,13 +73,37 @@ export interface ApprovalService extends ApprovalPort {
   inspect(taskId: string, decisionId: string, page: number): Promise<{ readonly presentationDigest: string; readonly page: number; readonly pageCount: number; readonly content: string }>;
   decide(input: unknown): Promise<SafeResult>;
 }
+const APPROVAL_OPERATIONS: readonly string[] = [
+  'history',
+  'classify',
+  'validateBinding',
+  'resolve',
+  'list',
+  'show',
+  'inspect',
+  'control',
+  'decide',
+  'requestDecision',
+  'evaluatePolicy',
+  'admitProvider',
+  'readProviderAdmissionReceipt',
+  'issueActionDecision',
+  'readActionDecisionReceipt',
+];
+
 export class ApprovalServiceError extends Error {
   readonly outcome: SafeResult['outcome'];
   readonly reasonCode: string;
-  constructor(outcome: SafeResult['outcome'], reasonCode = 'approval-operation-denied') {
+  readonly operationName?: string;
+  readonly deadlineMs?: number;
+  constructor(outcome: SafeResult['outcome'], reasonCode = 'approval-operation-denied', operationName?: unknown, deadlineMs?: number) {
     super('approval-operation-denied');
     this.outcome = outcome;
     this.reasonCode = reasonCode;
+    if (deadlineMs !== undefined && Number.isSafeInteger(deadlineMs) && deadlineMs > 0) {
+      this.operationName = typeof operationName === 'string' && APPROVAL_OPERATIONS.includes(operationName) ? operationName : 'unknown';
+      this.deadlineMs = deadlineMs;
+    }
   }
 }
 
@@ -103,5 +127,5 @@ export interface ServiceRuntime {
   projection(record: ApprovalRequestRecord): ApprovalBinding;
   callPort<T>(operation: () => T): T;
   loadPort<T>(operation: () => Promise<T>): Promise<T>;
-  bounded<T>(operation: (assertActive: () => void) => Promise<T> | T): Promise<T>;
+  bounded<T>(operationName: string, operation: (assertActive: () => void) => Promise<T> | T): Promise<T>;
 }

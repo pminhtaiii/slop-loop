@@ -2122,3 +2122,116 @@ for (const drift of [false, true]) {
     }
   });
 }
+
+for (const staleDecision of [false, true]) {
+  test(`serve --host real assembly: rejected C01 then approved C01 and C02 get past AwaitPlan (stale=${staleDecision})`, async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW_MS });
+    const token = 'repeat-case-console-token-01234567';
+    const sc = await setupServeScenario({ tag: 'repeat-case', extraEnv: { [REAL_CONSOLE_TOKEN_ENV]: token } });
+    let cliResult: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+    try {
+      cliResult = (await sc.captureStderr(() => runEvaluateCli(['serve', '--host', sc.hostFile]))).value;
+      assert.equal(cliResult.exitCode, 0);
+      const { host, port } = JSON.parse(cliResult.output) as { host: string; port: number };
+      const client = makeClient(`http://${host}:${port}`, token);
+      let stale: ApprovalPresentationShape | undefined;
+      let prior: ExperimentViewShape | undefined;
+      for (const [caseId, decision] of [
+        ['C01', 'reject'],
+        ['C01', 'approve'],
+        ['C02', 'approve'],
+      ] as const) {
+        const experiment = client.unwrap<{ experiment: ExperimentViewShape }>(
+          await client.post('/api/experiments', {
+            profileId: sc.profileId,
+            idempotencyKey: client.nextKey('repeat-start'),
+            source: { kind: 'catalog', caseIds: [caseId] },
+          }),
+          'repeat-start',
+        ).experiment;
+        assert.equal(experiment.status, 'waiting-approval');
+        const presentation = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${experiment.id}/approval`), 'repeat-presentation');
+        if (prior) {
+          assert.notEqual(experiment.runId, prior.runId);
+          assert.notEqual(experiment.workspaceId, prior.workspaceId);
+        }
+        prior = experiment;
+        if (staleDecision && stale) {
+          const denied = await client.post(`/api/experiments/${experiment.id}/decision`, {
+            idempotencyKey: client.nextKey('repeat-stale'),
+            decision: 'approve',
+            expectedVersion: stale.presentation.requestVersion,
+            presentationDigest: stale.presentation.presentationDigest,
+          });
+          assert.equal(denied.status, 409);
+          assert.deepEqual(denied.body, { ok: false, error: 'approval-operation-denied' });
+        }
+        const recorded = client.unwrap<DecisionReplyShape>(
+          await client.post(`/api/experiments/${experiment.id}/decision`, {
+            idempotencyKey: client.nextKey('repeat-decision'),
+            decision,
+            expectedVersion: presentation.presentation.requestVersion,
+            presentationDigest: presentation.presentation.presentationDigest,
+          }),
+          'repeat-decision',
+        );
+        const continued = await client.issueAndContinue(
+          experiment.id,
+          {
+            kind: 'resume',
+            expectedTaskVersion: recorded.controlVersion,
+            expectedControlVersion: recorded.controlVersion,
+            label: 'repeat-resume',
+          },
+          experiment.version,
+        );
+        if (decision === 'reject') {
+          assert.equal(continued.experiment.status, 'waiting-info');
+          assert.ok(continued.experiment.control);
+          const ended = await client.issueAndContinue(
+            experiment.id,
+            {
+              kind: 'end',
+              expectedTaskVersion: continued.experiment.control.taskVersion,
+              expectedControlVersion: continued.experiment.control.controlVersion,
+              decisionRef: presentation.binding.decisionId,
+              label: 'repeat-end',
+            },
+            continued.experiment.version,
+          );
+          assert.equal(ended.experiment.status, 'incomplete');
+          stale = presentation;
+        } else {
+          assert.equal(continued.experiment.status, 'waiting-approval', JSON.stringify(continued.experiment));
+          const verify = client.unwrap<ApprovalPresentationShape>(await client.get(`/api/experiments/${experiment.id}/approval`), 'repeat-verify');
+          assert.notEqual(verify.binding.decisionId, presentation.binding.decisionId);
+          const delivery = client.unwrap<DecisionReplyShape>(
+            await client.post(`/api/experiments/${experiment.id}/decision`, {
+              idempotencyKey: client.nextKey('repeat-deliver'),
+              decision: 'approve',
+              expectedVersion: verify.presentation.requestVersion,
+              presentationDigest: verify.presentation.presentationDigest,
+            }),
+            'repeat-deliver',
+          );
+          const completed = await client.issueAndContinue(
+            experiment.id,
+            {
+              kind: 'resume',
+              expectedTaskVersion: delivery.controlVersion,
+              expectedControlVersion: delivery.controlVersion,
+              label: 'repeat-complete',
+            },
+            continued.experiment.version,
+          );
+          assert.equal(completed.experiment.status, 'completed', JSON.stringify(completed.experiment));
+          stale = presentation;
+        }
+      }
+    } finally {
+      await cliResult?.close?.();
+      sc.cleanup();
+      t.mock.timers.reset();
+    }
+  });
+}

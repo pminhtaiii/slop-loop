@@ -158,7 +158,7 @@ export function createApprovalService(options: ApprovalServiceOptionsV02): Appro
     ...core.service,
     decisionAuthorityGeneration: generation,
     evaluatePolicy: (actionInput, evalOptions) =>
-      runtime.bounded(async () => {
+      runtime.bounded('evaluatePolicy', async () => {
         if (runtime.admission.closed || runtime.coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
         const action = validateNormalizedAction(actionInput);
         if (!action.ok) throw new ApprovalServiceError('invalid');
@@ -184,7 +184,7 @@ export function createApprovalService(options: ApprovalServiceOptionsV02): Appro
         return result.receipt;
       }),
     admitProvider: (requestInput, providerOptions) =>
-      runtime.bounded(async () => {
+      runtime.bounded('admitProvider', async () => {
         if (runtime.admission.closed || runtime.coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
         if (!isBoundedPolicyData(requestInput, 65_536)) throw new ApprovalServiceError('invalid');
         const parsed = validateProviderRequest(requestInput);
@@ -205,7 +205,7 @@ export function createApprovalService(options: ApprovalServiceOptionsV02): Appro
         return retainImmutable(retainedProviderAdmissions, result.receipt.receiptId, result.receipt, 'provider-admission-receipt-id-collision');
       }),
     readProviderAdmissionReceipt: receiptId =>
-      runtime.bounded(async () => {
+      runtime.bounded('readProviderAdmissionReceipt', async () => {
         if (runtime.admission.closed || runtime.coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
         if (typeof receiptId !== 'string' || !RECEIPT_ID.test(receiptId)) throw new ApprovalServiceError('invalid');
         const retained = retainedProviderAdmissions.get(receiptId);
@@ -248,9 +248,9 @@ export function createApprovalService(options: ApprovalServiceOptionsV02): Appro
         if (runtime.admission.closed || runtime.coordinator.isClosed() || !sameRunnableAuthority(latest, before)) throw new ApprovalServiceError('paused');
         return retained;
       }),
-    issueActionDecision: (decisionId, evaluationInput) => runtime.bounded(() => issueActionDecision(decisionId, evaluationInput)),
+    issueActionDecision: (decisionId, evaluationInput) => runtime.bounded('issueActionDecision', () => issueActionDecision(decisionId, evaluationInput)),
     readActionDecisionReceipt: decisionId =>
-      runtime.bounded(async () => {
+      runtime.bounded('readActionDecisionReceipt', async () => {
         if (runtime.admission.closed || runtime.coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
         if (typeof decisionId !== 'string' || !RECEIPT_ID.test(decisionId)) throw new ApprovalServiceError('invalid');
         const retained = retainedActionDecisions.get(decisionId);
