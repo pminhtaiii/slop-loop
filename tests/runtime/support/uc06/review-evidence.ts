@@ -579,7 +579,14 @@ export async function controlledReviewFixture(completion?: NonNullable<StateTran
       const snapshot = await owner.readVerificationAuthoritySnapshot(task.taskId);
       assert.ok(snapshot);
       if (!prepared || !reviewContext || !excerpts) return undefined;
-      const digest = reviewerContextDigest(task, currentDiff.diff, excerpts, current.repositoryRevisionDigest, { runId: current.runId, expectedTaskStateVersion: current.stateVersion }, reviewContext);
+      const digest = reviewerContextDigest(
+        task,
+        currentDiff.diff,
+        excerpts,
+        current.repositoryRevisionDigest,
+        { runId: current.runId, expectedTaskStateVersion: current.stateVersion, clarification: current.clarification },
+        reviewContext,
+      );
       assert.ok(digest);
       const request: ProviderRequest = createTestProviderRequest({
         providerRequestId: `bound-review-${current.stateVersion}-${++admissionSequence}`,
