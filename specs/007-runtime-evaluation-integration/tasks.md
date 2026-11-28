@@ -125,10 +125,11 @@
 
 ## Phase 6: Cross-Cutting Verification and Handoff
 
-- [ ] T018 Complete acceptance/context refresh in specs/007-runtime-evaluation-integration/quickstart.md, context/testing.md, context/architecture.md, context/tech_stack.md and context/progress_checker.md.
+- [x] T018 Complete acceptance/context refresh in specs/007-runtime-evaluation-integration/quickstart.md, context/testing.md, context/architecture.md, context/tech_stack.md and context/progress_checker.md.
   - **Dependencies**: T014, T017.
   - **Owned Paths**: specs/007-runtime-evaluation-integration/quickstart.md; context/testing.md; context/architecture.md; context/tech_stack.md; context/progress_checker.md.
   - **Acceptance Checks**: Run required source/emitted/full gates on exact candidate; independent review, context updater, scoped PR publication per workflow. Record actual real/not-run results, revisions/limits and old-ledger mappings without claiming full C01–C17/restart. No source fixture/artifact publication. Contributor completion remains published linked PR gate, distinct from feature acceptance.
+  - **Verification Evidence (2026-11-28)**: Released by the T017 acceptance entry in the decision record. The quickstart and the context docs (`testing.md`, `architecture.md`, `architecture-evaluation.md`, `tech_stack.md`, `progress_checker.md`) now record the actual state: T011 and T014 real observations, T039 (#306) and T017 user acceptance are recorded; T019, T031, #286, real custom-bug submission, G-RESTART, the full C01–C17 suite and independent owner signatures stay open. An independent review on `be826e7e` found 6 blocking and 4 minor citation and wording issues, all docs-only, with no overclaims and nothing private. They were repaired in `c9ded5d7`, and the re-review passed with all 10 resolved. The merger passed `c9ded5d7`: clean merge onto `1754d5ba`, docs-only paths, format, lint, context, tracked-file and env-example checks, and no endpoint or credential text. The checks were docs-only; no full runtime suite was rerun (CI runs it), and no real, restart or full-suite acceptance is claimed.
 
 ## Dependencies
 
