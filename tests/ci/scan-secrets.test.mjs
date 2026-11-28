@@ -411,7 +411,7 @@ test('shipped exemptions validate and clear exactly the reviewed synthetic findi
     ['private-key', 'tests/runtime/unit/telemetry.test.ts', 569, '12515fc40bc3579b3a5e75109b3a5ec545a1e29a'],
     ['generic-api-key', 'specs/007-runtime-evaluation-integration/data-model.md', 28, '7015a46c47af462186db31830262a8de33f5ba4d'],
     ['generic-api-key', 'tests/runtime/integration/evaluation-console-journey.test.ts', 79, ''],
-    ['generic-api-key', 'tests/runtime/integration/evaluation-console-journey.test.ts', 164, ''],
+    ['generic-api-key', 'tests/runtime/integration/evaluation-console-journey.test.ts', 177, ''],
     ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1167, ''],
     ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1175, ''],
     ['generic-api-key', 'tests/runtime/unit/workflow-evaluation.test.ts', 1558, ''],

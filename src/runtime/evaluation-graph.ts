@@ -9,6 +9,7 @@ import type { UC03ControlledHostReadiness, UC03HostReadiness } from './uc03-host
 import { createHostCoderGeneration } from './host-coder.ts';
 import type { BoundSource, CatalogEntry } from './evaluation-profile.ts';
 import type { AnswerRecord, EvaluationGraph, EvaluationGraphResult, EvaluationTaskIdentity, ServiceControlReceipt } from './evaluation-service-types.ts';
+import { projectMilestones } from './evaluation-milestone-view.ts';
 import { reportUC03GraphResult, validateEvaluationGraphReportBinding, type EvaluationGraphReportBinding } from './evaluation-graph-report.ts';
 import {
   clarificationView,
@@ -321,12 +322,14 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
               mode: readiness.status === 'ready' ? 'real' : 'mock',
             })
           : undefined;
+      const milestones = projectMilestones(graphResult.milestones);
       return {
         outcome: graphResult.outcome,
         state: state ? { taskId: state.taskId, runId: state.runId, workspaceId: state.workspaceId } : null,
         workflowClarification: endedNeedsInfo ? null : clarificationView(state),
         ...(graphResult.finalReport ? { usage: { tokensConsumed: graphResult.finalReport.usage.tokensConsumed, costUsd: graphResult.finalReport.usage.costUsd } } : {}),
         ...(workflowReport === undefined ? {} : { workflowReport }),
+        ...(milestones === null ? {} : { milestones }),
       };
     },
   };

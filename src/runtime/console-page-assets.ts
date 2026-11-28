@@ -18,7 +18,7 @@ dd { margin: 0; word-break: break-word; }
 .hint { font-weight: 400; font-size: .85em; opacity: .8; }
 `;
 
-/** Client script. No network endpoints beyond same-origin relative paths; no HTML sinks. */
+/** Client script; same-origin only, no HTML sinks. */
 export const SCRIPT = `
 (function () {
   'use strict';
@@ -29,26 +29,19 @@ export const SCRIPT = `
   var profile = document.body.getAttribute('data-profile');
 
   function byId(id) { return document.getElementById(id); }
+  function val(id) { return byId(id).value.trim(); }
+  function onClick(id, fn) { byId(id).addEventListener('click', fn); }
   function show(id, value) { byId(id).textContent = value; }
   function freshKey() { return crypto.randomUUID(); }
 
   function api(method, path, body) {
     var headers = { 'X-Operator-Token': token };
     if (body !== null) headers['Content-Type'] = 'application/json';
-    return fetch(path, {
-      method: method,
-      headers: headers,
-      body: body === null ? null : JSON.stringify(body),
-      cache: 'no-store',
-      credentials: 'omit',
-      redirect: 'error'
-    }).then(function (response) {
-      return response.json().then(function (data) { return { status: response.status, data: data }; });
-    });
+    return fetch(path, { method: method, headers: headers, body: body === null ? null : JSON.stringify(body), cache: 'no-store', credentials: 'omit', redirect: 'error' })
+      .then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); });
   }
 
-  // Result pane: allowlisted receipt/decision scalars only; views render via formatExperiment.
-  // A UC-05 decision arrives as a 200 SafeResult; only outcome ok/paused means it was recorded.
+  // Result pane: allowlisted scalars only; ok/paused means recorded.
   function describe(out) {
     var d = isObj(out.data) ? out.data : {};
     if (d.ok !== true) return 'error ' + out.status + ' ' + (typeof d.error === 'string' && OPAQUE.test(d.error) ? d.error : 'UNKNOWN');
@@ -61,16 +54,14 @@ export const SCRIPT = `
     return text.join('\\n');
   }
 
-  // One key per pending action: a disabled control plus the retained key makes a double submit harmless.
+  // One idempotency key per pending action.
   function send(button, slot, path, build) {
     if (button.disabled) return null;
     if (!keys[slot]) keys[slot] = freshKey();
     button.disabled = true;
     var key = keys[slot];
-    var payload = build(key);
-    return api('POST', path, payload).then(function (out) {
+    return api('POST', path, build(key)).then(function (out) {
       button.disabled = false;
-      // 200 or a definitive refusal (non-409 4xx) retires this slot's key; 409/503 replay it.
       if (out.status < 500 && out.status !== 409 && keys[slot] === key) keys[slot] = null;
       show('result', describe(out));
       return out;
@@ -84,13 +75,42 @@ export const SCRIPT = `
   function lines(text) { return text ? text.split('\\n').map(function (line) { return line.trim(); }).filter(Boolean) : []; }
   function num(id) { return Number(byId(id).value); }
 
-  // Safe report projection: explicit allowlists only; nothing is stringified wholesale.
+  // Explicit allowlists only.
   var OPAQUE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
   function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
   function pick(v, allowed) { return typeof v === 'string' && allowed.indexOf(v) >= 0 ? v : 'unknown'; }
   function cnt(v) { return typeof v === 'number' && v >= 0 && v <= 1000000 && Math.floor(v) === v ? v : null; }
   function text1(v, max) { return String(v).replace(/[\\u0000-\\u001f\\u007f-\\u009f\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+/g, ' ').slice(0, max); }
   var OUTCOMES = ['pass', 'fail', 'incomplete'];
+  var MK = 'task_started investigation_completed plan_proposed plan_approved plan_rejected patch_applied verification_completed review_completed replan_triggered budget_exhausted task_completed task_failed task_interrupted'.split(' ');
+  var MO = 'success failure pending info'.split(' ');
+  function u8ok(s, max) {
+    var b = 0, i = 0, c, n;
+    for (; i < s.length; i += 1) {
+      c = s.charCodeAt(i);
+      if (c < 128) b += 1;
+      else if (c < 2048) b += 2;
+      else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+        n = s.charCodeAt(i + 1);
+        if (n >= 0xdc00 && n <= 0xdfff) { b += 4; i += 1; } else b += 3;
+      } else b += 3;
+      if (b > max) return false;
+    }
+    return true;
+  }
+
+  function formatMilestones(view) {
+    var raw = Array.isArray(view.milestones) ? view.milestones : [];
+    var out = [], i, m, sum;
+    for (i = 0; i < raw.length && out.length < 64; i += 1) {
+      m = raw[i];
+      if (!isObj(m) || MK.indexOf(m.kind) < 0 || MO.indexOf(m.outcome) < 0 || typeof m.node !== 'string' || !OPAQUE.test(m.node) || m.node.length > 64 || typeof m.timestamp !== 'string' || !m.timestamp.trim() || !u8ok(m.timestamp, 64) || text1(m.timestamp, 64) !== m.timestamp || typeof m.summary !== 'string' || !u8ok(m.summary, 512)) continue;
+      sum = text1(m.summary, 512).trim();
+      if (!sum) continue;
+      out.push('milestone: ' + m.kind + ' [' + m.node + '] ' + m.outcome + ' ' + m.timestamp + ' - ' + sum);
+    }
+    return out.length ? out : ['milestones: none'];
+  }
 
   function formatReport(view) {
     if (view.graded !== true || view.scope === 'exploratory') return ['workflow report: custom submission, ungraded; no grade or acceptance shown'];
@@ -155,7 +175,7 @@ export const SCRIPT = `
     (view.submission ? view.submission.questions : []).forEach(function (q) {
       out.push('question ' + q.questionId + ': ' + q.text + ' [digest ' + q.questionDigest + ']');
     });
-    return out.concat(formatReport(view)).join('\\n');
+    return out.concat(formatMilestones(view), formatReport(view)).join('\\n');
   }
 
   function renderExperiment(view) {
@@ -168,8 +188,7 @@ export const SCRIPT = `
     renderClarification(view);
   }
 
-  // A catalog task can pause on a generated graph clarification group (1-16 questions, no intake
-  // submission). Render it on demand through textContent only, one input per question in order.
+  // Generated clarification group (1-16 questions); textContent only.
   var groupNode = null;
   var groupKey = null;
   var groupSent = null;
@@ -186,7 +205,7 @@ export const SCRIPT = `
     groupNode = null;
     groupKey = null;
     groupSent = null;
-    // The group's retained key dies with the group: a later group must never replay it as a conflict.
+    // Retire group key on clear.
     keys.group = null;
   }
 
@@ -215,11 +234,10 @@ export const SCRIPT = `
     });
     var button = el('button', 'Submit group answers');
     button.type = 'button';
-    // Answers bind to the group id/digest, in question order; a retained key covers this group
-    // until it is answered, and clearGroup retires it with the controls.
+    // Bound to group id/digest; clearGroup retires key.
     button.addEventListener('click', function () {
       send(button, 'group', experimentPath('/answers'), function (key) {
-        // An uncertain retry replays its key's payload: the service fingerprints answers.
+        // Replay retained payload on retry.
         if (groupSent && groupSent.idempotencyKey === key) return groupSent;
         groupSent = {
           idempotencyKey: key,
@@ -265,7 +283,7 @@ export const SCRIPT = `
     byId('token-state').textContent = token ? 'token held in page memory' : 'no token';
   });
 
-  byId('load-catalog').addEventListener('click', function () {
+  onClick('load-catalog', function () {
     api('GET', '/api/catalog', null).then(function (out) {
       if (!out.data || !out.data.ok) { show('catalog', 'error ' + out.status); return; }
       var text = ['profile: ' + out.data.result.profileId];
@@ -280,24 +298,14 @@ export const SCRIPT = `
     if (out && out.status === 200 && out.data && out.data.result && out.data.result.experiment) renderExperiment(out.data.result.experiment);
   }
 
-  byId('submit-experiment').addEventListener('click', function () {
+  onClick('submit-experiment', function () {
     send(byId('submit-experiment'), 'experiment', '/api/experiments', function (key) {
-      var kind = byId('source-kind').value;
-      if (kind === 'bug') {
+      if (byId('source-kind').value === 'bug') {
         return {
-          profileId: profile,
-          idempotencyKey: key,
+          profileId: profile, idempotencyKey: key,
           source: {
-            kind: 'bug',
-            repositoryId: byId('repository-id').value.trim(),
-            checkSetId: byId('check-set-id').value.trim(),
-            bugInput: {
-              goal: byId('bug-goal').value,
-              observedBehavior: byId('bug-observed').value,
-              expectedBehavior: byId('bug-expected').value,
-              reproduction: byId('bug-reproduction').value,
-              acceptanceCriteria: lines(byId('bug-acceptance').value)
-            }
+            kind: 'bug', repositoryId: val('repository-id'), checkSetId: val('check-set-id'),
+            bugInput: { goal: byId('bug-goal').value, observedBehavior: byId('bug-observed').value, expectedBehavior: byId('bug-expected').value, reproduction: byId('bug-reproduction').value, acceptanceCriteria: lines(byId('bug-acceptance').value) }
           }
         };
       }
@@ -305,91 +313,62 @@ export const SCRIPT = `
     }).then(onExp);
   });
 
-  byId('load-experiment').addEventListener('click', function () {
-    var id = byId('experiment-id').value.trim();
-    api('GET', '/api/experiments/' + encodeURIComponent(id), null).then(function (out) {
+  onClick('load-experiment', function () {
+    api('GET', '/api/experiments/' + encodeURIComponent(val('experiment-id')), null).then(function (out) {
       if (out.data && out.data.ok) renderExperiment(out.data.result); else show('experiment', describe(out));
     }, function () { show('experiment', 'unavailable'); });
   });
 
-  byId('toggle-poll').addEventListener('click', function () {
+  onClick('toggle-poll', function () {
     if (pollTimer === null) startPolling(); else stopPolling();
   });
 
-  byId('load-approval').addEventListener('click', function () {
-    var id = byId('experiment-id').value.trim();
-    api('GET', '/api/experiments/' + encodeURIComponent(id) + '/approval', null).then(function (out) {
+  onClick('load-approval', function () {
+    api('GET', experimentPath('/approval'), null).then(function (out) {
       show('approval', out.data && out.data.ok ? JSON.stringify(out.data.result, null, 2) : describe(out));
     }, function () { show('approval', 'approval unavailable'); });
   });
 
-  function experimentPath(suffix) { return '/api/experiments/' + encodeURIComponent(byId('experiment-id').value.trim()) + suffix; }
+  function experimentPath(suffix) { return '/api/experiments/' + encodeURIComponent(val('experiment-id')) + suffix; }
 
-  byId('submit-decision').addEventListener('click', function () {
+  onClick('submit-decision', function () {
     send(byId('submit-decision'), 'decision', experimentPath('/decision'), function (key) {
-      return {
-        idempotencyKey: key,
-        decision: byId('decision-choice').value,
-        expectedVersion: num('decision-version'),
-        presentationDigest: byId('decision-digest').value.trim()
-      };
+      return { idempotencyKey: key, decision: byId('decision-choice').value, expectedVersion: num('decision-version'), presentationDigest: val('decision-digest') };
     });
   });
 
-  byId('submit-answer').addEventListener('click', function () {
+  onClick('submit-answer', function () {
     send(byId('submit-answer'), 'answer', experimentPath('/answers'), function (key) {
-      return {
-        idempotencyKey: key,
-        questionId: byId('answer-question').value,
-        questionDigest: byId('answer-digest').value.trim(),
-        expectedVersion: num('answer-version'),
-        answers: [byId('answer-text').value]
-      };
+      return { idempotencyKey: key, questionId: byId('answer-question').value, questionDigest: val('answer-digest'), expectedVersion: num('answer-version'), answers: [byId('answer-text').value] };
     });
   });
 
-  byId('submit-direction').addEventListener('click', function () {
+  onClick('submit-direction', function () {
     send(byId('submit-direction'), 'direction', experimentPath('/directions'), function (key) {
-      return {
-        idempotencyKey: key,
-        kind: byId('direction-kind').value,
-        expectedTaskVersion: num('direction-task-version'),
-        expectedControlVersion: num('direction-control-version'),
-        decisionRef: byId('direction-decision-ref').value.trim() || undefined,
-        feedback: byId('direction-feedback').value.trim() || undefined
-      };
+      return { idempotencyKey: key, kind: byId('direction-kind').value, expectedTaskVersion: num('direction-task-version'), expectedControlVersion: num('direction-control-version'), decisionRef: val('direction-decision-ref') || undefined, feedback: val('direction-feedback') || undefined };
     }).then(onExp);
   });
 
-  byId('submit-continue').addEventListener('click', function () {
+  onClick('submit-continue', function () {
     send(byId('submit-continue'), 'continuation', experimentPath('/continue'), function (key) {
-      return {
-        idempotencyKey: key,
-        directionRef: byId('continue-direction-ref').value.trim(),
-        expectedVersion: num('continue-version')
-      };
+      return { idempotencyKey: key, directionRef: val('continue-direction-ref'), expectedVersion: num('continue-version') };
     }).then(onExp);
   });
 
-  byId('load-artifact').addEventListener('click', function () {
-    var id = byId('artifact-id').value.trim();
+  onClick('load-artifact', function () {
+    var id = val('artifact-id');
     if (!OPAQUE.test(id)) { show('artifact', 'artifact unavailable'); return; }
     api('GET', '/api/artifacts/' + encodeURIComponent(id), null).then(function (out) {
       show('artifact', out.data && out.data.ok ? out.data.result.mediaType + ' sha256:' + out.data.result.digest + '\\n' + out.data.result.text : describe(out));
     }, function () { show('artifact', 'artifact unavailable'); });
   });
 
-  byId('submit-comparison').addEventListener('click', function () {
+  onClick('submit-comparison', function () {
     send(byId('submit-comparison'), 'comparison', '/api/comparisons', function (key) {
-      return {
-        idempotencyKey: key,
-        baselineId: byId('compare-baseline').value.trim(),
-        candidateId: byId('compare-candidate').value.trim(),
-        policy: byId('compare-policy').value
-      };
+      return { idempotencyKey: key, baselineId: val('compare-baseline'), candidateId: val('compare-candidate'), policy: byId('compare-policy').value };
     }).then(function (out) {
       if (!out || out.status !== 200) { show('comparison-verdict', 'not compared'); show('comparison-acceptance', 'not compared'); return; }
-      // Verdict and candidate acceptance are separate authoritative values; never fold one into the other.
+      // Verdict and candidate acceptance are separate authoritative values.
       show('comparison-verdict', String(out.data.result.verdict || 'unavailable'));
       show('comparison-acceptance', String((out.data.result.candidateAcceptance || {}).outcome || 'unavailable'));
     });

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { deepFreeze } from '../contracts/foundation/uc03/v02/admission/snapshot.ts';
 import { sha256Text } from '../uc01/contracts.ts';
 import { bindEvaluationSource, isAdmittedEvaluationProfile, type BoundSource, type EvaluationProfile } from './evaluation-profile.ts';
+import { appendMilestoneViews } from './evaluation-milestone-view.ts';
 import {
   bindingsExplained,
   fail,
@@ -90,6 +91,7 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
     // A result without a report has none: the previous execution's report is not the current one.
     const report = result.workflowReport;
     experiment.workflowReport = report == null ? null : deepFreeze(structuredClone(report));
+    experiment.milestones = appendMilestoneViews(experiment.milestones, result.milestones);
     if (TERMINAL.has(experiment.status)) activeId = activeId === experiment.id ? undefined : activeId;
   };
 
@@ -142,6 +144,7 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
         usage: null,
         workflowClarification: null,
         workflowReport: null,
+        milestones: null,
         answers: [],
         directions: [],
       };

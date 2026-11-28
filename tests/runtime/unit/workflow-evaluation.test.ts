@@ -2247,3 +2247,115 @@ test('thrown route classifier reaches retained case observation and real server 
     process.stderr.write = original;
   }
 });
+
+test('service projects allowlisted bounded milestones in order, omits invalid entries, and reports none when absent', async () => {
+  const validBase = {
+    milestoneId: 'ms-1',
+    taskId: 'task-001',
+    runId: 'run-001',
+    timestamp: '2026-11-28T00:00:00.000Z',
+    node: 'Investigate',
+    kind: 'investigation_completed',
+    summary: 'Baseline reproduced cleanly',
+    outcome: 'success',
+    evidenceRefs: ['secret-evidence-ref'],
+    details: { internalPath: '/etc/passwd' },
+  };
+  const valid512Utf8 = 'é'.repeat(256); // 512 UTF-8 bytes
+  const overlong514Utf8 = 'é'.repeat(257); // 514 UTF-8 bytes (> 512 despite length 257)
+  let phase = 0;
+  const { service } = createService({
+    graph: {
+      portsFor: () => ({}),
+      run: async () => {
+        phase += 1;
+        if (phase === 1) {
+          return {
+            outcome: 'pending-approval',
+            state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' },
+            milestones: [
+              validBase,
+              { ...validBase, milestoneId: 'ms-dup', kind: 'investigation_completed', summary: valid512Utf8, outcome: 'info' },
+              { ...validBase, kind: 'unknown_kind', summary: 'Should be dropped' },
+              { ...validBase, outcome: 'pass', summary: 'Invalid outcome dropped' },
+              { ...validBase, node: '', summary: 'Blank node dropped' },
+              { ...validBase, timestamp: '', summary: 'Blank timestamp dropped' },
+              { ...validBase, summary: overlong514Utf8 },
+              'not-an-object',
+              { ...validBase, node: 'Investigate', kind: 'plan_proposed', summary: 'Plan ready', outcome: 'pending', extraField: 'secret-extra' },
+            ],
+          } as unknown as Awaited<ReturnType<Parameters<typeof createEvaluationService>[0]['graph']['run']>>;
+        }
+        return {
+          outcome: 'COMPLETED',
+          state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' },
+          milestones: [{ ...validBase, node: 'Patch', kind: 'patch_applied', outcome: 'success', summary: 'Patch applied' }],
+        } as unknown as Awaited<ReturnType<Parameters<typeof createEvaluationService>[0]['graph']['run']>>;
+      },
+    },
+  });
+
+  const started = await service.startExperiment({ source: catalogSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-ms-start' });
+  assert.ok(started.ok);
+  const viewMilestones = (started.value.experiment as unknown as { milestones?: readonly Record<string, unknown>[] | null }).milestones;
+  assert.ok(Array.isArray(viewMilestones), 'known milestones reach ExperimentView');
+  assert.equal(viewMilestones.length, 3, 'unknown, malformed, and over-long UTF-8 entries are omitted');
+  assert.deepEqual(
+    viewMilestones.map(entry => entry['kind']),
+    ['investigation_completed', 'investigation_completed', 'plan_proposed'],
+    'preserves documented order and duplicates-in-order',
+  );
+  assert.equal(viewMilestones[1]?.['summary'], valid512Utf8);
+  for (const entry of viewMilestones) {
+    assert.deepEqual(Object.keys(entry).sort(), ['kind', 'node', 'outcome', 'summary', 'timestamp'], 'explicit allowlist only; drops details and evidenceRefs');
+  }
+
+  const direction = await service.issueDirection({ id: 'exp-001', expectedTaskVersion: 1, expectedControlVersion: 1, kind: 'resume', idempotencyKey: 'key-ms-dir' });
+  assert.ok(direction.ok);
+  const continued = await service.continueExperiment({
+    id: 'exp-001',
+    expectedVersion: direction.value.experiment.version,
+    directionRef: 'receiptRef' in direction.value.receipt ? direction.value.receipt.receiptRef : direction.value.receipt.receiptId,
+    idempotencyKey: 'key-ms-cont',
+  });
+  assert.ok(continued.ok);
+  const contMilestones = (continued.value.experiment as unknown as { milestones?: readonly Record<string, unknown>[] | null }).milestones;
+  assert.deepEqual(
+    contMilestones?.map(entry => entry['kind']),
+    ['investigation_completed', 'investigation_completed', 'plan_proposed', 'patch_applied'],
+  );
+
+  // List cap <= 64 and no-milestone cases report null (none).
+  const manyService = createService({
+    graph: {
+      portsFor: () => ({}),
+      run: async () =>
+        ({
+          outcome: 'COMPLETED',
+          state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' },
+          milestones: Array.from({ length: 70 }, (_, idx) => ({ ...validBase, summary: `Milestone ${idx}` })),
+        }) as unknown as Awaited<ReturnType<Parameters<typeof createEvaluationService>[0]['graph']['run']>>,
+    },
+  }).service;
+  const bounded = await manyService.startExperiment({ source: catalogSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-ms-70' });
+  assert.ok(bounded.ok);
+  const boundedMilestones = (bounded.value.experiment as unknown as { milestones?: readonly Record<string, unknown>[] | null }).milestones;
+  assert.equal(boundedMilestones?.length, 64);
+
+  for (const emptyInput of [undefined, [], [{ ...validBase, kind: 'bogus' }]]) {
+    const emptyService = createService({
+      graph: {
+        portsFor: () => ({}),
+        run: async () =>
+          ({
+            outcome: 'INCOMPLETE',
+            state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' },
+            ...(emptyInput !== undefined ? { milestones: emptyInput } : {}),
+          }) as unknown as Awaited<ReturnType<Parameters<typeof createEvaluationService>[0]['graph']['run']>>,
+      },
+    }).service;
+    const emptyStart = await emptyService.startExperiment({ source: catalogSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-ms-empty' });
+    assert.ok(emptyStart.ok);
+    assert.equal((emptyStart.value.experiment as unknown as { milestones?: unknown }).milestones, null);
+  }
+});
