@@ -203,7 +203,7 @@ For the focused repaired source/emitted/type checks, use the exact commands in `
 
 ## Real-tier prerequisites (T040–T060) — operator steps
 
-Planned steps from the [real-tier contract](contracts/real-tier.md). Nothing below runs until T040–T050 and T061 are implemented and released after both planning review lanes pass. Each step is labelled with its tier. **T011 is a later, separately released step**: none of these commands runs `evaluate run`, and none claims G-REAL/SC-001, T017, a restart or G-OWNERS (still single-attested). **Privacy:** never paste the real endpoint host, port or URL into a tracked file, a commit message or a PR. This guide writes it as `http://<host>:<port>/v1`.
+Planned steps from the [real-tier contract](contracts/real-tier.md). T040–T062 are now implemented and accepted (see the ledger). Each step is labelled with its tier. T011, T014 and T017 were released and recorded separately: none of these commands runs `evaluate run`, and none by itself claims G-REAL/SC-001, T017, a restart or G-OWNERS (still single-attested). **Privacy:** never paste the real endpoint host, port or URL into a tracked file, a commit message or a PR. This guide writes it as `http://<host>:<port>/v1`.
 
 ### 1. Controlled tier: owner lanes, profile, endpoint, runaway stop, assembly, recovery gate, scanner, CLI preflight and campaign gate (T040–T050, T057–T061)
 
