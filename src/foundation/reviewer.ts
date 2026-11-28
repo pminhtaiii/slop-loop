@@ -8,6 +8,8 @@ import {
   validateProviderRequest,
   validateReviewAdmission,
   type BugTask,
+  type ClaimReceiptV02,
+  type ClarificationRecord,
   type ModelPortV02,
   type ProviderAdmissionContextV02,
   type ProviderRequest,
@@ -185,7 +187,7 @@ export function buildReviewerSnapshot(
   diff: string,
   evidence: readonly SourceEvidence[],
   repoDigest: string,
-  binding: { readonly runId: string; readonly expectedTaskStateVersion: number },
+  binding: { readonly runId: string; readonly expectedTaskStateVersion: number; readonly clarification?: ClarificationRecord | undefined },
   boundContext?: ReviewContextV1,
 ): { readonly state: TaskState; readonly evidence: readonly SourceEvidence[] } {
   if (boundContext !== undefined) {
@@ -220,6 +222,7 @@ export function buildReviewerSnapshot(
     evidenceRefs: evidence.map(item => item.path),
     risks: [],
     nextAction: 'final-review',
+    ...(binding.clarification?.answer === undefined ? {} : { clarification: binding.clarification }),
   });
   const snapshot = {
     state,
@@ -239,7 +242,7 @@ export function reviewerContextDigest(
   diff: string,
   evidence: readonly SourceEvidence[],
   repoDigest: string,
-  binding: { readonly runId: string; readonly expectedTaskStateVersion: number },
+  binding: { readonly runId: string; readonly expectedTaskStateVersion: number; readonly clarification?: ClarificationRecord | undefined },
   boundContext?: ReviewContextV1,
 ): string | null {
   if (parseUnifiedDiff(diff) === null) return null;
@@ -264,9 +267,18 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
     get lastFailureReason() {
       return lastFailureReason;
     },
-    async review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, admission: ProviderAdmissionContextV02): Promise<ReviewResult> {
+    async review(
+      task: BugTask,
+      diff: string,
+      evidence: readonly SourceEvidence[],
+      request: ProviderRequest,
+      admission: ProviderAdmissionContextV02,
+      _claim?: ClaimReceiptV02,
+      clarification?: ClarificationRecord,
+    ): Promise<ReviewResult> {
       lastObservedUsage = undefined;
       lastFailureReason = undefined;
+      clarification = clarification === undefined ? undefined : deepFreeze(deepClone(clarification));
       const resolverRequest = request;
       if (resolveReviewContext) {
         task = deepFreeze(deepClone(task));
@@ -325,6 +337,7 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
         {
           runId: admission.runId,
           expectedTaskStateVersion: admission.expectedTaskStateVersion,
+          clarification,
         },
         boundContext,
       );

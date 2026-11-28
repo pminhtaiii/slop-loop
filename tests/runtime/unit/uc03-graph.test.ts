@@ -452,6 +452,7 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
     const contextDigest = reviewerContextDigest(task, diff.diff, [], state.repositoryRevisionDigest, {
       runId: state.runId,
       expectedTaskStateVersion: state.stateVersion,
+      clarification: state.clarification,
     });
     if (contextDigest === null) return undefined;
     const request = createTestProviderRequest({

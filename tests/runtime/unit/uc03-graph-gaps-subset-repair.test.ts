@@ -104,7 +104,11 @@ function reviewerAdmissionResolver(statePort: MemoryStatePortV02) {
   }) => {
     const ownerAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
     if (!ownerAuthority) return undefined;
-    const contextDigest = reviewerContextDigest(task, diff.diff, [], state.repositoryRevisionDigest, { runId: state.runId, expectedTaskStateVersion: state.stateVersion });
+    const contextDigest = reviewerContextDigest(task, diff.diff, [], state.repositoryRevisionDigest, {
+      runId: state.runId,
+      expectedTaskStateVersion: state.stateVersion,
+      clarification: state.clarification,
+    });
     if (contextDigest === null) return undefined;
     const request = createTestProviderRequest({
       providerRequestId: `provider-${task.taskId}-${state.stateVersion}`,

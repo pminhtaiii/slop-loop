@@ -382,6 +382,7 @@ export async function controlledGeneratedPlanFixture(options: ControlledFixtureO
       const contextDigest = reviewerContextDigest(currentTask, diff.diff, [], state.repositoryRevisionDigest, {
         runId: state.runId,
         expectedTaskStateVersion: state.stateVersion,
+        clarification: state.clarification,
       });
       if (contextDigest === null) return undefined;
       const request = createTestProviderRequest({
