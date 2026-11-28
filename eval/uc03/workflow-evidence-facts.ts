@@ -1,5 +1,6 @@
 /** Validate host-owned final-tree and graph facts before independent grading. */
 
+import { clarificationWasAnswered } from './workflow-answered-facts.ts';
 import { createHash } from 'node:crypto';
 import {
   computeCanonicalSha256,
@@ -66,6 +67,7 @@ export interface DerivedWorkflowFacts {
     readonly speculativePatchApplied: boolean;
     readonly stoppedBeforeEffect: boolean;
     readonly completionWithheld: boolean;
+    readonly clarificationAnswered?: boolean;
   };
 }
 
@@ -375,6 +377,7 @@ export async function deriveWorkflowEvidenceFacts(input: {
     speculativePatchApplied: patchApplied,
     stoppedBeforeEffect,
     completionWithheld: withheld,
+    clarificationAnswered: await clarificationWasAnswered(state, input.statePort),
   } as const;
   const evidenceDigest = computeCanonicalSha256({
     caseId: input.caseId,
