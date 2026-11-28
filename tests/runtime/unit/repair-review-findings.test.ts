@@ -112,6 +112,7 @@ test('state and direct repair admission refuse forged malformed or oversized sna
     { ...record, findings: Array.from({ length: 17 }, () => record.findings[0]) },
     { ...record, findings: [{ ...record.findings[0], message: 'x'.repeat(2049) }] },
     { ...record, findings: [{ ...record.findings[0], file: '../escape.py' }] },
+    { ...record, findings: [{ ...record.findings[0], file: `${('a'.repeat(64) + '/').repeat(8)}x.py` }] },
     { ...record, findings: [{ ...record.findings[0], line: 0 }] },
     { ...record, findings: [{ ...record.findings[0], severity: 'critical' }] },
     { ...record, isUntrustedModelOutput: false },
@@ -127,5 +128,20 @@ test('state and direct repair admission refuse forged malformed or oversized sna
     const result = admit(buildTransportPayload(state, [], request('propose-repair')), pricing, target);
     assert.equal(result.ok, false);
     if (!result.ok) assert.match(result.reason, /^REVIEW_FINDINGS_INVALID/);
+  }
+});
+
+test('snapshot omits over-limit file identities while preserving ordinary findings', () => {
+  const file = `${('a'.repeat(64) + '/').repeat(8)}x.py`;
+  assert.equal(Buffer.byteLength(file), 524);
+  for (const ordinary of [[], [finding]]) {
+    const record = retainReviewFindings({ ...review, findings: [{ ...finding, file }, ...ordinary] });
+    assert.ok(record);
+    assert.equal(record.truncated, true);
+    assert.deepEqual(
+      record.findings.map(item => item.file),
+      ordinary.map(item => item.file),
+    );
+    assert.equal(reviewFindingsAreSafe(record), true);
   }
 });

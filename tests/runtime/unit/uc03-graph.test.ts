@@ -1578,6 +1578,28 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.equal(staleD0Setup.repositoryPort.patches.length, 1);
   assert.equal(staleD0Run.reviewerCalls, 0);
 
+  for (const keepOrdinary of [false, true]) {
+    const bounded = createTestSetup({ contextualApprovalIssuer: true, initialReviewStatus: 'findings' });
+    const originalReview = bounded.reviewerPort.review.bind(bounded.reviewerPort);
+    bounded.reviewerPort.review = async (...args) => {
+      const result = await originalReview(...args);
+      const ordinary = result.findings[0];
+      assert.ok(ordinary);
+      const file = `${('a'.repeat(64) + '/').repeat(8)}x.py`;
+      assert.equal(Buffer.byteLength(file), 524);
+      return { ...result, findings: [{ ...ordinary, file }, ...(keepOrdinary ? [ordinary] : [])] };
+    };
+    const repaired = await runPassingMockRoute(bounded);
+    assert.equal(repaired.reviewerCalls, 1);
+    assert.equal(repaired.result.state?.node, 'Repair');
+    assert.equal(repaired.result.state.nextAction, 'repair-review-findings');
+    assert.equal(repaired.result.state.reviewFindings?.truncated, true);
+    assert.deepEqual(
+      repaired.result.state.reviewFindings?.findings.map(item => item.file),
+      keepOrdinary ? ['src/calculator.py'] : [],
+    );
+  }
+
   const openClaimSetup = createTestSetup({ contextualApprovalIssuer: true });
   let concurrentResult: Awaited<ReturnType<typeof runUC03Graph>> | undefined;
   await runPassingMockRoute(openClaimSetup, undefined, undefined, undefined, async (current, rerun, reviewerCalls) => {

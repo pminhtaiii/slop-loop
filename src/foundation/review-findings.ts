@@ -4,6 +4,7 @@ import {
   REVIEW_FINDINGS_MAX_BYTES,
   REVIEW_FINDINGS_MAX_ITEMS,
   REVIEW_FINDING_MESSAGE_MAX_BYTES,
+  REVIEW_FINDING_FILE_MAX_BYTES,
   validateReviewFindings,
   type ReviewFindingsRecord,
 } from '../contracts/foundation/uc03/v01/review-findings.ts';
@@ -19,8 +20,16 @@ export function retainReviewFindings(review: ReviewResult): ReviewFindingsRecord
   const findings: ReviewFindingsRecord['findings'][number][] = [];
   let truncated = review.findings.length > REVIEW_FINDINGS_MAX_ITEMS;
   for (const finding of review.findings.slice(0, REVIEW_FINDINGS_MAX_ITEMS)) {
+    if (Buffer.byteLength(finding.file, 'utf8') > REVIEW_FINDING_FILE_MAX_BYTES) {
+      truncated = true;
+      continue;
+    }
     if (safeText(finding.file) !== finding.file) return undefined;
     const message = sanitizeDiagnostic(safeText(finding.message), { maxBytes: REVIEW_FINDING_MESSAGE_MAX_BYTES });
+    if (!message.sanitizedContent.trim()) {
+      truncated = true;
+      continue;
+    }
     const item = { file: finding.file, line: finding.line, side: finding.side, severity: finding.severity, message: message.sanitizedContent };
     const candidate: ReviewFindingsRecord = { source: 'reviewer-output', isUntrustedModelOutput: true, reviewId: review.reviewId, findings: [...findings, item], truncated: false };
     if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') > REVIEW_FINDINGS_MAX_BYTES) {

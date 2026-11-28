@@ -165,7 +165,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
       return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Reviewer result does not match the admitted current diff and persisted reservation'] };
     }
     const reviewFindings = retainReviewFindings(result);
-    if (!reviewFindings) return { state: ownerState, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Review findings metadata cannot be safely retained'] };
+    // Optional prompt context must not block an admitted review from reaching Repair.
     const reviewRefs = [...new Set([...(current.state.reviewRefs ?? []), result.reviewId])];
     const milestones = addMilestone(
       state.milestones ?? [],
